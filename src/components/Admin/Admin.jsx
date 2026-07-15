@@ -388,10 +388,10 @@ import AdminSettings from "./AdminSettings";
 import AdminDashboard from "./AdminDashboard";
 import AdminProduct from "./AdminProduct";
 import ProductMapping from "./ProductMapping";
-import SalesReport from "./SalesReport";
+import SalesReport from "./Salesreport.jsx";
  import InventoryManagementCurrentStockList from "../InventoryManagement/InventoryManagementCurrentStockList";
-import HQSetup from "./HQSetup";
-import HQAdminManagement from "./HQAdminManagement";
+import HQSetup from "./Hqsetup.jsx";
+import HQAdminManagement from "./Hqadminmanagement.jsx";
 
 // ─── Store context from localStorage ─────────────────────────────────────────
 const storeId   = localStorage.getItem("admin_store_id")   || "";

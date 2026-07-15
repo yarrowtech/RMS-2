@@ -718,7 +718,7 @@ import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
 
 import React, { useState, useEffect, useCallback } from "react";
 import { Image as ImageIcon, Plus, X, Trash2, MessageSquare, RefreshCw, Tag, Images } from "lucide-react";
-import VendorSubscriptionTab from "./VendorSubscriptionTab";
+import VendorSubscriptionTab from "./Vendorsubscriptiontab.jsx";
 
 const API_BASE = APP_API_URL;
 

@@ -937,10 +937,10 @@ import {
   FaPrint, FaExclamationTriangle, FaPlus,
 } from "react-icons/fa";
 import QuickFillPanel from "../Quickfillpanel";
-import BarcodeStickerPrint from "../BarcodeStickerPrint";
+import BarcodeStickerPrint from "../Barcodestickerprint.jsx";
 import ReactDOM from "react-dom";
-import InventoryProductForm from "./InventoryProductForm";
-import SplitProductModal from "./SplitProductModal";
+import InventoryProductForm from "./Inventoryproductform.jsx";
+import SplitProductModal from "./Splitproductmodal.jsx";
 
 const API = APP_API_URL;
 

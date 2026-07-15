@@ -3,8 +3,8 @@ import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
 
 import React, { useMemo, useState, useEffect, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
-import VendorCatalogueBrowserModal from "./VendorCatalogueBrowserModal";
-import VendorCompareSearch from "./VendorCompareSearch";
+import VendorCatalogueBrowserModal from "./Vendorcataloguebrowsermodal.jsx";
+import VendorCompareSearch from "./Vendorcomparesearch.jsx";
 
 const API_BASE = `${APP_API_URL}/purchaseorders`;
 

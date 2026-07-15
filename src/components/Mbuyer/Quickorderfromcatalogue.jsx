@@ -3,12 +3,9 @@ import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
 
 import React, { useState, useCallback, useEffect } from "react";
 import { Search, Send, RefreshCw, CheckCircle2, Trophy, ArrowLeft, Plus, Trash2, ShoppingBag, MessageSquare, FileQuestion, Users } from "lucide-react";
-import MyInquiriesPage from "./MyInquiriesPage.jsx";
-/* ⚠️ FIXED: was "./Myinquiriespage.jsx" (lowercase i, lowercase p) —
-   the actual file is MyInquiriesPage.jsx. Case-insensitive filesystems
-   (Windows, macOS default) silently tolerate this; case-sensitive ones
-   (Linux — nearly every production host) will fail to resolve this
-   import at build time. Worth catching now rather than at deploy time. */
+import MyInquiriesPage from "./Myinquiriespage.jsx";
+/* The import above intentionally matches the lowercase filename on disk;
+   this is required on case-sensitive filesystems such as Linux. */
 
 /**
  * QuickOrderFromCatalogue.jsx

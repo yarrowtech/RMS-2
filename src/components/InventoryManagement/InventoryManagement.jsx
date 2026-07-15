@@ -18,7 +18,7 @@ import InventoryManagementDailyStockMovement from "./InventoryManagementDailySto
 import InventoryManagementWareHouseWizeStock from "./InventoryManagementWareHouseWizeStock";
 import InventoryManagementSettings from "./InventoryManagementSettings";
 import InventoryManagementStockAllocation from "./InventoryManagementStockAllocation";
-import InventoryManagementStoreStock from "./InventoryManagementStoreStock";
+import InventoryManagementStoreStock from "./Inventorymanagementstorestock.jsx";
 import GRRC from "./GRRC";
 import GRN from "./GRN";
 

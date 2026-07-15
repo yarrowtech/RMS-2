@@ -1602,7 +1602,7 @@ import ReactDOM from "react-dom";
 import axios from "axios";
 import { useNavigate } from "react-router-dom";
 import QuickFillPanel from "../Quickfillpanel";
-import BarcodeStickerPrint from "../BarcodeStickerPrint";
+import BarcodeStickerPrint from "../Barcodestickerprint.jsx";
 
 const API_BASE = `${APP_API_URL}`;
 

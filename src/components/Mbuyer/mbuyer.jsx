@@ -265,23 +265,23 @@ import TaskList from "./TaskList";
 import CheckList from "./CheckList";
 import Reports from "./Reports";
 import Settings from "./Settings";
-import QuickOrderFromCatalogue from "./Quickorderfromcatalogue";
+import QuickOrderFromCatalogue from "./Quickorderfromcatalogue.jsx";
 import PurchaseInvoice from "../PurchaseInvoice.jsx";
-import RetailerWhatsAppConnect from "./Retailerwhatsappconnect";
-import Mbuyer1GRUpdateReturn from "./Mbuyer1grupdatereturn";
-import Mbuyer1NextPlan from "./Mbuyer1nextplan";
-import Mbuyer1DebitNote from "./Mbuyer1debitnote";
+import RetailerWhatsAppConnect from "./Retailerwhatsappconnect.jsx";
+import Mbuyer1GRUpdateReturn from "./Mbuyer1grupdatereturn.jsx";
+import Mbuyer1NextPlan from "./Mbuyer1nextplan.jsx";
+import Mbuyer1DebitNote from "./Mbuyer1debitnote.jsx";
 
 // â”€â”€ New Order sub-tabs from Mbuyer1 â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-import Mbuyer1OrderDetail  from "./Mbuyer1OrderDetail";   // item/amount/size/qty/colour/fabric
-import Mbuyer1SampleOrReal from "./Mbuyer1SampleOrReal";  // payment tracking samples vs real
-import MbuyerGRN from "./MbuyerGRN";
+import Mbuyer1OrderDetail  from "./Mbuyer1OrderDetail.jsx";   // item/amount/size/qty/colour/fabric
+import Mbuyer1SampleOrReal from "./Mbuyer1SampleOrReal.jsx";  // payment tracking samples vs real
+import MbuyerGRN from "./Mbuyergrn.jsx";
 
 
 // â”€â”€ Analytics tabs â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-import OpenPOTracker    from "./OpenPOTracker";
-import VendorPerformance from "./VendorPerformance";
-import VarianceLog      from "./VarianceLog";
+import OpenPOTracker    from "./Openpotracker.jsx";
+import VendorPerformance from "./Vendorperformance.jsx";
+import VarianceLog      from "./Variancelog.jsx";
 
 const COMPANY_NAME = "RMS";
 

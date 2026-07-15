@@ -1,7 +1,6 @@
 ﻿
 // App.jsx
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
-import { AdminRMS } from "./components/Admin";
 import RoleSelector from "./components/select";
 import Cashier from "./components/Cashier/Cashier";
 import HR from "./components/hr";
@@ -42,7 +41,7 @@ import VendorQuestion from "./components/Merchandiser_Seller/VendorQuestionnaire
 import RegisterVendor from "./components/Merchandiser_Seller/RegisterVendor.jsx";
 import VendorSetPassword from "./components/Merchandiser_Seller/VendorSetPassword.jsx";
 
-import POPublicView from "./components/POPublicView";
+import POPublicView from "./components/Popublicview.jsx";
 import StoreOwnerDashboard from "./components/StoreOwner/StoreOwnerDashboard.jsx";
 import StorePurchasing from "./components/StoreOwner/StorePurchasing.jsx";
 import StoreOwnerStaff from "./components/StoreOwner/StoreOwnerStaff.jsx";
@@ -142,4 +141,3 @@ export default function App() {
     </BrowserRouter>
   );
 }
-
