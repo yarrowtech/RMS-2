@@ -4,6 +4,11 @@ services:
     runtime: static
     buildCommand: npm run build
     staticPublishPath: ./dist
+    envVars:
+      - key: VITE_API_URL
+        value: https://rms-2-458u.onrender.com
+      - key: VITE_FRONTEND_URL
+        value: https://rms-2-1.onrender.com
     routes:
       - type: rewrite
         source: /*
