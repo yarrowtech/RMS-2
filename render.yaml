@@ -1,4 +1,4 @@
-services:
+Sservices:
   - type: web
     name: rms-2-1
     runtime: static
