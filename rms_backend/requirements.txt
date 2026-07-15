@@ -1,0 +1,17 @@
+fastapi
+uvicorn[standard]
+motor
+python-dotenv
+pydantic[email]
+pydantic-settings
+passlib[bcrypt]
+PyJWT
+fastapi-mail
+python-multipart
+email-validator
+bcrypt==4.2.0
+cloudinary
+python-jose[cryptography]
+pandas
+openpyxl
+reportlab
