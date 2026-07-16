@@ -912,11 +912,14 @@ export default function CashierPOS() {
   const [invoiceLookup,  setInvoiceLookup]  = useState(false);  // ← NEW
   const [originalInvoice,setOriginalInvoice]= useState("");     // ← NEW
 
-  const [bill, setBill] = useState({
-    cashierName: "Admin", customerName: "", mobile: "",
+  // The cashier name belongs to the authenticated session, never a generic
+  // POS default. `admin_name` is written by authRedirect immediately after
+  // login and is shared by store cashiers and store owners.
+  const [bill, setBill] = useState(() => ({
+    cashierName: localStorage.getItem("admin_name") || "Cashier", customerName: "", mobile: "",
     offer: "", appliedOffer: 0, discount: "",
     paymentMethod: "Cash",
-  });
+  }));
 
   const isReturn = mode === "return";
 

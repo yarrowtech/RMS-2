@@ -23,6 +23,7 @@ import {
 import MsellerSidebar       from "./MsellerSidebar.jsx";
 import AddProduct           from "./MsellerAddProduct.jsx";
 import VendorPurchaseOrders from "./VendorPurchaseOrders.jsx";
+import VendorJobWork from "./VendorJobWork.jsx";
 import MSellerDashboard     from "./MsellerDashboard.jsx";
 import MSellerCategory      from "./MsellerCategory.jsx";
 import MSellerProductList   from "./MsellerProductList.jsx";
@@ -157,6 +158,7 @@ const PAGE_TITLES = {
   "product-list":   "Product List",
   "edit-product":   "Edit Product",
   "purchase-order": "Purchase Orders",
+  "job-work":       "Job Work Orders",
   finance:          "Finance & Analytics",
   retailers:        "My Retailers",
   network:          "Business Network",
@@ -261,6 +263,7 @@ export default function MSeller() {
         );
 
       case "purchase-order": return <VendorPurchaseOrders vendorName={vendorProfile?.name} />;
+      case "job-work":       return <VendorJobWork />;
       case "purchase-invoice": return <PurchaseInvoice vendorMode />;
       case "finance":        return <VendorAnalytics />;
       case "retailers":      return <VendorRetailersTab />;

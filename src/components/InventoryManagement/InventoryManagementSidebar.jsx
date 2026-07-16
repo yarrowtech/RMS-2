@@ -292,7 +292,11 @@ export default function RMSInventorySidebar({
             {childItem("stock.ledger", <FaExchangeAlt />, "Stock Ledger / Movement")}
             {isHQ && childItem("stock.reorderLevel", <FaClipboardList />, "Reorder Level Setup")}
             {childItem("stock.adjustment", <FaExchangeAlt />, "Stock Adjustment")}
-            {isHQ && childItem("stock.transfer", <FaWarehouse />, "Stock Transfer")}
+            {childItem(
+              "stock.transfer",
+              <FaWarehouse />,
+              isHQ ? "Stock Transfer" : "Return Stock to Central"
+            )}
             {isHQ && childItem("stock.damagedReturned", <FaExclamationTriangle />, "Damaged / Returned Stock")}
           </div>
         )}

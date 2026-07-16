@@ -119,6 +119,10 @@ export default function AdminSetPassword() {
       const data = await res.json();
       if (!res.ok) { setError(data.detail || "Failed to set password."); return; }
 
+      // Password setup starts the first authenticated session. Persist the
+      // issued token before routing to a protected department dashboard.
+      if (data.access_token) localStorage.setItem("admin_token", data.access_token);
+
       // Save store context — same as login
       localStorage.setItem("store_id",   data.store_id   || "");
       localStorage.setItem("store_name", data.store_name || "");

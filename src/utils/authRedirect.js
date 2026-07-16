@@ -13,6 +13,7 @@ const DEPT_PATH_MAP = {
   "Inventory":                      "/inventory",
   "Stock Planning & Forecasting":   "/stock",
   "Third Party":                    "/third-party",
+  "Production & Job Work":          "/production",
   "Merchandiser Buyer":             "/merchandiser-buyer",
   "Vendor":                         "/merchandiser-seller",
   "Store Owner":                    "/dashboard/store-owner",

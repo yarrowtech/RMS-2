@@ -6,7 +6,7 @@ import { API_BASE_URL } from "../../config/api.js";
 const ROLES = {
   Inventory: {
     description: "Store stock, GRC and GRN receiving.",
-    permissions: ["store_stock", "stock_ledger", "stock_adjustment", "grc", "grn"],
+    permissions: ["store_stock", "stock_ledger", "stock_adjustment", "stock_transfer", "grc", "grn"],
   },
   Cashier: {
     description: "POS, returns and sales for this store.",

@@ -495,13 +495,15 @@ async def save_bill(
     is_return    = bool(payload.get("isReturn", False))
     items        = payload.get("items", [])
     summary      = payload.get("summary", {})
-    bill_meta    = payload.get("bill", {})
-    cashier_name = bill_meta.get("cashierName", "POS")
-
-    store      = await _require_store_context(authorization)
+    bill_meta = payload.get("bill", {})
+    store     = await _require_store_context(authorization)
     tenant_id  = store["tenant_id"]
     store_id   = store["store_id"]
     store_name = store["store_name"]
+
+    # A bill must show the person authenticated to the POS, rather than a
+    # browser-provided value that can be stale or manually changed.
+    cashier_name = (store.get("admin_name") or bill_meta.get("cashierName") or "POS").strip()
 
     if is_return:
         original_invoice = (payload.get("originalInvoice") or "").strip()

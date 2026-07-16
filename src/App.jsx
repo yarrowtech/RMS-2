@@ -18,12 +18,14 @@ import MSeller from "./components/Merchandiser_Seller/MSeller.jsx";
 import ProductMapping from "./components/ProductMapping.jsx";
 import InventoryManagement from "./components/InventoryManagement/InventoryManagement.jsx";
 import StockPlanForecasting from "./components/StockPlanForecastingDepartment/StockPlanForecasting.jsx";
+import ProductionJobWork from "./components/Production/ProductionJobWork.jsx";
 import Admin from "./components/Admin/Admin";
 import GRRC from "./components/InventoryManagement/GRRC.jsx";
 import GRN from "./components/InventoryManagement/GRN.jsx";
 import PurchaseInvoice from "./components/PurchaseInvoice.jsx";
 import ForgotPassword from "./pages/ForgotPassword";
 import ResetPassword from "./pages/ResetPassword";
+import RetailerOnboarding from "./pages/RetailerOnboarding.jsx";
 
 // â”€â”€ NEW: Department selector (shown when admin manages 2+ departments) â”€â”€â”€â”€â”€â”€â”€â”€
 import DepartmentSelector from "./pages/DepartmentSelector.jsx";
@@ -53,6 +55,7 @@ export default function App() {
       <Routes>
         {/* Main roles */}
         <Route path="/" element={<RoleSelector />} />
+        <Route path="/onboarding" element={<RetailerOnboarding />} />
         <Route path="/superadmin" element={<SuperAdmin />} />
         <Route path="/admin" element={<DepartmentRouteGuard department={["HQ", "IT", "Administrator", "SUPERADMIN"]}><Admin /></DepartmentRouteGuard>} />
 
@@ -77,6 +80,7 @@ export default function App() {
         <Route path="/dashboard/inventory"          element={<DepartmentRouteGuard department={["Inventory", "Store Owner"]}><InventoryManagement /></DepartmentRouteGuard>} />
         <Route path="/dashboard/stock-planning"     element={<DepartmentRouteGuard department="Stock Planning & Forecasting"><StockPlanForecasting /></DepartmentRouteGuard>} />
         <Route path="/dashboard/third-party"        element={<DepartmentRouteGuard department="Third Party"><ThirdPartyDept /></DepartmentRouteGuard>} />
+        <Route path="/dashboard/production"         element={<DepartmentRouteGuard department="Production & Job Work"><ProductionJobWork /></DepartmentRouteGuard>} />
         <Route path="/dashboard/merchandiser-buyer" element={<DepartmentRouteGuard department="Merchandiser Buyer"><Mbuyer /></DepartmentRouteGuard>} />
         <Route path="/dashboard/vendor"             element={<VendorRouteGuard><MSeller /></VendorRouteGuard>} />
         <Route path="/dashboard/store-owner"        element={<DepartmentRouteGuard department="Store Owner"><StoreOwnerDashboard /></DepartmentRouteGuard>} />
@@ -91,6 +95,7 @@ export default function App() {
         <Route path="/design"             element={<DepartmentRouteGuard department="Design & Pattern"><DesignPattern /></DepartmentRouteGuard>} />
         <Route path="/merchandiser-buyer" element={<DepartmentRouteGuard department="Merchandiser Buyer"><Mbuyer /></DepartmentRouteGuard>} />
         <Route path="/third-party"        element={<DepartmentRouteGuard department="Third Party"><ThirdPartyDept /></DepartmentRouteGuard>} />
+        <Route path="/production"         element={<DepartmentRouteGuard department="Production & Job Work"><ProductionJobWork /></DepartmentRouteGuard>} />
 
         {/* Merchandiser-Seller */}
         <Route path="/merchandiser-seller/login"          element={<MSellerLogin />} />

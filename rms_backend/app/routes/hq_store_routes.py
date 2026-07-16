@@ -428,7 +428,7 @@ from ..models import AdminCreate
 # Departments that ONLY make sense at HQ (no per-store equivalent).
 HQ_ONLY_DEPARTMENTS = [
     "Merchandiser Buyer", "Logistics", "IT", "Design & Pattern",
-    "Stock Planning & Forecasting", "Third Party",
+    "Stock Planning & Forecasting", "Third Party", "Production & Job Work",
 ]
 
 # Departments that ONLY make sense at a single store (no HQ equivalent).
@@ -452,6 +452,7 @@ STORE_DEPARTMENTS = STORE_ONLY_DEPARTMENTS + SHARED_DEPARTMENTS
 HQ_PERMISSIONS = [
     "inventory", "purchase_orders", "grn", "grc", "vendors",
     "stock_allocation", "stock_transfer", "mbuyer",
+    "job_work",
     "cashier", "store_stock", "sales",
     "hr", "finance", "logistics", "reports",
     "user_management",
@@ -465,7 +466,7 @@ HQ_PERMISSIONS = [
 # got there.
 STORE_DEPARTMENT_DEFAULT_PERMISSIONS = {
     "Cashier":   ["cashier", "sales"],
-    "Inventory": ["store_stock", "stock_ledger", "stock_adjustment", "grc", "grn"],
+    "Inventory": ["store_stock", "stock_ledger", "stock_adjustment", "stock_transfer", "grc", "grn"],
     "Finance":   ["finance", "reports"],
     "HR":        ["hr"],
 }
@@ -721,7 +722,12 @@ async def hq_update_admin(
                     f"{', '.join(invalid)}."
                 )
             )
+        if not payload.managedDepartments:
+            raise HTTPException(status_code=400, detail="An admin must have at least one department.")
         patch["managedDepartments"] = payload.managedDepartments
+        # Keep the legacy single department field aligned with the first
+        # selected department. Older screens and setup emails still read it.
+        patch["department"] = payload.managedDepartments[0]
     if payload.status             is not None:
         if payload.status not in ("ACTIVE", "SUSPENDED"):
             raise HTTPException(status_code=400, detail="status must be ACTIVE or SUSPENDED")

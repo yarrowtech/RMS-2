@@ -20,6 +20,7 @@ import {
   Crown,
   Network,
   ChartNoAxesCombined,
+  Scissors,
 } from "lucide-react";
 
 const cn = (...a) => a.filter(Boolean).join(" ");
@@ -32,6 +33,7 @@ const NAV_ITEMS = [
   { key: "whatsapp",       label: "WhatsApp",          icon: FaWhatsapp },
   { key: "product-list",   label: "Product List",      icon: Boxes },
   { key: "purchase-order", label: "Purchase Orders",   icon: ClipboardList },
+  { key: "job-work",       label: "Job Work Orders",    icon: Scissors },
   { key: "purchase-invoice", label: "Purchase Invoices", icon: ReceiptText },
   { key: "finance",        label: "Finance & Analytics", icon: ChartNoAxesCombined },
   { key: "retailers",      label: "My Retailers",      icon: Store },

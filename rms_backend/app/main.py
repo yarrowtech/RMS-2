@@ -24,6 +24,8 @@ from .routes.tenant_public_routes import router as tenant_public_router
 from .routes.business_network_routes import router as business_network_router
 from .routes.vendor_finance_routes import router as vendor_finance_router
 from .routes.finance_routes import router as finance_router
+from .routes.job_work_routes import router as job_work_router
+from .routes.onboarding_routes import router as onboarding_router
    
 
 
@@ -84,6 +86,8 @@ app.include_router(tenant_public_router)
 app.include_router(business_network_router)
 app.include_router(vendor_finance_router)
 app.include_router(finance_router)
+app.include_router(job_work_router)
+app.include_router(onboarding_router)
 
 
 

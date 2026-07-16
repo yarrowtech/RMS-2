@@ -41,6 +41,7 @@ const DEPT_COLOR_BY_ID = {
   "Design & Pattern":             "rose",
   "Stock Planning & Forecasting": "blue",
   "Third Party":                  "slate",
+  "Production & Job Work":        "fuchsia",
   "Cashier":                      "orange",
   "Inventory (Store)":            "indigo",
   "Finance (Store)":              "emerald",
@@ -62,6 +63,7 @@ const PERMISSIONS = [
   { id:"vendors",         label:"Vendors",           group:"Operations" },
   { id:"stock_allocation",label:"Stock Allocation",  group:"Operations" },
   { id:"stock_transfer",  label:"Stock Transfer",    group:"Operations" },
+  { id:"job_work",        label:"Production & Job Work", group:"Operations" },
   { id:"mbuyer",          label:"Merchandiser Buyer",group:"Operations" },
   { id:"cashier",         label:"Cashier / POS",     group:"Store"      },
   { id:"store_stock",     label:"Store Stock",       group:"Store"      },
@@ -79,10 +81,11 @@ const PERMISSIONS = [
 // manual checkbox).
 const PRESETS = {
   "Inventory Manager": ["inventory","stock_allocation","stock_transfer","reports"],
+  "Production Manager": ["inventory","job_work","reports"],
   "Buyer":             ["purchase_orders","vendors","mbuyer","reports"],
   "Store Manager":     ["cashier","store_stock","sales","reports"],
   "Finance":           ["finance","reports"],
-  "Full HQ Access":    ["inventory","purchase_orders","grn","grc","vendors","stock_allocation","stock_transfer","mbuyer","hr","finance","logistics","reports","user_management"],
+  "Full HQ Access":    ["inventory","purchase_orders","grn","grc","vendors","stock_allocation","stock_transfer","job_work","mbuyer","hr","finance","logistics","reports","user_management"],
 };
 
 const DEPT_COLOR = {
@@ -91,7 +94,7 @@ const DEPT_COLOR = {
   amber:"bg-amber-100 text-amber-700",    cyan:"bg-cyan-100 text-cyan-700",
   rose:"bg-rose-100 text-rose-700",       blue:"bg-blue-100 text-blue-700",
   slate:"bg-slate-100 text-slate-600",    orange:"bg-orange-100 text-orange-700",
-  teal:"bg-teal-100 text-teal-700",
+  teal:"bg-teal-100 text-teal-700",          fuchsia:"bg-fuchsia-100 text-fuchsia-700",
 };
 
 const INP = "w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm text-slate-800 placeholder-slate-400 outline-none focus:ring-2 focus:ring-indigo-400 focus:border-indigo-400 transition bg-white";
@@ -406,22 +409,35 @@ function AddAdminModal({ onClose, onCreated, stores = [], deptConfig }) {
 // ══════════════════════════════════════════════════════════════════════════════
 // VIEW ADMIN MODAL
 // ══════════════════════════════════════════════════════════════════════════════
-function EditPermissionsModal({ admin, onClose, onSaved }) {
+function EditPermissionsModal({ admin, onClose, onSaved, deptConfig }) {
   const [permissions, setPermissions] = useState([...(admin.permissions || [])]);
+  const [departments, setDepartments] = useState([...(admin.managedDepartments || [])]);
   const [saving, setSaving] = useState(false);
+
+  const availableDepartments = admin.scope === "store"
+    ? (deptConfig?.store_departments || [])
+    : (deptConfig?.hq_departments || []);
 
   const toggle = (id) => setPermissions(current =>
     current.includes(id) ? current.filter(p => p !== id) : [...current, id]
   );
 
+  const toggleDepartment = (id) => setDepartments(current =>
+    current.includes(id) ? current.filter(department => department !== id) : [...current, id]
+  );
+
   const save = async () => {
+    if (!departments.length) {
+      toast.error("Select at least one department for this admin.");
+      return;
+    }
     try {
       setSaving(true);
       await api(`/hq/admins/${admin.id}`, {
         method: "PATCH",
-        body: JSON.stringify({ permissions }),
+        body: JSON.stringify({ permissions, managedDepartments: departments }),
       });
-      toast.success(`Permissions updated for ${admin.name}`);
+      toast.success(`Access updated for ${admin.name}`);
       await onSaved();
       onClose();
     } catch (e) {
@@ -436,12 +452,33 @@ function EditPermissionsModal({ admin, onClose, onSaved }) {
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col">
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
           <div>
-            <h2 className="text-base font-bold text-slate-900">Edit Permissions</h2>
+            <h2 className="text-base font-bold text-slate-900">Edit Admin Access</h2>
             <p className="text-xs text-slate-500 mt-0.5">{admin.name} · {admin.email}</p>
           </div>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-600 p-1"><X className="w-4 h-4"/></button>
         </div>
         <div className="p-6 overflow-y-auto">
+          <section className="mb-6">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <div>
+                <p className="text-xs font-black uppercase tracking-widest text-slate-500">Departments</p>
+                <p className="mt-1 text-xs text-slate-400">{admin.scope === "store" ? "Store scope is fixed for this admin." : "HQ scope is fixed for this admin."}</p>
+              </div>
+              <span className="rounded-full bg-indigo-50 px-2.5 py-1 text-xs font-bold text-indigo-700">{departments.length} selected</span>
+            </div>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              {availableDepartments.map(department => {
+                const active = departments.includes(department);
+                return <button key={department} type="button" onClick={() => toggleDepartment(department)}
+                  className={`flex items-center gap-3 rounded-xl border p-3 text-left text-sm font-semibold transition ${active ? "border-violet-300 bg-violet-50 text-violet-800" : "border-slate-200 text-slate-600 hover:border-violet-200"}`}>
+                  <span className={`flex h-4 w-4 items-center justify-center rounded border ${active ? "border-violet-600 bg-violet-600 text-white" : "border-slate-300"}`}>
+                    {active && <CheckCircle className="h-3 w-3"/>}
+                  </span>
+                  {deptLabel(department)}
+                </button>;
+              })}
+            </div>
+          </section>
           {["Operations", "Store", "Admin"].map(group => (
             <div key={group} className="mb-6 last:mb-0">
               <p className="text-xs font-black text-slate-500 uppercase tracking-widest mb-3">{group}</p>
@@ -465,7 +502,7 @@ function EditPermissionsModal({ admin, onClose, onSaved }) {
         <div className="flex justify-end gap-3 px-6 py-4 border-t border-slate-100">
           <button onClick={onClose} disabled={saving} className="px-4 py-2.5 border border-slate-200 rounded-xl text-sm font-bold text-slate-600">Cancel</button>
           <button onClick={save} disabled={saving} className="px-5 py-2.5 bg-indigo-600 rounded-xl text-sm font-bold text-white disabled:opacity-50">
-            {saving ? "Saving..." : "Save Permissions"}
+            {saving ? "Saving..." : "Save Access"}
           </button>
         </div>
       </div>
@@ -726,7 +763,7 @@ export default function HQAdminManagement() {
                         <button onClick={() => setViewAdmin(admin)} className="p-1.5 hover:bg-indigo-50 rounded-lg text-indigo-500 transition" title="View">
                           <Eye className="w-4 h-4"/>
                         </button>
-                        <button onClick={() => setEditAdmin(admin)} className="p-1.5 hover:bg-violet-50 rounded-lg text-violet-500 transition" title="Edit permissions">
+                        <button onClick={() => setEditAdmin(admin)} className="p-1.5 hover:bg-violet-50 rounded-lg text-violet-500 transition" title="Edit departments and permissions">
                           <Pencil className="w-4 h-4"/>
                         </button>
                         <button onClick={() => handleSuspend(admin)}
@@ -768,7 +805,7 @@ export default function HQAdminManagement() {
       ), document.body)}
       {showAdd && createPortal(<AddAdminModal onClose={() => setShowAdd(false)} onCreated={fetchAll} stores={stores} deptConfig={deptConfig}/>, document.body)}
       {viewAdmin && createPortal(<ViewAdminModal admin={viewAdmin} onClose={() => setViewAdmin(null)}/>, document.body)}
-      {editAdmin && createPortal(<EditPermissionsModal admin={editAdmin} onClose={() => setEditAdmin(null)} onSaved={fetchAll}/>, document.body)}
+      {editAdmin && createPortal(<EditPermissionsModal admin={editAdmin} onClose={() => setEditAdmin(null)} onSaved={fetchAll} deptConfig={deptConfig}/>, document.body)}
     </div>
   );
 }

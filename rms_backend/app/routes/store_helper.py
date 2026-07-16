@@ -58,6 +58,8 @@ async def get_store_context(authorization: Optional[str] = None) -> dict:
     query      = {} if not store_id else {"store_id": store_id}
 
     return {
+        "admin_id":   str((admin or {}).get("_id") or payload.get("sub") or ""),
+        "admin_name": (admin or {}).get("name") or payload.get("name") or "",
         "store_id":   store_id,
         "store_name": store_name,
         "store_type": store_type,

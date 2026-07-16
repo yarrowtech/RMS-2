@@ -1298,6 +1298,7 @@ export default function SuperAdmin() {
     { id: 'vendors',   label: 'Vendors',         icon: Store     },
     { id: 'finance',   label: 'Platform Finance', icon: IndianRupee },
     { id: 'retailers', label: 'Retailers',       icon: Building2 },
+    { id: 'onboarding', label: 'Onboarding',     icon: UserPlus },
     { id: 'controls',  label: 'My Controls',    icon: Key      },
     { id: 'logs',      label: 'Activity Logs',  icon: Activity  },
   ];
@@ -1548,6 +1549,10 @@ export default function SuperAdmin() {
         {/* ── TAB: Retailers ── */}
         {activeTab === 'retailers' && (
           <RetailersTab />
+        )}
+
+        {activeTab === 'onboarding' && (
+          <SuperAdminOnboardingRequests />
         )}
 
         {/* ── Edit Tenant Modal ── */}

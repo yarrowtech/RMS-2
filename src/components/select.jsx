@@ -55,10 +55,6 @@ const tone = {
 
 export default function ProfessionalRoleSelector() {
   const navigate = useNavigate();
-  const contactEmail = import.meta.env.VITE_CONTACT_EMAIL || "";
-  const contactHref = contactEmail
-    ? `mailto:${contactEmail}?subject=${encodeURIComponent("RMS onboarding enquiry")}`
-    : "/vendor/register";
 
   return (
     <div className="relative min-h-screen overflow-hidden bg-[#f7f8fc] text-slate-900">
@@ -88,7 +84,7 @@ export default function ProfessionalRoleSelector() {
             <h1 className="text-4xl font-black leading-[1.07] tracking-[-0.045em] text-slate-950 sm:text-5xl lg:text-6xl">Run retail from one <span className="bg-gradient-to-r from-indigo-600 via-violet-600 to-emerald-600 bg-clip-text text-transparent">connected system.</span></h1>
             <p className="mt-6 max-w-lg text-base leading-7 text-slate-600 sm:text-lg">RMS connects retailers, stores, departments and supply partners—from product planning and buying through inventory, billing, finance and reporting.</p>
             <div className="mt-8 flex flex-wrap gap-3">
-              <a href="#about" className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-5 py-3 text-sm font-bold text-white shadow-lg shadow-indigo-600/20 transition hover:bg-indigo-700">Explore RMS <ArrowRight size={16} /></a>
+              <button onClick={() => navigate("/onboarding?type=retailer")} className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-5 py-3 text-sm font-bold text-white shadow-lg shadow-indigo-600/20 transition hover:bg-indigo-700">Start retailer onboarding <ArrowRight size={16} /></button>
               <button onClick={() => navigate("/vendor/register")} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-5 py-3 text-sm font-bold text-slate-800 shadow-sm transition hover:border-emerald-200 hover:text-emerald-700"><UserPlus size={16} /> Join as a partner</button>
             </div>
             <div className="mt-8 flex flex-wrap gap-5 text-xs font-semibold text-slate-500"><span className="flex items-center gap-2"><LockKeyhole size={15} className="text-indigo-600" /> Role-based access</span><span className="flex items-center gap-2"><ShieldCheck size={15} className="text-emerald-600" /> Tenant and store scoped</span></div>
@@ -141,8 +137,7 @@ export default function ProfessionalRoleSelector() {
 
         <section className="px-5 py-20 sm:px-8 lg:px-10">
           <div className="mx-auto max-w-7xl overflow-hidden rounded-[2rem] bg-gradient-to-br from-indigo-700 via-violet-700 to-slate-950 p-8 text-white shadow-2xl shadow-indigo-950/20 sm:p-12">
-            <div className="grid gap-8 lg:grid-cols-[1fr_auto] lg:items-center"><div className="max-w-2xl"><p className="text-xs font-extrabold uppercase tracking-[0.2em] text-indigo-200">Ready to get started?</p><h2 className="mt-4 text-3xl font-black tracking-tight sm:text-4xl">Bring your retail operation or partner business into RMS.</h2><p className="mt-4 leading-7 text-indigo-100/75">Register as a vendor partner, contact onboarding, or sign in if your account has already been approved.</p></div><div className="flex flex-col gap-3 sm:flex-row lg:flex-col"><button onClick={() => navigate("/vendor/register")} className="inline-flex items-center justify-center gap-2 rounded-xl bg-white px-5 py-3 text-sm font-extrabold text-indigo-700 transition hover:bg-indigo-50"><UserPlus size={17}/> Join as a Partner</button><a href={contactHref} className="inline-flex items-center justify-center gap-2 rounded-xl border border-white/20 bg-white/10 px-5 py-3 text-sm font-extrabold text-white transition hover:bg-white/15"><Mail size={17}/> Contact Onboarding</a></div></div>
-            {!contactEmail && <p className="mt-5 text-xs text-indigo-200/65">Site owner: configure <code className="rounded bg-black/20 px-1.5 py-1">VITE_CONTACT_EMAIL</code> to enable direct email enquiries.</p>}
+            <div className="grid gap-8 lg:grid-cols-[1fr_auto] lg:items-center"><div className="max-w-2xl"><p className="text-xs font-extrabold uppercase tracking-[0.2em] text-indigo-200">Ready to get started?</p><h2 className="mt-4 text-3xl font-black tracking-tight sm:text-4xl">Bring your retail operation or partner business into RMS.</h2><p className="mt-4 leading-7 text-indigo-100/75">Choose the right onboarding route. Access is created only after your business has been reviewed.</p></div><div className="flex flex-col gap-3 sm:flex-row lg:flex-col"><button onClick={() => navigate("/vendor/register")} className="inline-flex items-center justify-center gap-2 rounded-xl bg-white px-5 py-3 text-sm font-extrabold text-indigo-700 transition hover:bg-indigo-50"><UserPlus size={17}/> Join as a Partner</button><button onClick={() => navigate("/onboarding?type=retailer")} className="inline-flex items-center justify-center gap-2 rounded-xl border border-white/20 bg-white/10 px-5 py-3 text-sm font-extrabold text-white transition hover:bg-white/15"><Building2 size={17}/> Retailer onboarding</button><button onClick={() => navigate("/onboarding?type=single_store")} className="inline-flex items-center justify-center gap-2 rounded-xl border border-white/20 bg-white/10 px-5 py-3 text-sm font-extrabold text-white transition hover:bg-white/15"><Store size={17}/> Single-store owner</button></div></div>
           </div>
         </section>
       </main>

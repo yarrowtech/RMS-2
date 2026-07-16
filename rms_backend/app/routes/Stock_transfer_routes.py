@@ -254,6 +254,15 @@ async def get_all_transfers(
 ):
     store = await _require_tenant(authorization)
     query: dict = {"tenant_id": store["tenant_id"]}
+    caller_store_id = store.get("store_id")
+
+    # A store user may see only transfers sent from or to their own location.
+    # HQ users retain tenant-wide visibility.
+    if caller_store_id:
+        query["$and"] = [{"$or": [
+            {"from_store_id": caller_store_id},
+            {"to_store_id": caller_store_id},
+        ]}]
 
     if type_filter and type_filter.lower() in ("out", "in"):
         query["type"] = "Out" if type_filter.lower() == "out" else "In"
@@ -270,7 +279,7 @@ async def get_all_transfers(
         query["to_store_id"] = to_store_id
     if search:
         s = search.strip()
-        query["$or"] = [
+        search_query = {"$or": [
             {"refNo":         {"$regex": s, "$options": "i"}},
             {"documentNo":    {"$regex": s, "$options": "i"}},
             {"invoiceNo":     {"$regex": s, "$options": "i"}},
@@ -278,7 +287,8 @@ async def get_all_transfers(
             {"lines.product": {"$regex": s, "$options": "i"}},
             {"lines.barcode": {"$regex": s, "$options": "i"}},
             {"lines.sku":     {"$regex": s, "$options": "i"}},
-        ]
+        ]}
+        query.setdefault("$and", []).append(search_query)
 
     docs = []
     async for doc in stock_transfers_collection.find(query).sort("createdAt", -1).limit(limit):
@@ -290,8 +300,11 @@ async def get_all_transfers(
 @router.get("/transfer-outs")
 async def get_transfer_outs(authorization: Optional[str] = Header(None)):
     store = await _require_tenant(authorization)
+    query = {"type": "Out", "tenant_id": store["tenant_id"]}
+    if store.get("store_id"):
+        query["from_store_id"] = store["store_id"]
     docs = []
-    async for doc in stock_transfers_collection.find({"type": "Out", "tenant_id": store["tenant_id"]}).sort("createdAt", -1):
+    async for doc in stock_transfers_collection.find(query).sort("createdAt", -1):
         docs.append({
             "id":            str(doc["_id"]),
             "refNo":         doc.get("refNo", ""),
@@ -317,6 +330,8 @@ async def get_transfer_outs(authorization: Optional[str] = Header(None)):
 @router.get("/pending/{location}")
 async def get_pending_receipts(location: str, authorization: Optional[str] = Header(None)):
     store = await _require_tenant(authorization)
+    if store.get("store_id") and location != store["store_id"]:
+        raise HTTPException(status_code=403, detail="Store users can view pending receipts only for their own store.")
     to_store_id = None if location == "central" else location
     query = {"type": "Out", "status": "Dispatched", "to_store_id": to_store_id, "tenant_id": store["tenant_id"]}
 
@@ -346,7 +361,13 @@ async def get_transfer(transfer_id: str, authorization: Optional[str] = Header(N
     try:    oid = ObjectId(transfer_id)
     except: raise HTTPException(status_code=400, detail="Invalid transfer ID")
 
-    doc = await stock_transfers_collection.find_one({"_id": oid, "tenant_id": store["tenant_id"]})
+    query = {"_id": oid, "tenant_id": store["tenant_id"]}
+    if store.get("store_id"):
+        query["$or"] = [
+            {"from_store_id": store["store_id"]},
+            {"to_store_id": store["store_id"]},
+        ]
+    doc = await stock_transfers_collection.find_one(query)
     if not doc:
         raise HTTPException(status_code=404, detail="Stock transfer not found")
     return JSONResponse({"status": "success", "data": serialize(doc)})
@@ -365,6 +386,15 @@ async def create_transfer_out(payload: dict, authorization: str = Header(None)):
 
     from_store_id: Optional[str] = payload.get("from_store_id") or None
     to_store_id: Optional[str] = payload.get("to_store_id") or None
+
+    # Store staff can return only their own stock to Central. They cannot
+    # choose another store or dispatch stock held at Central/HQ.
+    caller_store_id = store.get("store_id")
+    if caller_store_id and (from_store_id != caller_store_id or to_store_id is not None):
+        raise HTTPException(
+            status_code=403,
+            detail="Store users can only dispatch stock from their own store to Central Inventory.",
+        )
 
     if to_store_id:
         try:
@@ -613,20 +643,28 @@ async def update_transfer(transfer_id: str, payload: dict, authorization: Option
     if existing.get("status") != "Dispatched":
         raise HTTPException(status_code=400, detail="Only Dispatched (not yet received) transfers can be edited.")
 
+    caller_store_id = store.get("store_id")
+    if caller_store_id and (existing.get("from_store_id") != caller_store_id or existing.get("to_store_id") is not None):
+        raise HTTPException(status_code=403, detail="Store users can edit only their own return-to-central transfers.")
+
     now = datetime.utcnow()
     old_from = existing.get("from_store_id")
     old_to   = existing.get("to_store_id")
     old_lines = existing.get("lines", [])
+
+    # Validate the new route before reversing any stock movement. Otherwise a
+    # rejected edit could restore stock without applying its replacement.
+    new_from = payload.get("from_store_id", old_from)
+    new_to   = payload.get("to_store_id", old_to)
+    if caller_store_id and (new_from != caller_store_id or new_to is not None):
+        raise HTTPException(status_code=403, detail="Store users can only return their own stock to Central Inventory.")
+    new_lines = _clean_lines(payload.get("lines", old_lines))
 
     # Reverse old deduction from source
     for line in old_lines:
         bc, qty = line.get("barcode"), line.get("qty", 0)
         if bc and qty:
             await _add_stock(bc, old_from, qty, reason=f"Edit reversal — {existing.get('refNo')}", tenant_id=tenant_id)
-
-    new_from = payload.get("from_store_id", old_from)
-    new_to   = payload.get("to_store_id", old_to)
-    new_lines = _clean_lines(payload.get("lines", old_lines))
 
     from_info = await _resolve_store_name(new_from, tenant_id)
     to_info   = await _resolve_store_name(new_to, tenant_id)
@@ -684,6 +722,10 @@ async def delete_transfer(transfer_id: str, authorization: Optional[str] = Heade
         raise HTTPException(status_code=400, detail="Only Transfer Out documents can be cancelled.")
     if doc.get("status") != "Dispatched":
         raise HTTPException(status_code=400, detail="Cannot cancel a transfer that has already been received.")
+
+    caller_store_id = store.get("store_id")
+    if caller_store_id and (doc.get("from_store_id") != caller_store_id or doc.get("to_store_id") is not None):
+        raise HTTPException(status_code=403, detail="Store users can cancel only their own return-to-central transfers.")
 
     from_store = doc.get("from_store_id")
     for line in doc.get("lines", []):

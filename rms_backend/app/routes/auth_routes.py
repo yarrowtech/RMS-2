@@ -29,6 +29,7 @@ DEPARTMENT_ROUTES: Dict[str, str] = {
     "Inventory":                      "/inventory",
     "Stock Planning & Forecasting":   "/stock",
     "Third Party":                    "/third-party",
+    "Production & Job Work":          "/production",
     "Merchandiser Buyer":             "/merchandiser-buyer",
     "Vendor":                         "/merchandiser-seller",
     "Store Owner":                    "/dashboard/store-owner",
@@ -162,9 +163,23 @@ async def set_password(req: SetPasswordRequest):
     managed: List[str] = admin.get("managedDepartments", [admin["department"]] if admin.get("department") else [])
     redirect_info = get_redirect_for_departments(managed)
     store = _store_info(admin)
+    access_token = create_access_token(
+        str(admin["_id"]),
+        admin.get("department", ""),
+        role="ADMIN",
+        extra={
+            "tenant_id":  store["tenant_id"],
+            "store_id":   store["store_id"],
+            "store_name": store["store_name"],
+            "store_type": store["store_type"],
+            "scope":      store["scope"],
+        },
+    )
 
     return {
         "message":    "Password set successfully.",
+        "access_token": access_token,
+        "role":       "ADMIN",
         "email":      email,
         "name":       admin.get("name", ""),
         "account_type": admin.get("account_type", "department_retailer"),

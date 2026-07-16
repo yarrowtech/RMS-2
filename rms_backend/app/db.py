@@ -60,11 +60,19 @@ content_pages_collection = db["content_pages"]
 flagged_content_collection = db["flagged_content"]
 users_collection = db["users"]
 invoices_collection = db["invoices"]
+onboarding_requests_collection = db["onboarding_requests"]
 
 # Retailer finance is deliberately separate from purchase invoices and POS
 # bills.  Those collections remain the operational source of truth; this
 # collection stores the accounting vouchers that reference them.
 finance_vouchers_collection = db["finance_vouchers"]
+
+# Production / job-work operational records. These are intentionally separate
+# from purchase orders and GRNs: materials sent to a cutter/stitcher remain
+# owned by the retailer and are reconciled against a job-work order.
+job_work_orders_collection = db["job_work_orders"]
+job_work_receipts_collection = db["job_work_receipts"]
+style_bom_plans_collection = db["style_bom_plans"]
 
 async def ensure_procurement_indexes():
     """Create the indexes required by catalogue/RFQ hot paths and idempotency."""
@@ -83,3 +91,10 @@ async def ensure_procurement_indexes():
     await business_connections_collection.create_index([("target_vendor_id", 1), ("status", 1), ("created_at", -1)], name="business_connection_incoming")
     await finance_vouchers_collection.create_index([("tenant_id", 1), ("store_id", 1), ("created_at", -1)], name="finance_voucher_scope_created")
     await finance_vouchers_collection.create_index([("tenant_id", 1), ("voucher_type", 1), ("voucher_date", -1)], name="finance_voucher_type_date")
+    await job_work_orders_collection.create_index([("tenant_id", 1), ("status", 1), ("created_at", -1)], name="job_work_tenant_status_created")
+    await job_work_orders_collection.create_index([("tenant_id", 1), ("job_worker_name", 1), ("status", 1)], name="job_work_tenant_worker_status")
+    await job_work_orders_collection.create_index([("assigned_vendor_id", 1), ("status", 1), ("created_at", -1)], name="job_work_vendor_status_created")
+    await job_work_receipts_collection.create_index([("tenant_id", 1), ("order_id", 1), ("received_at", -1)], name="job_work_receipt_order_created")
+    await style_bom_plans_collection.create_index([("tenant_id", 1), ("style_name", 1), ("created_at", -1)], name="style_bom_tenant_style_created")
+    await onboarding_requests_collection.create_index([("status", 1), ("created_at", -1)], name="onboarding_status_created")
+    await onboarding_requests_collection.create_index([("email", 1), ("account_type", 1), ("created_at", -1)], name="onboarding_email_type_created")
