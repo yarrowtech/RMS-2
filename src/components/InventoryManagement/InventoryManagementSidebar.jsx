@@ -94,6 +94,7 @@ export default function RMSInventorySidebar({
   setSidebarOpen,
   isHQ        = true,    // ← NEW: true for HQ admin (store_id: null)
   isStore     = false,   // ← NEW: true for store admin (store_id: "KOL_id")
+  isSingleStore = false,
   canReceive  = false,   // Single-store owner / inventory staff can create GRC + GRN
 }) {
   const isDrawer = mode === "drawer";
@@ -292,7 +293,7 @@ export default function RMSInventorySidebar({
             {childItem("stock.ledger", <FaExchangeAlt />, "Stock Ledger / Movement")}
             {isHQ && childItem("stock.reorderLevel", <FaClipboardList />, "Reorder Level Setup")}
             {childItem("stock.adjustment", <FaExchangeAlt />, "Stock Adjustment")}
-            {childItem(
+            {!isSingleStore && childItem(
               "stock.transfer",
               <FaWarehouse />,
               isHQ ? "Stock Transfer" : "Return Stock to Central"

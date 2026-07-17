@@ -372,6 +372,8 @@ export default function RetailersTab() {
   const [search,     setSearch]     = useState("");
   const [showAdd,    setShowAdd]    = useState(false);
   const [expandedId, setExpandedId] = useState(null);
+  const [upgradeRequests, setUpgradeRequests] = useState([]);
+  const [upgradeLoading, setUpgradeLoading] = useState(false);
 
   const fetchTenants = useCallback(async () => {
     try {
@@ -382,7 +384,34 @@ export default function RetailersTab() {
     finally { setLoading(false); }
   }, []);
 
-  useEffect(() => { fetchTenants(); }, [fetchTenants]);
+  const fetchUpgradeRequests = useCallback(async () => {
+    try {
+      setUpgradeLoading(true);
+      const data = await apiFetch("/api/store-upgrades/");
+      setUpgradeRequests(Array.isArray(data.requests) ? data.requests : []);
+    } catch (error) {
+      toast.error(error.message || "Failed to load store upgrade requests");
+    } finally {
+      setUpgradeLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { fetchTenants(); fetchUpgradeRequests(); }, [fetchTenants, fetchUpgradeRequests]);
+
+  const reviewUpgradeRequest = async (request, action) => {
+    try {
+      await apiFetch(`/api/store-upgrades/${request.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          action,
+          approved_plan: action === "approve" ? request.requested_plan : undefined,
+        }),
+      });
+      toast.success(action === "approve" ? `${request.company_name} is now a multi-store retailer` : "Upgrade request declined");
+      fetchTenants();
+      fetchUpgradeRequests();
+    } catch (error) { toast.error(error.message); }
+  };
 
   const handleSuspend = async (tenant) => {
     const newStatus = tenant.status === "active" ? "suspended" : "active";
@@ -461,6 +490,23 @@ export default function RetailersTab() {
           ))}
         </div>
       </div>
+
+      {upgradeRequests.filter((request) => request.status === "PENDING").length > 0 && (
+        <section className="overflow-hidden rounded-xl border border-violet-200 bg-white shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-violet-100 bg-violet-50 px-5 py-4">
+            <div><h3 className="font-black text-violet-950">Single Store → Multi-Store requests</h3><p className="mt-0.5 text-xs text-violet-700">Approval keeps the original store and stock in place, then gives the owner Retailer HQ access after their next login.</p></div>
+            <button onClick={fetchUpgradeRequests} disabled={upgradeLoading} className="rounded-lg border border-violet-200 bg-white px-3 py-2 text-xs font-bold text-violet-700 hover:bg-violet-100">{upgradeLoading ? "Refreshing…" : "Refresh"}</button>
+          </div>
+          <div className="divide-y divide-slate-100">
+            {upgradeRequests.filter((request) => request.status === "PENDING").map((request) => (
+              <div key={request.id} className="flex flex-wrap items-center justify-between gap-4 px-5 py-4">
+                <div><p className="font-bold text-slate-900">{request.company_name} <span className="font-normal text-slate-400">· {request.tenant_id}</span></p><p className="mt-1 text-xs text-slate-600">Owner: {request.owner_name} · {request.owner_email} · Current store: {request.primary_store_name || "Main store"}</p>{request.note && <p className="mt-1 text-xs italic text-slate-500">“{request.note}”</p>}</div>
+                <div className="flex items-center gap-2"><span className="rounded-full bg-indigo-50 px-2.5 py-1 text-xs font-black capitalize text-indigo-700">{request.requested_plan}</span><button onClick={() => reviewUpgradeRequest(request, "decline")} className="rounded-lg border border-rose-200 px-3 py-2 text-xs font-bold text-rose-700 hover:bg-rose-50">Decline</button><button onClick={() => reviewUpgradeRequest(request, "approve")} className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-bold text-white hover:bg-emerald-700">Approve upgrade</button></div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
 
       {/* Table */}
       <div className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">

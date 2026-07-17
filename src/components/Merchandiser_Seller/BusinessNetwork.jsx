@@ -10,6 +10,7 @@ const BUSINESS_TYPES = [
   ["", "All business types"], ["general_vendor", "General vendor"], ["wholesaler", "Wholesaler"],
   ["manufacturer", "Manufacturer"], ["distributor", "Distributor"],
   ["exporter", "Exporter"], ["fabric_supplier", "Fabric supplier"],
+  ["job_worker", "Job-work partner"],
   ["retailer", "Retailer / store owner"],
 ];
 

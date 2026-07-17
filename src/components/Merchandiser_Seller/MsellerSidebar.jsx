@@ -42,6 +42,45 @@ const NAV_ITEMS = [
   { key: "help-support",   label: "Help & Support",    icon: HeadphonesIcon },
 ];
 
+const PRODUCT_BUSINESS_TYPES = new Set([
+  "general_vendor", "wholesaler", "manufacturer", "distributor",
+  "retailer", "fabric_supplier", "exporter",
+]);
+
+const ROLE_LABELS = {
+  general_vendor: "Vendor workspace",
+  wholesaler: "Wholesale workspace",
+  manufacturer: "Manufacturer workspace",
+  distributor: "Distribution workspace",
+  retailer: "Retail partner workspace",
+  fabric_supplier: "Fabric supplier workspace",
+  exporter: "Export partner workspace",
+  job_worker: "Job-work workspace",
+};
+
+function roleSpecificLabels(types) {
+  const selected = new Set(types || []);
+  if (selected.has("fabric_supplier")) return {
+    catalogue: "Fabric Catalogue", productList: "Fabric & Material List", orders: "Material Orders", invoices: "Material Invoices",
+  };
+  if (selected.has("wholesaler")) return {
+    catalogue: "Bulk Catalogue", productList: "Bulk Stock List", orders: "Bulk Orders", invoices: "Wholesale Invoices",
+  };
+  if (selected.has("manufacturer")) return {
+    catalogue: "Production Catalogue", productList: "Finished Goods List", orders: "Production Orders", invoices: "Production Invoices",
+  };
+  if (selected.has("distributor")) return {
+    catalogue: "Brand Catalogue", productList: "Distributed Stock", orders: "Distribution Orders", invoices: "Distribution Invoices",
+  };
+  if (selected.has("exporter")) return {
+    catalogue: "Export Catalogue", productList: "Export Product List", orders: "Export Orders", invoices: "Export Invoices",
+  };
+  if (selected.has("retailer")) return {
+    catalogue: "Retail Catalogue", productList: "Store Product List", orders: "Retail Orders", invoices: "Retail Invoices",
+  };
+  return { catalogue: "My Catalogue", productList: "Product List", orders: "Purchase Orders", invoices: "Purchase Invoices" };
+}
+
 export default function MsellerSidebar({
   mode = "desktop",
   active,
@@ -52,9 +91,26 @@ export default function MsellerSidebar({
   sidebarOpen = true,
   setSidebarOpen,
   inquiryNotificationCount = 0,
+  jobWorkEnabled = false,
+  businessTypes = [],
 }) {
   const isDrawer = mode === "drawer";
   const showText = sidebarOpen;
+  const selectedTypes = Array.isArray(businessTypes) ? businessTypes : [];
+  const roleLabels = roleSpecificLabels(selectedTypes);
+  const workspaceLabel = ROLE_LABELS[selectedTypes[0]] || "Vendor workspace";
+  const showProductTools = selectedTypes.length === 0 || selectedTypes.some((type) => PRODUCT_BUSINESS_TYPES.has(type));
+  const visibleNavItems = NAV_ITEMS
+    .filter((item) => item.key !== "job-work" || jobWorkEnabled)
+    .filter((item) => !["catalogue", "product-list"].includes(item.key) || showProductTools)
+    .map((item) => ({
+      ...item,
+      label: item.key === "catalogue" ? roleLabels.catalogue
+        : item.key === "product-list" ? roleLabels.productList
+          : item.key === "purchase-order" ? roleLabels.orders
+            : item.key === "purchase-invoice" ? roleLabels.invoices
+              : item.label,
+    }));
 
   const userName = useMemo(() => {
     try {
@@ -132,7 +188,7 @@ export default function MsellerSidebar({
           {sidebarOpen && (
             <div className="min-w-0">
               <p className="truncate text-[13px] font-semibold text-white">{userName}</p>
-              <p className="text-[10.5px] font-medium text-emerald-100/60">Seller workspace</p>
+              <p className="text-[10.5px] font-medium text-emerald-100/60">{workspaceLabel}</p>
             </div>
           )}
         </div>
@@ -140,7 +196,7 @@ export default function MsellerSidebar({
 
       {/* ── Nav ── */}
       <nav className="relative z-10 flex-1 min-h-0 overflow-y-auto px-3 py-2 space-y-1 overscroll-contain [-webkit-overflow-scrolling:touch]">
-        {NAV_ITEMS.map(({ key, label, icon: Icon }) => {
+        {visibleNavItems.map(({ key, label, icon: Icon }) => {
           const isActive = active === key;
           return (
             <button

@@ -4,10 +4,63 @@ from fastapi.responses import JSONResponse
 from typing import Optional
 from datetime import datetime
 from bson import ObjectId
-from ..db import product_collection, inventory_collection, grn_collection, vendors_collection, reorder_rules_collection, stock_adjustments_collection, damage_return_collection, store_stock_collection
+from ..db import product_collection, inventory_collection, grn_collection, vendors_collection, reorder_rules_collection, stock_adjustments_collection, damage_return_collection, store_stock_collection, barcode_label_settings_collection
 from .deps import get_hq_tenant, get_any_tenant
 
 router = APIRouter(prefix="/inventory", tags=["Inventory Management"])
+
+DEFAULT_BARCODE_LABEL_FIELDS = [
+    "store_name", "barcode", "product_name", "design_no", "aging",
+    "brand", "category", "mrp", "size",
+]
+BARCODE_LABEL_FIELDS = {
+    "store_name", "barcode", "barcode_number", "product_name", "design_no",
+    "aging", "brand", "vendor", "division", "section", "department",
+    "category", "mrp", "size", "color",
+}
+
+
+def _label_template(document: dict | None) -> dict:
+    fields = document.get("fields") if document else None
+    if not isinstance(fields, list):
+        fields = list(DEFAULT_BARCODE_LABEL_FIELDS)
+    fields = [field for field in fields if field in BARCODE_LABEL_FIELDS]
+    if "barcode" not in fields:
+        fields.insert(0, "barcode")
+    return {
+        "fields": fields,
+        "label_size": "38x38",
+        "updated_at": document.get("updated_at").isoformat() if document and isinstance(document.get("updated_at"), datetime) else None,
+    }
+
+
+@router.get("/barcode-label-settings")
+async def get_barcode_label_settings(ctx: dict = Depends(get_hq_tenant)):
+    """Return the HQ-managed print template for this tenant only."""
+    document = await barcode_label_settings_collection.find_one({"tenant_id": ctx["tenant_id"]})
+    return _label_template(document)
+
+
+@router.put("/barcode-label-settings")
+async def save_barcode_label_settings(payload: dict, ctx: dict = Depends(get_hq_tenant)):
+    raw_fields = payload.get("fields")
+    if not isinstance(raw_fields, list):
+        raise HTTPException(status_code=400, detail="fields must be a list.")
+    fields = []
+    for field in raw_fields:
+        if field in BARCODE_LABEL_FIELDS and field not in fields:
+            fields.append(field)
+    if "barcode" not in fields:
+        fields.insert(0, "barcode")
+    if len(fields) > 12:
+        raise HTTPException(status_code=400, detail="Choose no more than 12 sticker fields.")
+    now = datetime.utcnow()
+    await barcode_label_settings_collection.update_one(
+        {"tenant_id": ctx["tenant_id"]},
+        {"$set": {"fields": fields, "label_size": "38x38", "updated_at": now, "updated_by": ctx.get("admin_id", "")}},
+        upsert=True,
+    )
+    return {"message": "Barcode label template saved for this tenant.", "template": _label_template({"fields": fields, "updated_at": now})}
 
 
 # ─────────────────────────────────────────────
@@ -107,6 +160,8 @@ async def build_product_master(tenant_id: str) -> dict:
                     "product_id":  product_id,
                     "product":     p.get("product_name", ""),
                     "sku":         p.get("sku", ""),
+                    "design_no":   p.get("design_no") or p.get("category1", ""),
+                    "brand":       p.get("brand") or p.get("category2", ""),
                     "division":    p.get("division", ""),
                     "section":     p.get("section", ""),
                     "department":  p.get("department", ""),
@@ -132,6 +187,8 @@ async def build_product_master(tenant_id: str) -> dict:
                     "product_id":  product_id,
                     "product":     " | ".join(parts),
                     "sku":         v.get("sku", ""),
+                    "design_no":   p.get("design_no") or p.get("category1", ""),
+                    "brand":       p.get("brand") or p.get("category2", ""),
                     "division":    p.get("division", ""),
                     "section":     p.get("section", ""),
                     "department":  p.get("department", ""),
@@ -226,6 +283,8 @@ async def get_current_stock(
             "id":          pm.get("product_id", ""),
             "barcode":     bc,
             "sku":         pm.get("sku", ""),
+            "design_no":   pm.get("design_no", ""),
+            "brand":       pm.get("brand", ""),
             "product":     pm.get("product") or stk.get("description") or bc,
             "division":    pm.get("division") or stk.get("division", ""),
             "section":     pm.get("section")  or stk.get("section",  ""),

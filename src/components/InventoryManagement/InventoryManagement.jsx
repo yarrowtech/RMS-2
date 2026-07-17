@@ -159,7 +159,9 @@ export default function InventoryManagement() {
       case "stock.adjustment":
         return <InventoryManagementStockAdjustment />;
       case "stock.transfer":
-        return <InventoryManagementStockTransfer />;
+        return isSingleStore
+          ? <MinimalPlaceholder title="Stock Transfer is not needed" subtitle="This business has one store and no separate central inventory. Use Stock Ledger for receipts, sales and adjustments." />
+          : <InventoryManagementStockTransfer />;
       case "stock.damagedReturned":
         return <InventoryManagementDamageAndReturn />;
 
@@ -240,6 +242,7 @@ export default function InventoryManagement() {
             setSidebarOpen={setDesktopSidebarOpen}
             isHQ={isHQ}
             isStore={isStore}
+            isSingleStore={isSingleStore}
             canReceive={canReceiveAtStore}
           />
         </aside>
@@ -263,6 +266,7 @@ export default function InventoryManagement() {
                 setSidebarOpen={() => setDrawerOpen(false)}
                 isHQ={isHQ}
                 isStore={isStore}
+                isSingleStore={isSingleStore}
                 canReceive={canReceiveAtStore}
               />
             </div>

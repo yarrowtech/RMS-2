@@ -6,7 +6,7 @@ from typing import Optional, List
 from datetime import datetime
 from bson import ObjectId
 
-from app.db import stock_transfers_collection, inventory_collection, store_stock_collection, stores_collection
+from app.db import stock_transfers_collection, inventory_collection, store_stock_collection, stores_collection, tenants_collection
 from .store_helper import get_store_context
 from .deps import require_permission
 
@@ -86,6 +86,9 @@ async def _require_tenant(authorization: Optional[str], permission: str = "stock
     store = await get_store_context(authorization)
     if not store.get("tenant_id"):
         raise HTTPException(status_code=403, detail="No tenant assigned to this account.")
+    tenant = await tenants_collection.find_one({"tenant_id": store["tenant_id"]}, {"account_type": 1})
+    if (tenant or {}).get("account_type") == "single_store":
+        raise HTTPException(status_code=403, detail="Stock transfers are unavailable for a single-store business because it has no separate central inventory.")
     if permission not in store.get("permissions", []):
         raise HTTPException(
             status_code=403,

@@ -4,6 +4,7 @@ import { API_BASE_URL as APP_API_URL } from "../config/api.js";
  */
 
 const DEPT_PATH_MAP = {
+  "HQ":                             "/admin",
   "HR":                             "/hr",
   "Cashier":                        "/cashier",
   "Finance":                        "/finance",

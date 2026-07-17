@@ -47,6 +47,7 @@ const BUSINESS_TYPES = [
   { key: "retailer",        label: "Retailer",        hint: "Sells to end customers too" },
   { key: "fabric_supplier", label: "Fabric supplier", hint: "Raw material / fabric" },
   { key: "exporter",        label: "Exporter",        hint: "Ships outside the country" },
+  { key: "job_worker",      label: "Job-work partner", hint: "Provides cutting, stitching, embroidery, washing, finishing or packing for retailer-owned material" },
 ];
 
 export default function MSellerCategory() {
@@ -123,6 +124,7 @@ export default function MSellerCategory() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || "Failed to save.");
       setSaved(true);
+      window.dispatchEvent(new Event("vendor-access-updated"));
     } catch (err) {
       setError(err.message);
     } finally {

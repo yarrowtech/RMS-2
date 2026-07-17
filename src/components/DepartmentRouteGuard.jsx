@@ -6,6 +6,7 @@ import { clearAuthData } from "../utils/authRedirect";
 const API_BASE = APP_API_URL;
 
 const DEPARTMENT_PATHS = {
+  "HQ": "/admin",
   "HR": "/dashboard/hr",
   "Cashier": "/dashboard/cashier",
   "Finance": "/dashboard/finance",
@@ -27,6 +28,17 @@ function getToken() {
 export default function DepartmentRouteGuard({ department, children }) {
   const location = useLocation();
   const [state, setState] = useState({ loading: true, allowed: false, redirect: "/admin/login" });
+
+  // A browser can restore a protected dashboard from its back-forward cache
+  // after logout. Re-check local auth on pageshow so Back never reopens a
+  // Store Owner or department workspace from an old visual snapshot.
+  useEffect(() => {
+    const redirectLoggedOutSession = () => {
+      if (!getToken()) window.location.replace("/admin/login");
+    };
+    window.addEventListener("pageshow", redirectLoggedOutSession);
+    return () => window.removeEventListener("pageshow", redirectLoggedOutSession);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;

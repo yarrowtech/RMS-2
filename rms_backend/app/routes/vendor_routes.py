@@ -1803,7 +1803,7 @@ async def get_vendor_profile(authorization: str = Header(None)):
 
 VALID_BUSINESS_TYPES = {
     "general_vendor", "wholesaler", "manufacturer", "retailer",
-    "fabric_supplier", "exporter", "distributor",
+    "fabric_supplier", "exporter", "distributor", "job_worker",
 }
 
 

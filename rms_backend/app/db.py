@@ -61,6 +61,8 @@ flagged_content_collection = db["flagged_content"]
 users_collection = db["users"]
 invoices_collection = db["invoices"]
 onboarding_requests_collection = db["onboarding_requests"]
+store_upgrade_requests_collection = db["store_upgrade_requests"]
+barcode_label_settings_collection = db["barcode_label_settings"]
 
 # Retailer finance is deliberately separate from purchase invoices and POS
 # bills.  Those collections remain the operational source of truth; this
@@ -98,3 +100,5 @@ async def ensure_procurement_indexes():
     await style_bom_plans_collection.create_index([("tenant_id", 1), ("style_name", 1), ("created_at", -1)], name="style_bom_tenant_style_created")
     await onboarding_requests_collection.create_index([("status", 1), ("created_at", -1)], name="onboarding_status_created")
     await onboarding_requests_collection.create_index([("email", 1), ("account_type", 1), ("created_at", -1)], name="onboarding_email_type_created")
+    await store_upgrade_requests_collection.create_index([("tenant_id", 1), ("status", 1), ("created_at", -1)], name="store_upgrade_tenant_status_created")
+    await barcode_label_settings_collection.create_index("tenant_id", unique=True, name="barcode_label_settings_tenant")

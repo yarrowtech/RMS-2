@@ -48,18 +48,29 @@ function formatSize(sz = "") {
   const map = { small:"S", medium:"M", large:"L", "x-large":"XL", xl:"XL", xxl:"XXL", xs:"XS" };
   return map[sz.toLowerCase()] || String(sz).toUpperCase();
 }
+const DEFAULT_TEMPLATE_FIELDS = ["store_name", "barcode", "product_name", "design_no", "aging", "brand", "category", "mrp", "size"];
+const EXTRA_FIELD_LABELS = { vendor:"Vendor", division:"Division", section:"Section", department:"Department", color:"Color" };
+function normaliseTemplateFields(fields) {
+  const selected = Array.isArray(fields) && fields.length ? fields : DEFAULT_TEMPLATE_FIELDS;
+  return selected.includes("barcode") ? selected : ["barcode", ...selected];
+}
 function labelFields(item) {
   const skuRaw = (item.sku || "").toUpperCase();
   const sku = skuRaw.replace(/-[0-9A-Fa-f]{6}$/, "").slice(0, 18);
   return {
     bc:       item.barcode || "",
-    division: extractBaseName(item.name || item.product || "").toUpperCase().slice(0, 18),
-    sku,
+    product:  extractBaseName(item.name || item.product || "").toUpperCase().slice(0, 18),
+    designNo: (item.design_no || item.style_no || sku || "").toUpperCase().slice(0, 18),
     aging:    item.aging || toAging(item.grn_date || ""),
     brand:    (item.brand || item.vendor_name || "").toUpperCase().slice(0, 10),
+    vendor:   (item.vendor_name || "").toUpperCase().slice(0, 12),
+    division: (item.division || "").toUpperCase().slice(0, 12),
+    section:  (item.section || "").toUpperCase().slice(0, 12),
+    department: (item.department || "").toUpperCase().slice(0, 12),
     category: (item.section || item.department || "").toUpperCase().slice(0, 10),
     mrp:      item.rate || item.mrp || 0,
-    size:     formatSize(item.size_label || item.color || ""),
+    size:     formatSize(item.size_label || item.size || ""),
+    color:    (item.color || "").toUpperCase().slice(0, 12),
   };
 }
 
@@ -87,9 +98,14 @@ function BarcodeImage({ value, height = 36, width = 1.1 }) {
 }
 
 /* ── Single label — BOLD CLEAR layout ───────────────────────────── */
-function LabelContent({ item, storeName }) {
-  const { bc, division, sku, aging, brand, category, mrp, size } = labelFields(item);
+function LabelContent({ item, storeName, templateFields }) {
+  const fields = normaliseTemplateFields(templateFields);
+  const { bc, product, designNo, aging, brand, vendor, division, section, department, category, mrp, size, color } = labelFields(item);
   const store = storeName ? storeName.toUpperCase() : "";
+  const has = (field) => fields.includes(field);
+  const extraValues = [["vendor", vendor], ["division", division], ["section", section], ["department", department], ["color", color]]
+    .filter(([field, value]) => has(field) && value)
+    .map(([field, value]) => `${EXTRA_FIELD_LABELS[field]}: ${value}`);
 
   return (
     <div style={{
@@ -103,7 +119,7 @@ function LabelContent({ item, storeName }) {
     }}>
 
       {/* Store name */}
-      {store && (
+      {has("store_name") && store && (
         <div style={{
           fontSize: 7, fontWeight: 900, textAlign: "center",
           textTransform: "uppercase", letterSpacing: "0.05em",
@@ -116,7 +132,7 @@ function LabelContent({ item, storeName }) {
 
       {/* Barcode — smaller height to leave more room for text */}
       <div style={{ flexShrink: 0 }}>
-        {bc
+        {has("barcode") && bc
           ? <BarcodeImage value={bc} height={36} width={1.1} />
           : <div style={{ height: 36, border: "1px dashed #ccc", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 7, color: "#aaa" }}>No barcode</div>
         }
@@ -125,18 +141,18 @@ function LabelContent({ item, storeName }) {
       {/* Divider */}
       <div style={{ height: "0.8px", background: "#000", margin: "2px 0 2px", flexShrink: 0 }} />
 
-      {/* Division — LARGE BOLD */}
-      <div style={{
+      {/* Product name */}
+      {has("product_name") && <div style={{
         fontSize: 11, fontWeight: 900, color: "#000",
         lineHeight: 1.15, letterSpacing: "0.02em",
         overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
         flexShrink: 0, marginBottom: 1,
       }}>
-        {division || "—"}
-      </div>
+        {product || "-"}
+      </div>}
 
-      {/* SKU + Aging — same line, clear font */}
-      <div style={{
+      {/* Design number + Aging */}
+      {(has("design_no") || (has("aging") && aging)) && <div style={{
         display: "flex", justifyContent: "space-between", alignItems: "baseline",
         flexShrink: 0, marginBottom: 1, overflow: "hidden",
       }}>
@@ -144,17 +160,17 @@ function LabelContent({ item, storeName }) {
           fontSize: 8.5, fontWeight: 700, color: "#000",
           overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1,
         }}>
-          {sku || "—"}
+          {has("design_no") ? (designNo || "-") : ""}
         </span>
-        {aging && (
+        {has("aging") && aging && (
           <span style={{ fontSize: 8.5, fontWeight: 700, color: "#000", flexShrink: 0, marginLeft: 4 }}>
             {aging}
           </span>
         )}
-      </div>
+      </div>}
 
       {/* Brand + Category — same line */}
-      {(brand || category) && (
+      {((has("brand") && brand) || (has("category") && category)) && (
         <div style={{
           display: "flex", justifyContent: "space-between", alignItems: "baseline",
           flexShrink: 0, marginBottom: 2, overflow: "hidden",
@@ -163,9 +179,9 @@ function LabelContent({ item, storeName }) {
             fontSize: 8.5, fontWeight: 700, color: "#000",
             overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1,
           }}>
-            {brand}
+            {has("brand") ? brand : ""}
           </span>
-          {category && (
+          {has("category") && category && (
             <span style={{
               fontSize: 8.5, fontWeight: 700, color: "#000",
               flexShrink: 0, marginLeft: 4,
@@ -177,15 +193,21 @@ function LabelContent({ item, storeName }) {
         </div>
       )}
 
+      {extraValues.length > 0 && (
+        <div style={{ fontSize: 7.2, lineHeight: 1.15, fontWeight: 700, color: "#111", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginBottom: 2 }}>
+          {extraValues.join(" · ")}
+        </div>
+      )}
+
       {/* MRP + Size — BIGGEST, most important */}
       <div style={{
         display: "flex", justifyContent: "space-between", alignItems: "baseline",
         flexShrink: 0,
       }}>
         <span style={{ fontSize: 13, fontWeight: 900, color: "#000", letterSpacing: "-0.02em" }}>
-          {mrp > 0 ? `Rs.${Number(mrp).toLocaleString("en-IN")}/--` : ""}
+          {has("mrp") && mrp > 0 ? `Rs.${Number(mrp).toLocaleString("en-IN")}/--` : ""}
         </span>
-        {size && (
+        {has("size") && size && (
           <span style={{ fontSize: 14, fontWeight: 900, color: "#000" }}>
             {size}
           </span>
@@ -196,16 +218,29 @@ function LabelContent({ item, storeName }) {
 }
 
 /* ── Build print HTML ────────────────────────────────────────────── */
-function buildPrintHTML(printItems, storeName, jsUrl) {
+function buildPrintHTML(printItems, storeName, jsUrl, templateFields) {
+  const fields = normaliseTemplateFields(templateFields);
+  const has = (field) => fields.includes(field);
   function oneLabelHTML(item, svgId) {
-    const { bc, division, sku, aging, brand, category, mrp, size } = labelFields(item);
+    const values = labelFields(item);
+    const bc = values.bc;
+    const division = has("product_name") ? values.product : "";
+    const sku = has("design_no") ? values.designNo : "";
+    const aging = has("aging") ? values.aging : "";
+    const extraValues = [["vendor", values.vendor], ["division", values.division], ["section", values.section], ["department", values.department], ["color", values.color]]
+      .filter(([field, value]) => has(field) && value)
+      .map(([field, value]) => `${EXTRA_FIELD_LABELS[field]}: ${value}`);
+    const brand = [has("brand") ? values.brand : "", ...extraValues].filter(Boolean).join(" · ").slice(0, 26);
+    const category = has("category") ? values.category : "";
+    const mrp = has("mrp") ? values.mrp : 0;
+    const size = has("size") ? values.size : "";
     const store = storeName ? storeName.toUpperCase() : "";
 
-    const storeLine = store
+    const storeLine = has("store_name") && store
       ? `<div style="font-size:7px;font-weight:900;text-align:center;text-transform:uppercase;letter-spacing:0.05em;border-bottom:0.8px solid #000;padding-bottom:1px;margin-bottom:2px;flex-shrink:0;">${store}</div>`
       : "";
 
-    const barcodeEl = bc
+    const barcodeEl = has("barcode") && bc
       ? `<svg id="${svgId}" data-bc="${bc}" style="width:100%;height:auto;display:block;"></svg>`
       : `<div style="height:36px;border:1px dashed #ccc;display:flex;align-items:center;justify-content:center;font-size:7px;color:#aaa;">No barcode</div>`;
 
@@ -297,7 +332,7 @@ window.onload = function() {
 }
 
 /* ── Main component ───────────────────────────────────────────────── */
-export default function BarcodeStickerPrint({ items = [], onClose, storeName = "" }) {
+export default function BarcodeStickerPrint({ items = [], onClose, storeName = "", templateFields = DEFAULT_TEMPLATE_FIELDS }) {
   useJsBarcode();
   const [copies,  setCopies]  = useState(1);
   const [stName,  setStName]  = useState(storeName);
@@ -322,13 +357,13 @@ export default function BarcodeStickerPrint({ items = [], onClose, storeName = "
 
   const handlePrint = useCallback(() => {
     const jsUrl = "https://cdnjs.cloudflare.com/ajax/libs/jsbarcode/3.11.6/JsBarcode.all.min.js";
-    const html  = buildPrintHTML(printItems, stName, jsUrl);
+    const html  = buildPrintHTML(printItems, stName, jsUrl, templateFields);
     const win   = window.open("", "_blank", "width=500,height=400");
     if (!win) { alert("Pop-up blocked — allow pop-ups for this site."); return; }
     win.document.open();
     win.document.write(html);
     win.document.close();
-  }, [printItems, stName]);
+  }, [printItems, stName, templateFields]);
 
   return ReactDOM.createPortal(
     <>
@@ -408,7 +443,7 @@ export default function BarcodeStickerPrint({ items = [], onClose, storeName = "
                   const item = preview[rowIdx * 2 + col];
                   return item
                     ? <div key={col} style={{ border:"1px solid #9ca3af", borderRadius:3, overflow:"hidden", background:"#fff" }}>
-                        <LabelContent item={item} storeName={stName} />
+                        <LabelContent item={item} storeName={stName} templateFields={templateFields} />
                       </div>
                     : <div key={col} style={{ width:LW, height:LH, background:"#f3f4f6", border:"1px dashed #d1d5db", borderRadius:3, display:"flex", alignItems:"center", justifyContent:"center" }}>
                         <span style={{ fontSize:10, color:"#9ca3af" }}>blank</span>

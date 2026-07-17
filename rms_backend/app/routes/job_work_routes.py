@@ -92,6 +92,24 @@ async def _approved_vendor(tenant_id: str, vendor_id: str) -> tuple[dict, dict]:
     return vendor, link
 
 
+async def _job_work_enabled_vendor(vendor: dict) -> bool:
+    """Job Work is a business capability, independent of subscription tier."""
+    business_types = {str(item).strip().lower() for item in (vendor.get("business_type") or [])}
+    return "job_worker" in business_types
+
+
+async def _require_vendor_job_work_access(vendor_id: str) -> dict:
+    vendor = await vendors_collection.find_one({"_id": ObjectId(vendor_id)})
+    if not vendor:
+        raise HTTPException(status_code=404, detail="Vendor account not found.")
+    if not await _job_work_enabled_vendor(vendor):
+        raise HTTPException(
+            status_code=403,
+            detail="Job Work is available only to vendors with the Job-work partner business type.",
+        )
+    return vendor
+
+
 async def _increase_central_stock(tenant_id: str, barcode: str, quantity: float, product: str, rate: float, reason: str) -> None:
     existing = await inventory_collection.find_one({"tenant_id": tenant_id, "barcode": barcode})
     adjustment = {
@@ -147,7 +165,7 @@ async def approved_job_work_vendors(ctx: dict = Depends(_require_job_work)):
         "tenant_id": ctx["tenant_id"], "status": "Approved",
     }).sort("created_at", -1):
         vendor = await vendors_collection.find_one({"_id": link.get("vendor_id")})
-        if not vendor:
+        if not vendor or not await _job_work_enabled_vendor(vendor):
             continue
         rows.append({
             "id": str(vendor["_id"]),
@@ -423,6 +441,7 @@ async def issue_material(order_id: str, payload: dict, ctx: dict = Depends(_requ
 async def vendor_job_work_orders(authorization: str = Header(None)):
     """Vendor portal: only job-work orders assigned to this vendor identity."""
     vendor_id = _vendor_session(authorization)
+    await _require_vendor_job_work_access(vendor_id)
     tenant_names: dict[str, str] = {}
     orders = []
     async for order in job_work_orders_collection.find({"assigned_vendor_id": vendor_id}).sort("created_at", -1).limit(300):
@@ -440,6 +459,7 @@ async def vendor_job_work_orders(authorization: str = Header(None)):
 async def vendor_acknowledge_job_work(order_id: str, payload: dict | None = None, authorization: str = Header(None)):
     """Vendor confirms receipt of the job-work instruction/material challan."""
     vendor_id = _vendor_session(authorization)
+    await _require_vendor_job_work_access(vendor_id)
     if not ObjectId.is_valid(order_id):
         raise HTTPException(status_code=400, detail="Invalid job work order ID.")
     order = await job_work_orders_collection.find_one({"_id": ObjectId(order_id), "assigned_vendor_id": vendor_id})
@@ -460,6 +480,7 @@ async def vendor_acknowledge_job_work(order_id: str, payload: dict | None = None
 async def vendor_update_job_work_progress(order_id: str, payload: dict, authorization: str = Header(None)):
     """Vendor can report progress; this never changes retailer stock."""
     vendor_id = _vendor_session(authorization)
+    await _require_vendor_job_work_access(vendor_id)
     if not ObjectId.is_valid(order_id):
         raise HTTPException(status_code=400, detail="Invalid job work order ID.")
     order = await job_work_orders_collection.find_one({"_id": ObjectId(order_id), "assigned_vendor_id": vendor_id})

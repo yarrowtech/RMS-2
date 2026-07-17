@@ -1,9 +1,10 @@
-import React from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import {
-  ArrowRight, Boxes, LogOut, PackagePlus, ShoppingCart, Store, Tags, UsersRound,
+  ArrowRight, Boxes, Building2, Crown, LogOut, PackagePlus, ShoppingCart, Store, Tags, UsersRound,
 } from "lucide-react";
 import { clearAuthData } from "../../utils/authRedirect.js";
+import { API_BASE_URL } from "../../config/api.js";
 
 const WORKSPACES = [
   {
@@ -53,6 +54,55 @@ const WORKSPACES = [
 export default function StoreOwnerDashboard() {
   const ownerName = localStorage.getItem("admin_name") || "Store Owner";
   const storeName = localStorage.getItem("admin_store_name") || "Your Store";
+  const [upgrade, setUpgrade] = useState(null);
+  const [upgradePlan, setUpgradePlan] = useState("professional");
+  const [upgradeNote, setUpgradeNote] = useState("");
+  const [upgradeLoading, setUpgradeLoading] = useState(true);
+  const [upgradeSaving, setUpgradeSaving] = useState(false);
+  const [upgradeMessage, setUpgradeMessage] = useState("");
+
+  const upgradeRequest = useCallback(async (path, options = {}) => {
+    const token = localStorage.getItem("admin_token") || localStorage.getItem("access_token") || localStorage.getItem("token") || "";
+    const response = await fetch(`${API_BASE_URL}${path}`, {
+      ...options,
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json", ...(options.headers || {}) },
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.detail || "Could not complete the upgrade request.");
+    return data;
+  }, []);
+
+  const loadUpgrade = useCallback(async () => {
+    try {
+      setUpgradeLoading(true);
+      const data = await upgradeRequest("/api/store-upgrades/me");
+      setUpgrade(data);
+    } catch (error) {
+      setUpgradeMessage(error.message);
+    } finally {
+      setUpgradeLoading(false);
+    }
+  }, [upgradeRequest]);
+
+  useEffect(() => { loadUpgrade(); }, [loadUpgrade]);
+
+  const submitUpgrade = async () => {
+    try {
+      setUpgradeSaving(true);
+      setUpgradeMessage("");
+      await upgradeRequest("/api/store-upgrades/requests", {
+        method: "POST",
+        body: JSON.stringify({ requested_plan: upgradePlan, note: upgradeNote.trim() }),
+      });
+      setUpgradeMessage("Your request was sent to RMS for review.");
+      setUpgradeNote("");
+      await loadUpgrade();
+    } catch (error) {
+      setUpgradeMessage(error.message);
+    } finally {
+      setUpgradeSaving(false);
+    }
+  };
 
   const logout = () => {
     clearAuthData();
@@ -100,6 +150,32 @@ export default function StoreOwnerDashboard() {
               </Link>
             ))}
           </div>
+
+          <section className="mt-6 overflow-hidden rounded-3xl border border-indigo-100 bg-white shadow-sm">
+            <div className="grid gap-6 bg-gradient-to-r from-indigo-950 via-violet-900 to-fuchsia-900 p-6 text-white lg:grid-cols-[1fr_auto] lg:items-center">
+              <div>
+                <div className="flex items-center gap-2 text-indigo-200"><Crown className="h-4 w-4" /><span className="text-xs font-black uppercase tracking-[0.18em]">Grow with RMS</span></div>
+                <h2 className="mt-2 text-2xl font-black">Ready to operate more than one store?</h2>
+                <p className="mt-2 max-w-2xl text-sm leading-6 text-indigo-100">Upgrade this business into a Retailer HQ workspace. Your current store remains your first location and its stock, products, sales and documents stay unchanged.</p>
+              </div>
+              <div className="rounded-2xl border border-white/15 bg-white/10 px-4 py-3 text-sm font-bold text-indigo-50"><Building2 className="mr-2 inline h-4 w-4 text-cyan-200" />HQ, multi-store and delegated teams</div>
+            </div>
+
+            <div className="p-6">
+              {upgradeLoading ? <p className="text-sm text-slate-500">Checking upgrade eligibility…</p> : upgrade?.request?.status === "PENDING" ? (
+                <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900"><p className="font-black">Multi-store upgrade request pending</p><p className="mt-1">Requested plan: <b className="capitalize">{upgrade.request.requested_plan}</b>. RMS will review the plan and migration before enabling HQ access.</p></div>
+              ) : upgrade?.request?.status === "APPROVED" || !upgrade?.eligible ? (
+                <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900"><p className="font-black">Multi-store retailer access is approved.</p><p className="mt-1">Sign out and sign in again to enter your new Retailer HQ workspace. Your original store is still preserved as the first store.</p></div>
+              ) : (
+                <div className="grid gap-4 lg:grid-cols-[180px_1fr_auto] lg:items-end">
+                  <label className="text-sm font-bold text-slate-700">Choose plan<select value={upgradePlan} onChange={(event) => setUpgradePlan(event.target.value)} className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-semibold outline-none focus:border-indigo-500"><option value="professional">Professional · up to 5 stores</option><option value="enterprise">Enterprise · unlimited stores</option></select></label>
+                  <label className="text-sm font-bold text-slate-700">Note for RMS <input value={upgradeNote} onChange={(event) => setUpgradeNote(event.target.value)} maxLength={1000} placeholder="For example: opening two new branches next quarter" className="mt-1.5 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm font-normal outline-none focus:border-indigo-500" /></label>
+                  <button onClick={submitUpgrade} disabled={upgradeSaving} className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 text-sm font-black text-white transition hover:bg-indigo-700 disabled:opacity-60"><ArrowRight className="h-4 w-4" />{upgradeSaving ? "Sending…" : "Request upgrade"}</button>
+                </div>
+              )}
+              {upgradeMessage && <p className="mt-3 text-sm font-semibold text-slate-600">{upgradeMessage}</p>}
+            </div>
+          </section>
         </div>
       </section>
     </main>

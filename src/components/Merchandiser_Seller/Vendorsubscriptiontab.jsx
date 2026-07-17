@@ -117,6 +117,7 @@ export default function VendorSubscriptionTab() {
         throw new Error(data.detail || "Upgrade failed.");
       }
       await fetchAll();
+      window.dispatchEvent(new Event("vendor-access-updated"));
     } catch (err) {
       setError(err.message);
     } finally {

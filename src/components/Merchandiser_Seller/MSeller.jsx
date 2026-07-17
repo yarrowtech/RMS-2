@@ -175,6 +175,32 @@ export default function MSeller() {
   const [searchQuery,    setSearchQuery]    = useState("");
   const [editingProduct, setEditingProduct] = useState(null);
   const [inquiryNotificationCount, setInquiryNotificationCount] = useState(0);
+  const [jobWorkEnabled, setJobWorkEnabled] = useState(false);
+
+  const refreshVendorAccess = useCallback(async () => {
+    const token = getToken();
+    if (!token) return;
+    try {
+      const headers = { Authorization: `Bearer ${token}` };
+      const profileResponse = await fetch(`${APP_API_URL}/api/vendors/me`, { headers });
+      const profile = await profileResponse.json().catch(() => ({}));
+      if (profileResponse.ok) setVendorProfile(profile);
+      const businessTypes = Array.isArray(profile.business_type) ? profile.business_type : [];
+      setJobWorkEnabled(profileResponse.ok && businessTypes.includes("job_worker"));
+    } catch {
+      setJobWorkEnabled(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshVendorAccess();
+    window.addEventListener("vendor-access-updated", refreshVendorAccess);
+    return () => window.removeEventListener("vendor-access-updated", refreshVendorAccess);
+  }, [refreshVendorAccess]);
+
+  useEffect(() => {
+    if (activeTab === "job-work" && !jobWorkEnabled) setActiveTab("dashboard");
+  }, [activeTab, jobWorkEnabled]);
 
   useEffect(() => {
     let cancelled=false;
@@ -287,6 +313,8 @@ export default function MSeller() {
     title:     "RMS",
     subtitle:  "Merchandiser Seller",
     inquiryNotificationCount,
+    jobWorkEnabled,
+    businessTypes: vendorProfile?.business_type || [],
   };
 
   return (

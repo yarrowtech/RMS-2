@@ -934,7 +934,7 @@ import {
   FaFilter, FaSearch, FaBoxes, FaLayerGroup, FaBuilding,
   FaSyncAlt, FaChevronDown, FaWarehouse, FaTimes, FaTag,
   FaStore, FaUserTie, FaTrashAlt, FaClipboardList, FaEdit,
-  FaPrint, FaExclamationTriangle, FaPlus,
+  FaPrint, FaExclamationTriangle, FaPlus, FaSlidersH,
 } from "react-icons/fa";
 import QuickFillPanel from "../Quickfillpanel";
 import BarcodeStickerPrint from "../Barcodestickerprint.jsx";
@@ -1050,6 +1050,40 @@ function StatusBadge({ status }) {
 }
 
 // ── Delete confirm modal ──────────────────────────────────────────────────────
+const DEFAULT_LABEL_FIELDS = ["store_name", "barcode", "product_name", "design_no", "aging", "brand", "category", "mrp", "size"];
+const LABEL_FIELD_OPTIONS = [
+  ["store_name", "Store name"], ["barcode", "Barcode"], ["product_name", "Product name"],
+  ["design_no", "Design No."], ["aging", "GRN aging"], ["brand", "Brand"],
+  ["category", "Category"], ["mrp", "MRP"], ["size", "Size"], ["color", "Color"],
+  ["vendor", "Vendor"], ["division", "Division"], ["section", "Section"], ["department", "Department"],
+];
+const labelName = (id) => LABEL_FIELD_OPTIONS.find(([key]) => key === id)?.[1] || id;
+
+function BarcodeLabelSettingsModal({ fields, saving, error, onChange, onSave, onClose }) {
+  const toggleField = (field) => {
+    if (field === "barcode") return;
+    if (fields.includes(field)) onChange(fields.filter((item) => item !== field));
+    else if (fields.length < 12) onChange([...fields, field]);
+  };
+  const move = (index, direction) => {
+    const next = [...fields];
+    const target = index + direction;
+    if (target < 0 || target >= next.length) return;
+    [next[index], next[target]] = [next[target], next[index]];
+    onChange(next);
+  };
+  return ReactDOM.createPortal(
+    <div className="fixed inset-0 z-[100001] grid place-items-center bg-slate-950/55 p-4" onClick={onClose}>
+      <section className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white shadow-2xl" onClick={(event) => event.stopPropagation()}>
+        <header className="flex items-start justify-between gap-4 border-b border-slate-100 bg-gradient-to-r from-slate-950 to-indigo-950 p-5 text-white"><div><p className="text-[10px] font-black uppercase tracking-[.18em] text-indigo-200">Tenant label template</p><h2 className="mt-1 text-lg font-black">Barcode Label Settings</h2><p className="mt-1 text-xs leading-5 text-indigo-100">Saved choices apply to future previews and barcode prints for this retailer. Barcode values never change.</p></div><button onClick={onClose} className="rounded-lg border border-white/20 px-2.5 py-1 text-sm font-bold text-white">×</button></header>
+        <div className="grid gap-5 p-5 md:grid-cols-2"><div><h3 className="text-sm font-black text-slate-900">Fields to print</h3><p className="mt-1 text-xs text-slate-500">Choose up to 12. Barcode is always required.</p><div className="mt-3 grid gap-2">{LABEL_FIELD_OPTIONS.map(([field, label]) => <label key={field} className={`flex cursor-pointer items-center gap-3 rounded-xl border px-3 py-2.5 text-sm ${fields.includes(field) ? "border-indigo-200 bg-indigo-50 text-indigo-950" : "border-slate-200 text-slate-600"}`}><input type="checkbox" checked={fields.includes(field)} disabled={field === "barcode"} onChange={() => toggleField(field)} className="h-4 w-4 accent-indigo-600" /><span className="font-semibold">{label}</span>{field === "barcode" && <span className="ml-auto text-[10px] font-black uppercase text-indigo-500">Required</span>}</label>)}</div></div><div><h3 className="text-sm font-black text-slate-900">Print order</h3><p className="mt-1 text-xs text-slate-500">Move selected fields to control their display order.</p><div className="mt-3 space-y-2">{fields.map((field, index) => <div key={field} className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5"><span className="w-5 text-xs font-black text-slate-400">{index + 1}</span><span className="flex-1 text-sm font-bold text-slate-800">{labelName(field)}</span><button type="button" disabled={index === 0} onClick={() => move(index, -1)} className="rounded border border-slate-200 bg-white px-2 py-0.5 text-xs disabled:opacity-30">↑</button><button type="button" disabled={index === fields.length - 1} onClick={() => move(index, 1)} className="rounded border border-slate-200 bg-white px-2 py-0.5 text-xs disabled:opacity-30">↓</button></div>)}</div><button type="button" onClick={() => onChange(DEFAULT_LABEL_FIELDS)} className="mt-4 text-xs font-bold text-indigo-600 hover:underline">Restore current RMS default fields</button></div></div>
+        {error && <p className="mx-5 rounded-xl bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-700">{error}</p>}
+        <footer className="flex justify-end gap-2 border-t border-slate-100 p-5"><button onClick={onClose} className="rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-bold text-slate-600">Cancel</button><button onClick={onSave} disabled={saving} className="rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-black text-white hover:bg-indigo-700 disabled:opacity-60">{saving ? "Saving…" : "Save label template"}</button></footer>
+      </section>
+    </div>, document.body,
+  );
+}
+
 function DeleteConfirmModal({ barcode, productName, onConfirm, onCancel }) {
   if (!barcode) return null;
   return (
@@ -1078,7 +1112,7 @@ function DeleteConfirmModal({ barcode, productName, onConfirm, onCancel }) {
 }
 
 // ── Product Detail Modal — now with Fix + Print Stickers ─────────────────────
-function ProductDetailModal({ row, onClose, onSaved, setShowForm, setEditProduct, setSplitRow, onGenerateBarcode }) {
+function ProductDetailModal({ row, onClose, onSaved, setShowForm, setEditProduct, setSplitRow, onGenerateBarcode, labelTemplateFields }) {
   const [visible,    setVisible]    = useState(false);
   const [tab,        setTab]        = useState("details");
   const [printOpen,  setPrintOpen]  = useState(false);
@@ -1158,8 +1192,14 @@ function ProductDetailModal({ row, onClose, onSaved, setShowForm, setEditProduct
     barcode:    row.barcode,
     name:       row.product || row.barcode,
     sku:        row.sku || "",
+    design_no:  row.design_no || "",
+    brand:      row.brand || "",
     rate:       row.rate || 0,
     division:   row.division || "",
+    section:    row.section || "",
+    department: row.department || "",
+    vendor_name: row.vendor_name || "",
+    grn_date:   row.grn_date || "",
     size_label: size || "",
     color:      color || "",
   }];
@@ -1489,6 +1529,7 @@ function ProductDetailModal({ row, onClose, onSaved, setShowForm, setEditProduct
           items={stickerItems}
           onClose={() => setPrintOpen(false)}
           storeName=""
+          templateFields={labelTemplateFields}
         />
       )}
     </>
@@ -1525,6 +1566,43 @@ export default function InventoryCurrentStockList() {
   const [data,    setData]    = useState([]);
   const [loading, setLoading] = useState(false);
   const [error,   setError]   = useState(null);
+  const [labelTemplateFields, setLabelTemplateFields] = useState(DEFAULT_LABEL_FIELDS);
+  const [labelSettingsOpen, setLabelSettingsOpen] = useState(false);
+  const [labelSettingsSaving, setLabelSettingsSaving] = useState(false);
+  const [labelSettingsError, setLabelSettingsError] = useState("");
+
+  useEffect(() => {
+    const loadLabelTemplate = async () => {
+      try {
+        const response = await fetch(`${API}/inventory/barcode-label-settings`, { headers: { Authorization: `Bearer ${getAdminToken()}` } });
+        const payload = await response.json().catch(() => ({}));
+        if (response.ok && Array.isArray(payload.fields) && payload.fields.length) setLabelTemplateFields(payload.fields);
+      } catch {
+        // The default label is still usable if the template endpoint is unavailable.
+      }
+    };
+    loadLabelTemplate();
+  }, []);
+
+  const saveLabelTemplate = async () => {
+    try {
+      setLabelSettingsSaving(true);
+      setLabelSettingsError("");
+      const response = await fetch(`${API}/inventory/barcode-label-settings`, {
+        method: "PUT",
+        headers: { Authorization: `Bearer ${getAdminToken()}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ fields: labelTemplateFields }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.detail || "Could not save the label template.");
+      setLabelTemplateFields(payload.template?.fields || labelTemplateFields);
+      setLabelSettingsOpen(false);
+    } catch (saveError) {
+      setLabelSettingsError(saveError.message);
+    } finally {
+      setLabelSettingsSaving(false);
+    }
+  };
 
   useEffect(() => {
     const fetchMeta = async () => {
@@ -1752,7 +1830,9 @@ export default function InventoryCurrentStockList() {
         setEditProduct={setEditProduct}
         setSplitRow={setSplitRow}
         onGenerateBarcode={handleGenerateBarcode}
+        labelTemplateFields={labelTemplateFields}
       />
+      {labelSettingsOpen && <BarcodeLabelSettingsModal fields={labelTemplateFields} saving={labelSettingsSaving} error={labelSettingsError} onChange={setLabelTemplateFields} onSave={saveLabelTemplate} onClose={() => { setLabelSettingsError(""); setLabelSettingsOpen(false); }} />}
       <DeleteConfirmModal
         barcode={deleteTarget?.barcode}
         productName={deleteTarget?.product}
@@ -1775,6 +1855,10 @@ export default function InventoryCurrentStockList() {
             <button onClick={fetchData} disabled={loading}
               className="flex items-center gap-2 px-3 py-2 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-600 text-sm font-medium transition-colors disabled:opacity-50">
               <FaSyncAlt className={loading ? "animate-spin" : ""} /> Refresh
+            </button>
+            <button onClick={() => setLabelSettingsOpen(true)}
+              className="flex items-center gap-2 px-3 py-2 rounded-xl border border-violet-200 bg-violet-50 hover:bg-violet-100 text-violet-700 text-sm font-bold transition-colors">
+              <FaSlidersH className="text-xs" /> Label Settings
             </button>
             <button onClick={() => { setEditProduct(null); setShowForm(true); }}
               className="flex items-center gap-2 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold transition-colors shadow-sm">

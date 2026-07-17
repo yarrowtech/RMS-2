@@ -6,6 +6,7 @@ import { useNavigate } from "react-router-dom";
 import { clearAuthData } from "../utils/authRedirect";
 
 const DEPT_ROUTES = {
+  "HQ":                             "/admin",
   "HR":                             "/dashboard/hr",
   "Cashier":                        "/dashboard/cashier",
   "Finance":                        "/dashboard/finance",
@@ -22,6 +23,7 @@ const DEPT_ROUTES = {
 
 // ─── Department metadata ───────────────────────────────────────────────────
 const DEPT_META = {
+  "HQ":                           { emoji: "🏢", gradient: "linear-gradient(135deg,#475569,#0f172a)", glow: "rgba(71,85,105,0.4)" },
   "HR":                           { emoji: "👥", gradient: "linear-gradient(135deg,#3b82f6,#1d4ed8)", glow: "rgba(59,130,246,0.4)" },
   "Cashier":                      { emoji: "💰", gradient: "linear-gradient(135deg,#10b981,#059669)", glow: "rgba(16,185,129,0.4)" },
   "Finance":                      { emoji: "📊", gradient: "linear-gradient(135deg,#8b5cf6,#6d28d9)", glow: "rgba(139,92,246,0.4)" },

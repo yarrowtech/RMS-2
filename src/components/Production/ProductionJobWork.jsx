@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { API_BASE_URL } from "../../config/api.js";
+import { logoutOrReturnToDepartmentSelector } from "../../utils/authRedirect.js";
 
 const JOB_WORK_TYPES = ["Cutting", "Stitching", "Finishing", "Embroidery", "Washing", "Packing", "Other"];
 
@@ -155,6 +156,7 @@ export default function ProductionJobWork() {
             </div>
           </div>
           <div className="flex gap-2">
+            <button type="button" onClick={() => logoutOrReturnToDepartmentSelector()} className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-2.5 text-sm font-bold text-rose-700 transition hover:bg-rose-100">Logout</button>
             <button type="button" onClick={refresh} className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 transition hover:bg-slate-50">↻ Refresh</button>
             <button type="button" onClick={() => setModal({ type: "plan" })} className="rounded-xl border border-violet-200 bg-violet-50 px-4 py-2.5 text-sm font-bold text-violet-700 transition hover:bg-violet-100">⊞ Style BOM & fabric plan</button>
             <button type="button" onClick={() => setModal({ type: "create" })} className="rounded-xl bg-gradient-to-r from-violet-600 to-fuchsia-600 px-4 py-2.5 text-sm font-bold text-white shadow-lg shadow-violet-200 transition hover:brightness-105">+ New job work order</button>

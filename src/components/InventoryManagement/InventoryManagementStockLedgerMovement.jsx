@@ -42,6 +42,7 @@ function DocTypeBadge({ type }) {
 export default function StockLedgerMovement() {
   const storeName = localStorage.getItem("store_name") || localStorage.getItem("admin_store_name") || "";
   const isStoreWorkspace = Boolean(localStorage.getItem("store_id") || localStorage.getItem("admin_store_id"));
+  const isSingleStore = localStorage.getItem("admin_account_type") === "single_store";
   /* Filter state */
   const [division,     setDivision]     = useState("");
   const [section,      setSection]      = useState("");
@@ -237,26 +238,26 @@ const res = await fetch(
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
 
           {/* Division */}
-          <FS label="Division" icon={<FaLayerGroup className="text-slate-500 text-xs" />}
+          {!isSingleStore && <FS label="Division" icon={<FaLayerGroup className="text-slate-500 text-xs" />}
             value={division} onChange={handleDivision}
-            options={["", ...divisions]} placeholder="All Divisions" />
+            options={["", ...divisions]} placeholder="All Divisions" />}
 
           {/* Section */}
-          <FS label="Section" icon={<FaFilter className="text-slate-500 text-xs" />}
+          {!isSingleStore && <FS label="Section" icon={<FaFilter className="text-slate-500 text-xs" />}
             value={section} onChange={handleSection}
             options={["", ...sections]}
             placeholder={division ? (sections.length ? "All Sections" : "No sections") : "Select Division first"}
-            disabled={!division || sections.length === 0} />
+            disabled={!division || sections.length === 0} />}
 
           {/* Department */}
-          <FS label="Department" icon={<FaBuilding className="text-slate-500 text-xs" />}
+          {!isSingleStore && <FS label="Department" icon={<FaBuilding className="text-slate-500 text-xs" />}
             value={department} onChange={setDepartment}
             options={["", ...departments]}
             placeholder={section ? (departments.length ? "All Departments" : "No departments") : "Select Section first"}
-            disabled={!section || departments.length === 0} />
+            disabled={!section || departments.length === 0} />}
 
           {/* Search */}
-          <div className="min-w-0">
+          <div className={`min-w-0 ${isSingleStore ? "sm:col-span-2 lg:col-span-4" : ""}`}>
             <label className="block text-xs font-semibold text-slate-600 mb-1 uppercase tracking-wide">Search</label>
             <div className="flex items-center gap-2 bg-slate-50 rounded-xl px-3 border border-slate-200 focus-within:border-indigo-400 focus-within:ring-2 focus-within:ring-indigo-100 transition-all">
               <FaSearch className="text-slate-400 shrink-0 text-xs" />
@@ -276,9 +277,9 @@ const res = await fetch(
             options={MOVEMENT_TYPES} />
 
           {/* Warehouse */}
-          <FS label="Warehouse" icon={<FaWarehouse className="text-slate-500 text-xs" />}
+          {!isSingleStore && <FS label="Warehouse" icon={<FaWarehouse className="text-slate-500 text-xs" />}
             value={warehouse} onChange={setWarehouse}
-            options={warehouses} />
+            options={warehouses} />}
 
           {/* From date */}
           <div className="min-w-0">
@@ -309,7 +310,7 @@ const res = await fetch(
       {/* ── Table ── */}
       <div className="bg-white rounded-2xl shadow-sm flex-1 min-h-0 overflow-hidden border border-slate-200">
         <div className="h-full overflow-auto">
-          <table className="w-full text-sm min-w-[1280px]">
+          <table className={`w-full text-sm min-w-[1280px] ${isSingleStore ? "[&_th:nth-child(7)]:hidden [&_td:nth-child(7)]:hidden [&_th:nth-child(8)]:hidden [&_td:nth-child(8)]:hidden [&_th:nth-child(9)]:hidden [&_td:nth-child(9)]:hidden [&_th:nth-child(13)]:hidden [&_td:nth-child(13)]:hidden" : ""}`}>
             <thead className="bg-slate-50 text-slate-600 sticky top-0 z-10 border-b border-slate-200">
               <tr>
                 {[
