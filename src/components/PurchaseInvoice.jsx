@@ -149,7 +149,7 @@ function VendorBadge({ isRegistered }) {
 }
 function Overlay({ onClose, children, wide }) {
   return createPortal(
-    <div onClick={e=>e.target===e.currentTarget&&onClose()}
+    <div className="purchase-invoice-modal" onClick={e=>e.target===e.currentTarget&&onClose()}
       style={{ position:"fixed",inset:0,zIndex:99999,background:"rgba(15,23,42,.62)",padding:12,
         display:"flex",alignItems:"center",justifyContent:"center",backdropFilter:"blur(4px)" }}>
       <div style={{ width:wide?"min(1300px,97vw)":"auto",maxWidth:"100%",maxHeight:"calc(100dvh - 24px)",
@@ -161,7 +161,7 @@ function Overlay({ onClose, children, wide }) {
 }
 function MiniModal({ title, onClose, children }) {
   return createPortal(
-    <div onClick={e=>e.target===e.currentTarget&&onClose()}
+    <div className="purchase-invoice-modal" onClick={e=>e.target===e.currentTarget&&onClose()}
       style={{ position:"fixed",inset:0,zIndex:100000,background:"rgba(15,23,42,.62)",padding:12,
         display:"flex",alignItems:"center",justifyContent:"center",backdropFilter:"blur(4px)" }}>
       <div style={{ background:"#fff",border:`1px solid ${C.border}`,borderRadius:16,padding:24,
@@ -215,46 +215,49 @@ function GhostBtn({ children, onClick }) {
 }
 function Spinner() {
   return <div style={{ width:14,height:14,border:`2px solid #E5E1D8`,borderTopColor:C.accent,
-    borderRadius:"50%",animation:"spin 1s linear infinite",display:"inline-block" }} />;
+    borderRadius:"50%",animation:"piSpin 1s linear infinite",display:"inline-block" }} />;
 }
 
 /* ═══════════════════════════════════════════════════════════════════
    GLOBAL CSS
 ═══════════════════════════════════════════════════════════════════ */
 const GLOBAL_CSS = `
-  *{box-sizing:border-box;margin:0;padding:0}
-  @keyframes fadeUp{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
-  @keyframes spin{to{transform:rotate(360deg)}}
-  .row-hover:hover{background:#F5F3FF!important;cursor:pointer}
-  .btn{cursor:pointer;border:none;font-family:'DM Sans',sans-serif;font-weight:600;border-radius:9px;transition:all .15s}
-  .btn:active{transform:scale(.97)}
-  .btn:disabled{opacity:.4;cursor:not-allowed}
-  input,select,textarea{font-family:'DM Sans',sans-serif;transition:border-color .15s,box-shadow .15s}
-  input:focus,select:focus,textarea:focus{outline:none!important;border-color:#7C3AED!important;box-shadow:0 0 0 3px rgba(124,58,237,.12)!important}
-  ::-webkit-scrollbar{width:5px;height:5px}
-  ::-webkit-scrollbar-track{background:#F6F4EF}
-  ::-webkit-scrollbar-thumb{background:#D4CEBF;border-radius:10px}
-  .inp{background:#fff;border:1px solid #DDD6FE;color:#172033;border-radius:9px;padding:9px 13px;font-size:13px;width:100%;font-family:'DM Sans',sans-serif}
-  .inp::placeholder{color:#98A2B3}
-  .inp-ro{background:#FDFBF8;color:#6B6560;border-style:dashed;cursor:default}
-  .cell{background:#fff;border:1.5px solid #E5E1D8;color:#1A1714;border-radius:5px;padding:0 8px;font-size:12px;height:32px;width:100%;font-family:'DM Mono',monospace}
-  .cell:focus{border-color:#8B4513!important}
-  .tab-btn{cursor:pointer;border:none;background:none;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:500;padding:10px 18px;border-radius:8px;transition:all .15s}
-  .type-toggle{display:flex;border:1.5px solid #E5E1D8;border-radius:10px;overflow:hidden}
-  .type-btn{flex:1;padding:14px 16px;border:none;cursor:pointer;font-family:'DM Sans',sans-serif;font-weight:600;font-size:13px;transition:all .2s;text-align:center}
-  .type-btn-po{background:#F5F3FF;color:#5B21B6;border-right:1.5px solid #DDD6FE}
-  .type-btn-direct{background:#EFF6FF;color:#1E40AF}
-  .type-btn-off{background:#FDFBF8;color:#B0A898}
-  .type-btn-off:hover{background:#F0EDE6;color:#6B6560}
-  .notif-row{border-radius:10px;padding:14px 16px;margin-bottom:8px;border:1px solid #E5E1D8;background:#fff;transition:box-shadow .15s}
-  .notif-row:hover{box-shadow:0 4px 16px rgba(0,0,0,.07)}
-  .pi-shell{max-width:100%;margin:0 auto;padding:16px}
-  .pi-header{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:18px 20px;margin-bottom:14px;background:#fff;border:1px solid #E8E5F5;border-radius:16px;box-shadow:0 8px 24px rgba(76,29,149,.06)}
-  .pi-kpis{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:10px;margin-bottom:14px}
-  .pi-tabs{display:flex;flex-wrap:wrap;gap:5px;margin-bottom:14px;background:#fff;border:1px solid #E8E5F5;border-radius:12px;padding:5px;width:100%}
-  .pi-filters{display:grid;grid-template-columns:minmax(240px,1fr) repeat(3,minmax(145px,180px));gap:8px;margin-bottom:12px;padding:12px;background:#fff;border:1px solid #E8E5F5;border-radius:12px}
-  @media(max-width:1200px){.pi-kpis{grid-template-columns:repeat(3,minmax(0,1fr))}.pi-filters{grid-template-columns:1fr 1fr}}
-  @media(max-width:700px){.pi-shell{padding:10px}.pi-header{align-items:flex-start;flex-direction:column}.pi-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.pi-filters{grid-template-columns:1fr}.pi-header .btn{width:100%}}
+  .purchase-invoice-page,.purchase-invoice-page *,.purchase-invoice-modal,.purchase-invoice-modal *{box-sizing:border-box}
+  .purchase-invoice-page{width:100%;min-width:0;max-width:100%}
+  .purchase-invoice-page h1,.purchase-invoice-page h2,.purchase-invoice-page h3,.purchase-invoice-page p{margin:0}
+  @keyframes piFadeUp{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+  @keyframes piSpin{to{transform:rotate(360deg)}}
+  .purchase-invoice-page .row-hover:hover{background:#F5F3FF!important;cursor:pointer}
+  .purchase-invoice-page .btn,.purchase-invoice-modal .btn{cursor:pointer;border:none;font-family:'DM Sans',sans-serif;font-weight:600;border-radius:9px;transition:all .15s}
+  .purchase-invoice-page .btn:active,.purchase-invoice-modal .btn:active{transform:scale(.97)}
+  .purchase-invoice-page .btn:disabled,.purchase-invoice-modal .btn:disabled{opacity:.4;cursor:not-allowed}
+  .purchase-invoice-page input,.purchase-invoice-page select,.purchase-invoice-page textarea,.purchase-invoice-modal input,.purchase-invoice-modal select,.purchase-invoice-modal textarea{font-family:'DM Sans',sans-serif;transition:border-color .15s,box-shadow .15s}
+  .purchase-invoice-page input:focus,.purchase-invoice-page select:focus,.purchase-invoice-page textarea:focus,.purchase-invoice-modal input:focus,.purchase-invoice-modal select:focus,.purchase-invoice-modal textarea:focus{outline:none!important;border-color:#7C3AED!important;box-shadow:0 0 0 3px rgba(124,58,237,.12)!important}
+  .purchase-invoice-page ::-webkit-scrollbar,.purchase-invoice-modal ::-webkit-scrollbar{width:5px;height:5px}
+  .purchase-invoice-page ::-webkit-scrollbar-track,.purchase-invoice-modal ::-webkit-scrollbar-track{background:#F6F4EF}
+  .purchase-invoice-page ::-webkit-scrollbar-thumb,.purchase-invoice-modal ::-webkit-scrollbar-thumb{background:#D4CEBF;border-radius:10px}
+  .purchase-invoice-page .inp,.purchase-invoice-modal .inp{background:#fff;border:1px solid #DDD6FE;color:#172033;border-radius:9px;padding:9px 13px;font-size:13px;width:100%;font-family:'DM Sans',sans-serif}
+  .purchase-invoice-page .inp::placeholder,.purchase-invoice-modal .inp::placeholder{color:#98A2B3}
+  .purchase-invoice-page .inp-ro,.purchase-invoice-modal .inp-ro{background:#FDFBF8;color:#6B6560;border-style:dashed;cursor:default}
+  .purchase-invoice-page .cell,.purchase-invoice-modal .cell{background:#fff;border:1.5px solid #E5E1D8;color:#1A1714;border-radius:5px;padding:0 8px;font-size:12px;height:32px;width:100%;font-family:'DM Mono',monospace}
+  .purchase-invoice-page .cell:focus,.purchase-invoice-modal .cell:focus{border-color:#8B4513!important}
+  .purchase-invoice-page .tab-btn{cursor:pointer;border:none;background:none;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:500;padding:10px 18px;border-radius:8px;transition:all .15s}
+  .purchase-invoice-page .type-toggle,.purchase-invoice-modal .type-toggle{display:flex;border:1.5px solid #E5E1D8;border-radius:10px;overflow:hidden}
+  .purchase-invoice-page .type-btn,.purchase-invoice-modal .type-btn{flex:1;padding:14px 16px;border:none;cursor:pointer;font-family:'DM Sans',sans-serif;font-weight:600;font-size:13px;transition:all .2s;text-align:center}
+  .purchase-invoice-page .type-btn-po,.purchase-invoice-modal .type-btn-po{background:#F5F3FF;color:#5B21B6;border-right:1.5px solid #DDD6FE}
+  .purchase-invoice-page .type-btn-direct,.purchase-invoice-modal .type-btn-direct{background:#EFF6FF;color:#1E40AF}
+  .purchase-invoice-page .type-btn-off,.purchase-invoice-modal .type-btn-off{background:#FDFBF8;color:#B0A898}
+  .purchase-invoice-page .type-btn-off:hover,.purchase-invoice-modal .type-btn-off:hover{background:#F0EDE6;color:#6B6560}
+  .purchase-invoice-page .notif-row{border-radius:10px;padding:14px 16px;margin-bottom:8px;border:1px solid #E5E1D8;background:#fff;transition:box-shadow .15s}
+  .purchase-invoice-page .notif-row:hover{box-shadow:0 4px 16px rgba(0,0,0,.07)}
+  .purchase-invoice-page .pi-shell{width:100%;min-width:0;max-width:100%;margin:0 auto;padding:16px}
+  .purchase-invoice-page .pi-header{display:flex;min-width:0;align-items:center;justify-content:space-between;gap:16px;padding:18px 20px;margin-bottom:14px;background:#fff;border:1px solid #E8E5F5;border-radius:16px;box-shadow:0 8px 24px rgba(76,29,149,.06)}
+  .purchase-invoice-page .pi-kpis{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:10px;margin-bottom:14px}
+  .purchase-invoice-page .pi-tabs{display:flex;flex-wrap:wrap;gap:5px;margin-bottom:14px;background:#fff;border:1px solid #E8E5F5;border-radius:12px;padding:5px;width:100%}
+  .purchase-invoice-page .pi-filters{display:grid;grid-template-columns:minmax(240px,1fr) repeat(3,minmax(145px,180px));gap:8px;margin-bottom:12px;padding:12px;background:#fff;border:1px solid #E8E5F5;border-radius:12px}
+  .purchase-invoice-page .pi-table-wrap{width:100%;max-width:100%;overflow-x:auto;overscroll-behavior-x:contain}
+  @media(max-width:1200px){.purchase-invoice-page .pi-kpis{grid-template-columns:repeat(3,minmax(0,1fr))}.purchase-invoice-page .pi-filters{grid-template-columns:1fr 1fr}}
+  @media(max-width:700px){.purchase-invoice-page .pi-shell{padding:10px}.purchase-invoice-page .pi-header{align-items:flex-start;flex-direction:column}.purchase-invoice-page .pi-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.purchase-invoice-page .pi-filters{grid-template-columns:1fr}.purchase-invoice-page .pi-header .btn{width:100%}}
 `;
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -360,7 +363,7 @@ function AdminPurchaseInvoiceManager() {
   ];
 
   return (
-    <div style={{ minHeight:"100%",background:C.bg,fontFamily:"'DM Sans',sans-serif",color:C.text,overflowX:"hidden" }}>
+    <div className="purchase-invoice-page" style={{ width:"100%",minWidth:0,maxWidth:"100%",minHeight:"100%",background:C.bg,fontFamily:"'DM Sans',sans-serif",color:C.text,overflow:"hidden" }}>
       <link href="https://fonts.googleapis.com/css2?family=Crimson+Pro:ital,wght@0,300;0,400;0,600;1,400&family=DM+Mono:wght@400;500&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet" />
       <style>{GLOBAL_CSS}</style>
 
@@ -368,7 +371,7 @@ function AdminPurchaseInvoiceManager() {
       {toast && (
         <div style={{ position:"fixed",top:20,right:20,zIndex:9999,padding:"12px 20px",
           borderRadius:8,fontSize:13,fontWeight:600,fontFamily:"'DM Sans',sans-serif",
-          animation:"fadeUp .2s ease",
+          animation:"piFadeUp .2s ease",
           background:toast.type==="err"?"#FEF2F2":"#F0FDF4",
           color:toast.type==="err"?"#991B1B":"#166534",
           border:`1px solid ${toast.type==="err"?"#FECACA":"#BBF7D0"}`,
@@ -475,7 +478,7 @@ function AdminPurchaseInvoiceManager() {
 
             {/* Table */}
             <div style={{ background:C.card,border:`1px solid ${C.border}`,borderRadius:12,overflow:"hidden",boxShadow:"0 1px 8px rgba(0,0,0,.05)" }}>
-              <div style={{ overflowX:"auto" }}>
+              <div className="pi-table-wrap">
                 <table style={{ width:"100%",borderCollapse:"collapse",minWidth:1180 }}>
                   <thead style={{ background:"#F8FAFC",borderBottom:`1px solid ${C.border}` }}>
                     <tr>
@@ -507,7 +510,7 @@ function AdminPurchaseInvoiceManager() {
                           onClick={()=>{setActive(inv);setModal("view");}}
                           style={{ borderBottom:`1px solid ${C.border}`,
                             background:noContact?"#FFFBEB":i%2===0?C.card:C.surface,
-                            animation:`fadeUp .2s ease ${i*0.02}s both` }}>
+                            animation:`piFadeUp .2s ease ${i*0.02}s both` }}>
                           <td style={{ padding:"10px 12px" }}>
                             <span style={{ fontFamily:"'DM Mono',monospace",fontSize:12,fontWeight:500,color:C.accent }}>{inv.invoiceNo||"—"}</span>
                           </td>
