@@ -24,6 +24,9 @@ import MsellerSidebar       from "./MsellerSidebar.jsx";
 import AddProduct           from "./MsellerAddProduct.jsx";
 import VendorPurchaseOrders from "./VendorPurchaseOrders.jsx";
 import VendorJobWork from "./VendorJobWork.jsx";
+import VendorRoleOperations from "./VendorRoleOperations.jsx";
+import VendorB2BTrade from "./VendorB2BTrade.jsx";
+import VendorB2BStock from "./VendorB2BStock.jsx";
 import MSellerDashboard     from "./MsellerDashboard.jsx";
 import MSellerCategory      from "./MsellerCategory.jsx";
 import MSellerProductList   from "./MsellerProductList.jsx";
@@ -159,6 +162,9 @@ const PAGE_TITLES = {
   "edit-product":   "Edit Product",
   "purchase-order": "Purchase Orders",
   "job-work":       "Job Work Orders",
+  "role-operations": "Business Operations",
+  "b2b-trade": "Vendor B2B Trade",
+  "b2b-stock": "Vendor B2B Stock",
   finance:          "Finance & Analytics",
   retailers:        "My Retailers",
   network:          "Business Network",
@@ -290,6 +296,9 @@ export default function MSeller() {
 
       case "purchase-order": return <VendorPurchaseOrders vendorName={vendorProfile?.name} />;
       case "job-work":       return <VendorJobWork />;
+      case "role-operations": return <VendorRoleOperations businessTypes={vendorProfile?.business_type || []} />;
+      case "b2b-trade": return <VendorB2BTrade />;
+      case "b2b-stock": return <VendorB2BStock />;
       case "purchase-invoice": return <PurchaseInvoice vendorMode />;
       case "finance":        return <VendorAnalytics />;
       case "retailers":      return <VendorRetailersTab />;

@@ -30,7 +30,7 @@ async def list_tenants_public():
     """
     tenants = []
     async for t in tenants_collection.find(
-        {"status": {"$ne": "suspended"}},
+        {"status": {"$ne": "suspended"}, "account_type": {"$ne": "single_store"}},
         {"_id": 0, "tenant_id": 1, "company_name": 1, "account_type": 1},
     ):
         if t.get("tenant_id"):

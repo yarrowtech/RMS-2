@@ -32,12 +32,15 @@ const NAV_ITEMS = [
   { key: "subscription",   label: "Subscription",      icon: Crown },
   { key: "whatsapp",       label: "WhatsApp",          icon: FaWhatsapp },
   { key: "product-list",   label: "Product List",      icon: Boxes },
+  { key: "role-operations", label: "Business Operations", icon: ClipboardList },
   { key: "purchase-order", label: "Purchase Orders",   icon: ClipboardList },
   { key: "job-work",       label: "Job Work Orders",    icon: Scissors },
   { key: "purchase-invoice", label: "Purchase Invoices", icon: ReceiptText },
   { key: "finance",        label: "Finance & Analytics", icon: ChartNoAxesCombined },
   { key: "retailers",      label: "My Retailers",      icon: Store },
   { key: "network",        label: "Business Network",  icon: Network },
+  { key: "b2b-trade",      label: "Vendor B2B Trade",  icon: Network },
+  { key: "b2b-stock",      label: "B2B Stock Ledger",  icon: Boxes },
   { key: "profile",        label: "Profile",           icon: UserCircle2 },
   { key: "help-support",   label: "Help & Support",    icon: HeadphonesIcon },
 ];
@@ -56,6 +59,19 @@ const ROLE_LABELS = {
   fabric_supplier: "Fabric supplier workspace",
   exporter: "Export partner workspace",
   job_worker: "Job-work workspace",
+};
+
+const ROLE_OPERATION_TYPES = new Set([
+  "wholesaler", "manufacturer", "fabric_supplier", "distributor", "exporter", "retailer",
+]);
+
+const ROLE_OPERATION_LABELS = {
+  wholesaler: "Wholesale Operations",
+  manufacturer: "Manufacturing Operations",
+  fabric_supplier: "Fabric Supply Operations",
+  distributor: "Distribution Operations",
+  exporter: "Export Operations",
+  retailer: "Retail Sourcing Operations",
 };
 
 function roleSpecificLabels(types) {
@@ -100,8 +116,14 @@ export default function MsellerSidebar({
   const roleLabels = roleSpecificLabels(selectedTypes);
   const workspaceLabel = ROLE_LABELS[selectedTypes[0]] || "Vendor workspace";
   const showProductTools = selectedTypes.length === 0 || selectedTypes.some((type) => PRODUCT_BUSINESS_TYPES.has(type));
+  const roleOperationType = ["fabric_supplier", "wholesaler", "manufacturer", "distributor", "exporter", "retailer"]
+    .find((type) => selectedTypes.includes(type));
+  const showRoleOperations = selectedTypes.some((type) => ROLE_OPERATION_TYPES.has(type));
   const visibleNavItems = NAV_ITEMS
     .filter((item) => item.key !== "job-work" || jobWorkEnabled)
+    .filter((item) => item.key !== "role-operations" || showRoleOperations)
+    .filter((item) => item.key !== "b2b-trade" || showProductTools)
+    .filter((item) => item.key !== "b2b-stock" || showProductTools)
     .filter((item) => !["catalogue", "product-list"].includes(item.key) || showProductTools)
     .map((item) => ({
       ...item,
@@ -109,6 +131,7 @@ export default function MsellerSidebar({
         : item.key === "product-list" ? roleLabels.productList
           : item.key === "purchase-order" ? roleLabels.orders
             : item.key === "purchase-invoice" ? roleLabels.invoices
+              : item.key === "role-operations" ? ROLE_OPERATION_LABELS[roleOperationType] || item.label
               : item.label,
     }));
 

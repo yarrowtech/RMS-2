@@ -1442,9 +1442,10 @@ async def register_vendor(request: Request):
         valid_tenant_count = await tenants_collection.count_documents({
             "tenant_id": {"$in": tenant_ids},
             "status": {"$ne": "suspended"},
+            "account_type": {"$ne": "single_store"},
         })
         if valid_tenant_count != len(tenant_ids):
-            raise HTTPException(status_code=400, detail="One or more selected retailers are unavailable.")
+            raise HTTPException(status_code=400, detail="One or more selected retailers are unavailable or are not eligible for vendor self-registration.")
 
     if identity:
         existing_link = await vendor_tenant_links_collection.find_one({

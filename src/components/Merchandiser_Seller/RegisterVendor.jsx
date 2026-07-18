@@ -461,7 +461,7 @@ const RegisterVendor = () => {
       try {
         const res  = await fetch(`${API_BASE_URL}/api/tenants/public`);
         const json = await res.json();
-        if (res.ok) setTenants(json.data || []);
+        if (res.ok) setTenants((json.data || []).filter((tenant) => tenant.account_type !== "single_store"));
       } catch {
         // Non-fatal — the dropdown will just show "no retailers available"
         // and the submit validation below will block submission until
@@ -723,7 +723,7 @@ const RegisterVendor = () => {
                           <span className="truncate">{t.company_name}</span>
                           <span className={`grid h-5 w-5 shrink-0 place-items-center rounded border text-xs ${selected ? "border-indigo-600 bg-indigo-600 text-white" : "border-slate-300 text-transparent"}`}>✓</span>
                         </span>
-                        <span className="mt-1 block text-[10px] font-medium uppercase tracking-wide text-slate-400">{t.account_type === "single_store" ? "Single store" : "Department retailer"}</span>
+                        <span className="mt-1 block text-[10px] font-medium uppercase tracking-wide text-slate-400">Retailer account</span>
                       </button>
                     );
                   })}

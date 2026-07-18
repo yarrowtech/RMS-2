@@ -57,6 +57,7 @@ from ..db import (
     catalogue_inquiries_collection,
     vendors_collection,
     vendor_tenant_links_collection,
+    vendor_role_operations_collection,
     tenants_collection,
 )
 from .deps import get_hq_tenant
@@ -413,6 +414,8 @@ async def search_vendor_catalogues(
     vendor_name:   Optional[str] = None,
     material:      Optional[str] = None,
     audience:      Optional[str] = None,
+    capability:    Optional[str] = None,
+    service_region: Optional[str] = None,
     min_price:     Optional[float] = None,
     max_price:     Optional[float] = None,
     ctx: dict = Depends(get_hq_tenant),
@@ -477,6 +480,47 @@ async def search_vendor_catalogues(
     if not vendor_map:
         return {"status": "success", "count": 0, "data": []}
 
+    # Specialist profiles are separate from catalogue items. They filter
+    # discovery but deliberately keep the existing catalogue → inquiry → PO
+    # response shape and flow unchanged.
+    profile_query: dict = {"vendor_id": {"$in": list(vendor_map.keys())}}
+    profile_filters = []
+    if capability and capability.strip():
+        capability_pattern = {"$regex": capability.strip(), "$options": "i"}
+        profile_filters.append({"$or": [
+            {"data.fabric_types": capability_pattern}, {"data.compositions": capability_pattern},
+            {"data.shade_colours": capability_pattern}, {"data.services": capability_pattern},
+            {"data.quality_standards": capability_pattern}, {"data.bulk_price_note": capability_pattern},
+            {"data.stock_availability": capability_pattern}, {"data.brands": capability_pattern},
+            {"data.sales_channels": capability_pattern}, {"data.export_countries": capability_pattern},
+            {"data.incoterms": capability_pattern}, {"data.currencies": capability_pattern},
+            {"data.export_documents": capability_pattern}, {"data.store_categories": capability_pattern},
+            {"data.seasonal_requirements": capability_pattern},
+        ]})
+    if service_region and service_region.strip():
+        region_pattern = {"$regex": service_region.strip(), "$options": "i"}
+        profile_filters.append({"$or": [
+            {"data.service_regions": region_pattern}, {"data.territories": region_pattern},
+            {"data.sourcing_regions": region_pattern}, {"data.delivery_locations": region_pattern},
+        ]})
+    if profile_filters:
+        profile_query["$and"] = profile_filters
+
+    vendor_operations: dict = {}
+    async for operation in vendor_role_operations_collection.find(profile_query, {"vendor_id": 1, "role": 1, "data": 1}):
+        vendor_operations.setdefault(operation["vendor_id"], []).append({
+            "role": operation.get("role", ""),
+            "data": operation.get("data", {}),
+        })
+
+    if profile_filters:
+        vendor_map = {
+            vendor_id: details for vendor_id, details in vendor_map.items()
+            if vendor_id in vendor_operations
+        }
+        if not vendor_map:
+            return {"status": "success", "count": 0, "data": []}
+
     item_query: dict = {"vendor_id": {"$in": list(vendor_map.keys())}, "active": True}
     text_filters = []
     for term in (category, material, audience):
@@ -499,6 +543,7 @@ async def search_vendor_catalogues(
         vinfo = vendor_map.get(item["vendor_id"], {})
         row["vendor_name"]    = vinfo.get("vendor_name", "")
         row["business_type"]  = vinfo.get("business_type", [])
+        row["supplier_operations"] = vendor_operations.get(item["vendor_id"], [])
         row["featured_badge"] = vinfo.get("featured_badge", False)
         row["_priority_rank"] = vinfo.get("priority_rank", 0)
         results.append(row)

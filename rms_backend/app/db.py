@@ -46,7 +46,14 @@ catalogue_inquiries_collection = db["catalogue_inquiries"]
 rfq_awards_collection        = db["rfq_awards"]
 procurement_notifications_collection = db["procurement_notifications"]
 vendor_subscriptions_collection = db["vendor_subscriptions"]
+vendor_role_operations_collection = db["vendor_role_operations"]
 business_connections_collection = db["business_connections"]
+vendor_b2b_rfqs_collection = db["vendor_b2b_rfqs"]
+vendor_b2b_orders_collection = db["vendor_b2b_orders"]
+vendor_b2b_receipts_collection = db["vendor_b2b_receipts"]
+vendor_b2b_invoices_collection = db["vendor_b2b_invoices"]
+vendor_b2b_stock_collection = db["vendor_b2b_stock"]
+vendor_b2b_stock_ledger_collection = db["vendor_b2b_stock_ledger"]
 vendor_tenant_links_collection = db["vendor_tenant_links"]
 
 # SUPERADMIN / PLATFORM COLLECTIONS 
@@ -82,6 +89,7 @@ async def ensure_procurement_indexes():
     await catalogue_inquiries_collection.create_index([("vendor_id", 1), ("status", 1), ("created_at", -1)], name="inq_vendor_status_created")
     await catalogue_inquiries_collection.create_index([("tenant_id", 1), ("comparison_group_id", 1)], name="inq_tenant_comparison")
     await vendor_catalogue_collection.create_index([("vendor_id", 1), ("active", 1)], name="catalog_vendor_active")
+    await vendor_role_operations_collection.create_index([("vendor_id", 1), ("role", 1)], unique=True, name="vendor_role_operations_unique")
     await vendor_catalogue_collection.create_index([("item_name", "text"), ("category", "text"), ("description", "text")], name="catalog_search_text")
     await rfq_awards_collection.create_index([("tenant_id", 1), ("idempotency_key", 1)], unique=True, name="award_tenant_idempotency")
     await rfq_awards_collection.create_index([("tenant_id", 1), ("status", 1), ("created_at", -1)], name="award_tenant_status")
@@ -91,6 +99,14 @@ async def ensure_procurement_indexes():
     await business_connections_collection.create_index("pair_key", unique=True, name="business_connection_pair")
     await business_connections_collection.create_index([("requester_vendor_id", 1), ("created_at", -1)], name="business_connection_outgoing")
     await business_connections_collection.create_index([("target_vendor_id", 1), ("status", 1), ("created_at", -1)], name="business_connection_incoming")
+    await vendor_b2b_rfqs_collection.create_index([("buyer_vendor_id", 1), ("created_at", -1)], name="vendor_b2b_rfq_buyer_created")
+    await vendor_b2b_rfqs_collection.create_index([("supplier_vendor_id", 1), ("status", 1), ("created_at", -1)], name="vendor_b2b_rfq_supplier_status")
+    await vendor_b2b_orders_collection.create_index([("buyer_vendor_id", 1), ("created_at", -1)], name="vendor_b2b_order_buyer_created")
+    await vendor_b2b_orders_collection.create_index([("supplier_vendor_id", 1), ("status", 1), ("created_at", -1)], name="vendor_b2b_order_supplier_status")
+    await vendor_b2b_invoices_collection.create_index([("buyer_vendor_id", 1), ("created_at", -1)], name="vendor_b2b_invoice_buyer_created")
+    await vendor_b2b_invoices_collection.create_index([("supplier_vendor_id", 1), ("created_at", -1)], name="vendor_b2b_invoice_supplier_created")
+    await vendor_b2b_stock_collection.create_index([("vendor_id", 1), ("item_key", 1), ("unit", 1)], unique=True, name="vendor_b2b_stock_vendor_item")
+    await vendor_b2b_stock_ledger_collection.create_index([("vendor_id", 1), ("created_at", -1)], name="vendor_b2b_stock_ledger_vendor_created")
     await finance_vouchers_collection.create_index([("tenant_id", 1), ("store_id", 1), ("created_at", -1)], name="finance_voucher_scope_created")
     await finance_vouchers_collection.create_index([("tenant_id", 1), ("voucher_type", 1), ("voucher_date", -1)], name="finance_voucher_type_date")
     await job_work_orders_collection.create_index([("tenant_id", 1), ("status", 1), ("created_at", -1)], name="job_work_tenant_status_created")

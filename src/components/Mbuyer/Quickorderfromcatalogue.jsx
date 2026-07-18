@@ -71,6 +71,13 @@ const BUSINESS_TYPES = [
 const today = () => new Date().toISOString().slice(0, 10);
 const EMPTY_ITEM = () => ({ description: "", quantity: "", rate: "", remarks: "" });
 
+function supplierHighlights(item) {
+  const values = (item.supplier_operations || []).flatMap((operation) =>
+    Object.values(operation.data || {}).flatMap((value) => Array.isArray(value) ? value : [value])
+  );
+  return [...new Set(values.map((value) => String(value || "").trim()).filter(Boolean))].slice(0, 3);
+}
+
 const STEP_LABELS = ["Search", "Request quotes", "Compare & pick", "Review & submit"];
 
 function StepHeader({ step }) {
@@ -172,6 +179,8 @@ export default function QuickOrderFromCatalogue() {
   const [businessType, setBusinessType] = useState("");
   const [vendorName, setVendorName] = useState("");
   const [materialFilter, setMaterialFilter] = useState("");
+  const [capabilityFilter, setCapabilityFilter] = useState("");
+  const [regionFilter, setRegionFilter] = useState("");
   const [audienceFilter, setAudienceFilter] = useState("");
   const [minPrice, setMinPrice] = useState("");
   const [maxPrice, setMaxPrice] = useState("");
@@ -210,6 +219,8 @@ export default function QuickOrderFromCatalogue() {
       if (businessType) params.set("business_type", businessType);
       if (vendorName.trim()) params.set("vendor_name", vendorName.trim());
       if (materialFilter.trim()) params.set("material", materialFilter.trim());
+      if (capabilityFilter.trim()) params.set("capability", capabilityFilter.trim());
+      if (regionFilter.trim()) params.set("service_region", regionFilter.trim());
       if (audienceFilter) params.set("audience", audienceFilter);
       if (minPrice) params.set("min_price", minPrice);
       if (maxPrice) params.set("max_price", maxPrice);
@@ -484,6 +495,8 @@ export default function QuickOrderFromCatalogue() {
                 <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
                   <input value={vendorName} onChange={e=>setVendorName(e.target.value)} placeholder="Vendor name" className="h-9 rounded-lg border border-slate-200 px-2.5 text-xs" />
                   <input value={materialFilter} onChange={e=>setMaterialFilter(e.target.value)} placeholder="Material" className="h-9 rounded-lg border border-slate-200 px-2.5 text-xs" />
+                  <input value={capabilityFilter} onChange={e=>setCapabilityFilter(e.target.value)} placeholder="Capability: cotton, FOB, embroidery" className="h-9 rounded-lg border border-slate-200 px-2.5 text-xs" />
+                  <input value={regionFilter} onChange={e=>setRegionFilter(e.target.value)} placeholder="Service region / territory" className="h-9 rounded-lg border border-slate-200 px-2.5 text-xs" />
                   <select value={audienceFilter} onChange={e=>setAudienceFilter(e.target.value)} className="h-9 rounded-lg border border-slate-200 bg-white px-2.5 text-xs"><option value="">All audiences</option><option>Men</option><option>Women</option><option>Kids</option><option>Unisex</option></select>
                   <input type="number" min="0" value={minPrice} onChange={e=>setMinPrice(e.target.value)} placeholder="Minimum price" className="h-9 rounded-lg border border-slate-200 px-2.5 text-xs" />
                   <input type="number" min="0" value={maxPrice} onChange={e=>setMaxPrice(e.target.value)} placeholder="Maximum price" className="h-9 rounded-lg border border-slate-200 px-2.5 text-xs" />
@@ -588,6 +601,7 @@ export default function QuickOrderFromCatalogue() {
                   <div className="grid grid-cols-2 gap-3 max-h-96 overflow-y-auto">
                     {results.map(item => {
                       const selected = selectedMap.has(item._id);
+                      const highlights = supplierHighlights(item);
                       return (
                         <button key={item._id} onClick={() => toggleItem(item)}
                           className={`text-left rounded-xl border overflow-hidden transition ${selected ? "border-indigo-500 ring-2 ring-indigo-100" : "border-slate-200"}`}>
@@ -607,6 +621,11 @@ export default function QuickOrderFromCatalogue() {
                               <p className="text-[10px] font-bold text-emerald-600 mt-0.5">
                                 ₹{item.price_range_min}–₹{item.price_range_max}
                               </p>
+                            )}
+                            {highlights.length > 0 && (
+                              <div className="mt-1 flex flex-wrap gap-1">
+                                {highlights.map((highlight) => <span key={highlight} className="rounded bg-teal-50 px-1.5 py-0.5 text-[9px] font-semibold text-teal-700">{highlight}</span>)}
+                              </div>
                             )}
                             {item.available_sizes?.length > 0 && (
                               <div className="flex flex-wrap gap-1 mt-1">
