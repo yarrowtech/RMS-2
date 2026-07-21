@@ -1,4 +1,4 @@
-﻿import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
+import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
 
 import React, { useState, useEffect, useCallback } from "react";
 import axios from "axios";
@@ -107,7 +107,7 @@ function ProfileCard({ profile }) {
   if (!profile) {
     return (
       <div className="flex h-64 items-center justify-center text-sm text-slate-400">
-        Loading profileâ€¦
+        Loading profile...
       </div>
     );
   }
@@ -123,8 +123,8 @@ function ProfileCard({ profile }) {
           <div className="space-y-2.5">
             <InfoRow icon={Building2} label="Business Name" value={profile.name} />
             <InfoRow icon={Mail}      label="Email"         value={profile.email} />
-            <InfoRow icon={Phone}     label="Mobile"        value={profile.contactMobile || "â€”"} />
-            <InfoRow icon={MapPin}    label="Address"       value={profile.address || "â€”"} />
+            <InfoRow icon={Phone}     label="Mobile"        value={profile.contactMobile || "-"} />
+            <InfoRow icon={MapPin}    label="Address"       value={profile.address || "-"} />
           </div>
         </div>
       </div>
@@ -136,7 +136,7 @@ function HelpCard() {
   const contacts = [
     { icon: Mail,  text: "support@rmshelpdesk.com" },
     { icon: Phone, text: "+91 1800 123 456" },
-    { icon: Clock, text: "Monâ€“Sat, 9 AM â€“ 6 PM" },
+    { icon: Clock, text: "Mon-Sat, 9 AM - 6 PM" },
   ];
   return (
     <div className="max-w-md">
@@ -427,7 +427,7 @@ export default function MSeller() {
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Searchâ€¦"
+              placeholder="Search..."
               className="w-full rounded-lg border border-slate-200 bg-slate-50 py-2 pl-9 pr-4 text-sm outline-none transition focus:border-teal-400 focus:bg-white focus:ring-2 focus:ring-teal-100"
             />
           </div>
