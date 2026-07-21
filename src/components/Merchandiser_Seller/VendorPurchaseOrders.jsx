@@ -1,4 +1,4 @@
-import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
+﻿import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
 
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import axios from "axios";
@@ -544,7 +544,7 @@ function POCard({
   const isWalkin  = po.vendor_type === "walkin" || po.status === "WalkinAccepted";
   const totalVal  = (po.items || []).reduce((s, i) => s + (i.quantity || 0) * (i.rate || 0), 0);
   const retailerName = po.retailer_name || po.ownerSite || "Retailer";
-  const buyerName = po.buyer_name || po.merchandiserName || "";
+  const buyerName = po.raised_by_name || po.buyer_name || po.merchandiserName || "";
   const buyerTeam = po.buyer_team || po.teamName || "";
 
   const prevExpanded = useRef(false);
@@ -622,10 +622,10 @@ function POCard({
               <span style={{
                 fontWeight: 700, color: T.violet, background: `${T.violet}12`,
                 borderRadius: 999, padding: "3px 8px",
-              }}>Raised by</span>
+              }}>Buyer</span>
               <span style={{ fontWeight: 700, color: T.navy }}>{retailerName}</span>
-              {buyerName && <span>· Buyer: {buyerName}</span>}
-              {buyerTeam && <span>· {buyerTeam}</span>}
+              {buyerName && <span>Raised by: {buyerName}</span>}
+              {buyerTeam && <span>{buyerTeam}</span>}
             </div>
           </div>
         </div>
@@ -1178,6 +1178,7 @@ export default function VendorPurchaseOrders({ vendorName }) {
           resolvedItems.push({
             product_sku: created.sku || "",
             barcode:     created.barcode || "",
+            vendorBarcode: it.vendorBarcode || created.barcode || "",
             description: it.description || it.new_product_name,
             quantity:    Number(it.quantity) || 0,
             rate:        Number(it.rate) || 0,
@@ -1186,6 +1187,7 @@ export default function VendorPurchaseOrders({ vendorName }) {
           resolvedItems.push({
             product_sku: it.product_sku || "",
             barcode:     it.barcode     || "",
+            vendorBarcode: it.vendorBarcode || it.barcode || "",
             description: it.description || "",
             quantity:    Number(it.quantity) || 0,
             rate:        Number(it.rate)     || 0,
@@ -1195,7 +1197,7 @@ export default function VendorPurchaseOrders({ vendorName }) {
 
       const token = getToken();
       const res = await axios.post(
-        `${APP_API_URL}/purchaseorders/${poId}/items`,
+        `${APP_API_URL}/api/vendors/purchaseorders/${poId}/items`,
         { items: resolvedItems },
         { headers: { Authorization: `Bearer ${token}` } }
       );
@@ -1214,7 +1216,7 @@ export default function VendorPurchaseOrders({ vendorName }) {
     try {
       const token = getToken();
       const res = await axios.post(
-        `${APP_API_URL}/purchaseorders/${poId}/submit`,
+        `${APP_API_URL}/api/vendors/purchaseorders/${poId}/submit`,
         {},
         { headers: { Authorization: `Bearer ${token}` } }
       );
@@ -1346,3 +1348,6 @@ export default function VendorPurchaseOrders({ vendorName }) {
     </>
   );
 }
+
+
+

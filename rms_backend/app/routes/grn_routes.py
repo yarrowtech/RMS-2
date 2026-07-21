@@ -35,6 +35,7 @@ def objid(v):
 
 class GRNItemModel(BaseModel):
     barcode:      str            = ""
+    vendorBarcode: str            = ""
     description:  str            = ""
     acceptedQty:  float          = 0
     inwardQty:    float          = 0
@@ -622,6 +623,7 @@ async def create_grn(grn: GRNModel, ctx: dict = Depends(get_receiving_tenant)):
         grn_dict["items"] = [
             {
                 "barcode":     (it.get("barcode") or "").strip(),
+                "vendorBarcode": (it.get("vendorBarcode") or "").strip(),
                 "description": it.get("description", ""),
                 "acceptedQty": float(it.get("acceptedQty", 0)),
                 "inwardQty":   float(it.get("acceptedQty", 0)),
@@ -643,6 +645,7 @@ async def create_grn(grn: GRNModel, ctx: dict = Depends(get_receiving_tenant)):
         for item in grn_dict["items"]:
             bc = (item.get("barcode") or "").strip()
             item["barcode"] = bc
+            item["vendorBarcode"] = (item.get("vendorBarcode") or "").strip()
             if bc in grc_item_map:
                 max_qty = grc_item_map[bc]
                 inward  = float(item.get("inwardQty", 0))
@@ -974,6 +977,7 @@ async def update_grn(grn_id: str, grn: GRNModel, ctx: dict = Depends(get_receivi
 
     for item in grn_dict.get("items", []):
         item["barcode"] = (item.get("barcode") or "").strip()
+        item["vendorBarcode"] = (item.get("vendorBarcode") or "").strip()
 
     compute_grn_totals(grn_dict)
     await grn_collection.update_one({"_id": ObjectId(grn_id), "tenant_id": ctx["tenant_id"]}, {"$set": grn_dict})

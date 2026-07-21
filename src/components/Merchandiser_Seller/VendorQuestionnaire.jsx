@@ -12,6 +12,7 @@ import {
 import toast from 'react-hot-toast';
 
 const API_BASE_URL = APP_API_URL;
+const QUESTIONNAIRE_TENANT_ID = new URLSearchParams(window.location.search).get("tenant") || "";
 
 const STEPS = [
   { id: 1, label: 'General',     icon: Building2,   color: '#6366f1' },
@@ -93,6 +94,7 @@ const VendorQuestion = () => {
       fd.append('paymentTerms',        formData.paymentTerms);
       fd.append('brandSection',        formData.brandSection);
       fd.append('onlineCollaboration', formData.onlineCollaboration);
+      if (QUESTIONNAIRE_TENANT_ID) fd.append('tenantId', QUESTIONNAIRE_TENANT_ID);
       formData.images.forEach(img => fd.append('images', img));
 
       const res  = await fetch(`${API_BASE_URL}/api/vendors/questionnaire`, { method: 'POST', body: fd });

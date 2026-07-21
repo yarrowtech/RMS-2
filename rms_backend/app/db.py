@@ -85,6 +85,7 @@ style_bom_plans_collection = db["style_bom_plans"]
 
 async def ensure_procurement_indexes():
     """Create the indexes required by catalogue/RFQ hot paths and idempotency."""
+    await purchaseorders_collection.create_index([("tenant_id", 1), ("orderNo", 1)], name="po_tenant_number")
     await catalogue_inquiries_collection.create_index([("tenant_id", 1), ("status", 1), ("created_at", -1)], name="inq_tenant_status_created")
     await catalogue_inquiries_collection.create_index([("vendor_id", 1), ("status", 1), ("created_at", -1)], name="inq_vendor_status_created")
     await catalogue_inquiries_collection.create_index([("tenant_id", 1), ("comparison_group_id", 1)], name="inq_tenant_comparison")

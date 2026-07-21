@@ -283,7 +283,7 @@ async def create_fabric_purchase_order(plan_id: str, payload: dict, ctx: dict = 
     po = {
         "_id": ObjectId(),
         "tenant_id": ctx["tenant_id"],
-        "orderNo": await generate_po_number(),
+        "orderNo": await generate_po_number(ctx["tenant_id"]),
         "orderDate": str(payload.get("order_date") or now.date().isoformat()),
         "vendorName": vendor_name,
         "vendor_id": ObjectId(vendor_id),

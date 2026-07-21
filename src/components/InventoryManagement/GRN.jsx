@@ -1015,6 +1015,7 @@ const today  = () => new Date().toISOString().slice(0, 10);
 /* ─── Empty item scaffold ─────────────────────────────────────── */
 const EMPTY_ITEM = (grcItem = {}) => ({
   barcode:     grcItem.barcode      || "",
+  vendorBarcode: grcItem.vendorBarcode || "",
   description: grcItem.description  || "",
   acceptedQty: grcItem.acceptedQty  || 0,   // read-only — sourced from GRC
   inwardQty:   grcItem.acceptedQty  || "",   // user edits this

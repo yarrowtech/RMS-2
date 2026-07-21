@@ -1,4 +1,4 @@
-import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
+﻿import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
 
 // import React, { useEffect, useState } from "react";
 // import axios from "axios";
@@ -8,12 +8,8 @@ import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
 
 // import AddProduct from "./MsellerAddProduct"; 
 
-// // ─── Helpers ───
-// const fmt = (n) => {
-//   const num = parseFloat(n);
-//   return isNaN(num) ? "—" : `₹${num.toFixed(2)}`;
-// };
-
+// // â”€â”€â”€ Helpers â”€â”€â”€
+// Legacy formatter (inactive copy).
 // const calcMargin = (cp, sp) => {
 //   const c = parseFloat(cp),
 //     s = parseFloat(sp);
@@ -21,9 +17,9 @@ import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
 //   return (((s - c) / c) * 100).toFixed(1);
 // };
 
-// // ─────────────────────────────────────────
+// // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // // Helper: get token from localStorage
-// // ─────────────────────────────────────────
+// // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 // const getAuthHeaders = () => {
 //   const token =
@@ -36,10 +32,10 @@ import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
 //     : {};
 // };
 
-// // ─────────────────────────────────────────
+// // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // // Helper: is the current user a vendor?
 // // Decodes the JWT payload without a library.
-// // ─────────────────────────────────────────
+// // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // const getTokenPayload = () => {
 //   try {
 //     const token = localStorage.getItem("token");
@@ -56,9 +52,9 @@ import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
 //   return !!(p && p.vendor_id);
 // };
 
-// // ─────────────────────────────────────────
-// // PriceCard — for simple products
-// // ─────────────────────────────────────────
+// // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// // PriceCard â€” for simple products
+// // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // function PriceCard({ label, value, type }) {
 //   const styles = {
 //     cp: "bg-slate-50 border-slate-200 text-slate-700",
@@ -76,9 +72,9 @@ import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
 //   );
 // }
 
-// // ─────────────────────────────────────────
-// // VariantRow — single row in variants table
-// // ─────────────────────────────────────────
+// // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// // VariantRow â€” single row in variants table
+// // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // function VariantRow({ v, variantType }) {
 //   const margin = calcMargin(v.cost_price, v.selling_price);
 //   const marginClass =
@@ -94,20 +90,20 @@ import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
 //     <tr className="border-b border-slate-100 transition hover:bg-slate-50">
 //       <td className="px-3 py-3">
 //         <span className="inline-block rounded border border-indigo-200 bg-indigo-50 px-2 py-1 font-mono text-[10px] font-medium text-indigo-700">
-//           {v.sku || "—"}
+//           {v.sku || "â€”"}
 //         </span>
 //       </td>
 
 //       <td className="px-3 py-3">
 //         <span className="inline-block rounded border border-slate-200 bg-slate-100 px-2 py-1 font-mono text-[10px] text-slate-500">
-//           {v.barcode || "—"}
+//           {v.barcode || "â€”"}
 //         </span>
 //       </td>
 
 //       {variantType === "size_color" && (
 //         <td className="px-3 py-3">
 //           <span className="inline-block rounded border border-indigo-200 bg-indigo-50 px-2 py-1 font-mono text-[10px] font-semibold text-indigo-700">
-//             {v.size_label || "—"}
+//             {v.size_label || "â€”"}
 //           </span>
 //           {v.size_value && (
 //             <span className="ml-1 font-mono text-[10px] text-slate-400">
@@ -123,7 +119,7 @@ import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
 //           style={{ backgroundColor: v.color || "transparent" }}
 //         />
 //         <span className="align-middle font-mono text-[10px] text-slate-500">
-//           {v.color || "—"}
+//           {v.color || "â€”"}
 //         </span>
 //       </td>
 
@@ -157,7 +153,7 @@ import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
 //             {margin}%
 //           </span>
 //         ) : (
-//           <span className="text-slate-300">—</span>
+//           <span className="text-slate-300">â€”</span>
 //         )}
 //       </td>
 
@@ -174,14 +170,14 @@ import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
 //   );
 // }
 
-// // ─────────────────────────────────────────
+// // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // // Product Detail Modal
-// // ─────────────────────────────────────────
+// // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // function ProductModal({ product, onClose, onEdit, onInvView, onInvEdit, isVendor }) {
 //   const [lightbox, setLightbox] = useState(null);
 
-//   const sku = product.sku || product.base_sku || "—";
-//   const barcode = product.barcode || product.base_barcode || "—";
+//   const sku = product.sku || product.base_sku || "â€”";
+//   const barcode = product.barcode || product.base_barcode || "â€”";
 //   const images = product.images || [];
 
 //   const handleOverlayClick = (e) => {
@@ -206,7 +202,7 @@ import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
 //               </span>
 
 //               <span className="rounded border border-slate-200 bg-slate-100 px-2.5 py-1 font-mono text-[11px] text-slate-500">
-//                 🔖 {barcode}
+//                 ðŸ”– {barcode}
 //               </span>
 
 //               {product.has_variants && (
@@ -223,16 +219,16 @@ import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
 //             className="shrink-0 rounded-lg border border-slate-200 bg-slate-100 px-3 py-1.5 text-sm text-slate-500 transition hover:border-red-200 hover:bg-red-50 hover:text-red-700"
 //             onClick={onClose}
 //           >
-//             ✕
+//             âœ•
 //           </button>
 //         </div>
 
 //         <div className="flex-1 overflow-y-auto px-5 py-5 sm:px-6">
 //           <div className="mb-5 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
 //             {[
-//               ["Division", product.division || "—"],
-//               ["Section", product.section || "—"],
-//               ["Department", product.department || "—"],
+//               ["Division", product.division || "â€”"],
+//               ["Section", product.section || "â€”"],
+//               ["Department", product.department || "â€”"],
 //               [
 //                 "Created",
 //                 product.created_at
@@ -243,7 +239,7 @@ import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
 //                       month: "short",
 //                       year: "numeric",
 //                     })
-//                   : "—",
+//                   : "â€”",
 //               ],
 //             ].map(([label, val]) => (
 //               <div
@@ -296,10 +292,10 @@ import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
 //                     <span>{m}%</span>
 //                     <span className="rounded-full bg-black/5 px-2 py-0.5 text-[10px]">
 //                       {isLoss
-//                         ? "⚠ Loss"
+//                         ? "âš  Loss"
 //                         : parseFloat(m) >= 20
-//                         ? "✓ Healthy"
-//                         : "↑ Low"}
+//                         ? "âœ“ Healthy"
+//                         : "â†‘ Low"}
 //                     </span>
 //                   </div>
 //                 );
@@ -313,7 +309,7 @@ import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
 //               <div className="mb-5 flex flex-wrap items-center gap-3 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-[13px] text-blue-700">
 //                 <span>Stock</span>
 //                 <b className="font-mono">{product.quantity ?? 0}</b>
-//                 <span className="text-[11px] text-slate-400">·</span>
+//                 <span className="text-[11px] text-slate-400">Â·</span>
 //                 <span>Unit</span>
 //                 <b className="font-mono">{product.unit || "pcs"}</b>
 //               </div>
@@ -399,13 +395,13 @@ import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
 //                           Color
 //                         </th>
 //                         <th className="px-3 py-3 text-left text-[10px] font-semibold uppercase tracking-[0.8px] text-white">
-//                           Cost (₹)
+//                           Cost (â‚¹)
 //                         </th>
 //                         <th className="px-3 py-3 text-left text-[10px] font-semibold uppercase tracking-[0.8px] text-white">
-//                           MRP (₹)
+//                           MRP (â‚¹)
 //                         </th>
 //                         <th className="px-3 py-3 text-left text-[10px] font-semibold uppercase tracking-[0.8px] text-white">
-//                           Selling (₹)
+//                           Selling (â‚¹)
 //                         </th>
 //                         <th className="px-3 py-3 text-left text-[10px] font-semibold uppercase tracking-[0.8px] text-white">
 //                           Margin
@@ -440,24 +436,24 @@ import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
 //             className="min-w-[120px] flex-1 rounded-xl bg-gradient-to-r from-indigo-600 to-indigo-500 px-4 py-2.5 text-[13px] font-semibold text-white shadow-md transition hover:-translate-y-[1px] hover:shadow-lg"
 //             onClick={onEdit}
 //           >
-//             ✏ Edit Product
+//             âœ Edit Product
 //           </button>
 
-//           {/* Inventory buttons hidden for vendors — they don't own inventory routes */}
+//           {/* Inventory buttons hidden for vendors â€” they don't own inventory routes */}
 //           {!isVendor && (
 //             <>
 //               <button
 //                 className="min-w-[120px] flex-1 rounded-xl border border-blue-200 bg-blue-50 px-4 py-2.5 text-[13px] font-semibold text-blue-700 transition hover:bg-blue-100"
 //                 onClick={onInvView}
 //               >
-//                 📦 View Inventory
+//                 ðŸ“¦ View Inventory
 //               </button>
 
 //               <button
 //                 className="min-w-[120px] flex-1 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-[13px] font-semibold text-emerald-700 transition hover:bg-emerald-100"
 //                 onClick={onInvEdit}
 //               >
-//                 ⚙ Edit Inventory
+//                 âš™ Edit Inventory
 //               </button>
 //             </>
 //           )}
@@ -473,7 +469,7 @@ import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
 //             className="absolute right-4 top-4 border-none bg-transparent text-[28px] text-white opacity-70 transition hover:opacity-100"
 //             onClick={() => setLightbox(null)}
 //           >
-//             ✕
+//             âœ•
 //           </button>
 //           <img
 //             src={lightbox}
@@ -487,9 +483,9 @@ import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
 //   );
 // }
 
-// // ─────────────────────────────────────────
+// // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // // Main ProductList
-// // ─────────────────────────────────────────
+// // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // export default function ProductList({
 //   embedded = false,
 //   onAddProduct,
@@ -546,7 +542,7 @@ import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
 //       });
 //       fetchProducts();
 //     } catch {
-//       alert("❌ Failed to delete product");
+//       alert("âŒ Failed to delete product");
 //     }
 //   };
 
@@ -568,7 +564,7 @@ import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
 //         <div className="shrink-0 mb-6 flex flex-col gap-4 rounded-2xl border border-white/30 bg-white/70 p-4 shadow-[0_8px_24px_rgba(79,70,229,0.08)] backdrop-blur-xl sm:flex-row sm:items-center sm:p-5">
 //           <div className="flex min-w-0 items-center gap-3.5">
 //             <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-600 to-indigo-500 text-[20px] text-white shadow-md">
-//               📦
+//               ðŸ“¦
 //             </div>
 
 //             <div className="min-w-0">
@@ -583,10 +579,10 @@ import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
 //         </div>
 
 //         <div className="shrink-0 mb-5 flex w-full max-w-[420px] items-center gap-2 rounded-xl border border-white/30 bg-white/70 px-4 py-2.5 shadow-sm backdrop-blur-xl transition focus-within:border-indigo-500 focus-within:ring-4 focus-within:ring-indigo-100">
-//           <span className="shrink-0 text-[14px] text-slate-900">🔍</span>
+//           <span className="shrink-0 text-[14px] text-slate-900">ðŸ”</span>
 //           <input
 //             type="text"
-//             placeholder="Search by name, SKU, barcode, division…"
+//             placeholder="Search by name, SKU, barcode, divisionâ€¦"
 //             value={search}
 //             onChange={(e) => setSearch(e.target.value)}
 //             className="w-full border-none bg-transparent text-[13px] text-slate-900 outline-none placeholder:text-slate-600"
@@ -596,7 +592,7 @@ import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
 //               onClick={() => setSearch("")}
 //               className="border-none bg-transparent text-[14px] text-slate-600"
 //             >
-//               ✕
+//               âœ•
 //             </button>
 //           )}
 //         </div>
@@ -634,14 +630,14 @@ import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
 //                 {loading ? (
 //                   <tr>
 //                     <td colSpan={7} className="px-5 py-14 text-center text-slate-400">
-//                       <div className="mb-3 text-[40px] opacity-40">⏳</div>
-//                       <p className="text-[14px] font-medium">Loading products…</p>
+//                       <div className="mb-3 text-[40px] opacity-40">â³</div>
+//                       <p className="text-[14px] font-medium">Loading productsâ€¦</p>
 //                     </td>
 //                   </tr>
 //                 ) : filtered.length === 0 ? (
 //                   <tr>
 //                     <td colSpan={7} className="px-5 py-14 text-center text-slate-400">
-//                       <div className="mb-3 text-[40px] opacity-40">📭</div>
+//                       <div className="mb-3 text-[40px] opacity-40">ðŸ“­</div>
 //                       <p className="text-[14px] font-medium">
 //                         {search ? "No results found" : "No products yet"}
 //                       </p>
@@ -649,7 +645,7 @@ import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
 //                   </tr>
 //                 ) : (
 //                   filtered.map((p, i) => {
-//                     const sku = p.sku || p.base_sku || "—";
+//                     const sku = p.sku || p.base_sku || "â€”";
 //                     const images = p.images || [];
 
 //                     return (
@@ -675,12 +671,12 @@ import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
 //                         </td>
 
 //                         <td className="px-4 py-3.5 align-middle font-medium text-slate-700">
-//                           {p.division || "—"}
+//                           {p.division || "â€”"}
 //                         </td>
 
 //                         <td className="px-4 py-3.5 align-middle">
 //                           <p className="font-medium text-slate-700">
-//                             {p.section || "—"}
+//                             {p.section || "â€”"}
 //                           </p>
 //                           {p.department && (
 //                             <p className="mt-0.5 text-[11px] leading-5 text-slate-400">
@@ -724,7 +720,7 @@ import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
 //                               </div>
 //                             )}
 //                             {images.length === 0 && (
-//                               <span className="text-[11px] text-slate-300">—</span>
+//                               <span className="text-[11px] text-slate-300">â€”</span>
 //                             )}
 //                           </div>
 //                         </td>
@@ -735,21 +731,21 @@ import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
 //                               className="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-[12px] font-semibold text-indigo-700 transition hover:bg-indigo-100"
 //                               onClick={() => setSelectedProduct(p)}
 //                             >
-//                               👁 View
+//                               ðŸ‘ View
 //                             </button>
 
 //                             <button
 //                               className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 text-[12px] font-semibold text-blue-700 transition hover:bg-blue-100"
 //                               onClick={() => handleEdit(p)}
 //                             >
-//                               ✏ Edit
+//                               âœ Edit
 //                             </button>
 
 //                             <button
 //                               className="rounded-lg border border-red-200 bg-red-50 px-2.5 py-1.5 text-[12px] font-semibold text-red-700 transition hover:bg-red-100"
 //                               onClick={() => deleteProduct(p)}
 //                             >
-//                               🗑
+//                               ðŸ—‘
 //                             </button>
 //                           </div>
 //                         </td>
@@ -765,7 +761,7 @@ import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
 //         {selectedProduct && (
 //           <ProductModal
 //             product={selectedProduct}
-//             isVendor={vendor}
+//
 //             onClose={() => setSelectedProduct(null)}
 //             onEdit={() => {
 //               handleEdit(selectedProduct);
@@ -796,10 +792,10 @@ import AddProduct from "./MsellerAddProduct"; // adjust path if AddProduct.jsx l
 
 const API_BASE = `${APP_API_URL}`;
 
-// ─── Helpers ───
+// â”€â”€â”€ Helpers â”€â”€â”€
 const fmt = (n) => {
   const num = parseFloat(n);
-  return isNaN(num) ? "—" : `₹${num.toFixed(2)}`;
+  return isNaN(num) ? "Not set" : `${String.fromCharCode(0x20B9)}${num.toFixed(2)}`;
 };
 
 const calcMargin = (cp, sp) => {
@@ -809,9 +805,9 @@ const calcMargin = (cp, sp) => {
   return (((s - c) / c) * 100).toFixed(1);
 };
 
-// ─────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Helper: get token from localStorage
-// ─────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const getAuthHeaders = () => {
   const token =
@@ -824,10 +820,10 @@ const getAuthHeaders = () => {
     : {};
 };
 
-// ─────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Helper: is the current user a vendor?
 // Decodes the JWT payload without a library.
-// ─────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const getTokenPayload = () => {
   try {
     const token = localStorage.getItem("token");
@@ -844,9 +840,9 @@ const isVendorUser = () => {
   return !!(p && p.vendor_id);
 };
 
-// ─────────────────────────────────────────
-// PriceCard — for simple products
-// ─────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// PriceCard â€” for simple products
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 function PriceCard({ label, value, type }) {
   const styles = {
     cp: "bg-slate-50 border-slate-200 text-slate-700",
@@ -864,9 +860,9 @@ function PriceCard({ label, value, type }) {
   );
 }
 
-// ─────────────────────────────────────────
-// VariantRow — single row in variants table
-// ─────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// VariantRow â€” single row in variants table
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 function VariantRow({ v, variantType }) {
   const margin = calcMargin(v.cost_price, v.selling_price);
   const marginClass =
@@ -882,20 +878,20 @@ function VariantRow({ v, variantType }) {
     <tr className="border-b border-slate-100 transition hover:bg-slate-50">
       <td className="px-3 py-3">
         <span className="inline-block rounded border border-indigo-200 bg-indigo-50 px-2 py-1 font-mono text-[10px] font-medium text-indigo-700">
-          {v.sku || "—"}
+          {v.sku || "â€”"}
         </span>
       </td>
 
       <td className="px-3 py-3">
         <span className="inline-block rounded border border-slate-200 bg-slate-100 px-2 py-1 font-mono text-[10px] text-slate-500">
-          {v.barcode || "—"}
+          {v.barcode || "â€”"}
         </span>
       </td>
 
       {variantType === "size_color" && (
         <td className="px-3 py-3">
           <span className="inline-block rounded border border-indigo-200 bg-indigo-50 px-2 py-1 font-mono text-[10px] font-semibold text-indigo-700">
-            {v.size_label || "—"}
+            {v.size_label || "â€”"}
           </span>
           {v.size_value && (
             <span className="ml-1 font-mono text-[10px] text-slate-400">
@@ -911,7 +907,7 @@ function VariantRow({ v, variantType }) {
           style={{ backgroundColor: v.color || "transparent" }}
         />
         <span className="align-middle font-mono text-[10px] text-slate-500">
-          {v.color || "—"}
+          {v.color || "â€”"}
         </span>
       </td>
 
@@ -945,7 +941,7 @@ function VariantRow({ v, variantType }) {
             {margin}%
           </span>
         ) : (
-          <span className="text-slate-300">—</span>
+          <span className="text-slate-300">â€”</span>
         )}
       </td>
 
@@ -962,14 +958,14 @@ function VariantRow({ v, variantType }) {
   );
 }
 
-// ─────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Product Detail Modal
-// ─────────────────────────────────────────
-function ProductModal({ product, onClose, onEdit, onInvView, onInvEdit, isVendor }) {
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+function ProductModal({ product, onClose, onEdit }) {
   const [lightbox, setLightbox] = useState(null);
 
-  const sku = product.sku || product.base_sku || "—";
-  const barcode = product.barcode || product.base_barcode || "—";
+  const sku = product.sku || product.base_sku || "Not available";
+  const barcode = product.barcode || product.base_barcode || "Not available";
   const images = product.images || [];
 
   const handleOverlayClick = (e) => {
@@ -993,8 +989,7 @@ function ProductModal({ product, onClose, onEdit, onInvView, onInvEdit, isVendor
                 {sku}
               </span>
 
-              <span className="rounded border border-slate-200 bg-slate-100 px-2.5 py-1 font-mono text-[11px] text-slate-500">
-                🔖 {barcode}
+              <span className="rounded border border-slate-200 bg-slate-100 px-2.5 py-1 font-mono text-[11px] text-slate-500">Barcode: {barcode}
               </span>
 
               {product.has_variants && (
@@ -1010,44 +1005,22 @@ function ProductModal({ product, onClose, onEdit, onInvView, onInvEdit, isVendor
           <button
             className="shrink-0 rounded-lg border border-slate-200 bg-slate-100 px-3 py-1.5 text-sm text-slate-500 transition hover:border-red-200 hover:bg-red-50 hover:text-red-700"
             onClick={onClose}
-          >
-            ✕
-          </button>
+          >Close</button>
         </div>
 
         <div className="flex-1 overflow-y-auto px-5 py-5 sm:px-6">
-          <div className="mb-5 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            {[
-              ["Division", product.division || "—"],
-              ["Section", product.section || "—"],
-              ["Department", product.department || "—"],
-              [
-                "Created",
-                product.created_at
-                  ? new Date(
-                      product.created_at.$date || product.created_at
-                    ).toLocaleDateString("en-IN", {
-                      day: "2-digit",
-                      month: "short",
-                      year: "numeric",
-                    })
-                  : "—",
-              ],
-            ].map(([label, val]) => (
-              <div
-                key={label}
-                className="rounded-xl border border-slate-200 bg-slate-50 p-3"
-              >
-                <p className="mb-1 text-[9px] font-bold uppercase tracking-[1px] text-slate-400">
-                  {label}
-                </p>
-                <p className="break-words text-[13px] font-semibold text-slate-900">
-                  {val}
-                </p>
-              </div>
-            ))}
+          <div className="mb-5 flex flex-wrap items-center gap-2 text-[12px] text-slate-500">
+            <span className="font-semibold text-slate-700">Created</span>
+            <span className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 font-medium text-slate-600">
+              {product.created_at
+                ? new Date(product.created_at.$date || product.created_at).toLocaleDateString("en-IN", {
+                    day: "2-digit",
+                    month: "short",
+                    year: "numeric",
+                  })
+                : "Not available"}
+            </span>
           </div>
-
           {!product.has_variants && (
             <>
               <span className="mb-2 block text-[10px] font-bold uppercase tracking-[2px] text-indigo-700">
@@ -1084,10 +1057,10 @@ function ProductModal({ product, onClose, onEdit, onInvView, onInvEdit, isVendor
                     <span>{m}%</span>
                     <span className="rounded-full bg-black/5 px-2 py-0.5 text-[10px]">
                       {isLoss
-                        ? "⚠ Loss"
+                        ? "Loss"
                         : parseFloat(m) >= 20
-                        ? "✓ Healthy"
-                        : "↑ Low"}
+                        ? "Healthy"
+                        : "Low"}
                     </span>
                   </div>
                 );
@@ -1101,7 +1074,7 @@ function ProductModal({ product, onClose, onEdit, onInvView, onInvEdit, isVendor
               <div className="mb-5 flex flex-wrap items-center gap-3 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-[13px] text-blue-700">
                 <span>Stock</span>
                 <b className="font-mono">{product.quantity ?? 0}</b>
-                <span className="text-[11px] text-slate-400">·</span>
+                <span className="text-[11px] text-slate-400">|</span>
                 <span>Unit</span>
                 <b className="font-mono">{product.unit || "pcs"}</b>
               </div>
@@ -1187,13 +1160,13 @@ function ProductModal({ product, onClose, onEdit, onInvView, onInvEdit, isVendor
                           Color
                         </th>
                         <th className="px-3 py-3 text-left text-[10px] font-semibold uppercase tracking-[0.8px] text-white">
-                          Cost (₹)
+                          Cost (INR)
                         </th>
                         <th className="px-3 py-3 text-left text-[10px] font-semibold uppercase tracking-[0.8px] text-white">
-                          MRP (₹)
+                          MRP (INR)
                         </th>
                         <th className="px-3 py-3 text-left text-[10px] font-semibold uppercase tracking-[0.8px] text-white">
-                          Selling (₹)
+                          Selling (INR)
                         </th>
                         <th className="px-3 py-3 text-left text-[10px] font-semibold uppercase tracking-[0.8px] text-white">
                           Margin
@@ -1227,28 +1200,8 @@ function ProductModal({ product, onClose, onEdit, onInvView, onInvEdit, isVendor
           <button
             className="min-w-[120px] flex-1 rounded-xl bg-gradient-to-r from-indigo-600 to-indigo-500 px-4 py-2.5 text-[13px] font-semibold text-white shadow-md transition hover:-translate-y-[1px] hover:shadow-lg"
             onClick={onEdit}
-          >
-            ✏ Edit Product
-          </button>
+          >Edit Product</button>
 
-          {/* Inventory buttons hidden for vendors — they don't own inventory routes */}
-          {!isVendor && (
-            <>
-              <button
-                className="min-w-[120px] flex-1 rounded-xl border border-blue-200 bg-blue-50 px-4 py-2.5 text-[13px] font-semibold text-blue-700 transition hover:bg-blue-100"
-                onClick={onInvView}
-              >
-                📦 View Inventory
-              </button>
-
-              <button
-                className="min-w-[120px] flex-1 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-[13px] font-semibold text-emerald-700 transition hover:bg-emerald-100"
-                onClick={onInvEdit}
-              >
-                ⚙ Edit Inventory
-              </button>
-            </>
-          )}
         </div>
       </div>
 
@@ -1259,9 +1212,8 @@ function ProductModal({ product, onClose, onEdit, onInvView, onInvEdit, isVendor
         >
           <button
             className="absolute right-4 top-4 border-none bg-transparent text-[28px] text-white opacity-70 transition hover:opacity-100"
-            onClick={() => setLightbox(null)}
-          >
-            ✕
+            onClick={() => setLightbox(null)}>
+            Close
           </button>
           <img
             src={lightbox}
@@ -1275,9 +1227,9 @@ function ProductModal({ product, onClose, onEdit, onInvView, onInvEdit, isVendor
   );
 }
 
-// ─────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Add Product Modal Wrapper
-// ─────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 function AddProductModal({ onClose, onSuccess }) {
   const handleOverlayClick = (e) => {
     if (e.target === e.currentTarget) onClose();
@@ -1295,9 +1247,9 @@ function AddProductModal({ onClose, onSuccess }) {
   );
 }
 
-// ─────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Main ProductList
-// ─────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 export default function ProductList({
   embedded = false,
   onAddProduct,
@@ -1340,9 +1292,7 @@ export default function ProductList({
       !q ||
       p.product_name?.toLowerCase().includes(q) ||
       sku.includes(q) ||
-      barcode.includes(q) ||
-      p.division?.toLowerCase().includes(q) ||
-      p.section?.toLowerCase().includes(q)
+      barcode.includes(q)
     );
   });
 
@@ -1355,7 +1305,7 @@ export default function ProductList({
       });
       fetchProducts();
     } catch {
-      alert("❌ Failed to delete product");
+      alert("âŒ Failed to delete product");
     }
   };
 
@@ -1383,19 +1333,17 @@ export default function ProductList({
   };
 
   return (
-    <div className="h-full min-h-0 overflow-hidden bg-gradient-to-br from-indigo-300 via-purple-400 to-indigo-500 p-4 sm:p-5 lg:p-6">
-      <div className="mx-auto flex h-full min-h-0 w-full flex-col">
-        <div className="shrink-0 mb-6 flex flex-col gap-4 rounded-2xl border border-white/30 bg-white/70 p-4 shadow-[0_8px_24px_rgba(79,70,229,0.08)] backdrop-blur-xl sm:flex-row sm:items-center sm:justify-between sm:p-5">
+    <div className="h-full min-h-0 overflow-hidden bg-slate-50 p-4 sm:p-5 lg:p-6">
+      <div className="mx-auto flex h-full min-h-0 w-full max-w-[1600px] flex-col">
+        <div className="shrink-0 mb-5 flex flex-col gap-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:flex-row sm:items-center sm:justify-between sm:p-6">
           <div className="flex min-w-0 items-center gap-3.5">
-            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-600 to-indigo-500 text-[20px] text-white shadow-md">
-              📦
-            </div>
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-indigo-50 text-[20px] text-indigo-600 ring-1 ring-indigo-100">PL</div>
 
             <div className="min-w-0">
               <h1 className="text-[22px] font-extrabold leading-tight tracking-[-0.4px] text-slate-900 sm:text-[22px]">
                 My Product List
               </h1>
-              <p className="mt-0.5 text-[12px] text-slate-700">
+              <p className="mt-1 text-[12px] font-medium text-slate-500">
                 {products.length} product{products.length !== 1 ? "s" : ""} total
               </p>
             </div>
@@ -1404,17 +1352,17 @@ export default function ProductList({
           {/* NEW: Add Product button */}
           <button
             onClick={handleAddClick}
-            className="flex shrink-0 items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-indigo-700 to-indigo-500 px-5 py-2.5 text-sm font-semibold text-white shadow-md transition hover:-translate-y-[1px] hover:shadow-lg"
+            className="flex shrink-0 items-center justify-center gap-2 rounded-xl bg-indigo-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:-translate-y-[1px] hover:bg-indigo-700 hover:shadow-md"
           >
-            <span className="text-base">＋</span> Add Product
+            <span className="text-base">+</span> Add Product
           </button>
         </div>
 
-        <div className="shrink-0 mb-5 flex w-full max-w-[420px] items-center gap-2 rounded-xl border border-white/30 bg-white/70 px-4 py-2.5 shadow-sm backdrop-blur-xl transition focus-within:border-indigo-500 focus-within:ring-4 focus-within:ring-indigo-100">
-          <span className="shrink-0 text-[14px] text-slate-900">🔍</span>
+        <div className="shrink-0 mb-4 flex w-full max-w-[480px] items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm transition focus-within:border-indigo-500 focus-within:ring-4 focus-within:ring-indigo-50">
+          <span className="shrink-0 text-[14px] text-slate-900">Search</span>
           <input
             type="text"
-            placeholder="Search by name, SKU, barcode, division…"
+            placeholder="Search products, SKU or barcode…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="w-full border-none bg-transparent text-[13px] text-slate-900 outline-none placeholder:text-slate-600"
@@ -1424,15 +1372,15 @@ export default function ProductList({
               onClick={() => setSearch("")}
               className="border-none bg-transparent text-[14px] text-slate-600"
             >
-              ✕
+              âœ•
             </button>
           )}
         </div>
 
-        <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-white/30 bg-white/70 shadow-[0_8px_22px_rgba(15,23,42,0.05)] backdrop-blur-xl">
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
           <div className="flex-1 min-h-0 overflow-auto">
-            <table className="min-w-[900px] w-full border-collapse text-[13px]">
-              <thead className="sticky top-0 z-10 bg-gradient-to-r from-indigo-600 to-indigo-500">
+            <table className="w-full min-w-[1080px] border-collapse text-[13px]">
+              <thead className="sticky top-0 z-10 bg-slate-900">
                 <tr>
                   <th className="px-4 py-3.5 text-left text-[11px] font-semibold uppercase tracking-[0.8px] text-white">
                     SKU
@@ -1441,10 +1389,10 @@ export default function ProductList({
                     Product
                   </th>
                   <th className="px-4 py-3.5 text-left text-[11px] font-semibold uppercase tracking-[0.8px] text-white">
-                    Division
+                    Barcode
                   </th>
                   <th className="px-4 py-3.5 text-left text-[11px] font-semibold uppercase tracking-[0.8px] text-white">
-                    Section / Dept
+                    Pricing / Stock
                   </th>
                   <th className="px-4 py-3.5 text-left text-[11px] font-semibold uppercase tracking-[0.8px] text-white">
                     Variants
@@ -1462,14 +1410,14 @@ export default function ProductList({
                 {loading ? (
                   <tr>
                     <td colSpan={7} className="px-5 py-14 text-center text-slate-400">
-                      <div className="mb-3 text-[40px] opacity-40">⏳</div>
-                      <p className="text-[14px] font-medium">Loading products…</p>
+                      <div className="mb-3 text-[40px] opacity-40">â³</div>
+                      <p className="text-[14px] font-medium">Loading productsâ€¦</p>
                     </td>
                   </tr>
                 ) : filtered.length === 0 ? (
                   <tr>
                     <td colSpan={7} className="px-5 py-14 text-center text-slate-400">
-                      <div className="mb-3 text-[40px] opacity-40">📭</div>
+                      <div className="mb-3 text-[40px] opacity-40">ðŸ“­</div>
                       <p className="text-[14px] font-medium">
                         {search ? "No results found" : "No products yet"}
                       </p>
@@ -1477,13 +1425,19 @@ export default function ProductList({
                   </tr>
                 ) : (
                   filtered.map((p, i) => {
-                    const sku = p.sku || p.base_sku || "—";
+                    const sku = p.sku || p.base_sku || "â€”";
                     const images = p.images || [];
+                    const barcode = p.barcode || p.base_barcode || "â€”";
+                    const mrp = Number(p.mrp ?? p.MRP ?? 0);
+                    const sellingPrice = Number(p.selling_price ?? p.sellingPrice ?? p.price ?? 0);
+                    const stock = p.has_variants
+                      ? (p.variants || []).reduce((sum, variant) => sum + Number(variant.stock ?? variant.quantity ?? 0), 0)
+                      : Number(p.stock ?? p.quantity ?? 0);
 
                     return (
                       <tr
                         key={i}
-                        className="border-b border-slate-100 transition last:border-b-0 hover:bg-slate-50"
+                        className="border-b border-slate-100 transition-colors last:border-b-0 hover:bg-indigo-50/40"
                       >
                         <td className="px-4 py-3.5 align-middle">
                           <span className="inline-block whitespace-nowrap rounded border border-indigo-200 bg-indigo-50 px-2 py-1 font-mono text-[11px] font-medium text-indigo-700">
@@ -1503,18 +1457,15 @@ export default function ProductList({
                         </td>
 
                         <td className="px-4 py-3.5 align-middle font-medium text-slate-700">
-                          {p.division || "—"}
+                          {barcode}
                         </td>
 
                         <td className="px-4 py-3.5 align-middle">
-                          <p className="font-medium text-slate-700">
-                            {p.section || "—"}
-                          </p>
-                          {p.department && (
-                            <p className="mt-0.5 text-[11px] leading-5 text-slate-400">
-                              {p.department}
-                            </p>
-                          )}
+                          <div className="flex flex-col gap-1 text-[11px]">
+                            <span className="font-semibold text-slate-700">MRP {"\u20B9"}{mrp.toLocaleString("en-IN")}</span>
+                            <span className="font-semibold text-emerald-700">Selling {"\u20B9"}{sellingPrice.toLocaleString("en-IN")}</span>
+                            <span className="font-mono text-slate-500">Stock {stock.toLocaleString("en-IN")}</span>
+                          </div>
                         </td>
 
                         <td className="px-4 py-3.5 align-middle">
@@ -1552,7 +1503,7 @@ export default function ProductList({
                               </div>
                             )}
                             {images.length === 0 && (
-                              <span className="text-[11px] text-slate-300">—</span>
+                              <span className="text-[11px] text-slate-300">No image</span>
                             )}
                           </div>
                         </td>
@@ -1560,25 +1511,22 @@ export default function ProductList({
                         <td className="px-4 py-3.5 align-middle">
                           <div className="flex flex-wrap items-center justify-center gap-2">
                             <button
-                              className="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-[12px] font-semibold text-indigo-700 transition hover:bg-indigo-100"
+                              className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-[12px] font-semibold text-slate-700 transition hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-700"
                               onClick={() => setSelectedProduct(p)}
                             >
-                              👁 View
-                            </button>
+                              View</button>
 
                             <button
-                              className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 text-[12px] font-semibold text-blue-700 transition hover:bg-blue-100"
+                              className="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-[12px] font-semibold text-indigo-700 transition hover:bg-indigo-100"
                               onClick={() => handleEdit(p)}
                             >
-                              ✏ Edit
-                            </button>
+                              Edit</button>
 
                             <button
-                              className="rounded-lg border border-red-200 bg-red-50 px-2.5 py-1.5 text-[12px] font-semibold text-red-700 transition hover:bg-red-100"
+                              className="rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-[12px] font-semibold text-rose-700 transition hover:bg-rose-100"
                               onClick={() => deleteProduct(p)}
                             >
-                              🗑
-                            </button>
+                              Delete</button>
                           </div>
                         </td>
                       </tr>
@@ -1593,22 +1541,9 @@ export default function ProductList({
         {selectedProduct && (
           <ProductModal
             product={selectedProduct}
-            isVendor={vendor}
             onClose={() => setSelectedProduct(null)}
             onEdit={() => {
               handleEdit(selectedProduct);
-              setSelectedProduct(null);
-            }}
-            onInvView={() => {
-              navigate(
-                `/inventory/view/${selectedProduct.sku || selectedProduct.base_sku}`
-              );
-              setSelectedProduct(null);
-            }}
-            onInvEdit={() => {
-              navigate(
-                `/inventory/edit/${selectedProduct.sku || selectedProduct.base_sku}`
-              );
               setSelectedProduct(null);
             }}
           />
@@ -1628,3 +1563,11 @@ export default function ProductList({
     </div>
   );
 }
+
+
+
+
+
+
+
+

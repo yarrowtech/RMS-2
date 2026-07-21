@@ -1,4 +1,4 @@
-import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
+﻿import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
 import React, { useEffect, useState, useCallback } from "react";
 import axios from "axios";
 
@@ -28,20 +28,21 @@ function KPI({ label, value, sub, color, icon, alert }) {
   return (
     <div style={{
       flex: "1 1 150px", minWidth: 140,
-      background: "#fff",
+      background: `linear-gradient(135deg, #ffffff 12%, ${color}16)`,
       borderRadius: 18,
       padding: "18px 20px",
-      border: `1px solid ${alert ? "#FECACA" : "#E4EAF3"}`,
+      border: `1px solid ${alert ? "#FECACA" : `${color}35`}`,
       borderTop: `4px solid ${color}`,
       boxShadow: alert
-        ? "0 4px 20px rgba(239,68,68,0.10)"
-        : "0 2px 10px rgba(15,27,45,0.05)",
+        ? "0 8px 24px rgba(239,68,68,0.12)"
+        : `0 8px 24px ${color}12`,
       position: "relative",
       overflow: "hidden",
     }}>
       <div style={{
         position: "absolute", top: 14, right: 16,
-        fontSize: 26, opacity: 0.12, color,
+        width: 40, height: 40, borderRadius: 13, fontSize: 20,
+        background: `${color}18`, display: "grid", placeItems: "center", color,
       }}>{icon}</div>
       <div style={{
         fontSize: 28, fontWeight: 800, color,
@@ -74,9 +75,9 @@ function SectionHead({ title, sub }) {
 function Card({ children, style = {} }) {
   return (
     <div style={{
-      background: "#fff", borderRadius: 16,
+      background: "linear-gradient(180deg, #ffffff, #fbfcff)", borderRadius: 18,
       border: "1px solid #E4EAF3", padding: "20px",
-      boxShadow: "0 2px 12px rgba(15,27,45,0.05)",
+      boxShadow: "0 8px 24px rgba(55,48,163,0.06)",
       ...style,
     }}>
       {children}
@@ -223,7 +224,7 @@ function ActivityRow({ icon, title, sub, right, alert }) {
 /* ══════════════════════════════════════════════════════════════════
    MAIN DASHBOARD
 ══════════════════════════════════════════════════════════════════ */
-export default function Dashboard() {
+export default function Dashboard({ onNavigate }) {
   const [data,    setData]    = useState(null);
   const [loading, setLoading] = useState(true);
   const [error,   setError]   = useState(null);
@@ -299,19 +300,22 @@ export default function Dashboard() {
 
       {/* ── Header ── */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
-        flexWrap: "wrap", gap: 12, marginBottom: 24 }}>
+        flexWrap: "wrap", gap: 16, marginBottom: 20, padding: "22px 24px", borderRadius: 22,
+        background: "linear-gradient(120deg, #312e81, #5b3df5 52%, #0891b2)",
+        boxShadow: "0 14px 34px rgba(79,70,229,0.25)" }}>
         <div>
-          <h2 style={{ margin: 0, fontSize: 22, fontWeight: 800, color: "#0F1B2D" }}>
+          <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: "0.16em", color: "#c7d2fe", textTransform: "uppercase", marginBottom: 5 }}>Procurement command center</div>
+          <h2 style={{ margin: 0, fontSize: 24, fontWeight: 800, color: "#fff" }}>
             Buyer Dashboard
           </h2>
-          <p style={{ margin: "4px 0 0", fontSize: 13, color: "#64748B" }}>
+          <p style={{ margin: "5px 0 0", fontSize: 13, color: "#e0e7ff" }}>
             {new Date().toLocaleDateString("en-IN", { weekday:"long", day:"numeric", month:"long", year:"numeric" })}
           </p>
         </div>
         <button onClick={fetchDashboard}
-          style={{ padding: "8px 16px", borderRadius: 10, background: "#F1F5F9",
-            border: "1px solid #E4EAF3", color: "#475569", fontSize: 13,
-            fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
+          style={{ padding: "9px 16px", borderRadius: 11, background: "rgba(255,255,255,0.16)",
+            border: "1px solid rgba(255,255,255,0.35)", color: "#fff", fontSize: 13,
+            fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
           ↻ Refresh
         </button>
       </div>
@@ -336,16 +340,16 @@ export default function Dashboard() {
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 20 }}>
         <KPI label="Active POs"       value={kpis.active_pos}
           color="#6366F1" icon="📋" />
-        <KPI label="Needs Review"     value={kpis.needs_review}
+        <KPI label="Vendor Review Queue"     value={kpis.needs_review}
           color="#7C3AED" icon="👁" alert={kpis.needs_review > 0}
           sub={kpis.needs_review > 0 ? "Vendor submitted — action required" : "All clear"} />
-        <KPI label="Overdue POs"      value={kpis.overdue_pos}
+        <KPI label="Delivery Risk"      value={kpis.overdue_pos}
           color="#EF4444" icon="⏰" alert={kpis.overdue_pos > 0}
           sub={kpis.overdue_pos > 0 ? "Past due date" : "None overdue"} />
-        <KPI label="Pending Vendors"  value={kpis.pending_vendors}
+        <KPI label="Vendor Onboarding"  value={kpis.pending_vendors}
           color="#F97316" icon="🏪" alert={kpis.pending_vendors > 0}
           sub={kpis.pending_vendors > 0 ? "Awaiting approval" : "None pending"} />
-        <KPI label="This Month POs"   value={money(kpis.month_po_value)}
+        <KPI label="Month Commitment"   value={money(kpis.month_po_value)}
           color="#0EA5E9" icon="📅" />
         <KPI label="OTB Remaining"
           value={kpis.otb_set ? money(kpis.otb_remaining) : "Not set"}
@@ -357,7 +361,7 @@ export default function Dashboard() {
       </div>
 
       {/* ── Charts row ── */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 14, marginBottom: 14 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 14, marginBottom: 14 }}>
 
         {/* PO Status Donut */}
         <Card>
@@ -414,7 +418,7 @@ export default function Dashboard() {
       </div>
 
       {/* ── Bottom grid ── */}
-      <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr", gap: 14 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 14 }}>
 
         {/* Left column */}
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
@@ -616,3 +620,9 @@ export default function Dashboard() {
     </div>
   );
 }
+
+
+
+
+
+

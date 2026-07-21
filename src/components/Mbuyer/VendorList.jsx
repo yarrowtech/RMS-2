@@ -42,7 +42,7 @@ function timeAgo(isoString) {
 // ─────────────────────────────────────────────────────────────────────────────
 // MAIN PAGE
 // ─────────────────────────────────────────────────────────────────────────────
-const Vendors = () => {
+const Vendors = ({ showQuestionnaires = true }) => {
   const [pendingVendors,   setPendingVendors]   = useState([]);
   const [approvedVendors,  setApprovedVendors]  = useState([]);
   const [selectedVendor,   setSelectedVendor]   = useState(null);
@@ -66,7 +66,14 @@ const Vendors = () => {
   const [notifLink,           setNotifLink]           = useState("");
   const [notifLinkCopied,     setNotifLinkCopied]     = useState(false);
 
-  useEffect(() => { fetchAll(); fetchQuestionnaireNotifs(); }, []);
+  useEffect(() => {
+    fetchAll();
+    if (showQuestionnaires) fetchQuestionnaireNotifs();
+    else {
+      setQuestionnaireNotifs([]);
+      setShowNotifPanel(false);
+    }
+  }, [showQuestionnaires]);
 
   // ── Fetch vendors ──────────────────────────────────────────────────────────
   async function fetchAll() {
@@ -314,7 +321,7 @@ const Vendors = () => {
 
         <div className="flex flex-wrap items-center gap-2">
           {/* 🔔 Questionnaire Bell */}
-          <div className="relative">
+          {showQuestionnaires && <div className="relative">
             <button
               onClick={() => setShowNotifPanel(!showNotifPanel)}
               className="relative flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 shadow-sm transition hover:border-violet-300 hover:text-violet-700"
@@ -334,7 +341,7 @@ const Vendors = () => {
                 onClose={() => setShowNotifPanel(false)}
               />
             )}
-          </div>
+          </div>}
 
           {/* ➕ Add Vendor */}
           <button
@@ -390,13 +397,13 @@ const Vendors = () => {
               onClose={closeAddVendor}
               onSendAnother={() => { setAddStep("form"); setGeneratedLink(""); setInviteData(null); }} />
       )}
-      {selectedNotifVendor && !notifLinkStep && (
+      {showQuestionnaires && selectedNotifVendor && !notifLinkStep && (
         <QuestionnaireReviewModal vendor={selectedNotifVendor}
           onClose={() => setSelectedNotifVendor(null)}
           onAccept={() => { handleNotifAccept(selectedNotifVendor); setSelectedNotifVendor(null); }}
           onReject={() => setSelectedNotifVendor(null)} />
       )}
-      {notifLinkStep && (
+      {showQuestionnaires && notifLinkStep && (
         <InviteLinkModal
           inviteData={{
             companyName:     notifLinkStep.vendorName,

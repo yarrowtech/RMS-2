@@ -1,4 +1,4 @@
-
+﻿
 
 
 from fastapi import APIRouter, HTTPException, Query, Depends
@@ -20,7 +20,7 @@ from app.db import (
 
 router = APIRouter(prefix="/mbuyer", tags=["Merchandiser Buyer"])
 
-# ─── helpers ─────────────────────────────────────────────────────────────────
+# â”€â”€â”€ helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def _str(v) -> str:
     return str(v) if v else ""
@@ -58,11 +58,11 @@ def _urgency(days: Optional[int]) -> str:
     if days <= 7:       return "due-soon"
     return "on-track"
 
-# ═══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # 1. OPEN PO TRACKER
 #    Returns all active POs with due-date urgency computed server-side.
 #    Active statuses: Pending, SentToVendor, WalkinAccepted, VendorSubmitted
-# ═══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 ACTIVE_STATUSES = [
     "Pending", "SentToVendor", "WalkinAccepted",
@@ -155,10 +155,10 @@ async def get_open_po_tracker(
     return JSONResponse({"status": "success", "summary": summary, "data": pos})
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # 2. VENDOR PERFORMANCE DASHBOARD
 #    Per-vendor scorecard computed from POs, GRCs and GRNs.
-# ═══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 @router.get("/vendor-performance")
 async def get_vendor_performance(
@@ -166,8 +166,8 @@ async def get_vendor_performance(
     search: Optional[str] = Query(None),
     sort_by: Optional[str] = Query("total_value"),  # total_value|fulfillment|on_time|variance
 ):
-    # ── Aggregate PO data per vendor ─────────────────────────────────────────
-    vendor_map: dict = {}   # vendorName → stats
+    # â”€â”€ Aggregate PO data per vendor â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    vendor_map: dict = {}   # vendorName â†’ stats
 
     async for po in purchaseorders_collection.find({"tenant_id": ctx["tenant_id"]}):
         name = (po.get("vendorName") or "").strip()
@@ -230,7 +230,7 @@ async def get_vendor_performance(
             if var_st == "blocked":
                 v["blocked_items"] += 1
 
-    # ── Aggregate GRN data for on-time delivery ───────────────────────────────
+    # â”€â”€ Aggregate GRN data for on-time delivery â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     async for grn in grn_collection.find({"tenant_id": ctx["tenant_id"]}):
         name = (grn.get("vendorName") or "").strip()
         if name not in vendor_map: continue
@@ -260,7 +260,7 @@ async def get_vendor_performance(
         else:
             v["no_date_count"] += 1
 
-    # ── Build result list ─────────────────────────────────────────────────────
+    # â”€â”€ Build result list â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     result = []
     for name, v in vendor_map.items():
         if search and search.lower() not in name.lower(): continue
@@ -275,7 +275,7 @@ async def get_vendor_performance(
 
         variance_rate   = round((v["variance_items"] / max(ordered_qty, 1)) * 100, 1)
 
-        # Score 0–100: fulfilment 40% + on-time 40% + no-variance 20%
+        # Score 0â€“100: fulfilment 40% + on-time 40% + no-variance 20%
         score_fulfil  = min(fulfillment_pct, 100) * 0.40
         score_ontime  = min(on_time_pct or 0, 100) * 0.40
         score_variance= max(0, 100 - variance_rate) * 0.20
@@ -333,10 +333,10 @@ async def get_vendor_performance(
     return JSONResponse({"status": "success", "summary": summary, "data": result})
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # 3. VARIANCE & PRICE OVERRIDE LOG
-#    All PO items where vendor rate ≠ buyer rate, grouped by variance status.
-# ═══════════════════════════════════════════════════════════════════════════════
+#    All PO items where vendor rate â‰  buyer rate, grouped by variance status.
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 @router.get("/variance-log")
 async def get_variance_log(
@@ -412,13 +412,13 @@ async def get_variance_log(
     return JSONResponse({"status": "success", "summary": summary, "data": entries})
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # 4. BUDGET & OTB (OPEN TO BUY)
 #    budgets_collection stores season budgets per division/department.
 #    OTB = Budget - committed PO value (active PO statuses).
 #
-#    db.py — add:  budgets_collection = db["budgets"]
-# ═══════════════════════════════════════════════════════════════════════════════
+#    db.py â€” add:  budgets_collection = db["budgets"]
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 from app.db import budgets_collection
 
@@ -431,7 +431,7 @@ COMMITTED_STATUSES = [
 async def get_budgets(ctx: dict = Depends(get_hq_tenant)):
     """
     Returns all budgets with live OTB computed from active POs.
-    Groups by division → department for the breakdown table.
+    Groups by division â†’ department for the breakdown table.
     """
     budgets = []
     async for b in budgets_collection.find({"tenant_id": ctx["tenant_id"]}).sort("createdAt", -1):
@@ -445,12 +445,12 @@ async def get_budgets(ctx: dict = Depends(get_hq_tenant)):
             "createdAt":   b.get("createdAt","").isoformat() if isinstance(b.get("createdAt"), datetime) else str(b.get("createdAt","")),
         })
 
-    # ── Compute committed spend from active POs ───────────────────────────────
-    # Build a map: (division, department) → committed value
+    # â”€â”€ Compute committed spend from active POs â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # Build a map: (division, department) â†’ committed value
     committed_map: dict = {}
-    async for po in purchaseorders_collection.find({"status": {"$in": COMMITTED_STATUSES}}):
+    async for po in purchaseorders_collection.find({"tenant_id": ctx["tenant_id"], "status": {"$in": COMMITTED_STATUSES}}):
         div  = (po.get("division") or "Uncategorized").strip()
-        dept = (po.get("department") or "—").strip()
+        dept = (po.get("department") or "â€”").strip()
         key  = (div, dept)
         items = po.get("items", [])
         val   = sum(_float(it.get("rate",0)) * _int(it.get("quantity",0)) for it in items)
@@ -486,7 +486,7 @@ async def get_budgets(ctx: dict = Depends(get_hq_tenant)):
                 "division": div, "department": dept,
                 "committed": round(val, 2), "totalBudget": 0,
                 "otb": -round(val, 2), "utilisation": 100,
-                "status": "no-budget", "season": "—", "id": None,
+                "status": "no-budget", "season": "â€”", "id": None,
             })
 
     summary = {
@@ -563,11 +563,11 @@ async def delete_budget(budget_id: str):
     return JSONResponse({"status": "success", "message": "Budget deleted."})
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # 5. DELIVERY & LEAD TIME TRACKING
-#    Reads POs + GRNs — no new collection.
+#    Reads POs + GRNs â€” no new collection.
 #    Follow-up notes stored on the PO document itself.
-# ═══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 @router.get("/delivery-tracking")
 async def get_delivery_tracking(
@@ -578,13 +578,13 @@ async def get_delivery_tracking(
 ):
     """
     Per-vendor delivery performance:
-    - Average lead time: PO createdAt → GRN date
+    - Average lead time: PO createdAt â†’ GRN date
     - On-time / delayed count
     - List of delayed POs with expected vs actual dates
     - Follow-up notes stored in po.followup_notes
     """
-    # ── Build GRN lookup: poNo → grn info ────────────────────────────────────
-    grn_map: dict = {}   # orderNo → {grnDate, receivedQty, grnId}
+    # â”€â”€ Build GRN lookup: poNo â†’ grn info â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    grn_map: dict = {}   # orderNo â†’ {grnDate, receivedQty, grnId}
     async for grn in grn_collection.find({"tenant_id": ctx["tenant_id"]}):
         po_no   = grn.get("poNo") or grn.get("orderNo") or ""
         grn_date = grn.get("grnDate") or grn.get("createdAt") or ""
@@ -595,7 +595,7 @@ async def get_delivery_tracking(
                 "grnId":       _str(grn["_id"]),
             }
 
-    # ── Aggregate PO data ────────────────────────────────────────────────────
+    # â”€â”€ Aggregate PO data â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     vendor_stats: dict = {}
     delayed_pos         = []
 
@@ -619,7 +619,7 @@ async def get_delivery_tracking(
                 "vendorName":   name,
                 "total_pos":    0,
                 "completed":    0,
-                "lead_times":   [],   # days PO → GRN
+                "lead_times":   [],   # days PO â†’ GRN
                 "on_time":      0,
                 "delayed":      0,
                 "no_date":      0,
@@ -679,7 +679,7 @@ async def get_delivery_tracking(
         if po.get("followup_notes"):
             vs["follow_ups"] += 1
 
-    # ── Build vendor summary ──────────────────────────────────────────────────
+    # â”€â”€ Build vendor summary â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     vendor_list = []
     for name, vs in vendor_stats.items():
         lead_times   = vs["lead_times"]
@@ -753,11 +753,11 @@ async def add_followup_note(po_id: str, payload: dict):
     return JSONResponse({"status": "success", "message": "Follow-up note added."})
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # 6. REORDER ALERTS WITH QUICK PO
 #    Reads inventory_collection where stockQty < reorderLevel.
 #    Sales velocity from sales_collection for suggested qty.
-# ═══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 from app.db import inventory_collection, sales_collection
 
@@ -778,9 +778,9 @@ async def get_reorder_alerts(
     """
     alerts = []
 
-    # ── Sales velocity: barcode → avg_daily_sales (last 30 days) ─────────────
+    # â”€â”€ Sales velocity: barcode â†’ avg_daily_sales (last 30 days) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     thirty_days_ago = datetime.utcnow() - timedelta(days=30)
-    velocity_map: dict = {}   # barcode → avg_daily_qty
+    velocity_map: dict = {}   # barcode â†’ avg_daily_qty
 
     try:
         async for sale in sales_collection.find({
@@ -792,13 +792,13 @@ async def get_reorder_alerts(
                 if bc:
                     velocity_map[bc] = velocity_map.get(bc, 0) + qty
     except Exception:
-        pass   # sales_collection may not exist — degrade gracefully
+        pass   # sales_collection may not exist â€” degrade gracefully
 
     for bc in velocity_map:
         velocity_map[bc] = round(velocity_map[bc] / 30, 2)
 
-    # ── Find last vendor per barcode (from GRNs) ──────────────────────────────
-    vendor_map: dict = {}   # barcode → {vendorName, vendorId}
+    # â”€â”€ Find last vendor per barcode (from GRNs) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    vendor_map: dict = {}   # barcode â†’ {vendorName, vendorId}
     async for grn in grn_collection.find({}).sort("createdAt", -1):
         for item in (grn.get("items") or []):
             bc = (item.get("barcode") or "").strip()
@@ -809,7 +809,7 @@ async def get_reorder_alerts(
                     "lastGRNDate": str(grn.get("grnDate") or "")[:10],
                 }
 
-    # ── Scan inventory for items below reorder level ──────────────────────────
+    # â”€â”€ Scan inventory for items below reorder level â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     inv_query: dict = {}
     if division_filter:
         inv_query["division"] = {"$regex": division_filter, "$options": "i"}
@@ -818,8 +818,8 @@ async def get_reorder_alerts(
         stock_qty    = _float(inv.get("stockQty") or inv.get("stock_qty") or inv.get("quantity") or 0)
         reorder_lvl  = _float(inv.get("reorderLevel") or inv.get("reorder_level") or inv.get("reorder_qty") or 0)
 
-        if reorder_lvl <= 0: continue          # no reorder level set — skip
-        if stock_qty >= reorder_lvl: continue  # stock is fine — skip
+        if reorder_lvl <= 0: continue          # no reorder level set â€” skip
+        if stock_qty >= reorder_lvl: continue  # stock is fine â€” skip
 
         barcode      = (inv.get("barcode") or "").strip()
         product_name = inv.get("productName") or inv.get("product_name") or inv.get("name") or ""
@@ -866,7 +866,7 @@ async def get_reorder_alerts(
             "lastGRNDate":   vendor_info.get("lastGRNDate", ""),
         })
 
-    # Sort: out-of-stock → critical → low; within each by shortfall desc
+    # Sort: out-of-stock â†’ critical â†’ low; within each by shortfall desc
     urgency_order = {"out-of-stock": 0, "critical": 1, "low": 2}
     alerts.sort(key=lambda a: (urgency_order.get(a["urgency"], 9), -a["shortfall"]))
 
@@ -881,14 +881,14 @@ async def get_reorder_alerts(
     return JSONResponse({"status": "success", "summary": summary, "data": alerts})
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# DASHBOARD — single endpoint returns all KPIs, charts, activity feed
-# ═══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# DASHBOARD â€” single endpoint returns all KPIs, charts, activity feed
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 @router.get("/dashboard")
 async def get_dashboard(ctx: dict = Depends(get_hq_tenant)):
     """
-    M-Buyer dashboard — one call returns:
+    M-Buyer dashboard â€” one call returns:
       kpis         : 6 headline numbers
       status_dist  : PO count by status (donut chart)
       monthly_value: PO value by month last 6 months (bar chart)
@@ -902,21 +902,21 @@ async def get_dashboard(ctx: dict = Depends(get_hq_tenant)):
     now   = datetime.utcnow()
     today = now.replace(hour=0, minute=0, second=0, microsecond=0)
 
-    # ── 1. KPIs ───────────────────────────────────────────────────────────────
+    # â”€â”€ 1. KPIs â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     # Active PO count
     active_count = await purchaseorders_collection.count_documents(
-        {"status": {"$in": ACTIVE_STATUSES}}
+        {"tenant_id": ctx["tenant_id"], "status": {"$in": ACTIVE_STATUSES}}
     )
 
-    # VendorSubmitted — needs buyer review
+    # VendorSubmitted â€” needs buyer review
     needs_review_count = await purchaseorders_collection.count_documents(
-        {"status": "VendorSubmitted"}
+        {"tenant_id": ctx["tenant_id"], "status": "VendorSubmitted"}
     )
 
     # Overdue active POs (dueDate field exists and is in the past)
     overdue_count = 0
     async for po in purchaseorders_collection.find(
-        {"status": {"$in": ACTIVE_STATUSES},
+        {"tenant_id": ctx["tenant_id"], "status": {"$in": ACTIVE_STATUSES},
          "$or": [{"dueDate": {"$exists": True, "$ne": ""}},
                  {"due_date": {"$exists": True, "$ne": ""}}]}
     ):
@@ -927,22 +927,22 @@ async def get_dashboard(ctx: dict = Depends(get_hq_tenant)):
 
     # Vendors pending approval
     pending_vendors_count = await vendors_collection.count_documents(
-        {"status": "Pending"}
+        {"tenant_id": ctx["tenant_id"], "status": "Pending"}
     )
 
     # This month PO value
     month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     month_value = 0.0
-    async for po in purchaseorders_collection.find({"createdAt": {"$gte": month_start}}):
+    async for po in purchaseorders_collection.find({"tenant_id": ctx["tenant_id"], "createdAt": {"$gte": month_start}}):
         for it in po.get("items", []):
             month_value += _float(it.get("rate", 0)) * _int(it.get("quantity", 0))
 
     # OTB remaining
     total_budget    = 0.0
     total_committed = 0.0
-    async for b in budgets_collection.find({}):
+    async for b in budgets_collection.find({"tenant_id": ctx["tenant_id"]}):
         total_budget += _float(b.get("totalBudget", 0))
-    async for po in purchaseorders_collection.find({"status": {"$in": COMMITTED_STATUSES}}):
+    async for po in purchaseorders_collection.find({"tenant_id": ctx["tenant_id"], "status": {"$in": COMMITTED_STATUSES}}):
         for it in po.get("items", []):
             total_committed += _float(it.get("rate", 0)) * _int(it.get("quantity", 0))
     otb_remaining = total_budget - total_committed
@@ -957,7 +957,7 @@ async def get_dashboard(ctx: dict = Depends(get_hq_tenant)):
         "otb_set":             total_budget > 0,
     }
 
-    # ── 2. PO Status Distribution (donut chart) ───────────────────────────────
+    # â”€â”€ 2. PO Status Distribution (donut chart) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     status_map: dict = {}
     async for po in purchaseorders_collection.find({"tenant_id": ctx["tenant_id"]}):
         s = po.get("status", "Unknown")
@@ -980,7 +980,7 @@ async def get_dashboard(ctx: dict = Depends(get_hq_tenant)):
         for s, c in sorted(status_map.items(), key=lambda x: -x[1])
     ]
 
-    # ── 3. Monthly PO Value — last 6 months ──────────────────────────────────
+    # â”€â”€ 3. Monthly PO Value â€” last 6 months â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     monthly_value = []
     for m in range(5, -1, -1):
         # Start of month m months ago
@@ -998,7 +998,7 @@ async def get_dashboard(ctx: dict = Depends(get_hq_tenant)):
 
         val = 0.0
         async for po in purchaseorders_collection.find(
-            {"createdAt": {"$gte": m_start, "$lt": m_end}}
+            {"tenant_id": ctx["tenant_id"], "createdAt": {"$gte": m_start, "$lt": m_end}}
         ):
             for it in po.get("items", []):
                 val += _float(it.get("rate", 0)) * _int(it.get("quantity", 0))
@@ -1008,10 +1008,10 @@ async def get_dashboard(ctx: dict = Depends(get_hq_tenant)):
             "value": round(val, 2),
         })
 
-    # ── 4. Division-wise spend ────────────────────────────────────────────────
+    # â”€â”€ 4. Division-wise spend â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     div_map: dict = {}
     async for po in purchaseorders_collection.find(
-        {"status": {"$in": COMMITTED_STATUSES}}
+        {"tenant_id": ctx["tenant_id"], "status": {"$in": COMMITTED_STATUSES}}
     ):
         div = (po.get("division") or "Uncategorized").strip()
         for it in po.get("items", []):
@@ -1022,7 +1022,7 @@ async def get_dashboard(ctx: dict = Depends(get_hq_tenant)):
         for d, v in sorted(div_map.items(), key=lambda x: -x[1])
     ][:8]
 
-    # ── 5. Top 5 vendors by PO value ─────────────────────────────────────────
+    # â”€â”€ 5. Top 5 vendors by PO value â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     vendor_val: dict  = {}
     vendor_pos: dict  = {}
     async for po in purchaseorders_collection.find({"tenant_id": ctx["tenant_id"]}):
@@ -1037,10 +1037,10 @@ async def get_dashboard(ctx: dict = Depends(get_hq_tenant)):
         for n, v in sorted(vendor_val.items(), key=lambda x: -x[1])
     ][:5]
 
-    # ── 6. Activity feed: VendorSubmitted POs needing review ─────────────────
+    # â”€â”€ 6. Activity feed: VendorSubmitted POs needing review â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     needs_review_list = []
     async for po in purchaseorders_collection.find(
-        {"status": "VendorSubmitted"}
+        {"tenant_id": ctx["tenant_id"], "status": "VendorSubmitted"}
     ).sort("updatedAt", -1).limit(8):
         updated = po.get("updatedAt")
         items   = po.get("items", [])
@@ -1055,10 +1055,10 @@ async def get_dashboard(ctx: dict = Depends(get_hq_tenant)):
             "updatedAt":   updated.isoformat() if isinstance(updated, datetime) else str(updated or ""),
         })
 
-    # ── 7. Overdue POs ────────────────────────────────────────────────────────
+    # â”€â”€ 7. Overdue POs â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     overdue_list = []
     async for po in purchaseorders_collection.find(
-        {"status": {"$in": ACTIVE_STATUSES}}
+        {"tenant_id": ctx["tenant_id"], "status": {"$in": ACTIVE_STATUSES}}
     ).sort("createdAt", -1):
         due_str  = po.get("dueDate") or po.get("due_date") or ""
         days_u   = _days_until(due_str)
@@ -1076,9 +1076,9 @@ async def get_dashboard(ctx: dict = Depends(get_hq_tenant)):
         })
         if len(overdue_list) >= 6: break
 
-    # ── 8. Pending vendor registrations ──────────────────────────────────────
+    # â”€â”€ 8. Pending vendor registrations â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     pending_vendor_list = []
-    async for v in vendors_collection.find({"status": "Pending"}).sort("created_at", -1).limit(5):
+    async for v in vendors_collection.find({"tenant_id": ctx["tenant_id"], "status": "Pending"}).sort("created_at", -1).limit(5):
         created = v.get("created_at") or v.get("createdAt")
         pending_vendor_list.append({
             "id":        _str(v["_id"]),
@@ -1089,9 +1089,9 @@ async def get_dashboard(ctx: dict = Depends(get_hq_tenant)):
             "source":    v.get("source", "registration"),
         })
 
-    # ── 9. Low stock alerts (top 5) ───────────────────────────────────────────
+    # â”€â”€ 9. Low stock alerts (top 5) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     low_stock_list = []
-    async for inv in inventory_collection.find({}):
+    async for inv in inventory_collection.find({"tenant_id": ctx["tenant_id"]}):
         stock   = _float(inv.get("stockQty") or inv.get("stock_qty") or inv.get("quantity") or 0)
         reorder = _float(inv.get("reorderLevel") or inv.get("reorder_level") or 0)
         if reorder <= 0 or stock >= reorder: continue
@@ -1121,15 +1121,137 @@ async def get_dashboard(ctx: dict = Depends(get_hq_tenant)):
     })
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# PROCUREMENT REPORTING - tenant-scoped data used by the M-Buyer Reports page
+
+def _report_date(value):
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, str):
+        for fmt in ("%Y-%m-%d", "%d-%m-%Y", "%Y/%m/%d"):
+            try:
+                return datetime.strptime(value[:10], fmt).date()
+            except (TypeError, ValueError):
+                continue
+    return None
+
+
+def _po_total(po: dict) -> float:
+    return round(sum(
+        _float(item.get("vendorRate") or item.get("rate")) * _float(item.get("quantity") or item.get("qty"))
+        for item in (po.get("items") or [])
+    ), 2)
+
+
+@router.get("/reports")
+async def get_procurement_reports(
+    from_date: Optional[str] = Query(None),
+    to_date: Optional[str] = Query(None),
+    ctx: dict = Depends(get_hq_tenant),
+):
+    """Live procurement reporting for the signed-in retailer tenant."""
+    start = _report_date(from_date) if from_date else None
+    end = _report_date(to_date) if to_date else None
+    if start and end and start > end:
+        raise HTTPException(status_code=400, detail="From date cannot be after to date.")
+
+    status_counts: dict = {}
+    vendor_values: dict = {}
+    month_values: dict = {}
+    rows = []
+    total_value = 0.0
+    item_count = 0
+    overdue_count = 0
+    committed_count = 0
+
+    async for po in purchaseorders_collection.find({"tenant_id": ctx["tenant_id"]}).sort("createdAt", -1):
+        po_date = _report_date(po.get("createdAt") or po.get("orderDate") or po.get("date"))
+        if start and (not po_date or po_date < start):
+            continue
+        if end and (not po_date or po_date > end):
+            continue
+
+        status = (po.get("status") or "Draft").strip()
+        value = _po_total(po)
+        vendor = (po.get("vendorName") or "Walk-in / Ad-hoc").strip()
+        due_date = po.get("dueDate") or po.get("due_date") or ""
+        is_overdue = status in ACTIVE_STATUSES and (_days_until(str(due_date)) or 0) < 0
+
+        total_value += value
+        item_count += len(po.get("items") or [])
+        committed_count += int(status in COMMITTED_STATUSES)
+        overdue_count += int(is_overdue)
+        status_counts[status] = status_counts.get(status, 0) + 1
+        vendor_values[vendor] = vendor_values.get(vendor, 0.0) + value
+        if po_date:
+            key = po_date.strftime("%b %Y")
+            month_values[key] = month_values.get(key, 0.0) + value
+
+        rows.append({
+            "order_no": po.get("orderNo") or "",
+            "order_date": po_date.isoformat() if po_date else "",
+            "vendor": vendor,
+            "status": status,
+            "item_count": len(po.get("items") or []),
+            "value": value,
+            "due_date": due_date,
+            "buyer": po.get("raised_by_name") or po.get("buyer_name") or "",
+        })
+
+    rows.sort(key=lambda row: row["order_date"], reverse=True)
+    monthly_spend = [
+        {"month": month, "value": round(value, 2)}
+        for month, value in month_values.items()
+    ]
+    monthly_spend = monthly_spend[-12:]
+    vendor_spend = [
+        {"vendor": vendor, "value": round(value, 2)}
+        for vendor, value in sorted(vendor_values.items(), key=lambda item: -item[1])[:8]
+    ]
+    status_distribution = [
+        {"name": status, "value": count}
+        for status, count in sorted(status_counts.items(), key=lambda item: -item[1])
+    ]
+
+    received_value = 0.0
+    grc_count = 0
+    async for grc in grc_collection.find({"tenant_id": ctx["tenant_id"]}):
+        grc_date = _report_date(grc.get("grcDate") or grc.get("createdAt"))
+        if start and (not grc_date or grc_date < start):
+            continue
+        if end and (not grc_date or grc_date > end):
+            continue
+        grc_count += 1
+        received_value += _float(grc.get("totalValue"))
+
+    return JSONResponse({
+        "status": "success",
+        "filters": {"from_date": from_date or "", "to_date": to_date or ""},
+        "summary": {
+            "po_count": len(rows),
+            "committed_pos": committed_count,
+            "total_value": round(total_value, 2),
+            "average_po_value": round(total_value / len(rows), 2) if rows else 0,
+            "item_count": item_count,
+            "overdue_pos": overdue_count,
+            "grc_count": grc_count,
+            "received_value": round(received_value, 2),
+        },
+        "monthly_spend": monthly_spend,
+        "status_distribution": status_distribution,
+        "vendor_spend": vendor_spend,
+        "rows": rows,
+        "generated_at": datetime.utcnow().isoformat(),
+    })
+
 # BUYER'S CALENDAR
 #
-# db.py — add:  calendar_events_collection = db["calendar_events"]
+# db.py â€” add:  calendar_events_collection = db["calendar_events"]
 #
 # Two sources of events:
-#   1. Manual — stored in calendar_events_collection (CRUD)
-#   2. Auto   — pulled live from POs/vendors (read-only, shown in calendar)
-# ═══════════════════════════════════════════════════════════════════════════════
+#   1. Manual â€” stored in calendar_events_collection (CRUD)
+#   2. Auto   â€” pulled live from POs/vendors (read-only, shown in calendar)
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 from app.db import calendar_events_collection
 
@@ -1167,7 +1289,7 @@ def _parse_date_to_ymd(date_str: str) -> str:
 
 @router.get("/calendar")
 async def get_calendar_events(
-    month: Optional[str] = Query(None),  # YYYY-MM — if None returns current month
+    month: Optional[str] = Query(None),  # YYYY-MM â€” if None returns current month
     view:  Optional[str] = Query("month"),  # month | list
 ):
     """
@@ -1196,7 +1318,7 @@ async def get_calendar_events(
 
     events = []
 
-    # ── 1. Manual events from DB ──────────────────────────────────────────────
+    # â”€â”€ 1. Manual events from DB â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     async for ev in calendar_events_collection.find({
         "date": {"$gte": m_start_str, "$lt": m_end_str}
     }):
@@ -1216,7 +1338,7 @@ async def get_calendar_events(
             "editable":  True,
         })
 
-    # ── 2. Auto: PO due dates ─────────────────────────────────────────────────
+    # â”€â”€ 2. Auto: PO due dates â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     async for po in purchaseorders_collection.find({
         "status": {"$in": ACTIVE_STATUSES}
     }):
@@ -1234,7 +1356,7 @@ async def get_calendar_events(
             "type":      ev_type,
             "label":     EVENT_TYPES[ev_type]["label"],
             "color":     EVENT_TYPES[ev_type]["color"],
-            "title":     f"PO Due — {po.get('vendorName','')}: {po.get('orderNo','')}",
+            "title":     f"PO Due â€” {po.get('vendorName','')}: {po.get('orderNo','')}",
             "date":      due_ymd,
             "endDate":   "",
             "notes":     f"Status: {po.get('status','')} | Items: {len(po.get('items',[]))}",
@@ -1243,7 +1365,7 @@ async def get_calendar_events(
             "editable":  False,
         })
 
-    # ── 3. Auto: VendorSubmitted POs (needs review) ───────────────────────────
+    # â”€â”€ 3. Auto: VendorSubmitted POs (needs review) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     async for po in purchaseorders_collection.find({"status": "VendorSubmitted"}):
         updated = po.get("updatedAt")
         if not updated: continue
@@ -1256,16 +1378,16 @@ async def get_calendar_events(
             "type":      "vendor_review",
             "label":     "Vendor Submitted",
             "color":     EVENT_TYPES["vendor_review"]["color"],
-            "title":     f"Review Needed — {po.get('vendorName','')}: {po.get('orderNo','')}",
+            "title":     f"Review Needed â€” {po.get('vendorName','')}: {po.get('orderNo','')}",
             "date":      upd_ymd,
             "endDate":   "",
-            "notes":     "Vendor has submitted this PO — awaiting buyer review.",
+            "notes":     "Vendor has submitted this PO â€” awaiting buyer review.",
             "vendorName":po.get("vendorName", ""),
             "poNo":      po.get("orderNo", ""),
             "editable":  False,
         })
 
-    # ── 4. Auto: Pending vendor registrations ─────────────────────────────────
+    # â”€â”€ 4. Auto: Pending vendor registrations â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     async for v in vendors_collection.find({"status": "Pending"}):
         created = v.get("created_at") or v.get("createdAt")
         if not created: continue
@@ -1279,7 +1401,7 @@ async def get_calendar_events(
             "type":      "vendor_pending",
             "label":     "Pending Approval",
             "color":     EVENT_TYPES["vendor_pending"]["color"],
-            "title":     f"Approve Vendor — {name}",
+            "title":     f"Approve Vendor â€” {name}",
             "date":      c_ymd,
             "endDate":   "",
             "notes":     f"Email: {v.get('email','')} | Mobile: {v.get('contactMobile','')}",
@@ -1392,10 +1514,10 @@ async def delete_calendar_event(event_id: str):
     await calendar_events_collection.delete_one({"_id": oid})
     return JSONResponse({"status": "success", "message": "Event deleted."})
 
-# ═══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # ORDER DETAILS CRUD
 # Collection: mbuyer_order_details_collection
-# ═══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 
 
@@ -1461,10 +1583,10 @@ async def delete_order_detail(doc_id: str, ctx: dict = Depends(get_hq_tenant)):
     return JSONResponse({"status": "success", "message": "Order deleted."})
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # SAMPLE OR REAL CRUD
 # Collection: sample_real_collection
-# ═══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 @router.get("/sample-or-real")
 async def get_sample_or_real(search: Optional[str] = Query(None), ctx: dict = Depends(get_hq_tenant)):
@@ -1537,10 +1659,10 @@ async def delete_sample_or_real(doc_id: str, ctx: dict = Depends(get_hq_tenant))
     return JSONResponse({"status": "success", "message": "Record deleted."})
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # BUYER GRC CRUD
 # Collection: mbuyer_grc_collection  (add to db.py: mbuyer_grc_collection = db["mbuyer_grc"])
-# ═══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 from app.db import mbuyer_grc_collection
 
@@ -1648,11 +1770,11 @@ async def delete_buyer_grc(doc_id: str, ctx: dict = Depends(get_hq_tenant)):
     return JSONResponse({"status": "success", "message": "GRC deleted."})
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # BUYER PRODUCT DESCRIPTION CRUD
 # Collection: mbuyer_product_desc_collection
 # Add to db.py:  mbuyer_product_desc_collection = db["mbuyer_product_descriptions"]
-# ═══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 from app.db import mbuyer_product_desc_collection
 
@@ -1733,15 +1855,15 @@ async def delete_product_description(doc_id: str, ctx: dict = Depends(get_hq_ten
     return JSONResponse({"status": "success", "message": "Product deleted."})
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# GR UPDATE & RETURN   →  mbuyer_gr_return_collection = db["mbuyer_gr_returns"]
-# NEXT PLAN            →  mbuyer_next_plan_collection  = db["mbuyer_next_plans"]
-# DEBIT NOTE           →  mbuyer_debit_note_collection = db["mbuyer_debit_notes"]
-# ═══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# GR UPDATE & RETURN   â†’  mbuyer_gr_return_collection = db["mbuyer_gr_returns"]
+# NEXT PLAN            â†’  mbuyer_next_plan_collection  = db["mbuyer_next_plans"]
+# DEBIT NOTE           â†’  mbuyer_debit_note_collection = db["mbuyer_debit_notes"]
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 from app.db import mbuyer_gr_return_collection, mbuyer_next_plan_collection, mbuyer_debit_note_collection
 
-# ── GR UPDATE & RETURN ────────────────────────────────────────────────────────
+# â”€â”€ GR UPDATE & RETURN â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @router.get("/gr-returns")
 async def get_gr_returns(search: Optional[str] = Query(None), ctx: dict = Depends(get_hq_tenant)):
@@ -1803,7 +1925,7 @@ async def delete_gr_return(doc_id: str, ctx: dict = Depends(get_hq_tenant)):
     return JSONResponse({"status": "success", "message": "Record deleted."})
 
 
-# ── NEXT PLAN ─────────────────────────────────────────────────────────────────
+# â”€â”€ NEXT PLAN â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @router.get("/next-plans")
 async def get_next_plans(search: Optional[str] = Query(None), ctx: dict = Depends(get_hq_tenant)):
@@ -1865,7 +1987,7 @@ async def delete_next_plan(doc_id: str, ctx: dict = Depends(get_hq_tenant)):
     return JSONResponse({"status": "success", "message": "Plan deleted."})
 
 
-# ── DEBIT NOTE ────────────────────────────────────────────────────────────────
+# â”€â”€ DEBIT NOTE â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @router.get("/debit-notes")
 async def get_debit_notes(search: Optional[str] = Query(None), ctx: dict = Depends(get_hq_tenant)):
@@ -1963,3 +2085,7 @@ async def delete_debit_note(doc_id: str, ctx: dict = Depends(get_hq_tenant)):
     except: raise HTTPException(status_code=400, detail="Invalid ID")
     await mbuyer_debit_note_collection.delete_one({"_id": oid})
     return JSONResponse({"status": "success", "message": "Debit note deleted."})
+
+
+
+

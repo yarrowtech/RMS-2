@@ -1,4 +1,4 @@
-
+﻿
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import jwt, JWTError
@@ -11,12 +11,12 @@ from ..db import admins_collection, tenants_collection
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
 
 
-# ── Core tenant context extractor ─────────────────────────────────────────────
+# â”€â”€ Core tenant context extractor â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 async def get_tenant(token: str = Depends(oauth2_scheme)) -> Dict[str, Any]:
     """
     Extracts tenant context from JWT token.
-    Works for ALL admin roles — HQ and Store.
+    Works for ALL admin roles â€” HQ and Store.
 
     Returns:
         {
@@ -30,8 +30,8 @@ async def get_tenant(token: str = Depends(oauth2_scheme)) -> Dict[str, Any]:
         }
 
     Raises:
-        401 — invalid/expired token
-        403 — admin has no tenant_id assigned yet, OR admin is suspended
+        401 â€” invalid/expired token
+        403 â€” admin has no tenant_id assigned yet, OR admin is suspended
     """
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -54,10 +54,10 @@ async def get_tenant(token: str = Depends(oauth2_scheme)) -> Dict[str, Any]:
     if not user_id or role not in ("ADMIN", "admin"):
         raise credentials_exception
 
-    # ── ALWAYS look up the live admin record ────────────────────────────────
+    # â”€â”€ ALWAYS look up the live admin record â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     # Previously this only happened as a fallback when tenant_id was missing
     # from the token. Now it happens every request, because status
-    # (ACTIVE/SUSPENDED) and permissions must be checked fresh — a JWT
+    # (ACTIVE/SUSPENDED) and permissions must be checked fresh â€” a JWT
     # issued before an admin was suspended, or before their permissions
     # were changed, must not keep working until it naturally expires.
     # This trades a small amount of latency (one indexed _id lookup) for
@@ -91,22 +91,23 @@ async def get_tenant(token: str = Depends(oauth2_scheme)) -> Dict[str, Any]:
         "store_name":  payload.get("store_name") or admin.get("store_name"),
         "store_type":  payload.get("store_type") or admin.get("store_type"),
         "admin_id":    user_id,
+        "admin_name":  admin.get("name") or admin.get("full_name") or admin.get("email", ""),
         "department":  payload.get("department") or admin.get("department", ""),
         # Carried through so require_permission() below doesn't need a
-        # second DB round-trip — this dict already reflects the live record.
+        # second DB round-trip â€” this dict already reflects the live record.
         "_permissions": admin.get("permissions", []),
         "_managed_departments": admin.get("managedDepartments", []),
     }
 
 
-# ── HQ Admin only ─────────────────────────────────────────────────────────────
+# â”€â”€ HQ Admin only â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 async def get_hq_tenant(ctx: Dict[str, Any] = Depends(get_tenant)) -> Dict[str, Any]:
     """
     HQ-level routes only.
     Blocks store admins from accessing central operations.
 
-    NOTE: this checks scope only, same as before — it does NOT check
+    NOTE: this checks scope only, same as before â€” it does NOT check
     permissions. A route gated only by get_hq_tenant is reachable by ANY
     HQ-scoped admin regardless of department/permissions. Use
     require_permission(...) (below) instead of, or layered with, this
@@ -151,7 +152,7 @@ async def get_receiving_tenant(ctx: Dict[str, Any] = Depends(get_tenant)) -> Dic
     )
 
 
-# ── Store Admin only ──────────────────────────────────────────────────────────
+# â”€â”€ Store Admin only â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 async def get_store_tenant(ctx: Dict[str, Any] = Depends(get_tenant)) -> Dict[str, Any]:
     """
@@ -160,7 +161,7 @@ async def get_store_tenant(ctx: Dict[str, Any] = Depends(get_tenant)) -> Dict[st
 
     Same caveat as get_hq_tenant: this only checks scope + store_id, not
     permissions. A "Cashier" store admin and an "Inventory (Store)" store
-    admin both pass this check identically today — pair with
+    admin both pass this check identically today â€” pair with
     require_permission(...) to actually differentiate them.
     """
     if ctx["scope"] not in ("store", "branch") or not ctx["store_id"]:
@@ -171,7 +172,7 @@ async def get_store_tenant(ctx: Dict[str, Any] = Depends(get_tenant)) -> Dict[st
     return ctx
 
 
-# ── Either HQ or Store (shared routes) ───────────────────────────────────────
+# â”€â”€ Either HQ or Store (shared routes) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 async def get_any_tenant(ctx: Dict[str, Any] = Depends(get_tenant)) -> Dict[str, Any]:
     """
@@ -179,34 +180,34 @@ async def get_any_tenant(ctx: Dict[str, Any] = Depends(get_tenant)) -> Dict[str,
     Use for: stock transfers, reports (with scope-based filtering)
 
     The route itself checks ctx["scope"] to decide what to return:
-        if ctx["scope"] == "hq":    → return all stores' data
-        if ctx["scope"] == "store": → return only their store's data
+        if ctx["scope"] == "hq":    â†’ return all stores' data
+        if ctx["scope"] == "store": â†’ return only their store's data
     """
     return ctx
 
 
-# ── Permission enforcement ────────────────────────────────────────────────────
+# â”€â”€ Permission enforcement â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def require_permission(permission: str):
     """
-    Dependency factory — returns a dependency that requires BOTH a valid
+    Dependency factory â€” returns a dependency that requires BOTH a valid
     tenant context AND the given permission string present in the admin's
     `permissions` array, checked live against admins_collection (via the
     ctx["_permissions"] already fetched in get_tenant, so no extra query).
 
     This is the piece that was previously missing entirely: the Add Admin
     modal lets HQ tick boxes like "Inventory", "Purchase Orders",
-    "Stock Transfer" — those were saved to the DB and displayed back in the
+    "Stock Transfer" â€” those were saved to the DB and displayed back in the
     admin table, but no route ever read them. Every route was reachable by
     any admin with the right scope (hq/store), regardless of which
     permission checkboxes were ticked.
 
-    Usage — layer on top of scope, don't replace it:
+    Usage â€” layer on top of scope, don't replace it:
         @router.post("/{id}/receive")
         async def receive(ctx: dict = Depends(require_permission("stock_transfer"))):
             ...
 
-    This does NOT separately re-check scope — it depends on get_tenant,
+    This does NOT separately re-check scope â€” it depends on get_tenant,
     which any admin (hq or store) satisfies as long as they're authenticated
     and active. If a route should ALSO be HQ-only or store-only regardless
     of permission, compose explicitly:
@@ -236,7 +237,7 @@ def require_department(department: str):
     """
     Same idea as require_permission, but checks managedDepartments instead.
     Useful when access should be gated by department membership rather than
-    (or in addition to) a specific permission — e.g. only admins with
+    (or in addition to) a specific permission â€” e.g. only admins with
     "Inventory (Store)" in their managedDepartments can touch store-level
     GRN receiving, regardless of which individual permission checkboxes
     were set.
@@ -250,3 +251,4 @@ def require_department(department: str):
             )
         return ctx
     return checker
+

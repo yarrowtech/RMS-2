@@ -1,4 +1,4 @@
-import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
+﻿import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
 
 import React, { useState, useEffect, useCallback } from "react";
 import axios from "axios";
@@ -41,7 +41,7 @@ import VendorWhatsAppConnect from "./Vendorwhatsappconnect.jsx";
 import PurchaseInvoice from "../PurchaseInvoice.jsx";
 import ProcurementNotificationCenter from "../ProcurementNotificationCenter.jsx";
 
-/* ── token helper — always use this, never localStorage directly ── */
+/* â”€â”€ token helper â€” always use this, never localStorage directly â”€â”€ */
 const getToken = () =>
   localStorage.getItem("vendor_token") ||
   localStorage.getItem("admin_token")  ||
@@ -50,8 +50,17 @@ const getToken = () =>
 
 const cn = (...a) => a.filter(Boolean).join(" ");
 
+const formatDashboardCurrency = (amount, currency = "INR") => {
+  const safeCurrency = /^[A-Z]{3}$/.test(currency || "") ? currency : "INR";
+  return new Intl.NumberFormat("en-IN", {
+    style: "currency",
+    currency: safeCurrency,
+    maximumFractionDigits: 0,
+  }).format(Number(amount) || 0);
+};
+
 /* ------------------------------------------------------------------
-   Stat card — one icon tint per meaning (teal = inventory, amber =
+   Stat card â€” one icon tint per meaning (teal = inventory, amber =
    needs attention, emerald = money in). Weight kept to font-bold,
    not font-black, so the numbers don't compete with page headings.
 ------------------------------------------------------------------ */
@@ -98,7 +107,7 @@ function ProfileCard({ profile }) {
   if (!profile) {
     return (
       <div className="flex h-64 items-center justify-center text-sm text-slate-400">
-        Loading profile…
+        Loading profileâ€¦
       </div>
     );
   }
@@ -114,8 +123,8 @@ function ProfileCard({ profile }) {
           <div className="space-y-2.5">
             <InfoRow icon={Building2} label="Business Name" value={profile.name} />
             <InfoRow icon={Mail}      label="Email"         value={profile.email} />
-            <InfoRow icon={Phone}     label="Mobile"        value={profile.contactMobile || "—"} />
-            <InfoRow icon={MapPin}    label="Address"       value={profile.address || "—"} />
+            <InfoRow icon={Phone}     label="Mobile"        value={profile.contactMobile || "â€”"} />
+            <InfoRow icon={MapPin}    label="Address"       value={profile.address || "â€”"} />
           </div>
         </div>
       </div>
@@ -127,7 +136,7 @@ function HelpCard() {
   const contacts = [
     { icon: Mail,  text: "support@rmshelpdesk.com" },
     { icon: Phone, text: "+91 1800 123 456" },
-    { icon: Clock, text: "Mon–Sat, 9 AM – 6 PM" },
+    { icon: Clock, text: "Monâ€“Sat, 9 AM â€“ 6 PM" },
   ];
   return (
     <div className="max-w-md">
@@ -182,6 +191,8 @@ export default function MSeller() {
   const [editingProduct, setEditingProduct] = useState(null);
   const [inquiryNotificationCount, setInquiryNotificationCount] = useState(0);
   const [jobWorkEnabled, setJobWorkEnabled] = useState(false);
+  const [dashboardSummary, setDashboardSummary] = useState(null);
+  const [dashboardSummaryLoading, setDashboardSummaryLoading] = useState(true);
 
   const refreshVendorAccess = useCallback(async () => {
     const token = getToken();
@@ -207,6 +218,31 @@ export default function MSeller() {
   useEffect(() => {
     if (activeTab === "job-work" && !jobWorkEnabled) setActiveTab("dashboard");
   }, [activeTab, jobWorkEnabled]);
+
+  const refreshDashboardSummary = useCallback(async () => {
+    const token = getToken();
+    if (!token) {
+      setDashboardSummary(null);
+      setDashboardSummaryLoading(false);
+      return;
+    }
+    setDashboardSummaryLoading(true);
+    try {
+      const response = await axios.get(`${APP_API_URL}/api/vendors/dashboard-summary`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      setDashboardSummary(response.data);
+    } catch (error) {
+      console.error("Unable to load vendor dashboard summary", error);
+      setDashboardSummary(null);
+    } finally {
+      setDashboardSummaryLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (activeTab === "dashboard") refreshDashboardSummary();
+  }, [activeTab, refreshDashboardSummary]);
 
   useEffect(() => {
     let cancelled=false;
@@ -275,11 +311,30 @@ export default function MSeller() {
         return (
           <div className="space-y-6">
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
-              <StatCard icon={Package}      label="Total Products"  value="28"      delta="+4 this month"      tone="teal" />
-              <StatCard icon={ShoppingBag}  label="Pending Orders"  value="5"                                   tone="amber" />
-              <StatCard icon={IndianRupee}  label="Revenue"         value="₹48,230" delta="+12% vs last month" tone="emerald" />
+              <StatCard
+                icon={Package}
+                label="Total Products"
+                value={dashboardSummaryLoading ? "…" : (dashboardSummary?.total_products ?? "—")}
+                delta={dashboardSummary ? `${dashboardSummary.products_added_this_month || 0} added this month` : undefined}
+                tone="teal"
+              />
+              <StatCard
+                icon={ShoppingBag}
+                label="Pending Orders"
+                value={dashboardSummaryLoading ? "…" : (dashboardSummary?.pending_orders ?? "—")}
+                tone="amber"
+              />
+              <StatCard
+                icon={IndianRupee}
+                label="Revenue"
+                value={dashboardSummaryLoading ? "…" : formatDashboardCurrency(dashboardSummary?.confirmed_revenue, dashboardSummary?.currency)}
+                delta={dashboardSummary?.revenue_change_pct !== null && dashboardSummary?.revenue_change_pct !== undefined
+                  ? `${dashboardSummary.revenue_change_pct > 0 ? "+" : ""}${dashboardSummary.revenue_change_pct}% vs last month`
+                  : (dashboardSummary?.current_month_revenue > 0 ? "New this month" : undefined)}
+                tone="emerald"
+              />
             </div>
-            <MSellerDashboard />
+            <MSellerDashboard onNavigate={setActiveTab} />
           </div>
         );
 
@@ -372,7 +427,7 @@ export default function MSeller() {
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search…"
+              placeholder="Searchâ€¦"
               className="w-full rounded-lg border border-slate-200 bg-slate-50 py-2 pl-9 pr-4 text-sm outline-none transition focus:border-teal-400 focus:bg-white focus:ring-2 focus:ring-teal-100"
             />
           </div>
@@ -403,3 +458,4 @@ export default function MSeller() {
     </div>
   );
 }
+

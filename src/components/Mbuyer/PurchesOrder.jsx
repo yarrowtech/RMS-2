@@ -1,4 +1,4 @@
-import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
+﻿import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
 
 
 import React, { useMemo, useState, useEffect, useRef, useCallback } from "react";
@@ -8,7 +8,7 @@ import VendorCompareSearch from "./Vendorcomparesearch.jsx";
 
 const API_BASE = `${APP_API_URL}/purchaseorders`;
 
-// ── Shared auth helper ──────────────────────────────────────────────────────
+// â”€â”€ Shared auth helper â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Every route this file calls (purchaseorders, /api/vendors/approved,
 // /api/products/vendor/{id}, /inventory/*) now requires an HQ admin's Bearer
 // token — added during the tenant-isolation pass. This file previously sent
@@ -635,7 +635,7 @@ function ReviewModal({ order, onClose, onApprove, onReject }) {
           )}
           {hasHighVariance && (
             <span className="flex items-center gap-1 rounded-full border border-red-200 bg-red-50 px-3 py-1 text-[11px] font-bold text-red-700">
-              ⚠ High variance (&gt;10%) detected
+              âš  High variance (&gt;10%) detected
             </span>
           )}
         </div>
@@ -726,8 +726,8 @@ function ReviewModal({ order, onClose, onApprove, onReject }) {
           {itemsWithVariance > 0 && (
             <div className="mt-3 flex flex-wrap items-center gap-3 text-[11px] text-slate-500">
               <span className="font-semibold text-slate-600">Variance bands:</span>
-              <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-slate-500">0–3% — auto-accept</span>
-              <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-amber-700">3–10% — review</span>
+              <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-slate-500">0â€“3% — auto-accept</span>
+              <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-amber-700">3â€“10% — review</span>
               <span className="rounded-full border border-red-200 bg-red-50 px-2 py-0.5 text-red-700">&gt;10% — needs approval</span>
             </div>
           )}
@@ -914,7 +914,7 @@ function PurchaseOrderForm({ onClose, onSave, initialOrder }) {
       try {
         setVendorLoading(true);
         setVendorError(null);
-        // ⚠️ THE FIX: this call had NO auth header at all. GET
+        // âš ï¸ THE FIX: this call had NO auth header at all. GET
         // /api/vendors/approved requires get_hq_tenant now (tenant-scoped —
         // returns only THIS tenant's approved vendors, e.g. Citimart's
         // admin sees only Citimart's approved vendors, never Zudio's).
@@ -931,7 +931,7 @@ function PurchaseOrderForm({ onClose, onSave, initialOrder }) {
         // identity/link split) merged with identity fields — "name" comes
         // from the vendor identity, "_id" is the link's id. Both are
         // already read correctly below; no shape change needed here.
-        // ⚠️ FIXED: under the vendor identity/tenant-link split, "_id" in
+        // âš ï¸ FIXED: under the vendor identity/tenant-link split, "_id" in
         // this response is now the LINK's id (see vendor_routes.py's
         // module docstring) — NOT the vendor's real identity id that
         // /api/products/vendor/{id} and PO creation actually key on.
@@ -1250,7 +1250,7 @@ function PurchaseOrderForm({ onClose, onSave, initialOrder }) {
                       <datalist id="vendorList">{vendors.map((v) => <option key={v.id} value={v.name} />)}</datalist>
                       {vendorError && (
                         <p className="mt-1 text-[10px] text-rose-600 flex items-center gap-1">
-                          ⚠ {vendorError} — check that you're logged in and try refreshing the page.
+                          âš  {vendorError} — check that you're logged in and try refreshing the page.
                         </p>
                       )}
                       {!vendorLoading && !vendorError && vendors.length === 0 && (
@@ -1367,8 +1367,8 @@ function PurchaseOrderForm({ onClose, onSave, initialOrder }) {
                   <Input type="number" min="0" value={general.commissionRate}
                     onChange={(e) => setG("commissionRate", String(clamp0(e.target.value)))} placeholder="0" />
                 </Row>
-                <Row label="Merchandiser Name">
-                  <Input value={general.merchandiserName} onChange={(e) => setG("merchandiserName", e.target.value)} placeholder="Name" />
+                <Row label="Buyer Contact Reference (optional)">
+                  <Input value={general.merchandiserName} onChange={(e) => setG("merchandiserName", e.target.value)} placeholder="Optional internal reference" />
                 </Row>
                 <Row label="Term Name">
                   <Input value={general.terms} onChange={(e) => setG("terms", e.target.value)} placeholder="Term name" />
@@ -2035,3 +2035,7 @@ const textareaClass = "w-full rounded-lg border border-slate-200 bg-white px-3 p
 function Input({ className = "", ...props }) {
   return <input {...props} className={[inputClass, className].join(" ")} />;
 }
+
+
+
+

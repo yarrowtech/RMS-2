@@ -49,7 +49,7 @@ export default function StorePurchasing() {
           })}
         </nav>
         <section className="min-h-[70vh] overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-          <Page />
+          {current.key === "vendors" ? <VendorList showQuestionnaires={false} /> : <Page />}
         </section>
       </div>
     </main>

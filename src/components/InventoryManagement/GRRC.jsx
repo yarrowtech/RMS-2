@@ -1158,7 +1158,7 @@ const today  = () => new Date().toISOString().slice(0, 10);
 
 const EMPTY_ITEM = (poItem = {}) => ({
   barcode:         poItem.barcode      || "",
-  vendorBarcode:   poItem.vendorBarcode || "",
+  vendorBarcode:   poItem.vendorBarcode || poItem.vendor_barcode || "",
   poBarcode:       poItem.barcode      || "",
   description:     poItem.description  || "",
   poQty:           poItem.amendedQty   || poItem.quantity || 0,

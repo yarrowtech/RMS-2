@@ -1,4 +1,4 @@
-
+﻿
 from fastapi import APIRouter, HTTPException, status, Depends, Header
 from jose import jwt, JWTError
 from ..config import settings, frontend_url
@@ -14,7 +14,7 @@ from .deps import get_hq_tenant
 
 router = APIRouter(prefix="/purchaseorders", tags=["Purchase Orders"])
 
-# ─── App base URL (used for share links) ─────────────────────────────────────
+# â”€â”€â”€ App base URL (used for share links) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # Change this to your production domain
 APP_BASE_URL = frontend_url()
 
@@ -25,9 +25,9 @@ def objid(v):
     return str(v) if isinstance(v, ObjectId) else v
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # MODELS
-# ═══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 class ItemModel(BaseModel):
     sku: Optional[str] = None
@@ -114,16 +114,21 @@ class PurchaseOrderModel(BaseModel):
     createdAt: Optional[datetime] = Field(default_factory=datetime.utcnow)
     updatedAt: Optional[datetime] = Field(default_factory=datetime.utcnow)
 
-    # ── Walk-in vendor fields ─────────────────────────────────────────
+    # â”€â”€ Walk-in vendor fields â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     vendor_type:   Optional[str]               = "registered"
     walkin_vendor: Optional[WalkinVendorModel] = None
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# HELPERS — unchanged from your existing file
-# ═══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# HELPERS â€” unchanged from your existing file
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
-async def generate_po_number():
+async def generate_po_number(tenant_id: str):
+    """Generate a PO sequence that belongs to one retailer/store tenant only."""
+    tenant_id = str(tenant_id or "").strip()
+    if not tenant_id:
+        raise ValueError("tenant_id is required to generate a purchase-order number")
+
     today = datetime.now()
     year, month = today.year, today.month
     if month >= 4:
@@ -132,7 +137,10 @@ async def generate_po_number():
         fy_start, fy_end = year - 1, year
     fy_code = f"{str(fy_start)[-2:]}-{str(fy_end)[-2:]}"
     last_po = await purchaseorders_collection.find_one(
-        {"orderNo": {"$regex": f"PO[/|-]\\d+/{fy_code}$"}},
+        {
+            "tenant_id": tenant_id,
+            "orderNo": {"$regex": f"PO[/|-]\\d+/{fy_code}$"},
+        },
         sort=[("_id", -1)]
     )
     last_num = 0
@@ -284,7 +292,7 @@ async def adjust_vendor_stock(items: list, vendor_id: str, reverse: bool = False
                     break
 
 
-# ─── Share link helper ────────────────────────────────────────────────────────
+# â”€â”€â”€ Share link helper â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def _make_share_link(token: str) -> str:
     return f"{APP_BASE_URL}/po-view/{token}"
@@ -337,9 +345,9 @@ def _po_public_payload(po: dict) -> dict:
     }
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# STANDARD ROUTES — all now tenant-scoped via get_hq_tenant
-# ═══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# STANDARD ROUTES â€” all now tenant-scoped via get_hq_tenant
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 '''
 @router.post("/", status_code=status.HTTP_201_CREATED)
 async def create_po(po: PurchaseOrderModel, ctx: dict = Depends(get_hq_tenant)):
@@ -347,12 +355,12 @@ async def create_po(po: PurchaseOrderModel, ctx: dict = Depends(get_hq_tenant)):
     po_dict["tenant_id"] = ctx["tenant_id"]
 
     if not po_dict.get("orderNo"):
-        po_dict["orderNo"] = await generate_po_number()
+        po_dict["orderNo"] = await generate_po_number(ctx["tenant_id"])
 
     for item in po_dict.get("items", []):
         item["barcode"] = await resolve_real_barcode(item)
 
-    # ── Vendor resolution ─────────────────────────────────────────────
+    # â”€â”€ Vendor resolution â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     if po_dict.get("vendor_type") == "walkin":
         po_dict["vendor_id"] = None
         # Generate share token for walkin vendors
@@ -365,8 +373,8 @@ async def create_po(po: PurchaseOrderModel, ctx: dict = Depends(get_hq_tenant)):
     else:
         vendor_name = po_dict.get("vendorName")
         if vendor_name:
-            # ⚠️ FIXED: previously filtered vendors_collection by "tenant_id"
-            # directly — that field no longer exists on vendor identities
+            # âš ï¸ FIXED: previously filtered vendors_collection by "tenant_id"
+            # directly â€” that field no longer exists on vendor identities
             # (moved to vendor_tenant_links_collection under the identity/
             # tenant-link split). This 404'd EVERY registered-vendor PO
             # creation, every time, since the split shipped. Fixed to find
@@ -433,14 +441,18 @@ async def create_po(po: PurchaseOrderModel, ctx: dict = Depends(get_hq_tenant)):
 async def create_po(po: PurchaseOrderModel, ctx: dict = Depends(get_hq_tenant)):
     po_dict = po.dict()
     po_dict["tenant_id"] = ctx["tenant_id"]
-
+    # Immutable audit identity: always use the authenticated HQ buyer,
+    # never the editable PO form contact field.
+    po_dict["raised_by_user_id"] = str(ctx.get("admin_id") or "")
+    po_dict["raised_by_name"] = ctx.get("admin_name") or "HQ Buyer"
+    po_dict["raised_by_department"] = ctx.get("department") or ""
     if not po_dict.get("orderNo"):
-        po_dict["orderNo"] = await generate_po_number()
+        po_dict["orderNo"] = await generate_po_number(ctx["tenant_id"])
 
     for item in po_dict.get("items", []):
         item["barcode"] = await resolve_real_barcode(item)
 
-    # ── Vendor resolution ─────────────────────────────────────────────
+    # â”€â”€ Vendor resolution â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     if po_dict.get("vendor_type") == "walkin":
         po_dict["vendor_id"] = None
         # Generate share token for walkin vendors
@@ -453,7 +465,7 @@ async def create_po(po: PurchaseOrderModel, ctx: dict = Depends(get_hq_tenant)):
     else:
         vendor_name = po_dict.get("vendorName")
         if vendor_name:
-            # Case/whitespace-insensitive match — prevents a slightly
+            # Case/whitespace-insensitive match â€” prevents a slightly
             # different typing of the same vendor's name from failing to
             # resolve to the correct (single, deduplicated) identity.
             name_pattern = re.escape(vendor_name.strip())
@@ -530,14 +542,18 @@ async def get_all_purchase_orders(ctx: dict = Depends(get_hq_tenant)):
 
 @router.get("/vendor/{vendor_name}")
 async def get_vendor_purchase_orders(vendor_name: str):
+    raise HTTPException(
+        status_code=410,
+        detail="This name-based vendor lookup is retired. Use /api/vendors/my-purchaseorders with a vendor token.",
+    )
     """
-    Vendor-facing route — intentionally NOT tenant-gated with get_hq_tenant,
+    Vendor-facing route â€” intentionally NOT tenant-gated with get_hq_tenant,
     since this is called by a logged-in vendor (not an HQ admin) using their
     own vendor session. Vendor identity is already implicitly tenant-scoped
     because a vendor account belongs to exactly one tenant.
 
     NOTE: if this route is called with no vendor auth at all today, that's a
-    separate issue — it should require vendor auth (see vendor_routes.py's
+    separate issue â€” it should require vendor auth (see vendor_routes.py's
     get_my_purchase_orders for the authenticated equivalent) and this
     name-only lookup route should probably be retired in favor of that one.
     """
@@ -582,7 +598,7 @@ async def update_purchase_order(po_id: str, po: PurchaseOrderModel, ctx: dict = 
     if po_dict.get("vendor_type") == "walkin":
         pass  # no vendor lookup for walk-in
     elif "vendorName" in po_dict:
-        # Same fix as create_po above — vendors_collection has no tenant_id
+        # Same fix as create_po above â€” vendors_collection has no tenant_id
         # anymore; verify via an Approved link instead.
         vendor = await vendors_collection.find_one({
             "$or": [{"vendor_name": po_dict["vendorName"]}, {"name": po_dict["vendorName"]}],
@@ -838,19 +854,19 @@ async def delete_purchase_order(po_id: str, ctx: dict = Depends(get_hq_tenant)):
     return {"message": f"Purchase order '{po.get('orderNo')}' deleted successfully", "stock_action": stock_action}
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # Vendor-session auth for the two vendor-facing routes below.
 #
-# ⚠️ FIX APPLIED: vendor_add_items and vendor_submit_po previously took NO
-# auth parameter at all — anyone who knew or guessed a PO's Mongo _id could
+# âš ï¸ FIX APPLIED: vendor_add_items and vendor_submit_po previously took NO
+# auth parameter at all â€” anyone who knew or guessed a PO's Mongo _id could
 # submit fake items/rates and flip its status, with no login required. This
 # was flagged early in this conversation but never actually implemented
 # until now. Uses the same JWT shape vendor_routes.py's vendor login issues
 # ({"vendor_id": ..., "email": ...}), decoded with the same secret/algorithm
-# deps.py uses for admin tokens — vendor tokens and admin tokens are
+# deps.py uses for admin tokens â€” vendor tokens and admin tokens are
 # distinguished by payload shape (vendor_id present vs role="ADMIN"), not by
 # a different secret.
-# ─────────────────────────────────────────────────────────────────────────────
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def _decode_vendor_token(authorization: str) -> dict:
     if not authorization or not authorization.startswith("Bearer "):
@@ -879,8 +895,8 @@ def _verify_po_belongs_to_vendor(po: dict, vendor_id: str):
 async def vendor_add_items(po_id: str, payload: dict, authorization: str = Header(None)):
     """
     Vendor-facing route (vendor adds draft items to a PO sent to them).
-    Not gated by get_hq_tenant — this is the vendor's own session, not an
-    HQ admin's — but NOW requires a valid vendor JWT, and verifies the PO
+    Not gated by get_hq_tenant â€” this is the vendor's own session, not an
+    HQ admin's â€” but NOW requires a valid vendor JWT, and verifies the PO
     is actually assigned to the calling vendor before allowing any writes.
     """
     decoded   = _decode_vendor_token(authorization)
@@ -920,7 +936,7 @@ async def vendor_add_items(po_id: str, payload: dict, authorization: str = Heade
         desc = (item.get("description") or "").strip().lower()
 
         if desc and desc in desc_to_idx and not bc.startswith("ITEM/"):
-            # Vendor's real barcode replaces ITEM/ placeholder — no duplicate
+            # Vendor's real barcode replaces ITEM/ placeholder â€” no duplicate
             existing_items[desc_to_idx[desc]] = item
             del desc_to_idx[desc]
         else:
@@ -945,7 +961,7 @@ async def vendor_add_items(po_id: str, payload: dict, authorization: str = Heade
 @router.post("/{po_id}/submit")
 async def vendor_submit_po(po_id: str, authorization: str = Header(None)):
     """
-    Vendor-facing route — now requires a valid vendor JWT and verifies PO
+    Vendor-facing route â€” now requires a valid vendor JWT and verifies PO
     ownership before allowing submission, same as vendor_add_items above.
     """
     decoded   = _decode_vendor_token(authorization)
@@ -973,15 +989,15 @@ async def vendor_submit_po(po_id: str, authorization: str = Header(None)):
 
     merged_items = [dict(it) for it in po.get("items", [])]
 
-    # Barcode index — for exact barcode match (registered vendor flow)
+    # Barcode index â€” for exact barcode match (registered vendor flow)
     bc_index: dict = {}
     for i, it in enumerate(merged_items):
         bc = (it.get("barcode") or "").strip()
         if bc:
             bc_index[bc] = i
 
-    # Description index — for walkin PO items with ITEM/ barcodes
-    # Vendor submits real products → match by description → replace ITEM/ barcode
+    # Description index â€” for walkin PO items with ITEM/ barcodes
+    # Vendor submits real products â†’ match by description â†’ replace ITEM/ barcode
     desc_index: dict = {}
     for i, it in enumerate(merged_items):
         desc = (it.get("description") or "").strip().lower()
@@ -996,7 +1012,7 @@ async def vendor_submit_po(po_id: str, authorization: str = Header(None)):
         bc   = (item.get("barcode") or "").strip()
         desc = (item.get("description") or "").strip().lower()
 
-        # ── Description match: walkin flow — real barcode replaces ITEM/ ─────
+        # â”€â”€ Description match: walkin flow â€” real barcode replaces ITEM/ â”€â”€â”€â”€â”€
         if not (bc and bc in bc_index) and desc and desc in desc_index:
             idx    = desc_index[desc]
             old_bc = (merged_items[idx].get("barcode") or "").strip()
@@ -1018,11 +1034,11 @@ async def vendor_submit_po(po_id: str, authorization: str = Header(None)):
             if old_bc in bc_index:
                 del bc_index[old_bc]
             bc_index[bc] = idx
-            # Remove from desc_index — same description cannot match twice
+            # Remove from desc_index â€” same description cannot match twice
             del desc_index[desc]
             continue
 
-        # ── Exact barcode match (registered vendor flow — unchanged) ──────────
+        # â”€â”€ Exact barcode match (registered vendor flow â€” unchanged) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         if bc and bc in bc_index:
             idx         = bc_index[bc]
             buyer_rate  = float(merged_items[idx].get("rate") or 0)
@@ -1063,9 +1079,9 @@ async def vendor_submit_po(po_id: str, authorization: str = Header(None)):
     if blocked_items and not po.get("variance_override"):
         raise HTTPException(status_code=400, detail={"message": f"{len(blocked_items)} item(s) have variance > 10%.", "blocked_items": blocked_items, "action_required": "buyer_override"})
 
-    # ── Step 4: Remove ITEM/ duplicates ───────────────────────────────────────
+    # â”€â”€ Step 4: Remove ITEM/ duplicates â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     # If vendor submitted a real barcode for same description, ITEM/ entry is
-    # now redundant — remove it to prevent duplicates in review modal
+    # now redundant â€” remove it to prevent duplicates in review modal
     real_desc_set = {
         (it.get("description") or "").strip().lower()
         for it in merged_items
@@ -1087,7 +1103,7 @@ async def vendor_submit_po(po_id: str, authorization: str = Header(None)):
 
     vendor_id    = str(po.get("vendor_id") or "")
     stock_action = "skipped"
-    # Only deduct stock on first submission — prevent double deduction on resubmit
+    # Only deduct stock on first submission â€” prevent double deduction on resubmit
     was_already_submitted = po.get("status") == "VendorSubmitted"
     if vendor_id and not was_already_submitted:
         await adjust_vendor_stock(vendor_items, vendor_id, reverse=False)
@@ -1136,9 +1152,9 @@ async def override_variance(po_id: str, payload: dict = {}, ctx: dict = Depends(
     return {"message": f"Variance override granted. Vendor can now resubmit.", "reason": reason}
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# WALKIN VENDOR — SHARE LINK ROUTES
-# ═══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# WALKIN VENDOR â€” SHARE LINK ROUTES
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 @router.get("/share/{po_id}/link")
 async def get_share_link(po_id: str, ctx: dict = Depends(get_hq_tenant)):
@@ -1197,7 +1213,7 @@ async def get_share_link(po_id: str, ctx: dict = Depends(get_hq_tenant)):
     }
 
 
-# ─── PUBLIC — no auth required ────────────────────────────────────────────────
+# â”€â”€â”€ PUBLIC â€” no auth required â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # These three routes are correctly left un-gated: the walk-in vendor has no
 # account/session yet. Instead of tenant_id coming from a JWT, it comes from
 # the PO itself (looked up via the unguessable share_token), and is then
@@ -1206,7 +1222,7 @@ async def get_share_link(po_id: str, ctx: dict = Depends(get_hq_tenant)):
 @router.get("/public/{token}")
 async def public_view_po(token: str):
     """
-    Public route — no login needed.
+    Public route â€” no login needed.
     Vendor opens the share link, this returns the PO data.
     Marks po_viewed_at on first access.
     """
@@ -1234,7 +1250,7 @@ async def public_accept_po(token: str, payload: dict = {}):
     """
     Vendor accepts the PO from the public link.
     Optionally updates contact details.
-    Sets status to WalkinAccepted — admin can then proceed to GRN.
+    Sets status to WalkinAccepted â€” admin can then proceed to GRN.
     """
     po = await purchaseorders_collection.find_one({"share_token": token})
     if not po:
@@ -1245,7 +1261,7 @@ async def public_accept_po(token: str, payload: dict = {}):
         raise HTTPException(status_code=410, detail="This link has expired.")
 
     if po.get("status") in ("Approved", "Cancelled", "Rejected"):
-        raise HTTPException(status_code=400, detail=f"PO cannot be accepted — current status: {po.get('status')}")
+        raise HTTPException(status_code=400, detail=f"PO cannot be accepted â€” current status: {po.get('status')}")
 
     # Optionally update walkin vendor contact details from what vendor fills in
     update: dict = {
@@ -1284,24 +1300,24 @@ async def public_register_vendor(token: str, payload: dict):
     """
     Vendor self-registers from the public PO link.
 
-    ⚠️ SCHEMA CHANGE: vendors_collection now holds only IDENTITY (name,
-    contact info) — status/tenant_id/vendor_code live on a separate
+    âš ï¸ SCHEMA CHANGE: vendors_collection now holds only IDENTITY (name,
+    contact info) â€” status/tenant_id/vendor_code live on a separate
     vendor_tenant_links_collection document, one per (vendor, tenant) pair.
     See vendor_routes.py's module docstring for the full explanation.
 
     SECURE FLOW:
-    1. Resolves or creates a vendor IDENTITY by name/mobile/email — if this
+    1. Resolves or creates a vendor IDENTITY by name/mobile/email â€” if this
        same real-world company already has an identity from working with
        a DIFFERENT retailer, that identity is REUSED rather than creating
        a duplicate login. A brand-new PENDING link is always created for
        THIS PO's tenant, regardless of whether the identity is new or
        reused.
-    2. Does NOT generate a password — vendor sets one only the first time
+    2. Does NOT generate a password â€” vendor sets one only the first time
        any of their relationships gets approved anywhere (see
        vendor_routes.py's approve_vendor).
     3. Admin sees new Pending vendor (relationship) in their vendor panel.
-    4. Admin approves → confirmation email sent (only if no password set yet).
-    5. Vendor clicks email link → sets password → logs in → sees every
+    4. Admin approves â†’ confirmation email sent (only if no password set yet).
+    5. Vendor clicks email link â†’ sets password â†’ logs in â†’ sees every
        retailer relationship on their "Retailers" tab.
     """
     po = await purchaseorders_collection.find_one({"share_token": token})
@@ -1333,7 +1349,7 @@ async def public_register_vendor(token: str, payload: dict):
     if not mobile:
         raise HTTPException(status_code=400, detail="Mobile number is required.")
 
-    # ── Resolve identity by name/mobile/email — GLOBALLY, not tenant-scoped ──
+    # â”€â”€ Resolve identity by name/mobile/email â€” GLOBALLY, not tenant-scoped â”€â”€
     # This is the crux of the multi-tenant fix: identity lookup deliberately
     # is NOT filtered by tenant_id anymore, so the same real-world vendor
     # walking into two different retailers' walk-in flows gets ONE identity
@@ -1376,7 +1392,7 @@ async def public_register_vendor(token: str, payload: dict):
                         f"pending admin approval. Please wait for the approval email."
                     ),
                 }
-            # Rejected/Deactivated with this tenant specifically — fall
+            # Rejected/Deactivated with this tenant specifically â€” fall
             # through and create a fresh Pending link below, since a past
             # rejection by ONE retailer shouldn't permanently block a new
             # attempt (the retailer can review and decide again).
@@ -1401,7 +1417,7 @@ async def public_register_vendor(token: str, payload: dict):
         result = await vendors_collection.insert_one(new_identity)
         vendor_id = result.inserted_id
 
-    # ── Create the per-tenant relationship link ───────────────────────────
+    # â”€â”€ Create the per-tenant relationship link â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     new_link = {
         "vendor_id":   vendor_id,
         "tenant_id":   tenant_id,
@@ -1420,7 +1436,7 @@ async def public_register_vendor(token: str, payload: dict):
     }
     await vendor_tenant_links_collection.insert_one(new_link)
 
-    # Link PO to vendor — vendor_type stays "walkin" until admin approves
+    # Link PO to vendor â€” vendor_type stays "walkin" until admin approves
     await purchaseorders_collection.update_one(
         {"share_token": token},
         {"$set": {
@@ -1440,3 +1456,4 @@ async def public_register_vendor(token: str, payload: dict):
         ),
         "vendor_id": str(vendor_id),
     }
+
