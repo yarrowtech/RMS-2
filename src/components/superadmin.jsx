@@ -2,6 +2,7 @@ import { API_BASE_URL as APP_API_URL } from "../config/api.js";
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import RetailersTab from './Superadminretailerstab.jsx';
+import SuperAdminOnboardingRequests from './SuperAdminOnboardingRequests.jsx';
 import SuperadminVendorManagementModal from './SuperadminVendorManagementModal';
 import { useNavigate } from 'react-router-dom';
 import {
