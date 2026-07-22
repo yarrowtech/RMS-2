@@ -1,1 +1,26 @@
 @import "tailwindcss";
+
+/*
+ * Keep native checkboxes compact. Several legacy forms use generic input
+ * utility classes, which can otherwise make a checkbox inherit text-field
+ * dimensions. Custom peer/screen-reader checkboxes are intentionally exempt.
+ */
+input[type="checkbox"]:not(.sr-only):not(.peer) {
+  appearance: auto !important;
+  -webkit-appearance: checkbox !important;
+  box-sizing: border-box;
+  inline-size: 1rem !important;
+  block-size: 1rem !important;
+  min-inline-size: 1rem !important;
+  min-block-size: 1rem !important;
+  padding: 0 !important;
+  margin: 0;
+  flex: 0 0 auto;
+  vertical-align: middle;
+  accent-color: var(--checkbox-accent, #4f46e5);
+}
+
+input[type="checkbox"]:not(.sr-only):not(.peer):focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--checkbox-accent, #4f46e5) 55%, transparent);
+  outline-offset: 2px;
+}

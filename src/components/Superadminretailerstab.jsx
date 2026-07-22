@@ -491,7 +491,7 @@ export default function RetailersTab() {
         </div>
       </div>
 
-      {upgradeRequests.filter((request) => request.status === "PENDING").length > 0 && (
+      {(
         <section className="overflow-hidden rounded-xl border border-violet-200 bg-white shadow-sm">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-violet-100 bg-violet-50 px-5 py-4">
             <div><h3 className="font-black text-violet-950">Single Store → Multi-Store requests</h3><p className="mt-0.5 text-xs text-violet-700">Approval keeps the original store and stock in place, then gives the owner Retailer HQ access after their next login.</p></div>
@@ -504,6 +504,11 @@ export default function RetailersTab() {
                 <div className="flex items-center gap-2"><span className="rounded-full bg-indigo-50 px-2.5 py-1 text-xs font-black capitalize text-indigo-700">{request.requested_plan}</span><button onClick={() => reviewUpgradeRequest(request, "decline")} className="rounded-lg border border-rose-200 px-3 py-2 text-xs font-bold text-rose-700 hover:bg-rose-50">Decline</button><button onClick={() => reviewUpgradeRequest(request, "approve")} className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-bold text-white hover:bg-emerald-700">Approve upgrade</button></div>
               </div>
             ))}
+            {upgradeRequests.filter((request) => request.status === "PENDING").length === 0 && (
+              <p className="px-5 py-5 text-sm text-slate-500">
+                No pending single-store upgrade requests. Use Refresh to check for new requests.
+              </p>
+            )}
           </div>
         </section>
       )}

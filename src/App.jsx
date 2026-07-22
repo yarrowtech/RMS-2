@@ -31,6 +31,7 @@ import RetailerOnboarding from "./pages/RetailerOnboarding.jsx";
 import DepartmentSelector from "./pages/DepartmentSelector.jsx";
 import DepartmentRouteGuard from "./components/DepartmentRouteGuard.jsx";
 import VendorRouteGuard from "./components/VendorRouteGuard.jsx";
+import SuperAdminRouteGuard from "./components/SuperAdminRouteGuard.jsx";
 
 //  Product Management
 import ProductList from "./components/Products/ProductList.jsx";
@@ -56,7 +57,7 @@ export default function App() {
         {/* Main roles */}
         <Route path="/" element={<RoleSelector />} />
         <Route path="/onboarding" element={<RetailerOnboarding />} />
-        <Route path="/superadmin" element={<SuperAdmin />} />
+        <Route path="/superadmin" element={<SuperAdminRouteGuard><SuperAdmin /></SuperAdminRouteGuard>} />
         <Route path="/admin" element={<DepartmentRouteGuard department={["HQ", "IT", "Administrator", "SUPERADMIN"]}><Admin /></DepartmentRouteGuard>} />
 
         {/* â”€â”€ Department selector â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
