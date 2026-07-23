@@ -19,7 +19,7 @@ from .routes.superadmin_vendor_routes import router as superadmin_vendor_router
 from .routes.catalogue_routes import router as catalogue_router
 from .routes.rfq_award_routes import router as rfq_award_router
 from .routes.procurement_notification_routes import router as procurement_notification_router
-from .routes.subscription_routes import router as subscription_router
+from .routes.subscription_routes import router as subscription_router, razorpay_webhook_router
 from .routes.tenant_public_routes import router as tenant_public_router
 from .routes.business_network_routes import router as business_network_router
 from .routes.vendor_finance_routes import router as vendor_finance_router
@@ -85,6 +85,7 @@ app.include_router(catalogue_router)
 app.include_router(rfq_award_router)
 app.include_router(procurement_notification_router)
 app.include_router(subscription_router)
+app.include_router(razorpay_webhook_router)
 app.include_router(tenant_public_router)
 app.include_router(business_network_router)
 app.include_router(vendor_finance_router)

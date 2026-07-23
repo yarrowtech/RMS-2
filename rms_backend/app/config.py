@@ -21,6 +21,10 @@ class Settings(BaseSettings):
     frontend_base_url: Optional[str] = Field(None, env='FRONTEND_BASE_URL')
     cors_origins: Optional[str] = Field(None, env='CORS_ORIGINS')
 
+    razorpay_key_id: Optional[str] = Field(None, env='RAZORPAY_KEY_ID')
+    razorpay_key_secret: Optional[str] = Field(None, env='RAZORPAY_KEY_SECRET')
+    razorpay_webhook_secret: Optional[str] = Field(None, env='RAZORPAY_WEBHOOK_SECRET')
+
     superadmin_email: str = Field(..., env='SUPERADMIN_EMAIL')
     superadmin_name: str = Field(..., env='SUPERADMIN_NAME')
     superadmin_password: str = Field(..., env='SUPERADMIN_PASSWORD')
