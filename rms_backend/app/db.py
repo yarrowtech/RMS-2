@@ -46,6 +46,7 @@ catalogue_inquiries_collection = db["catalogue_inquiries"]
 rfq_awards_collection        = db["rfq_awards"]
 procurement_notifications_collection = db["procurement_notifications"]
 vendor_subscriptions_collection = db["vendor_subscriptions"]
+vendor_subscription_payments_collection = db["vendor_subscription_payments"]
 vendor_role_operations_collection = db["vendor_role_operations"]
 business_connections_collection = db["business_connections"]
 vendor_b2b_rfqs_collection = db["vendor_b2b_rfqs"]
@@ -91,6 +92,8 @@ async def ensure_procurement_indexes():
     await catalogue_inquiries_collection.create_index([("tenant_id", 1), ("comparison_group_id", 1)], name="inq_tenant_comparison")
     await vendor_catalogue_collection.create_index([("vendor_id", 1), ("active", 1)], name="catalog_vendor_active")
     await vendor_role_operations_collection.create_index([("vendor_id", 1), ("role", 1)], unique=True, name="vendor_role_operations_unique")
+    await vendor_subscription_payments_collection.create_index("razorpay_order_id", unique=True, name="vendor_subscription_razorpay_order_unique")
+    await vendor_subscription_payments_collection.create_index([("vendor_id", 1), ("created_at", -1)], name="vendor_subscription_payment_history")
     await vendor_catalogue_collection.create_index([("item_name", "text"), ("category", "text"), ("description", "text")], name="catalog_search_text")
     await rfq_awards_collection.create_index([("tenant_id", 1), ("idempotency_key", 1)], unique=True, name="award_tenant_idempotency")
     await rfq_awards_collection.create_index([("tenant_id", 1), ("status", 1), ("created_at", -1)], name="award_tenant_status")

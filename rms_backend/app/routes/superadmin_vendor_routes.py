@@ -27,7 +27,7 @@ from pydantic import BaseModel, EmailStr
 
 from ..db import (
     vendors_collection, vendor_tenant_links_collection, tenants_collection,
-    product_mapping_collection, vendor_subscriptions_collection,
+    product_mapping_collection, vendor_subscriptions_collection, vendor_subscription_payments_collection,
 )
 from ..config import frontend_url
 from ..email_utils import send_vendor_confirmation_email
@@ -117,44 +117,76 @@ def _subscription_view(subscription: Optional[dict]) -> dict:
 async def get_platform_finance(
     current_admin: CurrentAdmin = Depends(get_current_superadmin),
 ):
-    """Platform billing overview for Super Admin.
-
-    This deliberately reports RMS subscription revenue only. It never exposes
-    retailer/vendor purchase invoices, receivables, or payment negotiations.
-    """
-    subscriptions = {}
+    """RMS subscription revenue only; retailer operational finance remains private."""
+    del current_admin
+    subscriptions: Dict[str, dict] = {}
     async for sub in vendor_subscriptions_collection.find({}):
         vendor_id = _str(sub.get("vendor_id"))
         if vendor_id:
             subscriptions[vendor_id] = sub
 
-    plan_counts = {tier: 0 for tier in TIER_CONFIG}
+    vendors: Dict[str, dict] = {}
+    async for vendor in vendors_collection.find({}, {"name": 1, "vendor_name": 1, "email": 1}):
+        vendor_id = _str(vendor.get("_id"))
+        if vendor_id:
+            vendors[vendor_id] = vendor
+
+    latest_payment_by_vendor: Dict[str, dict] = {}
     payment_counts: Dict[str, int] = {}
+    recent_payments = []
+    captured_revenue = 0.0
+    pending_value = 0.0
+    async for payment in vendor_subscription_payments_collection.find({}).sort("created_at", -1).limit(100):
+        payment_status = str(payment.get("status") or "created")
+        vendor_id = _str(payment.get("vendor_id"))
+        amount = float(payment.get("amount_inr") or 0)
+        payment_counts[payment_status] = payment_counts.get(payment_status, 0) + 1
+        if payment_status == "captured":
+            captured_revenue += amount
+        elif payment_status in {"created", "checkout_verified"}:
+            pending_value += amount
+        if vendor_id and vendor_id not in latest_payment_by_vendor:
+            latest_payment_by_vendor[vendor_id] = payment
+        vendor = vendors.get(vendor_id) or {}
+        recent_payments.append({
+            "id": _str(payment.get("_id")),
+            "vendor_id": vendor_id,
+            "vendor_name": vendor.get("name") or vendor.get("vendor_name") or "Vendor",
+            "email": vendor.get("email") or "",
+            "tier": payment.get("tier", DEFAULT_TIER),
+            "plan_label": TIER_CONFIG.get(payment.get("tier"), TIER_CONFIG[DEFAULT_TIER])["label"],
+            "amount_inr": round(amount, 2),
+            "status": payment_status,
+            "razorpay_order_id": payment.get("razorpay_order_id") or "",
+            "razorpay_payment_id": payment.get("razorpay_payment_id") or "",
+            "created_at": _as_iso(payment.get("created_at")),
+            "captured_at": _as_iso(payment.get("captured_at")),
+        })
+
+    plan_counts = {tier: 0 for tier in TIER_CONFIG}
     rows = []
     expected_mrr = 0.0
-    pending_value = 0.0
     renewals_due = 0
     now = datetime.utcnow()
     renewal_cutoff = now + timedelta(days=30)
 
-    async for vendor in vendors_collection.find({}, {"name": 1, "vendor_name": 1, "email": 1}):
-        vendor_id = _str(vendor.get("_id"))
+    for vendor_id, vendor in vendors.items():
         sub = subscriptions.get(vendor_id) or {}
         tier = sub.get("tier", DEFAULT_TIER)
         if tier not in TIER_CONFIG:
             tier = DEFAULT_TIER
-        status = sub.get("status", "active")
-        payment_status = sub.get("payment_status", "not_required" if tier == DEFAULT_TIER else "pending")
+        access_status = sub.get("status", "active")
+        subscription_payment_status = sub.get(
+            "payment_status", "not_required" if tier == DEFAULT_TIER else "pending"
+        )
+        latest_payment = latest_payment_by_vendor.get(vendor_id) or {}
         price = float(sub.get("price_inr", TIER_CONFIG[tier]["price_inr"]) or 0)
         expires_at = sub.get("expires_at")
 
         plan_counts[tier] += 1
-        payment_counts[payment_status] = payment_counts.get(payment_status, 0) + 1
-        if tier != DEFAULT_TIER and status == "active" and payment_status in {"paid", "waived"}:
+        if tier != DEFAULT_TIER and access_status == "active" and subscription_payment_status in {"paid", "waived"}:
             expected_mrr += price
-        if tier != DEFAULT_TIER and payment_status == "pending":
-            pending_value += price
-        if isinstance(expires_at, datetime) and now <= expires_at <= renewal_cutoff and status == "active":
+        if isinstance(expires_at, datetime) and now <= expires_at <= renewal_cutoff and access_status == "active":
             renewals_due += 1
 
         rows.append({
@@ -164,17 +196,20 @@ async def get_platform_finance(
             "tier": tier,
             "plan_label": TIER_CONFIG[tier]["label"],
             "price_inr": round(price, 2),
-            "status": status,
-            "payment_status": payment_status,
+            "status": access_status,
+            "payment_status": subscription_payment_status,
+            "last_transaction_status": latest_payment.get("status") or "not_required",
+            "razorpay_payment_id": latest_payment.get("razorpay_payment_id") or "",
             "started_at": _as_iso(sub.get("started_at")),
             "expires_at": _as_iso(expires_at),
             "updated_at": _as_iso(sub.get("updated_at")),
         })
 
-    rows.sort(key=lambda row: (row["payment_status"] == "pending", row["expires_at"] or "9999"), reverse=True)
+    rows.sort(key=lambda row: (row["status"] == "pending_payment", row["updated_at"] or ""), reverse=True)
     return {
         "summary": {
             "vendor_count": len(rows),
+            "captured_subscription_revenue": round(captured_revenue, 2),
             "expected_mrr": round(expected_mrr, 2),
             "pending_subscription_value": round(pending_value, 2),
             "renewals_due_30_days": renewals_due,
@@ -184,12 +219,13 @@ async def get_platform_finance(
             for tier, config in TIER_CONFIG.items()
         ],
         "payment_breakdown": [
-            {"status": status, "count": count} for status, count in sorted(payment_counts.items())
+            {"status": payment_status, "count": count}
+            for payment_status, count in sorted(payment_counts.items())
         ],
         "subscriptions": rows,
+        "recent_payments": recent_payments[:25],
         "rules": {"scope": "RMS subscription billing only", "retailer_vendor_finance_visible": False},
     }
-
 
 @router.get("/vendors/{vendor_id}/management")
 async def get_vendor_management(
