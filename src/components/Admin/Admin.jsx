@@ -390,16 +390,26 @@ import AdminProduct from "./AdminProduct";
 import ProductMapping from "./ProductMapping";
 import SalesReport from "./Salesreport.jsx";
  import InventoryManagementCurrentStockList from "../InventoryManagement/InventoryManagementCurrentStockList";
+import AdminStoreWiseInventory from "./AdminStoreWiseInventory.jsx";
 import HQSetup from "./Hqsetup.jsx";
 import HQAdminManagement from "./Hqadminmanagement.jsx";
 
 // ─── Store context from localStorage ─────────────────────────────────────────
-const storeId   = localStorage.getItem("admin_store_id")   || "";
-const storeName = localStorage.getItem("admin_store_name") || "";
-const tenantId  = localStorage.getItem("admin_tenant_id")  || "";
-const scope     = localStorage.getItem("admin_scope")      || "hq";
-const isHQ      = scope === "hq";
-const isStore   = scope === "store";
+// Read INSIDE each component that needs it, never at module top-level.
+// Admin.jsx is statically imported by App.jsx and login is a client-side
+// navigate() (no full page reload), so a module-level `const` here would
+// freeze at whatever localStorage held before the user ever logged in —
+// stale for the rest of the session unless they hard-refresh. Calling this
+// inside a component body instead re-reads fresh on every real mount.
+function readAdminContext() {
+  const scope = localStorage.getItem("admin_scope") || "hq";
+  return {
+    storeName: localStorage.getItem("admin_store_name") || "",
+    scope,
+    isHQ:    scope === "hq",
+    isStore: scope === "store",
+  };
+}
 
 const COMPANY_NAME = "RMS";
 
@@ -410,15 +420,8 @@ function labelFromKey(key) {
     // HQ
     "products":              "Products",
     "productMapping":        "Product Mapping",
-    "stockAllocation":       "Stock Allocation",
-    "purchaseOrders":        "Purchase Orders",
-    "grn":                   "GRN / Receiving",
+    "storeInventory":        "Store-wise Inventory",
     "reports":               "Sales Reports",
-    "users.vendor":          "Vendor",
-    "users.hr":              "HR",
-    "users.inventoryManager":"Inventory Manager",
-    "users.cashier":         "Cashier",
-    "users.logistics":       "Logistics",
     // Store
     "storeStock":            "Store Stock",
     "storeSales":            "Sales Report",
@@ -441,6 +444,7 @@ function PageLoader() {
 }
 
 function MinimalPlaceholder({ title, subtitle, badge }) {
+  const { isStore, storeName } = readAdminContext();
   return (
     <div className="p-6">
       <div className="flex items-center gap-3 mb-2">
@@ -467,6 +471,7 @@ function MinimalPlaceholder({ title, subtitle, badge }) {
 }
 
 function StoreBanner() {
+  const { isHQ, storeName, scope } = readAdminContext();
   if (isHQ) return null;
   return (
     <div className="mx-6 mt-4 flex items-center gap-3 px-4 py-2.5 bg-indigo-50 border border-indigo-200 rounded-xl">
@@ -483,6 +488,7 @@ function StoreBanner() {
 }
 
 export default function AdminModule() {
+  const { isHQ, isStore, storeName } = readAdminContext();
   const defaultTab = isStore ? "storeStock" : "dashboard";
 
   const [active, setActive]                         = useState(defaultTab);
@@ -516,69 +522,11 @@ export default function AdminModule() {
         case "productMapping":
           return <ProductMapping />;
 
-        case "stockAllocation":
-          // InventoryManagementCurrentStockList handles isHQ internally:
-          // shows Central Stock + Allocate to Store tabs
-          return <InventoryManagementCurrentStockList />;
-
-        case "purchaseOrders":
-          return (
-            <MinimalPlaceholder
-              title="Purchase Orders"
-              subtitle="Create and manage purchase orders to vendors."
-            />
-          );
-
-        case "grn":
-          return (
-            <MinimalPlaceholder
-              title="GRN / Receiving"
-              subtitle="Goods Received Notes — confirm and record incoming stock."
-            />
-          );
+        case "storeInventory":
+          return <AdminStoreWiseInventory />;
 
         case "reports":
           return <SalesReport />;
-
-        case "users.vendor":
-          return (
-            <MinimalPlaceholder
-              title="Vendor"
-              subtitle="Vendor users list, permissions, onboarding, and access control."
-            />
-          );
-
-        case "users.hr":
-          return (
-            <MinimalPlaceholder
-              title="HR"
-              subtitle="HR users list, attendance access, payroll access, and HR permissions."
-            />
-          );
-
-        case "users.inventoryManager":
-          return (
-            <MinimalPlaceholder
-              title="Inventory Manager"
-              subtitle="Inventory manager users, role permissions, and access to stock modules."
-            />
-          );
-
-        case "users.cashier":
-          return (
-            <MinimalPlaceholder
-              title="Cashier"
-              subtitle="Cashier users, POS permissions, counter mapping, and device access."
-            />
-          );
-
-        case "users.logistics":
-          return (
-            <MinimalPlaceholder
-              title="Logistics"
-              subtitle="Shipments, tracking, pickup/manifest, courier serviceability, NDR & RTO."
-            />
-          );
 
         default:
           return <MinimalPlaceholder title="Admin Panel" />;
