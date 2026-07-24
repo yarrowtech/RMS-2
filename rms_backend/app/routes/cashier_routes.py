@@ -25,6 +25,26 @@ def _store_scope(ctx: dict) -> dict:
     return {"tenant_id": ctx["tenant_id"], "store_id": ctx["store_id"]}
 
 
+async def _require_report_context(authorization: str = None) -> dict:
+    """Sales reports only: HQ sees every store in the tenant, a store admin
+    sees only their own store. POS/billing operations stay store-only via
+    _require_store_context above — this is deliberately looser, for
+    read-only reporting only."""
+    ctx = await get_store_context(authorization)
+    if not ctx.get("tenant_id"):
+        raise HTTPException(status_code=401, detail="Valid tenant authentication is required.")
+    if ctx.get("scope") == "store" and not ctx.get("store_id"):
+        raise HTTPException(status_code=403, detail="Store reports require a store-assigned account.")
+    return ctx
+
+
+def _report_scope(ctx: dict) -> dict:
+    scope = {"tenant_id": ctx["tenant_id"]}
+    if ctx.get("scope") == "store":
+        scope["store_id"] = ctx["store_id"]
+    return scope
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # HELPERS
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -879,13 +899,19 @@ async def get_sales_report(
     search:         Optional[str]   = Query(None),
     min_amount:     Optional[float] = Query(None),
     max_amount:     Optional[float] = Query(None),
+    store_id:       Optional[str]   = Query(None, description="HQ only — filter to one store/branch."),
     limit:          int             = Query(500, le=2000),
     skip:           int             = Query(0, ge=0),
     authorization: str = Header(None),
 ):
-    ctx = await _require_store_context(authorization)
+    ctx = await _require_report_context(authorization)
 
-    query: dict = _store_scope(ctx)
+    query: dict = _report_scope(ctx)
+    # A store-scoped caller is already locked to their own store by
+    # _report_scope above — only honor this filter for HQ, which otherwise
+    # sees every store's bills combined.
+    if store_id and ctx.get("scope") == "hq":
+        query["store_id"] = store_id
 
     if type_filter and type_filter.lower() not in ("all", ""):
         query["type"] = type_filter.lower()
@@ -949,6 +975,8 @@ async def get_sales_report(
             "invoice_no":       doc.get("invoice_no", ""),
             "type":             doc.get("type", "sale"),
             "date":             doc.get("date", ""),
+            "store_id":         doc.get("store_id", ""),
+            "store_name":       doc.get("store_name", ""),
             "cashier_name":     doc.get("cashier_name", ""),
             "customer_name":    doc.get("customer_name", ""),
             "mobile":           doc.get("mobile", ""),
@@ -1022,11 +1050,11 @@ async def reports_summary(
     to_date:   Optional[str] = Query(None),
     authorization: str = Header(None),
 ):
-    ctx = await _require_store_context(authorization)
+    ctx = await _require_report_context(authorization)
 
     fd, td = from_date or _default_dates()[0], to_date or _default_dates()[1]
     q = _date_query(fd, td)
-    q.update(_store_scope(ctx))
+    q.update(_report_scope(ctx))
 
     kpis = {
         "sale_count": 0, "return_count": 0,
@@ -1089,11 +1117,11 @@ async def reports_items(
     limit:     int           = Query(50, le=200),
     authorization: str = Header(None),
 ):
-    ctx = await _require_store_context(authorization)
+    ctx = await _require_report_context(authorization)
 
     fd, td = from_date or _default_dates()[0], to_date or _default_dates()[1]
     q = _date_query(fd, td)
-    q.update(_store_scope(ctx))
+    q.update(_report_scope(ctx))
     item_map: dict = {}
 
     async for doc in sales_collection.find(q):
@@ -1141,10 +1169,10 @@ async def reports_gst(
     to_date:   Optional[str] = Query(None),
     authorization: str = Header(None),
 ):
-    ctx = await _require_store_context(authorization)
+    ctx = await _require_report_context(authorization)
 
     fd, td = from_date or _default_dates()[0], to_date or _default_dates()[1]
-    q = {**_date_query(fd, td), "type": "sale", **_store_scope(ctx)}
+    q = {**_date_query(fd, td), "type": "sale", **_report_scope(ctx)}
     bracket_map: dict = {}
     totals = {"taxable": 0.0, "cgst": 0.0, "sgst": 0.0, "igst": 0.0, "total_gst": 0.0, "gross": 0.0}
 
@@ -1199,11 +1227,11 @@ async def reports_cashiers(
     to_date:   Optional[str] = Query(None),
     authorization: str = Header(None),
 ):
-    ctx = await _require_store_context(authorization)
+    ctx = await _require_report_context(authorization)
 
     fd, td = from_date or _default_dates()[0], to_date or _default_dates()[1]
     q = _date_query(fd, td)
-    q.update(_store_scope(ctx))
+    q.update(_report_scope(ctx))
     cashier_map: dict = {}
 
     async for doc in sales_collection.find(q):
@@ -1246,6 +1274,60 @@ async def reports_cashiers(
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# GET /cashier/reports/by-store
+# One row per store/branch, side by side — HQ oversight comparing every
+# location's sales at a glance, instead of picking one store_id at a time
+# via the ?store_id= filter on the base /reports endpoint.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@router.get("/reports/by-store")
+async def reports_by_store(
+    from_date: Optional[str] = Query(None),
+    to_date:   Optional[str] = Query(None),
+    authorization: str = Header(None),
+):
+    ctx = await _require_report_context(authorization)
+    if ctx.get("scope") != "hq":
+        raise HTTPException(status_code=403, detail="Store-wise summary is an HQ view.")
+
+    fd, td = from_date or _default_dates()[0], to_date or _default_dates()[1]
+    q = {**_date_query(fd, td), "tenant_id": ctx["tenant_id"]}
+    store_map: dict = {}
+
+    async for doc in sales_collection.find(q):
+        s        = doc.get("summary", {})
+        typ      = doc.get("type", "sale")
+        store_id = doc.get("store_id") or ""
+        net      = _float(s.get("net_payable"))
+        qty      = sum(int(i.get("qty", 0) or 0) for i in doc.get("items", []))
+
+        row = store_map.setdefault(store_id, {
+            "store_id": store_id or None,
+            "store_name": doc.get("store_name", "") or "Unassigned",
+            "sale_count": 0, "return_count": 0,
+            "gross_revenue": 0.0, "return_amount": 0.0, "net_revenue": 0.0,
+            "items_sold": 0,
+        })
+        if typ == "return":
+            row["return_count"]  += 1
+            row["return_amount"] += net
+        else:
+            row["sale_count"]    += 1
+            row["gross_revenue"] += net
+            row["items_sold"]    += qty
+
+    rows = []
+    for r in store_map.values():
+        r["net_revenue"]   = round(r["gross_revenue"] - r["return_amount"], 2)
+        r["gross_revenue"] = round(r["gross_revenue"], 2)
+        r["return_amount"] = round(r["return_amount"], 2)
+        rows.append(r)
+    rows.sort(key=lambda x: x["net_revenue"], reverse=True)
+
+    return JSONResponse({"status": "success", "from_date": fd, "to_date": td, "count": len(rows), "data": rows})
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # GET /cashier/reports/payments
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -1255,10 +1337,10 @@ async def reports_payments(
     to_date:   Optional[str] = Query(None),
     authorization: str = Header(None),
 ):
-    ctx = await _require_store_context(authorization)
+    ctx = await _require_report_context(authorization)
 
     fd, td = from_date or _default_dates()[0], to_date or _default_dates()[1]
-    q = {**_date_query(fd, td), "type": "sale", **_store_scope(ctx)}
+    q = {**_date_query(fd, td), "type": "sale", **_report_scope(ctx)}
     pay_map: dict = {}
     grand_total = 0.0
 

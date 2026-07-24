@@ -308,29 +308,47 @@
 //   );
 // }
 
-import React, { useEffect, useMemo, useRef, useState, useCallback } from "react";
+import React, { useEffect, useMemo, useRef, useCallback } from "react";
 import {
   FaChartPie,
   FaBoxes,
   FaSignOutAlt,
-  FaUsers,
-  FaUserTie,
-  FaUserShield,
-  FaUserCog,
   FaCashRegister,
   FaTruck,
-  FaChevronDown,
-  FaChevronRight,
   FaFileAlt,
   FaWarehouse,
   FaStore,
-  FaClipboardList,
   FaShoppingCart,
   FaIdBadge,
-  FaLayerGroup,
 } from "react-icons/fa";
-import { PanelLeft, PanelRight, PackageCheck, ArrowLeftRight, Building2, Wrench, Shield } from "lucide-react";
+import { PanelLeft, PanelRight, PackageCheck, Building2, Wrench, Shield, DollarSign, Palette, TrendingUp, Network, Factory, Package } from "lucide-react";
 import { FaSitemap } from "react-icons/fa";
+import { useNavigate } from "react-router-dom";
+
+// Departments granted through the multi-store upgrade / HQ Admin Management
+// that have a real, dedicated workspace page — but no entry point anywhere
+// in this sidebar today. Filtered per-admin against managedDepartments so
+// people only see tabs for what they were actually granted. "IT" is
+// intentionally excluded: its route currently loops back to this same
+// Admin shell (no dedicated page exists yet).
+//
+// "Inventory" IS included despite the sidebar already having a "Stock
+// Allocation" tab under Stock Management — that tab renders
+// InventoryManagementCurrentStockList, which is Central-stock-only (no
+// per-store breakdown). The real store/branch-wise stock view — with a
+// store picker, backed by GET /stock-allocation/store-stock/{store_id} —
+// lives in InventoryManagementStockAllocation.jsx, only reachable via
+// /inventory. Nothing in this sidebar pointed there until now.
+const DEPARTMENT_WORKSPACES = [
+  { department: "Inventory",                    path: "/inventory",           icon: Package,     label: "Inventory (store-wise stock)" },
+  { department: "Finance",                      path: "/finance",             icon: DollarSign,  label: "Finance" },
+  { department: "Logistics",                    path: "/logistics",           icon: FaTruck,     label: "Logistics" },
+  { department: "Merchandiser Buyer",           path: "/merchandiser-buyer",  icon: Building2,   label: "Merchandiser Buyer" },
+  { department: "Design & Pattern",             path: "/design",              icon: Palette,     label: "Design & Pattern" },
+  { department: "Stock Planning & Forecasting", path: "/stock",               icon: TrendingUp,  label: "Stock Planning" },
+  { department: "Third Party",                  path: "/third-party",         icon: Network,     label: "Third Party" },
+  { department: "Production & Job Work",        path: "/production",          icon: Factory,     label: "Production & Job Work" },
+];
 
 const cn = (...a) => a.filter(Boolean).join(" ");
 
@@ -393,16 +411,24 @@ export default function AdminSidebar({
 }) {
   const isDrawer   = mode === "drawer";
   const showText   = sidebarOpen;
+  const navigate   = useNavigate();
 
-  const [usersOpen,  setUsersOpen]  = useState(false);
-  const [stockOpen,  setStockOpen]  = useState(false);
+  // Read fresh on every mount/render, NOT as a prop computed once when
+  // Admin.jsx's module first evaluated. Admin.jsx is statically imported in
+  // App.jsx and login is a client-side navigate() (no full page reload), so
+  // any value read at Admin.jsx's module top-level is frozen at whatever
+  // localStorage held before the user ever logged in. Reading it here
+  // instead — inside the component function — re-runs on every real mount.
+  const managedDepartments = useMemo(() => {
+    try {
+      const loginData = JSON.parse(localStorage.getItem("admin_login_data") || "{}");
+      return Array.isArray(loginData.departments) ? loginData.departments : [];
+    } catch {
+      return [];
+    }
+  }, []);
 
-  const usersHeaderActive = String(active || "").startsWith("users.");
-  const stockHeaderActive = ["stockAllocation", "purchaseOrders", "grn"].includes(active);
-
-  useEffect(() => { if (usersHeaderActive) setUsersOpen(true);  }, [usersHeaderActive]);
-  useEffect(() => { if (stockHeaderActive) setStockOpen(true);  }, [stockHeaderActive]);
-  useEffect(() => { if (!sidebarOpen) { setUsersOpen(false); setStockOpen(false); } }, [sidebarOpen]);
+  const departmentWorkspaces = DEPARTMENT_WORKSPACES.filter((w) => managedDepartments.includes(w.department));
 
   const userName = useMemo(() => {
     try {
@@ -424,11 +450,6 @@ export default function AdminSidebar({
 
   const topBtnPad  = sidebarOpen ? "px-3 py-2.5" : "px-3 py-2.5 justify-center";
 
-  const childBtnBase =
-    "flex w-full items-center gap-3 rounded-lg border text-[12px] font-medium transition-colors";
-
-  const childBtnPad = sidebarOpen ? "px-3 py-2" : "px-3 py-2 justify-center";
-
   const onSelect = useCallback((key) => {
     setActive(key);
     if (isDrawer) setSidebarOpen?.(false);
@@ -444,52 +465,6 @@ export default function AdminSidebar({
       <span className="text-lg">{icon}</span>
       {showText && <span className="flex-1 text-left">{label}</span>}
     </button>
-  );
-
-  // Child nav item (inside dropdowns)
-  const navItem = (key, icon, label) => (
-    <button key={key} type="button" onClick={() => onSelect(key)}
-      className={cn(childBtnBase, childBtnPad,
-        active === key
-          ? cn(ACTIVE_GRAD, ACTIVE_TXT, "border-slate-800/20")
-          : "border-transparent bg-white/[0.03] text-slate-400 hover:bg-white/[0.07] hover:text-white"
-      )}
-      title={label} aria-label={label}>
-      <span className="text-base">{icon}</span>
-      {showText && (
-        <>
-          <span className="flex-1 text-left">{label}</span>
-          <FaChevronRight className="text-xs opacity-60" />
-        </>
-      )}
-    </button>
-  );
-
-  // Collapsible group
-  const group = (key, icon, label, isOpen, setOpen, children) => (
-    <div className="space-y-2" key={key}>
-      <button type="button"
-        onClick={() => {
-          if (!sidebarOpen && !isDrawer) setSidebarOpen?.(true);
-          setOpen(v => !v);
-        }}
-        className={cn(topBtnBase, topBtnPad,
-          isOpen && showText ? cn(ACTIVE_GRAD, ACTIVE_TXT, ACTIVE_BR) : "text-slate-300 hover:text-white"
-        )}>
-        <span className="text-lg">{icon}</span>
-        {showText && (
-          <>
-            <span className="flex-1 text-left">{label}</span>
-            <FaChevronDown className={cn("text-xs transition-transform", isOpen && "rotate-180")} />
-          </>
-        )}
-      </button>
-      {showText && (
-        <div className={cn("space-y-2", sidebarOpen && "pl-3", isOpen ? "block" : "hidden")}>
-          {children}
-        </div>
-      )}
-    </div>
   );
 
   // ── Section label ─────────────────────────────────────────────────────────
@@ -574,23 +549,36 @@ export default function AdminSidebar({
             {sectionLabel("Inventory")}
             {topBtn("products",       <FaBoxes />,     "Products")}
             {topBtn("productMapping", <FaSitemap />,   "Product Mapping")}
+            {topBtn("storeInventory", <Package size={14} />, "Store-wise Inventory")}
 
-            {/* Stock group */}
-            {group("stock", <FaLayerGroup />, "Stock Management", stockOpen, setStockOpen, <>
-              {navItem("stockAllocation", <ArrowLeftRight size={14} />, "Stock Allocation")}
-              {navItem("purchaseOrders",  <FaClipboardList />,          "Purchase Orders")}
-              {navItem("grn",             <PackageCheck size={14} />,   "GRN / Receiving")}
-            </>)}
+            {/* "Stock Allocation" removed — Store-wise Inventory above covers
+                Central + every branch already. "GRN / Receiving" links to
+                the real /grn page, but ONLY when Inventory is granted — /grn
+                is itself gated by DepartmentRouteGuard department="Inventory",
+                so showing it unconditionally would dead-end any HQ admin
+                without that department (bounced straight back to /admin). */}
+            {managedDepartments.includes("Inventory") && (
+              <button type="button" onClick={() => navigate("/grn")}
+                className={cn(topBtnBase, topBtnPad, "text-slate-300 hover:text-white")}
+                title="GRN / Receiving" aria-label="GRN / Receiving">
+                <PackageCheck size={14} />
+                {showText && <span className="flex-1 text-left">GRN / Receiving</span>}
+              </button>
+            )}
 
-            {sectionLabel("Team")}
-            {/* Users group */}
-            {group("users", <FaUsers />, "Users", usersOpen, setUsersOpen, <>
-              {navItem("users.vendor",           <FaUserTie />,    "Vendor")}
-              {navItem("users.hr",               <FaUserShield />, "HR")}
-              {navItem("users.inventoryManager", <FaUserCog />,    "Inventory Manager")}
-              {navItem("users.cashier",          <FaCashRegister />, "Cashier")}
-              {navItem("users.logistics",        <FaTruck />,      "Logistics")}
-            </>)}
+            {departmentWorkspaces.length > 0 && (
+              <>
+                {sectionLabel("Departments")}
+                {departmentWorkspaces.map(({ department, path, icon: Icon, label }) => (
+                  <button key={department} type="button" onClick={() => navigate(path)}
+                    className={cn(topBtnBase, topBtnPad, "text-slate-300 hover:text-white")}
+                    title={label} aria-label={label}>
+                    <Icon size={16} />
+                    {showText && <span className="flex-1 text-left">{label}</span>}
+                  </button>
+                ))}
+              </>
+            )}
 
             {sectionLabel("Analytics")}
             {topBtn("reports",        <FaFileAlt />,   "Sales Reports")}

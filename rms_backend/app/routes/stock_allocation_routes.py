@@ -193,7 +193,7 @@ from fastapi import APIRouter, HTTPException, Header
 from app.db import (
     inventory_collection, store_stock_collection, stock_transfers_collection,
     tenants_collection, product_collection, stock_adjustments_collection,
-    grc_collection,
+    grc_collection, stores_collection,
 )
 from .store_helper import get_store_context
 
@@ -320,6 +320,142 @@ async def get_store_stock(store_id: str, authorization: str = Header(None)):
         })
 
     return {"status": "success", "store_id": store_id, "count": len(rows), "data": rows}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# GET /stock-allocation/store-summary
+# One row per store/branch PLUS Central, side by side — for HQ oversight
+# that needs to compare stock across locations at a glance, not pick one
+# store at a time via /store-stock/{store_id}.
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.get("/store-summary")
+async def get_store_stock_summary(authorization: str = Header(None)):
+    store = await get_store_context(authorization)
+    tenant_id = store.get("tenant_id")
+    if not tenant_id:
+        raise HTTPException(status_code=403, detail="No tenant assigned to this account.")
+    if store.get("scope") == "store":
+        raise HTTPException(status_code=403, detail="Store-wise summary is an HQ view.")
+    is_single_store = await _is_single_store_tenant(tenant_id)
+
+    # Multi-store retailers price stock from the central product master —
+    # store_stock documents don't carry their own mrp/rate (same rule
+    # get_store_stock applies). Build a barcode -> price lookup once instead
+    # of a query per store_stock row.
+    central_prices: dict = {}
+    central_qty = 0.0
+    central_value = 0.0
+    central_items = 0
+    async for doc in inventory_collection.find({"tenant_id": tenant_id}):
+        barcode = doc.get("barcode", "")
+        price = float(doc.get("mrp") or doc.get("rate") or 0)
+        if barcode:
+            central_prices[barcode] = price
+        qty = float(doc.get("stockQty", 0))
+        if qty > 0:
+            central_items += 1
+        central_qty += qty
+        central_value += qty * price
+
+    # Seed every active store/branch so locations with zero stock still show
+    # a row, not just whichever ones happen to have store_stock documents.
+    rows_by_store: dict = {}
+    async for s in stores_collection.find({"tenant_id": tenant_id, "active": True}):
+        rows_by_store[str(s["_id"])] = {
+            "store_id": str(s["_id"]), "store_name": s.get("name", ""),
+            "item_count": 0, "total_qty": 0.0, "total_value": 0.0,
+        }
+
+    async for doc in store_stock_collection.find({"tenant_id": tenant_id}):
+        store_id = doc.get("store_id")
+        if not store_id:
+            continue
+        barcode = doc.get("barcode", "")
+        qty = float(doc.get("stockQty", 0))
+        own_price = float(doc.get("mrp") or doc.get("rate") or 0) if is_single_store else 0.0
+        price = own_price or central_prices.get(barcode, 0.0)
+        value = qty * price
+        row = rows_by_store.setdefault(store_id, {
+            "store_id": store_id, "store_name": doc.get("store_name", ""),
+            "item_count": 0, "total_qty": 0.0, "total_value": 0.0,
+        })
+        if qty > 0:
+            row["item_count"] += 1
+        row["total_qty"] += qty
+        row["total_value"] += value
+
+    rows = [
+        {"store_id": None, "store_name": "Central (unallocated)",
+         "item_count": central_items, "total_qty": round(central_qty, 2), "total_value": round(central_value, 2)},
+        *[{**r, "total_qty": round(r["total_qty"], 2), "total_value": round(r["total_value"], 2)}
+          for r in sorted(rows_by_store.values(), key=lambda r: r["store_name"])],
+    ]
+    return {"status": "success", "data": rows}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# GET /stock-allocation/item-matrix
+# Item-level version of store-summary: one row per product, one column per
+# store (+ Central), so HQ can see exactly which branch holds how much of a
+# specific SKU — not just each store's aggregate total.
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.get("/item-matrix")
+async def get_item_matrix(
+    search: str = "",
+    limit: int = 200,
+    authorization: str = Header(None),
+):
+    store = await get_store_context(authorization)
+    tenant_id = store.get("tenant_id")
+    if not tenant_id:
+        raise HTTPException(status_code=403, detail="No tenant assigned to this account.")
+    if store.get("scope") == "store":
+        raise HTTPException(status_code=403, detail="Item-level store comparison is an HQ view.")
+    limit = max(1, min(limit, 1000))
+
+    stores_list = []
+    async for s in stores_collection.find({"tenant_id": tenant_id, "active": True}).sort("name", 1):
+        stores_list.append({"id": str(s["_id"]), "name": s.get("name", "")})
+
+    products: dict = {}
+
+    async for doc in inventory_collection.find({"tenant_id": tenant_id}):
+        barcode = doc.get("barcode", "")
+        if not barcode:
+            continue
+        products[barcode] = {
+            "barcode": barcode,
+            "description": doc.get("description", "") or doc.get("product", "") or barcode,
+            "sku": doc.get("sku", ""),
+            "central_qty": float(doc.get("stockQty", 0)),
+            "store_qty": {},
+        }
+
+    async for doc in store_stock_collection.find({"tenant_id": tenant_id}):
+        barcode = doc.get("barcode", "")
+        store_id = doc.get("store_id")
+        if not barcode or not store_id:
+            continue
+        row = products.setdefault(barcode, {
+            "barcode": barcode,
+            "description": doc.get("description", "") or barcode,
+            "sku": doc.get("sku", ""),
+            "central_qty": 0.0,
+            "store_qty": {},
+        })
+        row["store_qty"][store_id] = row["store_qty"].get(store_id, 0) + float(doc.get("stockQty", 0))
+
+    rows = list(products.values())
+    if search:
+        needle = search.strip().lower()
+        rows = [r for r in rows if needle in r["barcode"].lower() or needle in r["description"].lower() or needle in r["sku"].lower()]
+    rows.sort(key=lambda r: r["description"] or r["barcode"])
+    total_count = len(rows)
+    rows = rows[:limit]
+
+    return {"status": "success", "stores": stores_list, "count": total_count, "data": rows}
 
 
 @router.patch("/store-stock/{store_id}/{barcode}")

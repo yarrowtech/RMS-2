@@ -9,6 +9,11 @@ import {
 
 const API_BASE = `${APP_API_URL}`;
 
+function authHeaders() {
+  const token = localStorage.getItem("admin_token") || localStorage.getItem("access_token") || localStorage.getItem("token") || "";
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
 /* ─── Formatters ─── */
 const fmtV = (n) => `₹${Number(n || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const fmtN = (n) => Number(n || 0).toLocaleString("en-IN");
@@ -55,7 +60,7 @@ function PayBadge({ method }) {
 }
 
 /* ─── Bill Row (expandable) ─── */
-function BillRow({ bill, idx }) {
+function BillRow({ bill, idx, showStore }) {
   const [open, setOpen] = useState(false);
   const isReturn = bill.type === "return";
   const s        = bill.summary;
@@ -72,6 +77,9 @@ function BillRow({ bill, idx }) {
         </td>
         <td style={{ padding: "12px 14px", whiteSpace: "nowrap" }}><TypeBadge type={bill.type} /></td>
         <td style={{ padding: "12px 14px", fontSize: 12, color: "#475569", whiteSpace: "nowrap" }}>{bill.date}</td>
+        {showStore && (
+          <td style={{ padding: "12px 14px", fontSize: 12, color: "#475569", whiteSpace: "nowrap" }}>{bill.store_name || "—"}</td>
+        )}
         <td style={{ padding: "12px 14px", fontSize: 12, color: "#475569" }}>{bill.cashier_name || "—"}</td>
         <td style={{ padding: "12px 14px", fontSize: 12, color: "#475569" }}>{bill.customer_name || "Walking Customer"}</td>
         <td style={{ padding: "12px 14px", fontSize: 12, color: "#475569" }}>{bill.mobile || "—"}</td>
@@ -90,7 +98,7 @@ function BillRow({ bill, idx }) {
       {/* Expanded line items */}
       {open && (
         <tr style={{ background: "#F8FAFC" }}>
-          <td colSpan={12} style={{ padding: "0 14px 14px" }}>
+          <td colSpan={showStore ? 13 : 12} style={{ padding: "0 14px 14px" }}>
             <div style={{ borderRadius: 12, border: "1px solid #E2E8F0", overflow: "hidden", marginTop: 8 }}>
               <table style={{ width: "100%", fontSize: 11, borderCollapse: "collapse" }}>
                 <thead>
@@ -146,8 +154,88 @@ function BillRow({ bill, idx }) {
   );
 }
 
+/* ─── By-store comparison table — HQ oversight, all stores at once ─── */
+function StoreSummaryTable({ fromDate, toDate }) {
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    setLoading(true); setError(null);
+    const params = new URLSearchParams({ from_date: fromDate, to_date: toDate });
+    fetch(`${API_BASE}/cashier/reports/by-store?${params}`, { headers: authHeaders() })
+      .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
+      .then((json) => setRows(json.data || []))
+      .catch((e) => setError(e.message))
+      .finally(() => setLoading(false));
+  }, [fromDate, toDate]);
+
+  const totals = rows.reduce((acc, r) => ({
+    sale_count: acc.sale_count + r.sale_count,
+    items_sold: acc.items_sold + r.items_sold,
+    gross_revenue: acc.gross_revenue + r.gross_revenue,
+    net_revenue: acc.net_revenue + r.net_revenue,
+  }), { sale_count: 0, items_sold: 0, gross_revenue: 0, net_revenue: 0 });
+
+  return (
+    <div style={{ background: "#fff", borderRadius: 16, border: "1px solid #F1F5F9", boxShadow: "0 2px 12px rgba(0,0,0,0.05)", overflow: "hidden" }}>
+      {error && <div style={{ padding: 16, color: "#DC2626", fontSize: 13 }}>⚠ {error}</div>}
+      {loading ? (
+        <div style={{ padding: "60px 0", textAlign: "center", color: "#94A3B8" }}>
+          <FaSyncAlt style={{ fontSize: 24, marginBottom: 10, animation: "spin 1s linear infinite", color: "#6366F1" }} />
+          <div style={{ fontSize: 13 }}>Loading store comparison…</div>
+        </div>
+      ) : (
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, minWidth: 700 }}>
+            <thead>
+              <tr style={{ background: "#F8FAFC", borderBottom: "2px solid #E2E8F0" }}>
+                {["Store","Bills","Items Sold","Gross Revenue","Returns","Net Revenue"].map((h) => (
+                  <th key={h} style={{ padding: "12px 14px", textAlign: h === "Store" ? "left" : "right", fontSize: 10, fontWeight: 700, color: "#64748B", textTransform: "uppercase", letterSpacing: "0.6px", whiteSpace: "nowrap" }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r, i) => (
+                <tr key={r.store_id || "unassigned"} style={{ background: i % 2 === 0 ? "#fff" : "#FAFAFA", borderBottom: "1px solid #F1F5F9" }}>
+                  <td style={{ padding: "12px 14px", fontWeight: 700, color: "#0F172A" }}>{r.store_name}</td>
+                  <td style={{ padding: "12px 14px", textAlign: "right", fontFamily: "monospace" }}>{fmtN(r.sale_count)}</td>
+                  <td style={{ padding: "12px 14px", textAlign: "right", fontFamily: "monospace" }}>{fmtN(r.items_sold)}</td>
+                  <td style={{ padding: "12px 14px", textAlign: "right", fontFamily: "monospace", color: "#475569" }}>{fmtV(r.gross_revenue)}</td>
+                  <td style={{ padding: "12px 14px", textAlign: "right", fontFamily: "monospace", color: "#DC2626" }}>{r.return_count ? fmtV(r.return_amount) : "—"}</td>
+                  <td style={{ padding: "12px 14px", textAlign: "right", fontFamily: "monospace", fontWeight: 800, color: "#0F172A" }}>{fmtV(r.net_revenue)}</td>
+                </tr>
+              ))}
+              {rows.length === 0 && (
+                <tr><td colSpan={6} style={{ padding: "60px 0", textAlign: "center", color: "#94A3B8", fontSize: 13 }}>No sales in this date range.</td></tr>
+              )}
+            </tbody>
+            {rows.length > 0 && (
+              <tfoot>
+                <tr style={{ borderTop: "2px solid #E2E8F0", background: "#F8FAFC" }}>
+                  <td style={{ padding: "12px 14px", fontWeight: 800, color: "#0F172A" }}>All stores</td>
+                  <td style={{ padding: "12px 14px", textAlign: "right", fontFamily: "monospace", fontWeight: 800 }}>{fmtN(totals.sale_count)}</td>
+                  <td style={{ padding: "12px 14px", textAlign: "right", fontFamily: "monospace", fontWeight: 800 }}>{fmtN(totals.items_sold)}</td>
+                  <td style={{ padding: "12px 14px", textAlign: "right", fontFamily: "monospace", fontWeight: 800 }}>{fmtV(totals.gross_revenue)}</td>
+                  <td />
+                  <td style={{ padding: "12px 14px", textAlign: "right", fontFamily: "monospace", fontWeight: 800 }}>{fmtV(totals.net_revenue)}</td>
+                </tr>
+              </tfoot>
+            )}
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ═══════════════════════════════════════════════════════════════════════════ */
+const isHQ = () => localStorage.getItem("admin_scope") === "hq";
+
 export default function SalesReport() {
+  const showStoreColumn = isHQ();
+  const [viewMode, setViewMode] = useState("bills"); // "bills" | "byStore"
+
   /* Filters */
   const [fromDate,      setFromDate]      = useState(monthStartStr());
   const [toDate,        setToDate]        = useState(todayStr());
@@ -157,6 +245,16 @@ export default function SalesReport() {
   const [searchQ,       setSearchQ]       = useState("");
   const [minAmt,        setMinAmt]        = useState("");
   const [maxAmt,        setMaxAmt]        = useState("");
+  const [storeFilter,   setStoreFilter]   = useState("");
+  const [stores,        setStores]        = useState([]);
+
+  useEffect(() => {
+    if (!showStoreColumn) return;
+    fetch(`${API_BASE}/superadmin/stores/list`, { headers: authHeaders() })
+      .then((r) => r.json())
+      .then((json) => setStores(Array.isArray(json.stores) ? json.stores : []))
+      .catch(() => {});
+  }, [showStoreColumn]);
 
   /* Data */
   const [bills,       setBills]       = useState([]);
@@ -182,10 +280,11 @@ export default function SalesReport() {
       if (searchQ.trim())                        params.append("search",          searchQ.trim());
       if (minAmt !== "")                         params.append("min_amount",      minAmt);
       if (maxAmt !== "")                         params.append("max_amount",      maxAmt);
+      if (storeFilter)                           params.append("store_id",        storeFilter);
       params.append("limit", PAGE_SIZE);
       params.append("skip",  newSkip);
 
-      const res  = await fetch(`${API_BASE}/cashier/reports?${params}`);
+      const res  = await fetch(`${API_BASE}/cashier/reports?${params}`, { headers: authHeaders() });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const json = await res.json();
       setBills(json.data || []);
@@ -194,7 +293,7 @@ export default function SalesReport() {
       setSkip(newSkip);
     } catch (e) { setError(e.message); }
     finally { setLoading(false); }
-  }, [fromDate, toDate, typeFilter, paymentFilter, cashierFilter, searchQ, minAmt, maxAmt]);
+  }, [fromDate, toDate, typeFilter, paymentFilter, cashierFilter, searchQ, minAmt, maxAmt, storeFilter]);
 
   useEffect(() => { fetchData(0); }, [fetchData]);
 
@@ -212,10 +311,11 @@ export default function SalesReport() {
       if (searchQ.trim())      params.append("search",         searchQ.trim());
       if (minAmt !== "")       params.append("min_amount",     minAmt);
       if (maxAmt !== "")       params.append("max_amount",     maxAmt);
+      if (storeFilter)         params.append("store_id",       storeFilter);
       params.append("limit", "2000");
       params.append("skip",  "0");
 
-      const res  = await fetch(`${API_BASE}/cashier/reports?${params}`);
+      const res  = await fetch(`${API_BASE}/cashier/reports?${params}`, { headers: authHeaders() });
       const json = await res.json();
       const allBills = json.data || [];
 
@@ -223,7 +323,7 @@ export default function SalesReport() {
 
       /* ── Sheet 1: Summary (one row per bill) ── */
       const summaryHeaders = [
-        "Invoice No", "Type", "Date", "Cashier", "Customer", "Mobile",
+        "Invoice No", "Type", "Date", ...(showStoreColumn ? ["Store"] : []), "Cashier", "Customer", "Mobile",
         "Payment Method", "Original Invoice", "Items Count",
         "Total Sale (₹)", "Total Savings (₹)", "Taxable Amount (₹)",
         "CGST (₹)", "SGST (₹)", "IGST (₹)", "Total GST (₹)",
@@ -233,6 +333,7 @@ export default function SalesReport() {
         "Invoice No":         b.invoice_no,
         "Type":               b.type.toUpperCase(),
         "Date":               b.date,
+        ...(showStoreColumn ? { "Store": b.store_name || "" } : {}),
         "Cashier":            b.cashier_name || "",
         "Customer":           b.customer_name || "Walking Customer",
         "Mobile":             b.mobile || "",
@@ -420,10 +521,22 @@ export default function SalesReport() {
         <div>
           <h1 style={{ margin: 0, fontSize: 22, fontWeight: 800, color: "#0F172A", letterSpacing: "-0.5px" }}>Sales Report</h1>
           <p style={{ margin: "4px 0 0", fontSize: 12, color: "#94A3B8" }}>
-            {totalCount} records · click any row to expand line items
+            {viewMode === "bills" ? `${totalCount} records · click any row to expand line items` : "All stores compared side by side"}
           </p>
         </div>
-        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+          {showStoreColumn && (
+            <div style={{ display: "flex", borderRadius: 10, border: "1px solid #E2E8F0", overflow: "hidden" }}>
+              <button onClick={() => setViewMode("bills")}
+                style={{ height: 38, padding: "0 16px", border: "none", background: viewMode === "bills" ? "#6366F1" : "#fff", color: viewMode === "bills" ? "#fff" : "#475569", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                Bill List
+              </button>
+              <button onClick={() => setViewMode("byStore")}
+                style={{ height: 38, padding: "0 16px", border: "none", background: viewMode === "byStore" ? "#6366F1" : "#fff", color: viewMode === "byStore" ? "#fff" : "#475569", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                By Store
+              </button>
+            </div>
+          )}
           <button onClick={() => fetchData(0)} disabled={loading}
             style={{ height: 38, display: "flex", alignItems: "center", gap: 7, padding: "0 16px", borderRadius: 10, border: "1px solid #E2E8F0", background: "#fff", color: "#6366F1", fontSize: 12, fontWeight: 700, cursor: loading ? "not-allowed" : "pointer", opacity: loading ? 0.6 : 1 }}>
             <FaSyncAlt style={{ fontSize: 11, animation: loading ? "spin 1s linear infinite" : "none" }} /> Refresh
@@ -436,12 +549,16 @@ export default function SalesReport() {
         </div>
       </div>
 
+      {viewMode === "byStore" ? (
+        <StoreSummaryTable fromDate={fromDate} toDate={toDate} />
+      ) : (
+      <>
       {/* ── Filters ── */}
       <div style={{ background: "#fff", borderRadius: 16, border: "1px solid #F1F5F9", boxShadow: "0 2px 12px rgba(0,0,0,0.05)", padding: "16px 20px", marginBottom: 20 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
           <FaFilter style={{ color: "#6366F1", fontSize: 13 }} />
           <span style={{ fontSize: 13, fontWeight: 700, color: "#0F172A" }}>Filters</span>
-          <button onClick={() => { setFromDate(monthStartStr()); setToDate(todayStr()); setTypeFilter("all"); setPaymentFilter("all"); setCashierFilter(""); setSearchQ(""); setMinAmt(""); setMaxAmt(""); }}
+          <button onClick={() => { setFromDate(monthStartStr()); setToDate(todayStr()); setTypeFilter("all"); setPaymentFilter("all"); setCashierFilter(""); setSearchQ(""); setMinAmt(""); setMaxAmt(""); setStoreFilter(""); }}
             style={{ marginLeft: "auto", fontSize: 11, color: "#94A3B8", background: "none", border: "none", cursor: "pointer", fontWeight: 700, display: "flex", alignItems: "center", gap: 4 }}>
             <FaTimes style={{ fontSize: 9 }} /> Reset
           </button>
@@ -484,6 +601,19 @@ export default function SalesReport() {
               <option value="UPI">UPI</option>
             </select>
           </div>
+
+          {/* Store / Branch — HQ only, since a store admin is already locked to their own store */}
+          {showStoreColumn && (
+            <div>
+              <label style={{ fontSize: 10, fontWeight: 700, color: "#94A3B8", textTransform: "uppercase", letterSpacing: "0.5px", display: "block", marginBottom: 5 }}>Store / Branch</label>
+              <select className="filter-input" value={storeFilter} onChange={e => setStoreFilter(e.target.value)}>
+                <option value="">All stores</option>
+                {stores.map((s) => (
+                  <option key={s.id} value={s.id}>{s.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
 
           {/* Cashier */}
           <div>
@@ -547,7 +677,10 @@ export default function SalesReport() {
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, minWidth: 1100 }}>
             <thead>
               <tr style={{ background: "#F8FAFC", borderBottom: "2px solid #E2E8F0" }}>
-                {["Invoice No","Type","Date & Time","Cashier","Customer","Mobile","Payment","Items","Sale Amt","GST","Net Payable",""].map((h, i) => (
+                {(showStoreColumn
+                  ? ["Invoice No","Type","Date & Time","Store","Cashier","Customer","Mobile","Payment","Items","Sale Amt","GST","Net Payable",""]
+                  : ["Invoice No","Type","Date & Time","Cashier","Customer","Mobile","Payment","Items","Sale Amt","GST","Net Payable",""]
+                ).map((h, i) => (
                   <th key={i} style={{
                     padding: "12px 14px", textAlign: ["Items","Sale Amt","GST","Net Payable"].includes(h) ? "right" : "left",
                     fontSize: 10, fontWeight: 700, color: "#64748B", textTransform: "uppercase",
@@ -559,20 +692,20 @@ export default function SalesReport() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={12} style={{ padding: "60px 0", textAlign: "center", color: "#94A3B8" }}>
+                  <td colSpan={showStoreColumn ? 13 : 12} style={{ padding: "60px 0", textAlign: "center", color: "#94A3B8" }}>
                     <FaSyncAlt style={{ fontSize: 24, marginBottom: 10, animation: "spin 1s linear infinite", color: "#6366F1" }} />
                     <div style={{ fontSize: 13 }}>Loading report…</div>
                   </td>
                 </tr>
               ) : bills.length === 0 ? (
                 <tr>
-                  <td colSpan={12} style={{ padding: "60px 0", textAlign: "center", color: "#94A3B8" }}>
+                  <td colSpan={showStoreColumn ? 13 : 12} style={{ padding: "60px 0", textAlign: "center", color: "#94A3B8" }}>
                     <FaBoxOpen style={{ fontSize: 32, marginBottom: 10, opacity: 0.3 }} />
                     <div style={{ fontSize: 13 }}>No bills found for the selected filters</div>
                   </td>
                 </tr>
               ) : (
-                bills.map((bill, i) => <BillRow key={bill.id} bill={bill} idx={i} />)
+                bills.map((bill, i) => <BillRow key={bill.id} bill={bill} idx={i} showStore={showStoreColumn} />)
               )}
             </tbody>
           </table>
@@ -605,6 +738,8 @@ export default function SalesReport() {
       <div style={{ marginTop: 12, fontSize: 11, color: "#94A3B8", textAlign: "center" }}>
         Excel export includes 4 sheets: Bill Summary · Item Details · GST Summary · Payment Summary
       </div>
+      </>
+      )}
     </div>
   );
 }
