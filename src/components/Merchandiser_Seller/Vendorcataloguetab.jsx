@@ -1098,6 +1098,7 @@ function CataloguePanel() {
   const [sub, setSub] = useState(null);
   const [manageItem, setManageItem] = useState(null);
   const [editItem, setEditItem] = useState(null);
+  const [error, setError] = useState(null);
 
   const fetchItems = useCallback(async () => {
     setLoading(true);
@@ -1123,12 +1124,26 @@ function CataloguePanel() {
   };
 
   const toggleActive = async (item) => {
-    await vendorFetch(`/api/catalogue/my-catalogue/${item._id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ active: !item.active }),
-    });
-    fetchItems();
+    setError(null);
+    try {
+      const res = await vendorFetch(`/api/catalogue/my-catalogue/${item._id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ active: !item.active }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || "Could not update this item.");
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      fetchItems();
+    }
+  };
+
+  const daysUntil = (dateStr) => {
+    if (!dateStr) return null;
+    const diffMs = new Date(dateStr).getTime() - Date.now();
+    return Math.ceil(diffMs / (1000 * 60 * 60 * 24));
   };
 
   // Active items count against the tier limit — matches the backend's own
@@ -1138,6 +1153,10 @@ function CataloguePanel() {
 
   return (
     <div className="space-y-4">
+      {error && (
+        <div className="text-xs font-semibold text-rose-600 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2">⚠ {error}</div>
+      )}
+
       {sub && (
         <div className="bg-white rounded-xl border border-slate-200 px-4 py-3 flex items-center gap-4">
           <div className="flex-1">
@@ -1197,7 +1216,21 @@ function CataloguePanel() {
                 )}
               </button>
               <div className="p-3 space-y-2">
-                <p className="text-sm font-bold text-slate-900 truncate">{item.item_name}</p>
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-sm font-bold text-slate-900 truncate">{item.item_name}</p>
+                  {!item.active ? (
+                    <span className="shrink-0 text-[10px] font-bold text-rose-600 bg-rose-50 border border-rose-200 px-1.5 py-0.5 rounded-full whitespace-nowrap">Expired</span>
+                  ) : (() => {
+                    const days = daysUntil(item.expires_at);
+                    if (days === null) return null;
+                    const dueSoon = days <= 7;
+                    return (
+                      <span className={`shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded-full whitespace-nowrap border ${dueSoon ? "text-amber-700 bg-amber-50 border-amber-200" : "text-slate-500 bg-slate-50 border-slate-200"}`}>
+                        {days <= 0 ? "Expiring today" : `${days}d left`}
+                      </span>
+                    );
+                  })()}
+                </div>
                 {(item.price_range_min || item.price_range_max) && (
                   <p className="text-xs text-emerald-600 font-bold">₹{item.price_range_min}–₹{item.price_range_max}</p>
                 )}
