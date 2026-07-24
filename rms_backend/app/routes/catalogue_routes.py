@@ -256,7 +256,30 @@ async def update_catalogue_item(item_id: str, payload: dict, authorization: str 
     patch = {k: v for k, v in payload.items() if k in allowed}
     patch["updated_at"] = datetime.utcnow()
 
-    await vendor_catalogue_collection.update_one({"_id": ObjectId(item_id)}, {"$set": patch})
+    # Reactivating a previously-expired item ("active": False -> True) must
+    # also refresh its visibility window — otherwise the next expire-sweep
+    # run (POST /api/catalogue/expire-sweep) immediately hides it again
+    # since expires_at is still in the past. This is also the only way a
+    # Free vendor (no paid renewal to bulk-extend for them) gets an item
+    # visible again once it lapses.
+    update_ops = {"$set": patch}
+    if patch.get("active") is True and not item.get("active", False):
+        tier = await get_vendor_tier(vendor_id)
+        active_count = await vendor_catalogue_collection.count_documents({
+            "vendor_id": ObjectId(vendor_id), "active": True,
+        })
+        if active_count >= tier["image_limit"]:
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    f"Your {tier['label']} plan allows {tier['image_limit']} active catalogue items. "
+                    f"Deactivate another item or upgrade your plan to reactivate this one."
+                )
+            )
+        patch["expires_at"] = datetime.utcnow() + timedelta(days=tier["visibility_days"])
+        update_ops["$unset"] = {"expired_at": "", "expired_reason": ""}
+
+    await vendor_catalogue_collection.update_one({"_id": ObjectId(item_id)}, update_ops)
     return {"status": "success", "message": "Catalogue item updated."}
 
 

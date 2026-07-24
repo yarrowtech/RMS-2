@@ -311,11 +311,33 @@ async def get_my_subscription(authorization: str = Header(None)):
     business_type_count = len((vendor or {}).get("business_type") or [])
 
     sub = tier.get("subscription")
+    raw_tier = (sub or {}).get("tier")
+    raw_status = (sub or {}).get("status")
+    expires_at = (sub or {}).get("expires_at")
+    now = datetime.utcnow()
+
+    # A paid tier that has expired and never got renewed — get_vendor_tier()
+    # already served this vendor Free limits above, but the UI still needs
+    # to know *why* (vs. having always been on Free) so it can nudge them
+    # to renew instead of silently looking like they're on Free by choice.
+    lapsed_tier = None
+    days_until_expiry = None
+    renewal_due_soon = False
+    if raw_tier and raw_tier != "free" and raw_status == "active" and expires_at:
+        if expires_at <= now:
+            lapsed_tier = raw_tier
+        else:
+            days_until_expiry = (expires_at - now).days
+            renewal_due_soon = days_until_expiry <= 7
+
     return {
         "status": "success",
         "data": {
             "tier":                  tier["tier"],
             "label":                 tier["label"],
+            "lapsed_tier":           lapsed_tier,
+            "days_until_expiry":     days_until_expiry,
+            "renewal_due_soon":      renewal_due_soon,
             "image_limit":           tier["image_limit"],
             "images_used":           image_count,
             "visibility_days":       tier["visibility_days"],
@@ -338,7 +360,7 @@ async def get_my_subscription(authorization: str = Header(None)):
     }
 
 
-async def _extend_existing_catalogue_items(vendor_id: str, visibility_days: int) -> int:
+async def _extend_existing_catalogue_items(vendor_id: str, visibility_days: int, image_limit: Optional[int] = None) -> int:
     """
     ⚠️ FIX: previously, upgrading or renewing only touched the
     vendor_subscriptions_collection record — every catalogue item already
@@ -351,13 +373,43 @@ async def _extend_existing_catalogue_items(vendor_id: str, visibility_days: int)
     Called from both /upgrade (on activation) and /renew — pushes every
     currently-active item's expires_at out to (now + visibility_days),
     same as if freshly uploaded under the new tier.
+
+    Also revives items the expire-sweep previously auto-hid
+    (active=False, expired_reason="tier_visibility_window") — never ones
+    the vendor deliberately deactivated themselves — up to image_limit, so
+    renewing actually gets the vendor's catalogue back instead of only
+    extending whatever happened to still be active at that exact moment.
+    Most-recently-expired items are revived first when there isn't room
+    for all of them.
     """
     new_expiry = datetime.utcnow() + timedelta(days=visibility_days)
+    vendor_oid = ObjectId(vendor_id)
+
     result = await vendor_catalogue_collection.update_many(
-        {"vendor_id": ObjectId(vendor_id), "active": True},
+        {"vendor_id": vendor_oid, "active": True},
         {"$set": {"expires_at": new_expiry}}
     )
-    return result.modified_count
+    extended = result.modified_count
+
+    if image_limit is not None:
+        active_count = await vendor_catalogue_collection.count_documents({"vendor_id": vendor_oid, "active": True})
+        revivable_slots = image_limit - active_count
+        if revivable_slots > 0:
+            expired_docs = await vendor_catalogue_collection.find(
+                {"vendor_id": vendor_oid, "active": False, "expired_reason": "tier_visibility_window"},
+                {"_id": 1},
+            ).sort("expired_at", -1).to_list(revivable_slots)
+            if expired_docs:
+                await vendor_catalogue_collection.update_many(
+                    {"_id": {"$in": [d["_id"] for d in expired_docs]}},
+                    {
+                        "$set": {"active": True, "expires_at": new_expiry},
+                        "$unset": {"expired_at": "", "expired_reason": ""},
+                    },
+                )
+                extended += len(expired_docs)
+
+    return extended
 
 
 
@@ -394,7 +446,7 @@ async def _activate_paid_vendor_subscription(payment: dict, payment_id: str) -> 
         },
         upsert=True,
     )
-    return await _extend_existing_catalogue_items(vendor_id, tier_cfg["visibility_days"])
+    return await _extend_existing_catalogue_items(vendor_id, tier_cfg["visibility_days"], tier_cfg["image_limit"])
 
 
 @router.post("/checkout")
@@ -624,7 +676,7 @@ async def upgrade_subscription(payload: dict, authorization: str = Header(None))
         },
         upsert=True,
     )
-    extended_count = await _extend_existing_catalogue_items(vendor_id, tier_cfg["visibility_days"])
+    extended_count = await _extend_existing_catalogue_items(vendor_id, tier_cfg["visibility_days"], tier_cfg["image_limit"])
     return {
         "status": "success",
         "message": "Switched to Free.",

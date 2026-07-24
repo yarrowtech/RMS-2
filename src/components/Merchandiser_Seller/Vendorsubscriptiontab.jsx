@@ -137,8 +137,8 @@ export default function VendorSubscriptionTab() {
     }
   };
 
-  const handleUpgrade = async (tierKey) => {
-    if (tierKey === mySub?.tier) return;
+  const handleUpgrade = async (tierKey, isRenewal = false) => {
+    if (tierKey === mySub?.tier && !isRenewal) return;
     setUpgrading(tierKey);
     setError(null);
     setPaymentNotice("");
@@ -216,6 +216,24 @@ export default function VendorSubscriptionTab() {
           </div>
         )}
 
+        {mySub?.lapsed_tier && (
+          <div className="bg-rose-50 border border-rose-200 text-rose-800 text-sm font-semibold px-4 py-3 rounded-xl flex flex-wrap items-center justify-between gap-3">
+            <span>Your {tiers[mySub.lapsed_tier]?.label || mySub.lapsed_tier} plan expired and you're now on Free tier limits. Renew to get your benefits back.</span>
+            <button onClick={() => handleUpgrade(mySub.lapsed_tier, true)} disabled={upgrading === mySub.lapsed_tier} className="shrink-0 h-9 px-4 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold disabled:opacity-50">
+              {upgrading === mySub.lapsed_tier ? "Opening secure payment..." : `Renew ${tiers[mySub.lapsed_tier]?.label || mySub.lapsed_tier}`}
+            </button>
+          </div>
+        )}
+
+        {!mySub?.lapsed_tier && mySub?.renewal_due_soon && (
+          <div className="bg-amber-50 border border-amber-200 text-amber-800 text-sm font-semibold px-4 py-3 rounded-xl flex flex-wrap items-center justify-between gap-3">
+            <span>Your {mySub.label} plan renews in {mySub.days_until_expiry} day{mySub.days_until_expiry === 1 ? "" : "s"}. Renew now to avoid dropping to Free limits.</span>
+            <button onClick={() => handleUpgrade(mySub.tier, true)} disabled={upgrading === mySub.tier} className="shrink-0 h-9 px-4 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold disabled:opacity-50">
+              {upgrading === mySub.tier ? "Opening secure payment..." : `Renew ${mySub.label}`}
+            </button>
+          </div>
+        )}
+
         {mySub && (
           <div className="bg-white rounded-2xl border border-slate-200 p-5 space-y-4">
             <div className="flex items-center justify-between gap-4">
@@ -232,6 +250,12 @@ export default function VendorSubscriptionTab() {
                 </span>
               )}
             </div>
+            {mySub.tier !== "free" && mySub.expires_at && !mySub.lapsed_tier && (
+              <p className="text-xs font-semibold text-slate-500">
+                Renews on {new Date(mySub.expires_at).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}
+                {typeof mySub.days_until_expiry === "number" && ` · ${mySub.days_until_expiry <= 0 ? "expiring today" : `${mySub.days_until_expiry} day${mySub.days_until_expiry === 1 ? "" : "s"} left`}`}
+              </p>
+            )}
             <UsageBar used={mySub.images_used} limit={mySub.image_limit} label="Catalogue images" />
             <UsageBar used={mySub.business_types_used} limit={mySub.business_type_limit} label="Business type tags" />
             <p className="text-xs text-slate-400">
