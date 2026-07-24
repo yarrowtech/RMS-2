@@ -374,6 +374,8 @@ export default function RetailersTab() {
   const [expandedId, setExpandedId] = useState(null);
   const [upgradeRequests, setUpgradeRequests] = useState([]);
   const [upgradeLoading, setUpgradeLoading] = useState(false);
+  const [upgradeDepartmentCatalog, setUpgradeDepartmentCatalog] = useState([]);
+  const [deptSelections, setDeptSelections] = useState({});
 
   const fetchTenants = useCallback(async () => {
     try {
@@ -388,7 +390,15 @@ export default function RetailersTab() {
     try {
       setUpgradeLoading(true);
       const data = await apiFetch("/api/store-upgrades/");
-      setUpgradeRequests(Array.isArray(data.requests) ? data.requests : []);
+      const requests = Array.isArray(data.requests) ? data.requests : [];
+      setUpgradeRequests(requests);
+      setDeptSelections((prev) => {
+        const next = { ...prev };
+        requests.filter((r) => ["PENDING", "PAID_PENDING_REVIEW"].includes(r.status)).forEach((r) => {
+          if (!next[r.id]) next[r.id] = r.requested_departments || [];
+        });
+        return next;
+      });
     } catch (error) {
       toast.error(error.message || "Failed to load store upgrade requests");
     } finally {
@@ -396,7 +406,24 @@ export default function RetailersTab() {
     }
   }, []);
 
-  useEffect(() => { fetchTenants(); fetchUpgradeRequests(); }, [fetchTenants, fetchUpgradeRequests]);
+  const fetchUpgradeDepartmentCatalog = useCallback(async () => {
+    try {
+      const data = await apiFetch("/api/store-upgrades/departments");
+      setUpgradeDepartmentCatalog(Array.isArray(data.departments) ? data.departments : []);
+    } catch {
+      // non-critical — approve still works with the requested departments as-is
+    }
+  }, []);
+
+  useEffect(() => { fetchTenants(); fetchUpgradeRequests(); fetchUpgradeDepartmentCatalog(); }, [fetchTenants, fetchUpgradeRequests, fetchUpgradeDepartmentCatalog]);
+
+  const toggleDeptSelection = (requestId, key) => {
+    setDeptSelections((prev) => {
+      const current = prev[requestId] || [];
+      const next = current.includes(key) ? current.filter((d) => d !== key) : [...current, key];
+      return { ...prev, [requestId]: next };
+    });
+  };
 
   const reviewUpgradeRequest = async (request, action) => {
     try {
@@ -405,6 +432,7 @@ export default function RetailersTab() {
         body: JSON.stringify({
           action,
           approved_plan: action === "approve" ? request.requested_plan : undefined,
+          approved_departments: action === "approve" ? (deptSelections[request.id] || request.requested_departments || []) : undefined,
         }),
       });
       toast.success(action === "approve" ? `${request.company_name} is now a multi-store retailer` : "Upgrade request declined");
@@ -498,13 +526,53 @@ export default function RetailersTab() {
             <button onClick={fetchUpgradeRequests} disabled={upgradeLoading} className="rounded-lg border border-violet-200 bg-white px-3 py-2 text-xs font-bold text-violet-700 hover:bg-violet-100">{upgradeLoading ? "Refreshing…" : "Refresh"}</button>
           </div>
           <div className="divide-y divide-slate-100">
-            {upgradeRequests.filter((request) => request.status === "PENDING").map((request) => (
-              <div key={request.id} className="flex flex-wrap items-center justify-between gap-4 px-5 py-4">
-                <div><p className="font-bold text-slate-900">{request.company_name} <span className="font-normal text-slate-400">· {request.tenant_id}</span></p><p className="mt-1 text-xs text-slate-600">Owner: {request.owner_name} · {request.owner_email} · Current store: {request.primary_store_name || "Main store"}</p>{request.note && <p className="mt-1 text-xs italic text-slate-500">“{request.note}”</p>}</div>
-                <div className="flex items-center gap-2"><span className="rounded-full bg-indigo-50 px-2.5 py-1 text-xs font-black capitalize text-indigo-700">{request.requested_plan}</span><button onClick={() => reviewUpgradeRequest(request, "decline")} className="rounded-lg border border-rose-200 px-3 py-2 text-xs font-bold text-rose-700 hover:bg-rose-50">Decline</button><button onClick={() => reviewUpgradeRequest(request, "approve")} className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-bold text-white hover:bg-emerald-700">Approve upgrade</button></div>
+            {upgradeRequests.filter((request) => ["PENDING", "PAID_PENDING_REVIEW"].includes(request.status)).map((request) => {
+              const isPaid = request.status === "PAID_PENDING_REVIEW";
+              return (
+              <div key={request.id} className="flex flex-wrap items-start justify-between gap-4 px-5 py-4">
+                <div className="min-w-[260px] flex-1">
+                  <p className="font-bold text-slate-900">{request.company_name} <span className="font-normal text-slate-400">· {request.tenant_id}</span></p>
+                  <p className="mt-1 text-xs text-slate-600">Owner: {request.owner_name} · {request.owner_email} · Current store: {request.primary_store_name || "Main store"}</p>
+                  <p className="mt-1 text-xs font-bold">
+                    {isPaid
+                      ? <span className="text-emerald-600">Payment captured — ready for review</span>
+                      : <span className="text-amber-600">Awaiting payment from the retailer</span>}
+                  </p>
+                  {request.note && <p className="mt-1 text-xs italic text-slate-500">“{request.note}”</p>}
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {upgradeDepartmentCatalog.map((dept) => {
+                      const locked = dept.requires_plan === "enterprise" && request.requested_plan !== "enterprise";
+                      const selected = (deptSelections[request.id] || []).includes(dept.key);
+                      return (
+                        <button
+                          key={dept.key}
+                          type="button"
+                          disabled={locked}
+                          onClick={() => toggleDeptSelection(request.id, dept.key)}
+                          className={`rounded-full border px-2.5 py-1 text-[11px] font-bold ${locked ? "cursor-not-allowed border-slate-100 text-slate-300" : selected ? "border-violet-300 bg-violet-100 text-violet-800" : "border-slate-200 text-slate-500 hover:border-violet-200"}`}
+                        >
+                          {dept.key}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="rounded-full bg-indigo-50 px-2.5 py-1 text-xs font-black capitalize text-indigo-700">{request.requested_plan}</span>
+                  <button onClick={() => reviewUpgradeRequest(request, "decline")} className="rounded-lg border border-rose-200 px-3 py-2 text-xs font-bold text-rose-700 hover:bg-rose-50">Decline</button>
+                  <button
+                    onClick={() => reviewUpgradeRequest(request, "approve")}
+                    disabled={!isPaid}
+                    title={isPaid ? "" : "Waiting for the retailer to complete payment"}
+                    className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-bold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    Approve upgrade
+                  </button>
+                </div>
               </div>
-            ))}
-            {upgradeRequests.filter((request) => request.status === "PENDING").length === 0 && (
+              );
+            })}
+            {upgradeRequests.filter((request) => ["PENDING", "PAID_PENDING_REVIEW"].includes(request.status)).length === 0 && (
               <p className="px-5 py-5 text-sm text-slate-500">
                 No pending single-store upgrade requests. Use Refresh to check for new requests.
               </p>
