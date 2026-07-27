@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { logoutOrReturnToDepartmentSelector } from "../utils/authRedirect";
+import { getAdminName, getAdminScope, getStoreName, logoutOrReturnToDepartmentSelector } from "../utils/authRedirect";
 import { API_BASE_URL } from "../config/api.js";
 import {
   Users, Calendar, DollarSign, Clock, Plane, LogOut, Bell, X, Plus,
@@ -27,13 +27,40 @@ async function hrFetch(path, options = {}) {
 }
 
 const MENU = [
-  { id: "dashboard", label: "Dashboard", icon: BarChart3 },
-  { id: "employees", label: "Employees", icon: Users },
+  { id: "dashboard", label: "Overview", icon: BarChart3 },
+  { id: "employees", label: "People", icon: Users },
   { id: "attendance", label: "Attendance", icon: Clock },
-  { id: "leaves", label: "Leaves", icon: Calendar },
-  { id: "salary", label: "Salary", icon: DollarSign },
-  { id: "holidays", label: "Holidays", icon: Plane },
+  { id: "leaves", label: "Leave Centre", icon: Calendar },
+  { id: "salary", label: "Payroll", icon: DollarSign },
+  { id: "holidays", label: "Holiday Calendar", icon: Plane },
 ];
+
+const HR_UI_STYLES = `
+  .hr-workspace {
+    min-height: 100vh;
+    color: #17213a;
+    background: radial-gradient(circle at 88% -8%, rgba(45, 212, 191, .16), transparent 32rem), radial-gradient(circle at 38% 0%, rgba(99, 102, 241, .10), transparent 31rem), #f5f7fb;
+  }
+  .hr-workspace .hr-sidebar { width: 280px; background: linear-gradient(165deg, #111c3a 0%, #142a4b 50%, #0b766f 145%); box-shadow: 14px 0 40px rgba(15, 23, 42, .10); }
+  .hr-workspace .hr-brand { border: 1px solid rgba(255,255,255,.13); background: rgba(255,255,255,.065); box-shadow: inset 0 1px 0 rgba(255,255,255,.08); }
+  .hr-workspace .hr-nav-item { color: #bfccdf; border: 1px solid transparent; }
+  .hr-workspace .hr-nav-item:hover { background: rgba(255,255,255,.075); color: #fff; }
+  .hr-workspace .hr-nav-item-active { color: #fff; border-color: rgba(94,234,212,.22); background: linear-gradient(90deg, rgba(20,184,166,.34), rgba(99,102,241,.26)); box-shadow: 0 8px 18px rgba(2,6,23,.18); }
+  .hr-workspace .hr-content { min-width: 0; }
+  .hr-workspace .hr-header { background: rgba(255,255,255,.86); border-bottom: 1px solid #e5eaf2; backdrop-filter: blur(14px); }
+  .hr-workspace .hr-panel { background: rgba(255,255,255,.94); border: 1px solid #e2e8f0; border-radius: 20px; box-shadow: 0 14px 35px rgba(15,23,42,.07); }
+  .hr-workspace .hr-panel > div:first-child { border-color: #e7edf5; }
+  .hr-workspace input, .hr-workspace select, .hr-workspace textarea { border-color: #d9e2ef; background: #fbfcfe; color: #17213a; box-shadow: 0 1px 2px rgba(15,23,42,.02); }
+  .hr-workspace input:focus, .hr-workspace select:focus, .hr-workspace textarea:focus { outline: none; border-color: #4f46e5; box-shadow: 0 0 0 3px rgba(79,70,229,.12); }
+  .hr-workspace table thead { background: #f6f8fc; }
+  .hr-workspace table th { color: #66748d; font-size: .68rem; letter-spacing: .07em; }
+  .hr-workspace table td { color: #3b4860; }
+  .hr-workspace table tbody tr { transition: background .16s ease; }
+  .hr-workspace table tbody tr:hover { background: #f8fbff !important; }
+  .hr-workspace .hr-stat-card { border: 1px solid #e4eaf2; background: rgba(255,255,255,.92); border-radius: 18px; box-shadow: 0 12px 26px rgba(15,23,42,.055); }
+  .hr-workspace .hr-stat-icon { border-radius: 14px; }
+  @media (max-width: 900px) { .hr-workspace .hr-sidebar { width: 76px; } .hr-workspace .hr-brand-copy, .hr-workspace .hr-nav-label, .hr-workspace .hr-sidebar-note { display: none; } .hr-workspace .hr-nav-item { justify-content: center; padding-left: 0; padding-right: 0; } .hr-workspace .hr-nav-item svg { margin-right: 0; } }
+`;
 
 function ErrorBanner({ message }) {
   if (!message) return null;
@@ -49,33 +76,44 @@ function DashboardView() {
     hrFetch("/api/hr/dashboard").then((r) => setStats(r.data)).catch((e) => setError(e.message));
   }, []);
 
-  const CARDS = stats ? [
-    { label: "Total Employees", value: stats.total_employees, icon: Users, color: "bg-blue-500" },
-    { label: "Present Today", value: stats.present_today, icon: Clock, color: "bg-green-500" },
-    { label: "On Leave Today", value: stats.on_leave_today, icon: Calendar, color: "bg-orange-500" },
-    { label: "Pending Leave Requests", value: stats.pending_leave_requests, icon: Bell, color: "bg-purple-500" },
-  ] : [];
+  const cards = [
+    { label: "Team members", helper: "Active people in this workspace", value: stats?.total_employees, icon: Users, iconClass: "bg-indigo-50 text-indigo-600", accent: "bg-indigo-500" },
+    { label: "Present today", helper: "Checked in or marked present", value: stats?.present_today, icon: Clock, iconClass: "bg-emerald-50 text-emerald-600", accent: "bg-emerald-500" },
+    { label: "On leave", helper: "Approved leave for today", value: stats?.on_leave_today, icon: Calendar, iconClass: "bg-amber-50 text-amber-600", accent: "bg-amber-500" },
+    { label: "Needs review", helper: "Pending leave requests", value: stats?.pending_leave_requests, icon: Bell, iconClass: "bg-violet-50 text-violet-600", accent: "bg-violet-500" },
+  ];
 
   return (
     <div className="space-y-6">
       <ErrorBanner message={error} />
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        {CARDS.map(({ label, value, icon: Icon, color }) => (
-          <div key={label} className={`${color} text-white p-6 rounded-lg shadow-lg`}>
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="text-sm font-semibold opacity-90">{label}</h3>
-                <p className="text-3xl font-bold">{value ?? "—"}</p>
-              </div>
-              <Icon className="w-10 h-10 opacity-80" />
-            </div>
+      <section className="overflow-hidden rounded-[22px] border border-slate-200 bg-gradient-to-br from-slate-900 via-slate-800 to-teal-900 px-6 py-7 text-white shadow-[0_16px_35px_rgba(15,23,42,.14)] sm:px-8">
+        <p className="text-[11px] font-bold uppercase tracking-[.18em] text-teal-200">Workforce pulse</p>
+        <div className="mt-2 flex flex-wrap items-end justify-between gap-4">
+          <div>
+            <h3 className="text-2xl font-bold tracking-tight">Your people operations, at a glance.</h3>
+            <p className="mt-1 text-sm text-slate-300">Monitor attendance, leave activity and payroll readiness from one workspace.</p>
           </div>
+          <div className="rounded-xl border border-white/10 bg-white/10 px-4 py-2 text-sm font-semibold text-teal-100">Live department data</div>
+        </div>
+      </section>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        {cards.map(({ label, helper, value, icon: Icon, iconClass, accent }) => (
+          <article key={label} className="hr-stat-card relative overflow-hidden p-5">
+            <div className={`absolute left-0 top-0 h-1 w-full ${accent}`} />
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-xs font-bold uppercase tracking-[.1em] text-slate-500">{label}</p>
+                <p className="mt-2 text-3xl font-bold tracking-tight text-slate-900">{value ?? "—"}</p>
+                <p className="mt-1 text-xs text-slate-500">{helper}</p>
+              </div>
+              <span className={`hr-stat-icon flex h-11 w-11 items-center justify-center ${iconClass}`}><Icon className="h-5 w-5" /></span>
+            </div>
+          </article>
         ))}
       </div>
     </div>
   );
 }
-
 /* ── Employees ── */
 function EmployeesView() {
   const [employees, setEmployees] = useState([]);
@@ -121,7 +159,7 @@ function EmployeesView() {
   const filtered = employees.filter((e) => e.name.toLowerCase().includes(search.toLowerCase()) || e.email.toLowerCase().includes(search.toLowerCase()));
 
   return (
-    <div className="bg-white rounded-lg shadow-md overflow-hidden">
+    <div className="hr-panel overflow-hidden">
       <ErrorBanner message={error} />
       <div className="p-6 border-b">
         <div className="flex items-center justify-between mb-4">
@@ -241,7 +279,7 @@ function AttendanceView() {
   };
 
   return (
-    <div className="bg-white rounded-lg shadow-md overflow-hidden">
+    <div className="hr-panel overflow-hidden">
       <ErrorBanner message={error} />
       <div className="p-6 border-b flex flex-wrap items-center justify-between gap-4">
         <h2 className="text-2xl font-semibold">Attendance</h2>
@@ -349,7 +387,7 @@ function LeavesView() {
   };
 
   return (
-    <div className="bg-white rounded-lg shadow-md overflow-hidden">
+    <div className="hr-panel overflow-hidden">
       <ErrorBanner message={error} />
       <div className="p-6 border-b flex items-center justify-between">
         <h2 className="text-2xl font-semibold">Leave Requests</h2>
@@ -473,7 +511,7 @@ function SalaryView() {
   };
 
   return (
-    <div className="bg-white rounded-lg shadow-md overflow-hidden">
+    <div className="hr-panel overflow-hidden">
       <ErrorBanner message={error} />
       <div className="p-6 border-b space-y-3">
         <h2 className="text-2xl font-semibold">Salary Records</h2>
@@ -529,7 +567,7 @@ function SalaryView() {
 }
 
 /* ── Holidays ── */
-function HolidaysView() {
+function HolidaysView({ canManageHolidays }) {
   const [holidays, setHolidays] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -572,9 +610,11 @@ function HolidaysView() {
       <ErrorBanner message={error} />
       <div className="flex justify-between items-center">
         <h2 className="text-2xl font-semibold">Holiday Calendar</h2>
-        <button onClick={() => setShowAdd(true)} className="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600 flex items-center space-x-2 text-sm font-bold">
-          <Plus className="w-4 h-4" /><span>Add Holiday</span>
-        </button>
+        {canManageHolidays ? (
+          <button onClick={() => setShowAdd(true)} className="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600 flex items-center space-x-2 text-sm font-bold">
+            <Plus className="w-4 h-4" /><span>Add Holiday</span>
+          </button>
+        ) : <p className="text-sm text-slate-500">Company holidays are managed by HQ HR.</p>}
       </div>
       {showAdd && (
         <div className="bg-white border rounded-lg p-4 space-y-3">
@@ -605,7 +645,7 @@ function HolidaysView() {
                   <p className="text-xs text-gray-500">{h.type}</p>
                 </div>
               </div>
-              <button onClick={() => remove(h._id)} className="text-rose-500 hover:text-rose-700"><X className="w-4 h-4" /></button>
+              {canManageHolidays && <button onClick={() => remove(h._id)} className="text-rose-500 hover:text-rose-700"><X className="w-4 h-4" /></button>}
             </div>
           ))}
           {holidays.length === 0 && <p className="text-sm text-gray-400 col-span-full text-center py-8">No holidays added yet.</p>}
@@ -617,6 +657,11 @@ function HolidaysView() {
 
 export default function HR() {
   const [activeSection, setActiveSection] = useState("dashboard");
+  const canManageHolidays = getAdminScope() === "hq";
+  const isStoreWorkspace = !canManageHolidays;
+  const workspaceName = isStoreWorkspace ? (getStoreName() || "Store workspace") : "Head office workspace";
+  const adminName = getAdminName() || "HR Administrator";
+  const activeLabel = MENU.find((item) => item.id === activeSection)?.label || "Overview";
   const handleLogout = () => logoutOrReturnToDepartmentSelector();
 
   const renderContent = () => {
@@ -626,36 +671,67 @@ export default function HR() {
       case "attendance": return <AttendanceView />;
       case "leaves": return <LeavesView />;
       case "salary": return <SalaryView />;
-      case "holidays": return <HolidaysView />;
+      case "holidays": return <HolidaysView canManageHolidays={canManageHolidays} />;
       default: return <DashboardView />;
     }
   };
 
   return (
-    <div className="flex h-screen bg-gray-100">
-      <div className="w-64 bg-sky-600 text-white flex flex-col">
-        <div className="p-6 text-center"><h1 className="text-xl font-bold">HR</h1></div>
-        <nav className="flex-1">
+    <div className="hr-workspace flex">
+      <style>{HR_UI_STYLES}</style>
+      <aside className="hr-sidebar sticky top-0 flex h-screen shrink-0 flex-col p-4 text-white">
+        <div className="hr-brand rounded-2xl p-4">
+          <div className="flex items-center gap-3">
+            <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-gradient-to-br from-teal-300 to-cyan-500 text-lg font-black text-slate-950 shadow-lg shadow-teal-950/20">HR</div>
+            <div className="hr-brand-copy min-w-0">
+              <p className="text-xs font-semibold uppercase tracking-[.18em] text-teal-200">RMS workforce</p>
+              <h1 className="truncate text-lg font-bold">People Operations</h1>
+            </div>
+          </div>
+          <div className="hr-sidebar-note mt-4 rounded-xl border border-white/10 bg-slate-950/20 px-3 py-2.5">
+            <p className="text-[10px] font-bold uppercase tracking-[.16em] text-slate-300">Signed in as</p>
+            <p className="mt-1 truncate text-sm font-semibold">{adminName}</p>
+            <p className="mt-0.5 truncate text-xs text-teal-100/75">{workspaceName}</p>
+          </div>
+        </div>
+
+        <nav className="mt-6 flex-1 space-y-1.5 overflow-y-auto pr-1">
+          <p className="hr-sidebar-note px-3 pb-2 text-[10px] font-bold uppercase tracking-[.18em] text-slate-400">Workspace</p>
           {MENU.map(({ id, label, icon: Icon }) => (
-            <button key={id} onClick={() => setActiveSection(id)}
-              className={`w-full flex items-center px-6 py-3 text-left hover:bg-sky-700 transition-colors ${activeSection === id ? "bg-sky-700 border-r-4 border-white" : ""}`}>
-              <Icon className="w-5 h-5 mr-3" />{label}
+            <button
+              key={id}
+              onClick={() => setActiveSection(id)}
+              className={`hr-nav-item flex w-full items-center rounded-xl px-3.5 py-3 text-left text-sm font-semibold transition-all ${activeSection === id ? "hr-nav-item-active" : ""}`}
+            >
+              <Icon className="mr-3 h-[18px] w-[18px] shrink-0" />
+              <span className="hr-nav-label">{label}</span>
             </button>
           ))}
         </nav>
-        <div className="p-4">
-          <button onClick={handleLogout} className="flex items-center gap-2 w-full px-3 py-2 rounded-lg text-sm font-bold bg-sky-700 hover:bg-sky-800">
-            <LogOut className="w-4 h-4" /> Logout
+
+        <div className="mt-4 border-t border-white/10 pt-4">
+          <button onClick={handleLogout} className="flex w-full items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-3 text-sm font-bold text-slate-100 transition hover:bg-rose-500/20 hover:text-white">
+            <LogOut className="h-4 w-4" /> <span className="hr-nav-label">Log out</span>
           </button>
         </div>
-      </div>
-      <div className="flex-1 overflow-auto">
-        <header className="bg-white border-b border-gray-200 px-6 py-4 shadow-sm">
-          <h2 className="text-2xl font-bold text-gray-900">HR Management</h2>
-          <p className="text-sm text-gray-600">Your tenant's real employee, attendance, leave and payroll data.</p>
+      </aside>
+
+      <main className="hr-content min-h-screen flex-1">
+        <header className="hr-header sticky top-0 z-10 flex min-h-[92px] items-center justify-between gap-5 px-6 py-4 lg:px-9">
+          <div>
+            <div className="mb-1 flex items-center gap-2 text-[11px] font-bold uppercase tracking-[.16em] text-teal-700">
+              <span>Human resources</span><span className="h-1 w-1 rounded-full bg-teal-500" /><span>{isStoreWorkspace ? "Store scoped" : "HQ oversight"}</span>
+            </div>
+            <h2 className="text-2xl font-bold tracking-tight text-slate-900">{activeLabel}</h2>
+            <p className="mt-0.5 text-sm text-slate-500">{isStoreWorkspace ? `People operations for ${workspaceName}.` : "Manage people, attendance, leave and payroll across your organisation."}</p>
+          </div>
+          <div className="hidden rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-right shadow-sm sm:block">
+            <p className="text-[10px] font-bold uppercase tracking-[.15em] text-slate-400">Access level</p>
+            <p className="mt-0.5 text-sm font-bold text-slate-700">{isStoreWorkspace ? "Store HR" : "HQ HR"}</p>
+          </div>
         </header>
-        <div className="p-8">{renderContent()}</div>
-      </div>
+        <div className="mx-auto w-full max-w-[1540px] p-5 sm:p-7 lg:p-9">{renderContent()}</div>
+      </main>
     </div>
   );
 }

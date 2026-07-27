@@ -58,6 +58,36 @@ def _serialize(doc: dict, extra_id_fields: tuple = ()) -> dict:
     return doc
 
 
+def _is_store_scoped(ctx: TenantCtx) -> bool:
+    return ctx.get("scope") in {"store", "branch"}
+
+
+def _store_scope_query(ctx: TenantCtx) -> dict:
+    """Return the mandatory store filter for store-scoped HR users."""
+    if not _is_store_scoped(ctx):
+        return {}
+    store_id = ctx.get("store_id")
+    if not store_id:
+        raise HTTPException(status_code=403, detail="This HR account is not assigned to a store.")
+    return {"store_id": store_id}
+
+
+async def _get_scoped_employee(admin_id: str, ctx: TenantCtx) -> dict:
+    """Load an employee only when it belongs to the HR user's tenant/store scope."""
+    query = {"_id": _oid(admin_id, "employee id"), "tenant_id": ctx["tenant_id"]}
+    query.update(_store_scope_query(ctx))
+    employee = await admins_collection.find_one(query)
+    if not employee:
+        raise HTTPException(status_code=404, detail="Employee not found in your assigned scope.")
+    return employee
+
+
+def _require_hq_hr(ctx: TenantCtx) -> None:
+    """Company holidays are tenant-wide, so only HQ HR may change them."""
+    if _is_store_scoped(ctx):
+        raise HTTPException(status_code=403, detail="Only HQ HR can manage company holidays.")
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # EMPLOYEE DIRECTORY — reads admins_collection, never duplicates it
 # ═══════════════════════════════════════════════════════════════════════════
@@ -99,9 +129,7 @@ class EmployeeProfileUpdate(BaseModel):
 
 @router.patch("/employees/{admin_id}/profile")
 async def update_employee_profile(admin_id: str, payload: EmployeeProfileUpdate, ctx: TenantCtx = Depends(get_hr_context)):
-    admin = await admins_collection.find_one({"_id": _oid(admin_id, "employee id"), "tenant_id": ctx["tenant_id"]})
-    if not admin:
-        raise HTTPException(status_code=404, detail="Employee not found.")
+    await _get_scoped_employee(admin_id, ctx)
 
     patch = {k: v for k, v in payload.model_dump(exclude_unset=True).items() if v is not None}
     patch["updated_at"] = datetime.utcnow()
@@ -187,9 +215,7 @@ class ManualAttendance(BaseModel):
 
 @router.post("/attendance/manual")
 async def mark_attendance_manual(payload: ManualAttendance, ctx: TenantCtx = Depends(get_hr_context)):
-    admin = await admins_collection.find_one({"_id": _oid(payload.admin_id, "employee id"), "tenant_id": ctx["tenant_id"]})
-    if not admin:
-        raise HTTPException(status_code=404, detail="Employee not found.")
+    admin = await _get_scoped_employee(payload.admin_id, ctx)
     now = datetime.utcnow()
     await hr_attendance_collection.update_one(
         {"tenant_id": ctx["tenant_id"], "admin_id": payload.admin_id, "date": payload.date},
@@ -276,7 +302,9 @@ class LeaveReview(BaseModel):
 
 @router.patch("/leaves/{leave_id}")
 async def review_leave(leave_id: str, payload: LeaveReview, ctx: TenantCtx = Depends(get_hr_context)):
-    leave = await hr_leave_requests_collection.find_one({"_id": _oid(leave_id, "leave id"), "tenant_id": ctx["tenant_id"]})
+    leave_query = {"_id": _oid(leave_id, "leave id"), "tenant_id": ctx["tenant_id"]}
+    leave_query.update(_store_scope_query(ctx))
+    leave = await hr_leave_requests_collection.find_one(leave_query)
     if not leave:
         raise HTTPException(status_code=404, detail="Leave request not found.")
     if leave.get("status") != "Pending":
@@ -308,9 +336,7 @@ class SalaryUpsert(BaseModel):
 
 @router.post("/salary")
 async def upsert_salary(payload: SalaryUpsert, ctx: TenantCtx = Depends(get_hr_context)):
-    admin = await admins_collection.find_one({"_id": _oid(payload.admin_id, "employee id"), "tenant_id": ctx["tenant_id"]})
-    if not admin:
-        raise HTTPException(status_code=404, detail="Employee not found.")
+    admin = await _get_scoped_employee(payload.admin_id, ctx)
 
     net_salary = payload.basic_salary + payload.allowances - payload.deductions
     now = datetime.utcnow()
@@ -319,6 +345,7 @@ async def upsert_salary(payload: SalaryUpsert, ctx: TenantCtx = Depends(get_hr_c
         {
             "$set": {
                 "employee_name": admin.get("name", ""),
+                "store_id": admin.get("store_id"),
                 "basic_salary": payload.basic_salary,
                 "allowances": payload.allowances,
                 "deductions": payload.deductions,
@@ -338,6 +365,16 @@ async def list_salary(month: Optional[str] = None, ctx: TenantCtx = Depends(get_
     query: dict = {"tenant_id": ctx["tenant_id"]}
     if month:
         query["month"] = month
+    if _is_store_scoped(ctx):
+        store_scope = _store_scope_query(ctx)
+        # Include legacy salary documents only when their employee belongs to this store.
+        employee_ids = [str(doc["_id"]) async for doc in admins_collection.find(
+            {"tenant_id": ctx["tenant_id"], **store_scope}, {"_id": 1}
+        )]
+        query["$or"] = [
+            store_scope,
+            {"store_id": {"$exists": False}, "admin_id": {"$in": employee_ids}},
+        ]
     records = []
     async for doc in hr_salary_records_collection.find(query).sort("month", -1):
         records.append(_serialize(doc))
@@ -365,6 +402,7 @@ async def list_holidays(ctx: TenantCtx = Depends(get_tenant)):
 
 @router.post("/holidays", status_code=201)
 async def add_holiday(payload: HolidayCreate, ctx: TenantCtx = Depends(get_hr_context)):
+    _require_hq_hr(ctx)
     now = datetime.utcnow()
     doc = {
         "tenant_id": ctx["tenant_id"],
@@ -382,6 +420,7 @@ async def add_holiday(payload: HolidayCreate, ctx: TenantCtx = Depends(get_hr_co
 
 @router.delete("/holidays/{holiday_id}")
 async def delete_holiday(holiday_id: str, ctx: TenantCtx = Depends(get_hr_context)):
+    _require_hq_hr(ctx)
     result = await hr_holidays_collection.delete_one({"_id": _oid(holiday_id, "holiday id"), "tenant_id": ctx["tenant_id"]})
     if not result.deleted_count:
         raise HTTPException(status_code=404, detail="Holiday not found.")
@@ -402,14 +441,15 @@ async def hr_dashboard(ctx: TenantCtx = Depends(get_hr_context)):
         employee_query["store_id"] = ctx.get("store_id")
     total_employees = await admins_collection.count_documents(employee_query)
 
+    activity_scope = _store_scope_query(ctx)
     present_today = await hr_attendance_collection.count_documents({
-        "tenant_id": tenant_id, "date": today, "status": {"$in": ["Present", "Late"]},
+        "tenant_id": tenant_id, "date": today, "status": {"$in": ["Present", "Late"]}, **activity_scope,
     })
     on_leave_today = await hr_attendance_collection.count_documents({
-        "tenant_id": tenant_id, "date": today, "status": "On Leave",
+        "tenant_id": tenant_id, "date": today, "status": "On Leave", **activity_scope,
     })
     pending_leaves = await hr_leave_requests_collection.count_documents({
-        "tenant_id": tenant_id, "status": "Pending",
+        "tenant_id": tenant_id, "status": "Pending", **activity_scope,
     })
 
     return {

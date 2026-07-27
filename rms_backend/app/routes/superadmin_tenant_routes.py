@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, status, Depends
 from pydantic import BaseModel, EmailStr
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 from bson import ObjectId
 
 from ..routes.auth_routes import get_current_superadmin
@@ -9,6 +9,7 @@ from ..db import admins_collection, stores_collection
 from ..auth import create_password_setup_token
 from ..email_utils import send_password_setup_email
 from ..config import settings
+from ..retailer_plans import INTERNAL_FREE_PLAN, RETAILER_PLAN_LIMITS, normalize_retailer_plan, retailer_plan_config
 
 # Add to db.py:
 # tenants_collection = db["tenants"]
@@ -26,7 +27,7 @@ class TenantCreate(BaseModel):
     company_name: str
     tenant_id:    str          # unique slug e.g. "zudio" — never changes
     gstin:        Optional[str] = ""
-    plan:         str = "starter"   # starter | professional | enterprise
+    plan:         str = "basic"     # basic | professional | enterprise | internal_free_enterprise
     account_type: str = "department_retailer"  # department_retailer | single_store
     phone:        Optional[str] = ""
     address:      Optional[str] = ""
@@ -50,11 +51,15 @@ class TenantUpdate(BaseModel):
     status:       Optional[str] = None   # "active" | "suspended"
 
 
-PLAN_LIMITS = {
-    "starter":      { "stores": 1,  "admins": 3,   "label": "Starter"      },
-    "professional": { "stores": 5,  "admins": 15,  "label": "Professional" },
-    "enterprise":   { "stores": 999,"admins": 999,  "label": "Enterprise"  },
-}
+class TenantBillingUpdate(BaseModel):
+    """Superadmin-only billing classification. Never changes departments."""
+    plan: str
+    billing_mode: Literal["paid", "waived", "manual", "trial"]
+    subscription_status: Literal["active", "payment_pending", "trial", "cancelled"] = "active"
+    free_reason: Optional[str] = ""
+
+
+PLAN_LIMITS = RETAILER_PLAN_LIMITS
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -87,17 +92,19 @@ async def list_tenants(
             "tenant_id":    t.get("tenant_id", ""),
             "company_name": t.get("company_name", ""),
             "gstin":        t.get("gstin", ""),
-            "plan":         t.get("plan", "starter"),
+            "plan":         normalize_retailer_plan(t.get("plan", "basic")),
             "account_type": t.get("account_type", "department_retailer"),
-            "plan_label":   PLAN_LIMITS.get(t.get("plan","starter"), {}).get("label","Starter"),
+            "plan_label":   retailer_plan_config(t.get("plan", "basic")).get("label", "Basic"),
             "status":       t.get("status", "active"),
             "phone":        t.get("phone", ""),
             "city":         t.get("city", ""),
             "state":        t.get("state", ""),
             "store_count":  stats["store_count"],
             "admin_count":  stats["admin_count"],
-            "store_limit":  PLAN_LIMITS.get(t.get("plan","starter"), {}).get("stores", 1),
-            "admin_limit":  PLAN_LIMITS.get(t.get("plan","starter"), {}).get("admins", 3),
+            "store_limit":  retailer_plan_config(t.get("plan", "basic")).get("stores"),
+            "admin_limit":  retailer_plan_config(t.get("plan", "basic")).get("admins"),
+            "billing_mode": t.get("billing_mode", "manual"),
+            "subscription_status": t.get("subscription_status", "active"),
             "hq_admin_email": t.get("hq_admin_email", ""),
             "hq_admin_name":  t.get("hq_admin_name", ""),
             "created_at":   created.isoformat()[:10] if isinstance(created, datetime) else None,
@@ -123,6 +130,9 @@ async def create_tenant(
     account_type = payload.account_type.strip().lower()
     if account_type not in ("department_retailer", "single_store"):
         raise HTTPException(status_code=400, detail="Invalid account_type")
+    plan = normalize_retailer_plan(payload.plan)
+    if plan not in PLAN_LIMITS:
+        raise HTTPException(status_code=400, detail="Invalid retailer plan")
     existing  = await tenants_collection.find_one({"tenant_id": tenant_id})
     if existing:
         raise HTTPException(
@@ -143,9 +153,12 @@ async def create_tenant(
         "tenant_id":       tenant_id,
         "company_name":    payload.company_name.strip(),
         "gstin":           (payload.gstin or "").strip().upper(),
-        "plan":            payload.plan,
+        "plan":            plan,
         "account_type":    account_type,
         "status":          "active",
+        "billing_mode":    "waived" if plan == INTERNAL_FREE_PLAN else "manual",
+        "subscription_status": "active",
+        "free_reason":     "" if plan != INTERNAL_FREE_PLAN else "Internal RMS tenant",
         "phone":           (payload.phone or "").strip(),
         "address":         (payload.address or "").strip(),
         "city":            (payload.city or "").strip(),
@@ -240,7 +253,11 @@ async def update_tenant(
     patch: Dict[str, Any] = {"updated_at": datetime.utcnow()}
     if payload.company_name is not None: patch["company_name"] = payload.company_name.strip()
     if payload.gstin        is not None: patch["gstin"]        = payload.gstin.strip().upper()
-    if payload.plan         is not None: patch["plan"]         = payload.plan
+    if payload.plan is not None:
+        plan = normalize_retailer_plan(payload.plan)
+        if plan not in PLAN_LIMITS:
+            raise HTTPException(status_code=400, detail="Invalid retailer plan")
+        patch["plan"] = plan
     if payload.phone        is not None: patch["phone"]        = payload.phone.strip()
     if payload.address      is not None: patch["address"]      = payload.address.strip()
     if payload.city         is not None: patch["city"]         = payload.city.strip()
@@ -252,6 +269,36 @@ async def update_tenant(
 
     await tenants_collection.update_one({"tenant_id": tenant_id}, {"$set": patch})
     return {"message": f"Tenant '{tenant_id}' updated."}
+
+
+@router.put("/{tenant_id}/billing")
+async def update_tenant_billing(
+    tenant_id: str,
+    payload: TenantBillingUpdate,
+    current_admin: CurrentAdmin = Depends(get_current_superadmin),
+):
+    """Change commercial billing without touching departments or stock."""
+    del current_admin
+    tenant = await tenants_collection.find_one({"tenant_id": tenant_id})
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+    plan = normalize_retailer_plan(payload.plan)
+    if plan not in PLAN_LIMITS:
+        raise HTTPException(status_code=400, detail="Invalid retailer plan")
+    if plan == INTERNAL_FREE_PLAN and payload.billing_mode != "waived":
+        raise HTTPException(status_code=400, detail="Internal Free Enterprise must use waived billing.")
+    if plan != INTERNAL_FREE_PLAN and payload.billing_mode == "waived":
+        raise HTTPException(status_code=400, detail="Only Internal Free Enterprise can use waived billing.")
+    patch = {
+        "plan": plan,
+        "billing_mode": payload.billing_mode,
+        "subscription_status": payload.subscription_status,
+        "free_reason": (payload.free_reason or "").strip() if plan == INTERNAL_FREE_PLAN else "",
+        "subscription_expires_at": None if plan == INTERNAL_FREE_PLAN else tenant.get("subscription_expires_at"),
+        "updated_at": datetime.utcnow(),
+    }
+    await tenants_collection.update_one({"tenant_id": tenant_id}, {"$set": patch})
+    return {"message": "Tenant billing updated. Departments, admins, stores and stock were not changed."}
 
 
 @router.delete("/{tenant_id}")

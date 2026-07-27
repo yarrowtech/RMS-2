@@ -71,6 +71,8 @@ invoices_collection = db["invoices"]
 onboarding_requests_collection = db["onboarding_requests"]
 store_upgrade_requests_collection = db["store_upgrade_requests"]
 store_upgrade_payments_collection = db["store_upgrade_payments"]
+retailer_signups_collection = db["retailer_signups"]
+retailer_subscription_payments_collection = db["retailer_subscription_payments"]
 barcode_label_settings_collection = db["barcode_label_settings"]
 
 # Retailer finance is deliberately separate from purchase invoices and POS
@@ -135,11 +137,18 @@ async def ensure_procurement_indexes():
     await store_upgrade_requests_collection.create_index([("tenant_id", 1), ("status", 1), ("created_at", -1)], name="store_upgrade_tenant_status_created")
     await store_upgrade_payments_collection.create_index("razorpay_order_id", unique=True, name="store_upgrade_razorpay_order_unique")
     await store_upgrade_payments_collection.create_index([("request_id", 1), ("created_at", -1)], name="store_upgrade_payment_request_created")
+    await retailer_signups_collection.create_index("razorpay_order_id", name="retailer_signup_razorpay_order")
+    await retailer_signups_collection.create_index([("status", 1), ("created_at", -1)], name="retailer_signup_status_created")
+    await retailer_subscription_payments_collection.create_index("razorpay_order_id", unique=True, name="retailer_subscription_razorpay_order_unique")
+    await retailer_subscription_payments_collection.create_index([("tenant_id", 1), ("created_at", -1)], name="retailer_subscription_tenant_payment_history")
     await barcode_label_settings_collection.create_index("tenant_id", unique=True, name="barcode_label_settings_tenant")
     await hr_employee_profiles_collection.create_index([("tenant_id", 1), ("admin_id", 1)], unique=True, name="hr_profile_tenant_admin")
     await hr_attendance_collection.create_index([("tenant_id", 1), ("admin_id", 1), ("date", 1)], unique=True, name="hr_attendance_tenant_admin_date")
     await hr_attendance_collection.create_index([("tenant_id", 1), ("date", 1)], name="hr_attendance_tenant_date")
+    await hr_attendance_collection.create_index([("tenant_id", 1), ("store_id", 1), ("date", 1)], name="hr_attendance_store_date")
     await hr_leave_requests_collection.create_index([("tenant_id", 1), ("admin_id", 1), ("created_at", -1)], name="hr_leave_tenant_admin_created")
     await hr_leave_requests_collection.create_index([("tenant_id", 1), ("status", 1), ("created_at", -1)], name="hr_leave_tenant_status_created")
+    await hr_leave_requests_collection.create_index([("tenant_id", 1), ("store_id", 1), ("status", 1), ("created_at", -1)], name="hr_leave_store_status_created")
     await hr_salary_records_collection.create_index([("tenant_id", 1), ("admin_id", 1), ("month", 1)], unique=True, name="hr_salary_tenant_admin_month")
+    await hr_salary_records_collection.create_index([("tenant_id", 1), ("store_id", 1), ("month", -1)], name="hr_salary_store_month")
     await hr_holidays_collection.create_index([("tenant_id", 1), ("date", 1)], name="hr_holidays_tenant_date")

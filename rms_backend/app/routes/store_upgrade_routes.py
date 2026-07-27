@@ -31,16 +31,26 @@ TenantCtx = Dict[str, Any]
 
 MULTI_STORE_PLANS = {"professional", "enterprise"}
 
-# Deliberately a different, higher price band than vendor catalogue tiers
-# (subscription_routes.py: Free/Standard/Premium top out at price_inr=1499).
-# This upgrade restructures a tenant's whole account (HQ + multi-store), not
-# a catalogue visibility tier, so it is priced and sold separately.
+# Single source of truth for retailer plan pricing — used both by the
+# self-serve upgrade flow below (existing single-store tenants growing into
+# Professional/Enterprise) and by superadmin's tenant creation flow
+# (superadmin_tenant_routes.py imports this dict directly so the two never
+# quietly drift apart). Deliberately a different, higher price band than
+# vendor catalogue tiers (subscription_routes.py: Free/Standard/Premium top
+# out at price_inr=1499) — this is a whole-account plan (HQ + multi-store),
+# not a catalogue visibility tier.
+#
+# "basic" is the baseline every retailer starts on (today's single-store
+# workspace) — it is never an upgrade target, only Professional/Enterprise
+# are (see MULTI_STORE_PLANS below).
 STORE_PLAN_CONFIG = {
-    "professional": {"label": "Professional", "price_inr": 30000,  "max_stores": 5},
+    "basic":        {"label": "Basic",        "price_inr": 50000,  "max_stores": 1},
+    "professional": {"label": "Professional", "price_inr": 90000,  "max_stores": 5},
     "enterprise":   {"label": "Enterprise",   "price_inr": 125000, "max_stores": None},
 }
 
 RAZORPAY_ORDER_URL = "https://api.razorpay.com/v1/orders"
+RAZORPAY_PAYMENT_LINK_URL = "https://api.razorpay.com/v1/payment_links"
 
 
 def _razorpay_credentials() -> tuple[str, str]:
@@ -76,6 +86,28 @@ def _razorpay_create_order_sync(key_id: str, key_secret: str, payload: dict) -> 
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Could not reach Razorpay. Please try again.") from exc
 
 
+
+def _razorpay_create_payment_link_sync(key_id: str, key_secret: str, payload: dict) -> dict:
+    """Create Razorpay's hosted payment page and return its safe short URL."""
+    credentials = base64.b64encode(f"{key_id}:{key_secret}".encode("utf-8")).decode("ascii")
+    req = urlrequest.Request(
+        RAZORPAY_PAYMENT_LINK_URL,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Authorization": f"Basic {credentials}", "Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urlrequest.urlopen(req, timeout=20) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except urlerror.HTTPError as exc:
+        raw = exc.read().decode("utf-8", errors="replace")
+        try:
+            detail = json.loads(raw).get("error", {}).get("description") or raw
+        except json.JSONDecodeError:
+            detail = raw
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"Razorpay payment-link creation failed: {detail}") from exc
+    except OSError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Could not reach Razorpay. Please try again.") from exc
 def _razorpay_fetch_payment_sync(key_id: str, key_secret: str, payment_id: str) -> dict:
     credentials = base64.b64encode(f"{key_id}:{key_secret}".encode("utf-8")).decode("ascii")
     req = urlrequest.Request(
@@ -222,6 +254,11 @@ async def list_store_upgrade_plans():
     always_new = sorted(set(BASE_HQ_PERMISSIONS) - SINGLE_STORE_OWNER_PERMISSIONS)
     plans = {}
     for key, cfg in STORE_PLAN_CONFIG.items():
+        if key == "basic":
+            # Baseline plan — same single-store workspace a retailer already
+            # has, nothing new is unlocked.
+            plans[key] = {**cfg, "always_included": [], "new_permissions": []}
+            continue
         depts = _departments_allowed_for_plan(key)
         new_permissions = sorted(set(always_new) | {p for d in depts for p in _new_permissions_for(d)})
         plans[key] = {**cfg, "always_included": always_new, "new_permissions": new_permissions}

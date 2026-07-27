@@ -66,13 +66,23 @@ def _wrap(color: str, header_title: str, body_html: str, footer: str = "© CitiM
     """
 
 def _btn(link: str, label: str, color: str) -> str:
+    # Table-based "bulletproof" button, not a styled <div><a> — Outlook's
+    # desktop renderer (Word's HTML engine) ignores display:inline-block on
+    # anchors and silently drops the click target, while everything else
+    # (Gmail, Apple Mail, etc.) renders either fine. The plain-text link
+    # below was the only thing that actually worked for those clients; this
+    # makes the button itself reliable everywhere instead of relying on it.
     return f"""
-    <div style="text-align:center;margin:28px 0;">
-      <a href="{link}" style="background:{color};color:#fff;text-decoration:none;
-         padding:12px 28px;font-size:15px;border-radius:6px;display:inline-block;">
-        {label}
-      </a>
-    </div>
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center" style="margin:28px auto;">
+      <tr>
+        <td style="border-radius:6px;background:{color};">
+          <a href="{link}" target="_blank" rel="noopener"
+             style="display:block;padding:12px 28px;font-size:15px;font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#ffffff;text-decoration:none;border-radius:6px;">
+            {label}
+          </a>
+        </td>
+      </tr>
+    </table>
     <p style="font-size:12px;color:#aaa;word-break:break-all;background:#f8f9fa;
               padding:10px;border-radius:6px;">{link}</p>
     """
@@ -83,21 +93,21 @@ def _divider() -> str:
 def _note(text: str) -> str:
     return f'<p style="font-size:12px;color:#999;text-align:center;">{text}</p>'
 
-async def _send(subject: str, recipients: List[str], html: str):
+async def _send(subject: str, recipients: List[str], html: str) -> bool:
     if not conf:
-        print("⚠️  Skipping email — SMTP not configured.")
-        return
+        print("Email skipped: SMTP is not configured.")
+        return False
     try:
         fm = FastMail(conf)
         await fm.send_message(MessageSchema(
             subject=subject, recipients=recipients, body=html, subtype="html"
         ))
-        print(f"📧 Sent: {subject} → {', '.join(recipients)}")
+        print(f"Email sent: {subject} -> {', '.join(recipients)}")
+        return True
     except Exception as e:
-        print(f"❌ Email failed [{subject}]: {e}")
+        print(f"Email failed [{subject}]: {e}")
+        return False
 
-
-# ─────────────────────────────────────────────────────────────────────────────
 # 1. ADMIN — Password setup (existing, unchanged behaviour)
 # ─────────────────────────────────────────────────────────────────────────────
 async def send_password_setup_email(
@@ -127,6 +137,39 @@ async def send_password_setup_email(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# 1b. RETAILER - approved onboarding payment link
+async def send_retailer_payment_email(
+    email: EmailStr,
+    name: str,
+    company_name: str,
+    plan_label: str,
+    amount_inr: int,
+    payment_link: str,
+    expires_in_days: int = 7,
+) -> bool:
+    """Send the retailer-controlled checkout link after Super Admin approval."""
+    body = f"""
+      <h2 style="color:#222;margin-bottom:8px;">Hello, {name}!</h2>
+      <p style="font-size:15px;color:#444;">
+        Your RMS onboarding request for <strong style="color:{PRIMARY};">{company_name}</strong> has been approved.
+      </p>
+      <div style="margin:20px 0;padding:16px;border:1px solid #dbeafe;background:#eff6ff;border-radius:10px;">
+        <p style="margin:0;color:#1e3a8a;font-size:13px;font-weight:700;">Selected RMS plan</p>
+        <p style="margin:6px 0 0;color:#172554;font-size:20px;font-weight:800;">{plan_label} - Rs. {amount_inr:,.0f}/month</p>
+      </div>
+      <p style="font-size:14px;color:#555;line-height:1.6;">
+        Complete payment on the Razorpay-hosted checkout below to activate your RMS workspace. RMS never asks you to email card, UPI, bank, or payment details. Your tenant and first administrator account are created only after Razorpay confirms the payment.
+      </p>
+      {_btn(payment_link, "Pay securely on Razorpay", PRIMARY)}
+      {_divider()}
+      {_note(f"This secure payment link expires in {expires_in_days} days. If you did not request RMS onboarding, you can ignore this email.")}
+    """
+    return await _send(
+        subject=f"Complete payment to activate {company_name} on RMS",
+        recipients=[email],
+        html=_wrap(PRIMARY, "Your RMS onboarding is approved", body, "RMS Platform"),
+    )
+
 # 2. ADMIN — Assigned to additional department
 # ─────────────────────────────────────────────────────────────────────────────
 async def send_department_added_email(
