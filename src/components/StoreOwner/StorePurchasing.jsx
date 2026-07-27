@@ -20,35 +20,35 @@ export default function StorePurchasing() {
   const Page = current.component;
 
   return (
-    <main className="min-h-screen bg-slate-50 text-slate-900">
-      <header className="border-b border-slate-200 bg-white px-4 py-4 shadow-sm sm:px-7">
+    <main className="min-h-screen bg-gradient-to-br from-violet-50 via-sky-50 to-emerald-50 text-slate-900">
+      <header className="border-b border-indigo-200/70 bg-gradient-to-r from-indigo-950 via-violet-900 to-cyan-900 px-4 py-4 shadow-lg shadow-indigo-950/15 sm:px-7">
         <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-3">
           <button onClick={() => navigate("/dashboard/store-owner")}
-            className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-sm font-bold text-slate-600 hover:bg-slate-50">
+            className="inline-flex items-center gap-2 rounded-xl border border-white/20 bg-white/10 px-3 py-2 text-sm font-bold text-white transition hover:bg-white/20">
             <ArrowLeft className="h-4 w-4" /> Workspace
           </button>
           <div className="min-w-0">
             <div className="flex items-center gap-2">
-              <ClipboardList className="h-5 w-5 text-violet-600" />
-              <h1 className="text-lg font-black tracking-tight">Store Purchasing</h1>
+              <ClipboardList className="h-5 w-5 text-cyan-300" />
+              <h1 className="text-lg font-black tracking-tight text-white">Store Purchasing</h1>
             </div>
-            <p className="mt-0.5 text-xs text-slate-500">Only the supplier, ordering and invoice tools needed by your store.</p>
+            <p className="mt-0.5 text-xs text-indigo-100">Only the supplier, ordering and invoice tools needed by your store.</p>
           </div>
         </div>
       </header>
 
       <div className="mx-auto max-w-7xl px-4 py-5 sm:px-7">
-        <nav className="mb-5 flex max-w-full gap-2 overflow-x-auto rounded-2xl border border-slate-200 bg-white p-2 shadow-sm">
+        <nav className="mb-5 flex max-w-full gap-2 overflow-x-auto rounded-2xl border border-indigo-200/70 bg-white/80 p-2 shadow-lg shadow-indigo-950/5 backdrop-blur">
           {TABS.map((tab) => {
             const Icon = tab.icon;
             const selected = active === tab.key;
             return <button key={tab.key} onClick={() => setActive(tab.key)}
-              className={`inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition ${selected ? "bg-violet-600 text-white shadow" : "text-slate-600 hover:bg-violet-50 hover:text-violet-700"}`}>
+              className={`inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition ${selected ? "bg-gradient-to-r from-violet-600 to-indigo-600 text-white shadow-lg shadow-indigo-200" : "text-slate-600 hover:bg-violet-50 hover:text-violet-700"}`}>
               <Icon className="h-4 w-4" /> {tab.label}
             </button>;
           })}
         </nav>
-        <section className="min-h-[70vh] overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+        <section className="min-h-[70vh] overflow-hidden rounded-2xl border border-white/80 bg-white/90 shadow-xl shadow-indigo-950/10 backdrop-blur">
           {current.key === "vendors" ? <VendorList showQuestionnaires={false} /> : <Page />}
         </section>
       </div>

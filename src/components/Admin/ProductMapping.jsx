@@ -27,7 +27,7 @@ function authFetch(url, options = {}) {
 }
 
 const ProductMapping = () => {
-  const [mappings, setMappings] = useState([]);
+  const isSingleStore = localStorage.getItem("admin_account_type") === "single_store";
   const [groupedData, setGroupedData] = useState({});
   const [form, setForm] = useState({
     product_type: "",
@@ -155,19 +155,19 @@ const ProductMapping = () => {
       : [];
 
   return (
-    <div className="mx-auto w-full max-w-6xl space-y-3 p-3 sm:p-4">
+    <div className={`mx-auto min-h-screen w-full max-w-6xl space-y-3 p-3 sm:p-4 ${isSingleStore ? "rounded-[2rem] bg-gradient-to-br from-violet-50 via-sky-50 to-emerald-50 sm:p-6" : ""}`}>
       {/* Header Section */}
       <div className="">
-        <div className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+        <div className={`flex flex-col gap-3 rounded-xl border px-4 py-3 shadow-sm sm:flex-row sm:items-center sm:justify-between ${isSingleStore ? "border-indigo-200/60 bg-gradient-to-r from-indigo-950 via-violet-900 to-cyan-900 text-white shadow-xl shadow-indigo-950/15" : "border-slate-200 bg-white"}`}>
           <div className="flex items-center gap-3">
-            <div className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-indigo-50 ring-1 ring-inset ring-indigo-100">
-              <Package size={17} className="text-indigo-600" />
+            <div className={`grid h-9 w-9 shrink-0 place-items-center rounded-lg ring-1 ring-inset ${isSingleStore ? "bg-white/10 ring-white/20" : "bg-indigo-50 ring-indigo-100"}`}>
+              <Package size={17} className={isSingleStore ? "text-cyan-300" : "text-indigo-600"} />
             </div>
             <div>
-              <h1 className="text-base font-bold tracking-tight text-slate-900">
+              <h1 className={`text-base font-bold tracking-tight ${isSingleStore ? "text-white" : "text-slate-900"}`}>
                 Product Type Mappings
               </h1>
-              <p className="mt-0.5 text-xs text-slate-500">Define the product type, division, section and department hierarchy</p>
+              <p className={`mt-0.5 text-xs ${isSingleStore ? "text-indigo-100" : "text-slate-500"}`}>Define the product type, division, section and department hierarchy</p>
             </div>
           </div>
           <button
@@ -175,7 +175,7 @@ const ProductMapping = () => {
               fetchMappings();
               fetchGroupedMappings();
             }}
-            className="inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 transition hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-700"
+            className={`inline-flex h-9 items-center justify-center gap-2 rounded-lg border px-3 text-xs font-semibold transition ${isSingleStore ? "border-white/20 bg-white/10 text-white hover:bg-white/20" : "border-slate-200 bg-white text-slate-700 hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-700"}`}
           >
             <RefreshCcw size={14} /> Refresh
           </button>
@@ -185,7 +185,7 @@ const ProductMapping = () => {
       {/* Form Section */}
       <form
         onSubmit={handleSubmit}
-        className="rounded-xl border border-slate-200 bg-white shadow-sm"
+        className={`rounded-xl border shadow-sm ${isSingleStore ? "border-violet-200 bg-white/90 shadow-violet-950/10 backdrop-blur" : "border-slate-200 bg-white"}`}
       >
         <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
           <div className="grid h-7 w-7 place-items-center rounded-md bg-indigo-50">
@@ -324,9 +324,9 @@ const HybridInputSelect = ({ label, value, onChange, options, placeholder, color
 };
 
 // ---------------- Table Component ----------------
-const MappingTable = ({ mappings, loading, handleEdit, handleDelete }) => (
-  <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-    <div className="flex items-center justify-between border-b border-slate-200 bg-white px-4 py-3">
+const MappingTable = ({ mappings, loading, handleEdit, handleDelete, colorful }) => (
+  <div className={`overflow-hidden rounded-xl border bg-white shadow-sm ${colorful ? "border-cyan-200 shadow-cyan-950/10" : "border-slate-200"}`}>
+    <div className={`flex items-center justify-between border-b px-4 py-3 ${colorful ? "border-cyan-100 bg-gradient-to-r from-cyan-50 via-white to-violet-50" : "border-slate-200 bg-white"}`}>
       <h3 className="flex items-center gap-2 text-sm font-bold text-slate-900">
         <Package size={16} className="text-indigo-600" />
         Current Mappings ({mappings.length})
@@ -335,7 +335,7 @@ const MappingTable = ({ mappings, loading, handleEdit, handleDelete }) => (
 
     <div className="overflow-x-auto">
       <table className="min-w-full">
-        <thead className="bg-slate-50/80">
+        <thead className={colorful ? "bg-gradient-to-r from-violet-100 via-indigo-50 to-cyan-100" : "bg-slate-50/80"}>
           <tr>
             <th className="px-4 py-2 text-left text-[10px] font-bold uppercase tracking-wider text-slate-500">
               Product Type
@@ -407,7 +407,7 @@ const MappingTable = ({ mappings, loading, handleEdit, handleDelete }) => (
           )}
         </tbody>
       </table>
-    </div>
+    </div>
   </div>
 );
 

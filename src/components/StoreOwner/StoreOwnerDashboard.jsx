@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import {
-  ArrowRight, Boxes, Building2, Crown, LogOut, PackagePlus, ShoppingCart, Store, Tags, UsersRound, X,
+  ArrowRight, Boxes, Building2, CheckCircle2, CircleDot, Crown, LogOut, PackagePlus, ShoppingCart, Store, Tags, UsersRound, X,
 } from "lucide-react";
 import { clearAuthData } from "../../utils/authRedirect.js";
 import { API_BASE_URL } from "../../config/api.js";
@@ -87,6 +87,13 @@ const WORKSPACES = [
   },
 ];
 
+const STARTING_STEPS = [
+  { number: "01", title: "Set up product groups", text: "Create the divisions, sections and departments you use in your store.", path: "/product-mapping", action: "Set up groups", icon: Tags },
+  { number: "02", title: "Add your first products", text: "Add prices, variants, images and RMS barcodes for what you sell.", path: "/products", action: "Add products", icon: PackagePlus },
+  { number: "03", title: "Buy or receive stock", text: "Choose a vendor, create a purchase order, then receive goods through GRC and GRN.", path: "/dashboard/store-owner/purchasing", action: "Open purchasing", icon: ShoppingCart },
+  { number: "04", title: "Check store stock", text: "Review quantity, movement and adjustments before you begin selling.", path: "/dashboard/inventory", action: "Open stock", icon: Boxes },
+  { number: "05", title: "Start billing", text: "Use Point of Sale when products and opening stock are ready.", path: "/dashboard/cashier", action: "Open POS", icon: Store },
+];
 export default function StoreOwnerDashboard() {
   const ownerName = localStorage.getItem("admin_name") || "Store Owner";
   const storeName = localStorage.getItem("admin_store_name") || "Your Store";
@@ -251,11 +258,36 @@ export default function StoreOwnerDashboard() {
         </section>
       </div>
 
-      <section className="bg-slate-50 px-5 pb-14 sm:px-8 lg:px-12">
-        <div className="mx-auto -translate-y-14 max-w-7xl">
+      <section className="bg-gradient-to-br from-indigo-50 via-sky-50 to-emerald-50 px-5 pb-14 sm:px-8 lg:px-12">
+        <div className="mx-auto -translate-y-14 max-w-7xl space-y-7">
+          <section className="overflow-hidden rounded-[2rem] border border-indigo-200/70 bg-white/85 shadow-xl shadow-indigo-950/10 backdrop-blur">
+            <div className="grid gap-5 border-b border-indigo-100 bg-gradient-to-r from-violet-100 via-indigo-50 to-cyan-100 px-6 py-6 lg:grid-cols-[1fr_auto] lg:items-center">
+              <div>
+                <div className="flex items-center gap-2 text-indigo-700"><CircleDot className="h-4 w-4" /><span className="text-xs font-black uppercase tracking-[.18em]">New here? Follow this order</span></div>
+                <h2 className="mt-2 text-2xl font-black tracking-tight text-slate-950">Get your store ready to sell</h2>
+                <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">Start with product setup, then bring stock in, and finally open POS. You can come back here anytime—each step opens the exact workspace you need.</p>
+              </div>
+              <Link to="/product-mapping" className="inline-flex items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 py-3 text-sm font-black text-white shadow-lg shadow-indigo-200 transition hover:bg-indigo-700">Start setup <ArrowRight className="h-4 w-4" /></Link>
+            </div>
+            <div className="grid divide-y divide-slate-100 md:grid-cols-5 md:divide-x md:divide-y-0">
+              {STARTING_STEPS.map(({ number, title, text, path, action, icon: Icon }) => (
+                <Link key={number} to={path} className={`group border-t-4 p-5 transition hover:-translate-y-0.5 ${number === "01" ? "border-violet-400 bg-violet-50/70 hover:bg-violet-100/70" : number === "02" ? "border-fuchsia-400 bg-fuchsia-50/60 hover:bg-fuchsia-100/60" : number === "03" ? "border-cyan-400 bg-cyan-50/70 hover:bg-cyan-100/70" : number === "04" ? "border-emerald-400 bg-emerald-50/70 hover:bg-emerald-100/70" : "border-orange-400 bg-orange-50/70 hover:bg-orange-100/70"}`}>
+                  <div className="flex items-center justify-between"><span className="text-xs font-black tracking-[.16em] text-indigo-500">{number}</span><Icon className="h-5 w-5 text-slate-400 transition group-hover:text-indigo-600" /></div>
+                  <h3 className="mt-5 text-sm font-black text-slate-900">{title}</h3>
+                  <p className="mt-2 min-h-16 text-xs leading-5 text-slate-500">{text}</p>
+                  <span className="mt-4 inline-flex items-center gap-1 text-xs font-black text-indigo-600">{action} <ArrowRight className="h-3.5 w-3.5" /></span>
+                </Link>
+              ))}
+            </div>
+          </section>
+
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-white/70 bg-white/55 px-5 py-4 shadow-sm">
+            <div><p className="text-xs font-black uppercase tracking-[.16em] text-slate-400">Your workspace</p><h2 className="mt-1 text-xl font-black text-slate-950">Daily store operations</h2></div>
+            <p className="inline-flex items-center gap-2 rounded-full bg-emerald-50 px-3 py-2 text-xs font-bold text-emerald-700"><CheckCircle2 className="h-4 w-4" />Single-store tools only</p>
+          </div>
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
             {WORKSPACES.map(({ title, description, path, icon: Icon, color }) => (
-              <Link key={title} to={path} className="group rounded-3xl border border-slate-200 bg-white p-6 shadow-sm transition duration-200 hover:-translate-y-1 hover:border-indigo-200 hover:shadow-xl">
+              <Link key={title} to={path} className="group rounded-3xl border border-white/80 bg-white/80 p-6 shadow-lg shadow-indigo-950/5 backdrop-blur transition duration-200 hover:-translate-y-1 hover:border-indigo-300 hover:bg-white hover:shadow-xl">
                 <div className={`grid h-12 w-12 place-items-center rounded-2xl bg-gradient-to-br ${color} text-white shadow-lg`}>
                   <Icon className="h-6 w-6" />
                 </div>
