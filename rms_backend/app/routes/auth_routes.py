@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional
 from jose import jwt, JWTError
 
 from ..auth import decode_token, create_access_token, create_reset_token, decode_reset_token
-from ..db import admins_collection
+from ..db import admins_collection, vendors_collection
 from ..utils import hash_password, verify_password
 from ..models import TokenResponse
 from ..config import settings
@@ -301,28 +301,48 @@ class ForgotPasswordRequest(BaseModel):
 @router.post("/forgot-password")
 async def forgot_password(req: ForgotPasswordRequest):
     user = await admins_collection.find_one({"email": req.email})
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+    if user:
+        department = user.get("department")
+        if department == "Administrator":
+            await admins_collection.update_one(
+                {"email": req.email},
+                {"$set": {"reset_requested": True, "reset_approved": False, "reset_requested_at": datetime.utcnow()}},
+            )
+            return {"message": "Request sent to Super Admin for approval"}
 
-    department = user.get("department")
-    if department == "Administrator":
-        await admins_collection.update_one(
-            {"email": req.email},
-            {"$set": {"reset_requested": True, "reset_approved": False, "reset_requested_at": datetime.utcnow()}},
-        )
-        return {"message": "Request sent to Super Admin for approval"}
+        token = create_reset_token(str(user["_id"]), account_type="admin")
+        await admins_collection.update_one({"_id": user["_id"]}, {"$set": {"reset_token": token}})
 
-    token = create_reset_token(str(user["_id"]))
-    await admins_collection.update_one({"_id": user["_id"]}, {"$set": {"reset_token": token}})
+        reset_link = f"{settings.frontend_base_url}/reset-password?token={token}"
+        try:
+            await send_reset_password_email(email=req.email, name=user.get("name", "User"), link=reset_link)
+        except Exception as e:
+            print("❌ EMAIL ERROR:", str(e))
 
-    reset_link = f"{settings.frontend_base_url}/reset-password?token={token}"
-    try:
-        await send_reset_password_email(email=req.email, name=user.get("name", "User"), link=reset_link)
-    except Exception as e:
-        print("❌ EMAIL ERROR:", str(e))
+        print("RESET LINK:", reset_link)
+        return {"message": "Password reset link sent to email"}
 
-    print("RESET LINK:", reset_link)
-    return {"message": "Password reset link sent to email"}
+    # Not an admin/retailer-side account — try vendors, a separate identity
+    # collection (see vendor_routes.py). Same token shape, tagged
+    # account_type="vendor" so /reset-password knows which collection to
+    # write the new password into.
+    vendor = await vendors_collection.find_one({"email": req.email})
+    if vendor:
+        token = create_reset_token(str(vendor["_id"]), account_type="vendor")
+        await vendors_collection.update_one({"_id": vendor["_id"]}, {"$set": {"reset_token": token}})
+
+        reset_link = f"{settings.frontend_base_url}/reset-password?token={token}"
+        try:
+            await send_reset_password_email(
+                email=req.email, name=vendor.get("name") or vendor.get("vendor_name") or "Vendor", link=reset_link
+            )
+        except Exception as e:
+            print("❌ EMAIL ERROR:", str(e))
+
+        print("RESET LINK:", reset_link)
+        return {"message": "Password reset link sent to email"}
+
+    raise HTTPException(status_code=404, detail="User not found")
 
 
 # ─── 5. Reset Password ────────────────────────────────────────────────────────
@@ -343,7 +363,26 @@ async def reset_password(req: ResetPasswordRequest):
         raise HTTPException(status_code=400, detail="Invalid token")
 
     user_id = payload.get("sub")
-    user    = await admins_collection.find_one({"_id": ObjectId(user_id)})
+    account_type = payload.get("account_type", "admin")
+
+    if account_type == "vendor":
+        vendor = await vendors_collection.find_one({"_id": ObjectId(user_id)})
+        if not vendor:
+            raise HTTPException(status_code=404, detail="User not found")
+        if vendor.get("reset_token") != req.token:
+            raise HTTPException(status_code=403, detail="Token already used or invalid")
+
+        hashed = hash_password(req.new_password)
+        await vendors_collection.update_one(
+            {"_id": ObjectId(user_id)},
+            {
+                "$set":   {"password": hashed, "updated_at": datetime.utcnow()},
+                "$unset": {"reset_token": ""},
+            },
+        )
+        return {"message": "Password reset successful"}
+
+    user = await admins_collection.find_one({"_id": ObjectId(user_id)})
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 

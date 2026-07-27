@@ -1,4 +1,4 @@
-﻿
+
 // App.jsx
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import RoleSelector from "./components/select";
@@ -26,6 +26,7 @@ import PurchaseInvoice from "./components/PurchaseInvoice.jsx";
 import ForgotPassword from "./pages/ForgotPassword";
 import ResetPassword from "./pages/ResetPassword";
 import RetailerOnboarding from "./pages/RetailerOnboarding.jsx";
+import RetailerPayment from "./pages/RetailerPayment.jsx";
 
 // â”€â”€ NEW: Department selector (shown when admin manages 2+ departments) â”€â”€â”€â”€â”€â”€â”€â”€
 import DepartmentSelector from "./pages/DepartmentSelector.jsx";
@@ -57,6 +58,7 @@ export default function App() {
         {/* Main roles */}
         <Route path="/" element={<RoleSelector />} />
         <Route path="/onboarding" element={<RetailerOnboarding />} />
+        <Route path="/retailer/complete-payment" element={<RetailerPayment />} />
         <Route path="/superadmin" element={<SuperAdminRouteGuard><SuperAdmin /></SuperAdminRouteGuard>} />
         <Route path="/admin" element={<DepartmentRouteGuard department={["HQ", "IT", "Administrator", "SUPERADMIN"]}><Admin /></DepartmentRouteGuard>} />
 

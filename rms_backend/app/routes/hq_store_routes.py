@@ -22,6 +22,7 @@ from ..db import stores_collection, admins_collection, tenants_collection
 from ..auth import create_password_setup_token
 from ..email_utils import send_password_setup_email
 from ..config import settings
+from ..retailer_plans import retailer_plan_config
 
 router = APIRouter(prefix="/hq", tags=["HQ Store Management"])
 
@@ -129,6 +130,15 @@ async def create_store(
     ctx: TenantCtx = Depends(get_hq_tenant),
 ):
     """HQ Admin creates a store or branch under their tenant."""
+    tenant = await tenants_collection.find_one({"tenant_id": ctx["tenant_id"]}, {"plan": 1})
+    plan_cfg = retailer_plan_config((tenant or {}).get("plan", "basic"))
+    store_limit = plan_cfg.get("stores")
+    current_store_count = await stores_collection.count_documents({"tenant_id": ctx["tenant_id"]})
+    if store_limit is not None and current_store_count >= store_limit:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Your {plan_cfg['label']} plan allows {store_limit} store(s)/branch(es). Upgrade the retailer plan to add more.",
+        )
     existing = await stores_collection.find_one({
         "tenant_id": ctx["tenant_id"],
         "code":      payload.code.upper().strip(),
@@ -304,6 +314,18 @@ async def create_store_admin(
         raise HTTPException(
             status_code=404,
             detail="Store not found or does not belong to your tenant."
+        )
+
+    tenant = await tenants_collection.find_one({"tenant_id": ctx["tenant_id"]}, {"plan": 1})
+    plan_cfg = retailer_plan_config((tenant or {}).get("plan", "basic"))
+    admin_limit = plan_cfg.get("admins")
+    current_admin_count = await admins_collection.count_documents({
+        "tenant_id": ctx["tenant_id"], "department": {"$ne": "SUPERADMIN"},
+    })
+    if admin_limit is not None and current_admin_count >= admin_limit:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Your {plan_cfg['label']} plan allows {admin_limit} administrator account(s). Upgrade the retailer plan to add more.",
         )
 
     existing = await admins_collection.find_one({"email": payload.email})
@@ -590,6 +612,18 @@ async def hq_create_admin(
 
     if "SUPERADMIN" in payload.managedDepartments:
         raise HTTPException(status_code=403, detail="Cannot create SUPERADMIN accounts.")
+
+    tenant = await tenants_collection.find_one({"tenant_id": ctx["tenant_id"]}, {"plan": 1})
+    plan_cfg = retailer_plan_config((tenant or {}).get("plan", "basic"))
+    admin_limit = plan_cfg.get("admins")
+    current_admin_count = await admins_collection.count_documents({
+        "tenant_id": ctx["tenant_id"], "department": {"$ne": "SUPERADMIN"},
+    })
+    if admin_limit is not None and current_admin_count >= admin_limit:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Your {plan_cfg['label']} plan allows {admin_limit} administrator account(s). Upgrade the retailer plan to add more.",
+        )
 
     invalid = [
         d for d in payload.managedDepartments

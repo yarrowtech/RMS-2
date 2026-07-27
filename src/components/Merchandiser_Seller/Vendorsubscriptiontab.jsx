@@ -286,6 +286,8 @@ export default function VendorSubscriptionTab() {
                     `Visible for ${cfg.visibility_days} days`,
                     cfg.business_type_limit ? `${cfg.business_type_limit} business type tag${cfg.business_type_limit > 1 ? "s" : ""}` : "Unlimited business types",
                     cfg.inquiry_limit_per_month ? `${cfg.inquiry_limit_per_month} inquiries/month` : "Unlimited inquiries",
+                    `Business Network — ${cfg.network_page_size}/page, ${cfg.network_requests_per_month ? `${cfg.network_requests_per_month} requests/month` : "unlimited requests"}`,
+                    "Vendor-to-vendor B2B trading (RFQs & orders)",
                     `${cfg.finance_history_months} months finance history`,
                     `${cfg.finance_transaction_limit} recent payment records`,
                     cfg.finance_export ? "Transaction CSV export" : "Finance dashboard view",

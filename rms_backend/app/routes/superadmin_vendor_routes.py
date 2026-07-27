@@ -28,6 +28,7 @@ from pydantic import BaseModel, EmailStr
 from ..db import (
     vendors_collection, vendor_tenant_links_collection, tenants_collection,
     product_mapping_collection, vendor_subscriptions_collection, vendor_subscription_payments_collection,
+    retailer_subscription_payments_collection,
 )
 from ..config import frontend_url
 from ..email_utils import send_vendor_confirmation_email
@@ -206,6 +207,28 @@ async def get_platform_finance(
         })
 
     rows.sort(key=lambda row: (row["status"] == "pending_payment", row["updated_at"] or ""), reverse=True)
+
+    retailer_recent_payments = []
+    retailer_captured_revenue = 0.0
+    retailer_pending_value = 0.0
+    async for payment in retailer_subscription_payments_collection.find({}).sort("created_at", -1).limit(100):
+        payment_status = str(payment.get("status") or "created")
+        amount = float(payment.get("amount_inr") or 0)
+        if payment_status == "captured":
+            retailer_captured_revenue += amount
+        elif payment_status in {"created", "authorized", "checkout_verified"}:
+            retailer_pending_value += amount
+        retailer_recent_payments.append({
+            "id": _str(payment.get("_id")),
+            "tenant_id": payment.get("tenant_id") or "",
+            "company_name": payment.get("company_name") or "Retailer",
+            "plan": payment.get("plan") or "basic",
+            "amount_inr": round(amount, 2),
+            "status": payment_status,
+            "created_at": _as_iso(payment.get("created_at")),
+            "captured_at": _as_iso(payment.get("captured_at")),
+        })
+
     return {
         "summary": {
             "vendor_count": len(rows),
@@ -213,6 +236,8 @@ async def get_platform_finance(
             "expected_mrr": round(expected_mrr, 2),
             "pending_subscription_value": round(pending_value, 2),
             "renewals_due_30_days": renewals_due,
+            "retailer_captured_revenue": round(retailer_captured_revenue, 2),
+            "retailer_pending_subscription_value": round(retailer_pending_value, 2),
         },
         "plan_breakdown": [
             {"tier": tier, "label": config["label"], "count": plan_counts[tier], "price_inr": config["price_inr"]}
@@ -224,7 +249,8 @@ async def get_platform_finance(
         ],
         "subscriptions": rows,
         "recent_payments": recent_payments[:25],
-        "rules": {"scope": "RMS subscription billing only", "retailer_vendor_finance_visible": False},
+        "retailer_recent_payments": retailer_recent_payments[:25],
+        "rules": {"scope": "RMS platform subscription billing only; retailer operational finance remains private."},
     }
 
 @router.get("/vendors/{vendor_id}/management")

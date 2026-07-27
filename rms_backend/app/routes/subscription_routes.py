@@ -212,7 +212,7 @@ TIER_CONFIG = {
         "visibility_days":      45,
         "business_type_limit":  3,
         "inquiry_limit_per_month": None,   # None = unlimited
-        "price_inr":            499,
+        "price_inr":            1499,
         "priority_rank":        1,
         "featured_badge":       False,
         "network_page_size":     20,
@@ -230,7 +230,7 @@ TIER_CONFIG = {
         "visibility_days":      90,
         "business_type_limit":  None,
         "inquiry_limit_per_month": None,
-        "price_inr":            1499,
+        "price_inr":            3499,
         "priority_rank":        2,
         "featured_badge":       True,   # NEW — shown as a "Verified" badge in search/browse
         "network_page_size":     40,
@@ -608,6 +608,14 @@ async def razorpay_webhook(request: Request):
 
     event_name = str(event.get("event") or "")
     event_id = request.headers.get("x-razorpay-event-id", "")
+
+    # Retailer onboarding uses Razorpay Payment Links, while vendor plans use
+    # Razorpay Orders. Keep one signed webhook endpoint and route each event
+    # by its server-created payment metadata.
+    from .retailer_signup_routes import process_retailer_payment_link_webhook
+    retailer_result = await process_retailer_payment_link_webhook(event, event_id)
+    if retailer_result is not None:
+        return retailer_result
     payment_entity = ((event.get("payload") or {}).get("payment") or {}).get("entity") or {}
     order_id = str(payment_entity.get("order_id") or "")
     payment_id = str(payment_entity.get("id") or "")

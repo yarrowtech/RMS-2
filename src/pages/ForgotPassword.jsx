@@ -1,6 +1,7 @@
 import { API_BASE_URL as APP_API_URL } from "../config/api.js";
 import React, { useState } from "react";
 import axios from "axios";
+import { useNavigate } from "react-router-dom";
 
 const styles = `
   @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500&family=DM+Sans:wght@300;400;500&display=swap');
@@ -319,6 +320,7 @@ const styles = `
 `;
 
 export default function ForgotPassword() {
+  const navigate = useNavigate();
   const [email, setEmail] = useState("");
   const [loading, setLoading] = useState(false);
   const [sent, setSent] = useState(false);
@@ -398,7 +400,7 @@ export default function ForgotPassword() {
                 </span>
               </button>
 
-              <button className="fp-back" onClick={() => {}}>
+              <button className="fp-back" onClick={() => navigate("/admin/login")}>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <polyline points="15 18 9 12 15 6"/>
                 </svg>
@@ -420,7 +422,7 @@ export default function ForgotPassword() {
               <button className="fp-btn" onClick={() => { setSent(false); setEmail(""); }}>
                 <span className="fp-btn-inner">Send again</span>
               </button>
-              <button className="fp-back" onClick={() => {}}>
+              <button className="fp-back" onClick={() => navigate("/admin/login")}>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <polyline points="15 18 9 12 15 6"/>
                 </svg>

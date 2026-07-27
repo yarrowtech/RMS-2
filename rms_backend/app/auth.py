@@ -52,12 +52,13 @@ def create_password_setup_token(email: str, department: str):
 # ================================
 # RESET TOKEN (NEW)
 # ================================
-def create_reset_token(user_id: str):
+def create_reset_token(user_id: str, account_type: str = "admin"):
     expire = timedelta(minutes=20)
 
     payload = {
         "sub": user_id,
-        "type": "password_reset"
+        "type": "password_reset",
+        "account_type": account_type,  # "admin" | "vendor" — which collection to reset in
     }
 
     return create_token(payload, expires_delta=expire)

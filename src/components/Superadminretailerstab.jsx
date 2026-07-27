@@ -3,9 +3,38 @@ import React, { useEffect, useState, useCallback } from "react";
 import {
   Building2, Plus, Search, Eye, Pencil, Trash2, X,
   CheckCircle, XCircle, AlertCircle, Store, Users,
-  Crown, Zap, Rocket, ChevronDown, ChevronUp,
+  Crown, Zap, Rocket, ChevronDown, ChevronUp, CreditCard, Gift,
 } from "lucide-react";
 import toast from "react-hot-toast";
+
+function loadRazorpayCheckout() {
+  if (window.Razorpay) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const existing = document.querySelector('script[data-rms-razorpay-checkout="true"]');
+    if (existing) {
+      existing.addEventListener("load", resolve, { once: true });
+      existing.addEventListener("error", () => reject(new Error("Could not load secure payment checkout.")), { once: true });
+      return;
+    }
+    const script = document.createElement("script");
+    script.src = "https://checkout.razorpay.com/v1/checkout.js";
+    script.async = true;
+    script.dataset.rmsRazorpayCheckout = "true";
+    script.onload = resolve;
+    script.onerror = () => reject(new Error("Could not load secure payment checkout."));
+    document.body.appendChild(script);
+  });
+}
+
+// Basic/Professional/Enterprise paid ladder — kept in sync with
+// STORE_PLAN_CONFIG in store_upgrade_routes.py. Separate from the legacy
+// starter/professional/enterprise PLAN_CFG below, which belongs only to the
+// original (untouched) Department Retailer / free Single Store flow.
+const SIGNUP_PLAN_CFG = {
+  basic:        { label: "Basic",        price: 50000,  workspace: "Single Store",   icon: Store,  bg: "bg-slate-100", text: "text-slate-700", border: "border-slate-200" },
+  professional: { label: "Professional", price: 90000,  workspace: "Multi-Store HQ", icon: Rocket, bg: "bg-blue-50",   text: "text-blue-700",  border: "border-blue-200"  },
+  enterprise:   { label: "Enterprise",   price: 125000, workspace: "Multi-Store HQ", icon: Crown,  bg: "bg-amber-50",  text: "text-amber-700", border: "border-amber-200" },
+};
 
 const API   = APP_API_URL;
 const apiFetch = async (path, opts = {}) => {
@@ -24,9 +53,10 @@ const apiFetch = async (path, opts = {}) => {
 };
 
 const PLAN_CFG = {
-  starter:      { label: "Starter",      icon: <Zap className="w-3 h-3"/>,    bg: "bg-slate-100",   text: "text-slate-700",  border: "border-slate-200"  },
-  professional: { label: "Professional", icon: <Rocket className="w-3 h-3"/>, bg: "bg-blue-50",     text: "text-blue-700",   border: "border-blue-200"   },
-  enterprise:   { label: "Enterprise",   icon: <Crown className="w-3 h-3"/>,  bg: "bg-amber-50",    text: "text-amber-700",  border: "border-amber-200"  },
+  basic:                    { label: "Basic",                    icon: <Zap className="w-3 h-3"/>,    bg: "bg-slate-100",   text: "text-slate-700",  border: "border-slate-200"  },
+  professional:             { label: "Professional",             icon: <Rocket className="w-3 h-3"/>, bg: "bg-blue-50",     text: "text-blue-700",   border: "border-blue-200"   },
+  enterprise:               { label: "Enterprise",               icon: <Crown className="w-3 h-3"/>,  bg: "bg-amber-50",    text: "text-amber-700",  border: "border-amber-200"  },
+  internal_free_enterprise: { label: "Internal Free Enterprise", icon: <Gift className="w-3 h-3"/>,   bg: "bg-emerald-50",  text: "text-emerald-700", border: "border-emerald-200" },
 };
 
 const STATUS_CFG = {
@@ -43,7 +73,7 @@ const EMPTY_TENANT = {
   company_name:    "",
   tenant_id:       "",
   gstin:           "",
-  plan:            "starter",
+  plan:            "professional",
   phone:           "",
   city:            "",
   state:           "",
@@ -60,10 +90,27 @@ const toSlug = (name) =>
 // ══════════════════════════════════════════════════════════════════════════════
 // ADD RETAILER MODAL
 // ══════════════════════════════════════════════════════════════════════════════
-function AddRetailerModal({ onClose, onCreated }) {
+function AddRetailerModal({ onClose, onCreated, onboardingRequest }) {
   const [form,   setForm]   = useState(EMPTY_TENANT);
   const [saving, setSaving] = useState(false);
   const [step,   setStep]   = useState(1); // 1 = retailer info, 2 = hq admin
+
+  useEffect(() => {
+    if (!onboardingRequest) return;
+    setForm({
+      ...EMPTY_TENANT,
+      company_name: onboardingRequest.business_name || "",
+      tenant_id: toSlug(onboardingRequest.business_name || ""),
+      plan: onboardingRequest.requested_plan || "professional",
+      account_type: onboardingRequest.requested_plan === "basic" ? "single_store" : "department_retailer",
+      phone: onboardingRequest.phone || "",
+      city: onboardingRequest.city || "",
+      state: onboardingRequest.state || "",
+      hq_admin_name: onboardingRequest.contact_name || "",
+      hq_admin_email: onboardingRequest.email || "",
+      onboarding_request_id: onboardingRequest.id,
+    });
+  }, [onboardingRequest]);
 
   const f = (k) => (e) => {
     const val = e.target.value;
@@ -81,19 +128,36 @@ function AddRetailerModal({ onClose, onCreated }) {
 
   const handleCreate = async () => {
     if (!form.company_name.trim()) { toast.error("Company name is required"); return; }
-    if (!form.tenant_id.trim())    { toast.error("Tenant ID is required"); return; }
-    if (!form.hq_admin_name.trim()){ toast.error("Primary admin name is required"); return; }
-    if (!form.hq_admin_email.trim()){ toast.error("Primary admin email is required"); return; }
+    if (!form.tenant_id.trim()) { toast.error("Tenant ID is required"); return; }
+    if (!form.hq_admin_name.trim()) { toast.error("Primary admin name is required"); return; }
+    if (!form.hq_admin_email.trim()) { toast.error("Primary admin email is required"); return; }
 
     try {
       setSaving(true);
-      const data = await apiFetch("/superadmin/tenants/", {
-        method: "POST", body: JSON.stringify(form),
+      if (form.plan === "internal_free_enterprise") {
+        const data = await apiFetch("/superadmin/tenants/", {
+          method: "POST",
+          body: JSON.stringify({ ...form, billing_mode: "waived", subscription_status: "active", free_reason: "Internal RMS tenant" }),
+        });
+        toast.success(`${form.company_name} was activated as an internal waived Enterprise tenant.`);
+        onCreated(data);
+        onClose();
+        return;
+      }
+
+      const signup = await apiFetch("/api/retailer-signups/", {
+        method: "POST",
+        body: JSON.stringify({
+          company_name: form.company_name, tenant_id: form.tenant_id, gstin: form.gstin,
+          plan: form.plan, phone: form.phone, address: form.address, city: form.city, state: form.state,
+          hq_admin_name: form.hq_admin_name, hq_admin_email: form.hq_admin_email,
+          hq_admin_phone: form.hq_admin_phone, onboarding_request_id: form.onboarding_request_id || null,
+        }),
       });
-      toast.success(`✅ ${form.company_name} is now live on RMS!`);
-      onCreated(data);
-      onClose();
-    } catch (e) { toast.error(e.message); }
+      const paymentEmail = await apiFetch(`/api/retailer-signups/${signup.signup.id}/send-payment-link`, { method: "POST" });
+      toast.success(`Secure payment link sent to ${paymentEmail.email}.`);
+      onCreated(paymentEmail);
+      onClose();    } catch (e) { toast.error(e.message); }
     finally { setSaving(false); }
   };
 
@@ -148,7 +212,7 @@ function AddRetailerModal({ onClose, onCreated }) {
                     { key: "department_retailer", title: "Department Retailer", text: "Multiple teams, departments, stores and delegated admins.", icon: Building2 },
                     { key: "single_store", title: "Single Store", text: "One owner workspace with products, stock, purchasing and POS.", icon: Store },
                   ].map(({ key, title, text, icon: Icon }) => (
-                    <button key={key} type="button" onClick={() => setForm(p => ({ ...p, account_type: key, plan: key === "single_store" ? "starter" : p.plan }))}
+                    <button key={key} type="button" onClick={() => setForm(p => ({ ...p, account_type: key, plan: key === "single_store" ? "basic" : (p.plan === "basic" ? "professional" : p.plan) }))}
                       className={`rounded-2xl border-2 p-4 text-left transition ${form.account_type === key ? "border-amber-400 bg-amber-50 shadow-sm" : "border-slate-200 hover:border-slate-300"}`}>
                       <div className="flex items-center gap-2"><Icon className={`h-5 w-5 ${form.account_type === key ? "text-amber-600" : "text-slate-500"}`} /><span className="text-sm font-black text-slate-900">{title}</span></div>
                       <p className="mt-2 text-xs leading-5 text-slate-500">{text}</p>
@@ -181,7 +245,7 @@ function AddRetailerModal({ onClose, onCreated }) {
                   <div className="grid grid-cols-3 gap-2">
                     {Object.entries(PLAN_CFG).map(([key, cfg]) => (
                       <button key={key} type="button"
-                        onClick={() => setForm(p => ({ ...p, plan: key }))}
+                        onClick={() => setForm(p => ({ ...p, plan: key, account_type: key === "basic" ? "single_store" : "department_retailer" }))}
                         className={`p-2.5 rounded-xl border-2 text-xs font-bold transition flex items-center justify-center gap-1.5 ${
                           form.plan === key
                             ? `${cfg.bg} ${cfg.text} ${cfg.border} border-opacity-100`
@@ -220,8 +284,8 @@ function AddRetailerModal({ onClose, onCreated }) {
                   {PLAN_CFG[form.plan].label} Plan Includes:
                 </p>
                 <div className={`flex gap-4 ${PLAN_CFG[form.plan].text}`}>
-                  <span>🏪 {form.plan === "enterprise" ? "Unlimited" : form.plan === "professional" ? "5" : "1"} Store{form.plan !== "starter" ? "s" : ""}</span>
-                  <span>👤 {form.plan === "enterprise" ? "Unlimited" : form.plan === "professional" ? "15" : "3"} Admins</span>
+                  <span>🏪 {form.plan === "enterprise" || form.plan === "internal_free_enterprise" ? "Unlimited" : form.plan === "professional" ? "5" : "1"} Store{form.plan !== "basic" ? "s" : ""}</span>
+                  <span>👤 {form.plan === "enterprise" || form.plan === "internal_free_enterprise" ? "Unlimited" : form.plan === "professional" ? "15" : "3"} Admins</span>
                   <span>✅ Full RMS Access</span>
                 </div>
               </div>
@@ -232,7 +296,7 @@ function AddRetailerModal({ onClose, onCreated }) {
             <>
               <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-800 flex gap-2">
                 <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-                <span>This creates the <b>{form.account_type === "single_store" ? "Store Owner" : "HQ Admin"} account</b> for <b>{form.company_name || "this retailer"}</b>. They will receive a setup email to set their password.</span>
+                <span>{form.plan === "internal_free_enterprise" ? <>This creates the <b>{form.account_type === "single_store" ? "Store Owner" : "HQ Admin"} account</b> for <b>{form.company_name || "this retailer"}</b>. They will receive a setup-password email.</> : <>After you confirm, RMS emails the retailer a secure Razorpay payment link. Their tenant and first admin are created only after payment is verified.</>}</span>
               </div>
 
               <div className="grid grid-cols-2 gap-4">
@@ -366,7 +430,7 @@ function RetailerDetail({ tenant, onClose }) {
 // ══════════════════════════════════════════════════════════════════════════════
 // MAIN — RetailersTab
 // ══════════════════════════════════════════════════════════════════════════════
-export default function RetailersTab() {
+export default function RetailersTab({ pendingOnboarding, onConsumeOnboarding }) {
   const [tenants,    setTenants]    = useState([]);
   const [loading,    setLoading]    = useState(false);
   const [search,     setSearch]     = useState("");
@@ -416,6 +480,7 @@ export default function RetailersTab() {
   }, []);
 
   useEffect(() => { fetchTenants(); fetchUpgradeRequests(); fetchUpgradeDepartmentCatalog(); }, [fetchTenants, fetchUpgradeRequests, fetchUpgradeDepartmentCatalog]);
+  useEffect(() => { if (pendingOnboarding) setShowAdd(true); }, [pendingOnboarding]);
 
   const toggleDeptSelection = (requestId, key) => {
     setDeptSelections((prev) => {
@@ -438,6 +503,18 @@ export default function RetailersTab() {
       toast.success(action === "approve" ? `${request.company_name} is now a multi-store retailer` : "Upgrade request declined");
       fetchTenants();
       fetchUpgradeRequests();
+    } catch (error) { toast.error(error.message); }
+  };
+
+  const handleGrantInternalFree = async (tenant) => {
+    if (!window.confirm(`Move ${tenant.company_name} to Internal Free Enterprise? This only changes billing and plan capacity; it does not alter departments, admins, stores or stock.`)) return;
+    try {
+      await apiFetch(`/superadmin/tenants/${tenant.tenant_id}/billing`, {
+        method: "PUT",
+        body: JSON.stringify({ plan: "internal_free_enterprise", billing_mode: "waived", subscription_status: "active", free_reason: "Internal RMS tenant" }),
+      });
+      toast.success(`${tenant.company_name} is now an internal waived Enterprise tenant.`);
+      fetchTenants();
     } catch (error) { toast.error(error.message); }
   };
 
@@ -604,7 +681,7 @@ export default function RetailersTab() {
                   {search ? "No retailers match your search." : "No retailers yet. Click \"Add Retailer\" to onboard the first one."}
                 </td></tr>
               ) : filtered.map(t => {
-                const plan      = PLAN_CFG[t.plan]    || PLAN_CFG.starter;
+                const plan      = PLAN_CFG[t.plan]    || PLAN_CFG.basic;
                 const statusCfg = STATUS_CFG[t.status] || STATUS_CFG.active;
                 const expanded  = expandedId === t.tenant_id;
                 return (
@@ -662,6 +739,10 @@ export default function RetailersTab() {
                             className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-500 transition" title="View details">
                             {expanded ? <ChevronUp className="w-4 h-4"/> : <Eye className="w-4 h-4"/>}
                           </button>
+                          {t.plan !== "internal_free_enterprise" && <button onClick={() => handleGrantInternalFree(t)}
+                            className="p-1.5 rounded-lg text-emerald-600 transition hover:bg-emerald-50" title="Grant internal free Enterprise plan">
+                            <Gift className="w-4 h-4"/>
+                          </button>}
                           <button onClick={() => handleSuspend(t)}
                             className={`p-1.5 rounded-lg transition ${t.status === "active" ? "hover:bg-amber-50 text-amber-500" : "hover:bg-emerald-50 text-emerald-500"}`}
                             title={t.status === "active" ? "Suspend" : "Activate"}>
@@ -692,8 +773,9 @@ export default function RetailersTab() {
 
       {showAdd && (
         <AddRetailerModal
-          onClose={() => setShowAdd(false)}
-          onCreated={() => fetchTenants()}
+          onboardingRequest={pendingOnboarding}
+          onClose={() => { setShowAdd(false); onConsumeOnboarding?.(); }}
+          onCreated={() => { fetchTenants(); onConsumeOnboarding?.(); }}
         />
       )}
     </div>

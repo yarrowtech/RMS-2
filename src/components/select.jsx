@@ -1,10 +1,12 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   ArrowRight, BadgeCheck, BarChart3, Boxes, Building2, CheckCircle2,
   Factory, Globe2, Handshake, Layers3, LockKeyhole, Mail, PackageCheck,
   ShieldCheck, ShoppingCart, Store, Truck, UserPlus, Users, Workflow,
+  Zap, Crown, TrendingUp, Sparkles, Rocket,
 } from "lucide-react";
+import { API_BASE_URL } from "../config/api.js";
 
 const portals = [
   {
@@ -53,8 +55,61 @@ const tone = {
   blue: "bg-blue-50 text-blue-700 ring-blue-100", slate: "bg-slate-100 text-slate-700 ring-slate-200",
 };
 
+const VENDOR_THEME = {
+  free:     { icon: Zap,        accent: "from-slate-400 to-slate-600",   badge: "bg-slate-100 text-slate-600 ring-slate-200" },
+  standard: { icon: TrendingUp, accent: "from-indigo-500 to-violet-600", badge: "bg-indigo-50 text-indigo-700 ring-indigo-200" },
+  premium:  { icon: Crown,      accent: "from-amber-400 to-orange-500",  badge: "bg-amber-50 text-amber-700 ring-amber-200" },
+};
+
+const STORE_THEME = {
+  basic:        { icon: Store,  accent: "from-slate-400 to-slate-600",    badge: "bg-slate-100 text-slate-600 ring-slate-200" },
+  professional: { icon: Rocket, accent: "from-indigo-500 to-blue-600",    badge: "bg-indigo-50 text-indigo-700 ring-indigo-200" },
+  enterprise:   { icon: Globe2, accent: "from-violet-600 to-fuchsia-600", badge: "bg-violet-50 text-violet-700 ring-violet-200" },
+};
+
+function vendorBullets(cfg) {
+  return [
+    `${cfg.image_limit} catalogue images, ${cfg.visibility_days}-day visibility`,
+    cfg.inquiry_limit_per_month ? `${cfg.inquiry_limit_per_month} buyer inquiries / month` : "Unlimited buyer inquiries",
+    `Business Network — ${cfg.network_page_size}/page${cfg.network_requests_per_month ? `, ${cfg.network_requests_per_month} requests/mo` : ", unlimited requests"}`,
+    "Vendor-to-vendor B2B trading",
+    cfg.finance_export ? "Finance export & retailer-wise breakdown" : "Finance dashboard view",
+    cfg.featured_badge ? "Priority placement + Verified badge" : null,
+  ].filter(Boolean);
+}
+
+function storeBullets(cfg, key) {
+  if (key === "basic") {
+    return [
+      "Single store workspace",
+      "Products, stock, purchasing & POS",
+      "Everything a single-store retailer needs day to day",
+    ];
+  }
+  return [
+    cfg.max_stores ? `Up to ${cfg.max_stores} stores` : "Unlimited stores",
+    "HQ Admin workspace + delegated department teams",
+    (cfg.new_permissions || []).includes("hr")
+      ? "All departments — Inventory, Finance, Logistics, HR, Job Work, Design & Third Party"
+      : "Core departments — Inventory, Finance, Logistics & Merchandiser Buyer",
+  ];
+}
+
 export default function ProfessionalRoleSelector() {
   const navigate = useNavigate();
+  const [vendorTiers, setVendorTiers] = useState(null);
+  const [storePlans, setStorePlans] = useState(null);
+
+  useEffect(() => {
+    fetch(`${API_BASE_URL}/api/subscriptions/tiers`)
+      .then((r) => r.json())
+      .then((json) => setVendorTiers(json.data || null))
+      .catch(() => {});
+    fetch(`${API_BASE_URL}/api/store-upgrades/plans`)
+      .then((r) => r.json())
+      .then((json) => setStorePlans(json.plans || null))
+      .catch(() => {});
+  }, []);
 
   return (
     <div className="relative min-h-screen overflow-hidden bg-[#f7f8fc] text-slate-900">
@@ -71,6 +126,7 @@ export default function ProfessionalRoleSelector() {
             <a href="#about" className="hover:text-indigo-700">What is RMS?</a>
             <a href="#workflow" className="hover:text-indigo-700">How it works</a>
             <a href="#departments" className="hover:text-indigo-700">Capabilities</a>
+            <a href="#pricing" className="hover:text-indigo-700">Pricing</a>
             <a href="#partners" className="hover:text-indigo-700">For partners</a>
           </nav>
           <button onClick={() => navigate("/admin/login")} className="rounded-xl bg-slate-950 px-4 py-2.5 text-xs font-bold text-white shadow-sm transition hover:bg-indigo-700">Sign in</button>
@@ -127,6 +183,70 @@ export default function ProfessionalRoleSelector() {
           </div>
         </section>
 
+        <section id="pricing" className="relative overflow-hidden bg-gradient-to-b from-slate-50 via-white to-white py-20">
+          <div className="pointer-events-none absolute inset-x-0 top-0 h-[420px] bg-[radial-gradient(circle_at_top,rgba(99,102,241,0.10),transparent_60%)]" />
+          <div className="relative mx-auto max-w-7xl px-5 sm:px-8 lg:px-10">
+            <div className="mx-auto max-w-3xl text-center">
+              <span className="inline-flex items-center gap-2 rounded-full border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs font-extrabold uppercase tracking-[0.18em] text-amber-700"><Sparkles size={14} /> Pricing</span>
+              <h2 className="mt-4 text-3xl font-black tracking-tight text-slate-950 sm:text-4xl">Transparent pricing for <span className="bg-gradient-to-r from-indigo-600 via-violet-600 to-amber-500 bg-clip-text text-transparent">both sides of RMS.</span></h2>
+              <p className="mt-4 leading-7 text-slate-600">Vendors pay for catalogue reach and visibility. Retailers choose the plan that matches their business — from a single store to a full multi-store HQ operation.</p>
+            </div>
+
+            <div className="mt-14">
+              <h3 className="text-center text-sm font-extrabold uppercase tracking-[0.14em] text-emerald-700">Vendor partner plans</h3>
+              <div className="mt-6 grid gap-5 sm:grid-cols-3">
+                {vendorTiers ? Object.entries(vendorTiers).map(([key, cfg]) => {
+                  const theme = VENDOR_THEME[key] || VENDOR_THEME.free;
+                  const Icon = theme.icon;
+                  return (
+                    <div key={key} className={`group relative overflow-hidden rounded-3xl border border-white bg-white p-6 shadow-[0_18px_50px_rgba(15,23,42,0.08)] ring-1 transition duration-300 hover:-translate-y-1 hover:shadow-[0_24px_65px_rgba(15,23,42,0.14)] ${cfg.featured_badge ? "ring-amber-200" : "ring-slate-200/70"}`}>
+                      <span className={`absolute inset-x-0 top-0 h-1.5 bg-gradient-to-r ${theme.accent}`} />
+                      {cfg.featured_badge && (
+                        <span className="absolute right-5 top-5 rounded-full bg-gradient-to-r from-amber-400 to-orange-500 px-2.5 py-1 text-[10px] font-black uppercase tracking-wide text-white shadow-sm">Most popular</span>
+                      )}
+                      <span className={`grid h-11 w-11 place-items-center rounded-2xl ring-1 ${theme.badge}`}><Icon size={20} /></span>
+                      <p className="mt-5 text-xs font-extrabold uppercase tracking-widest text-slate-400">{cfg.label}</p>
+                      <p className="mt-1 flex items-baseline gap-1">
+                        <span className="text-3xl font-black tracking-tight text-slate-950">{cfg.price_inr === 0 ? "Free" : `₹${cfg.price_inr.toLocaleString("en-IN")}`}</span>
+                        {cfg.price_inr > 0 && <span className="text-xs font-bold text-slate-400">/month</span>}
+                      </p>
+                      <ul className="mt-5 space-y-2.5">{vendorBullets(cfg).map((line) => <li key={line} className="flex items-start gap-2 text-xs leading-5 text-slate-600"><CheckCircle2 size={14} className="mt-0.5 shrink-0 text-emerald-500" />{line}</li>)}</ul>
+                    </div>
+                  );
+                }) : <p className="col-span-3 text-center text-sm text-slate-400">Loading plans…</p>}
+              </div>
+            </div>
+
+            <div className="mt-16">
+              <h3 className="text-center text-sm font-extrabold uppercase tracking-[0.14em] text-indigo-700">Retailer plans</h3>
+              <div className="mx-auto mt-6 grid max-w-5xl gap-5 sm:grid-cols-3">
+                {storePlans ? Object.entries(storePlans).map(([key, cfg]) => {
+                  const theme = STORE_THEME[key] || STORE_THEME.professional;
+                  const Icon = theme.icon;
+                  const featured = key === "professional";
+                  return (
+                    <div key={key} className={`group relative overflow-hidden rounded-3xl border border-white bg-white p-6 shadow-[0_18px_50px_rgba(15,23,42,0.08)] ring-1 transition duration-300 hover:-translate-y-1 hover:shadow-[0_24px_65px_rgba(15,23,42,0.14)] ${featured ? "ring-violet-200" : "ring-slate-200/70"}`}>
+                      <span className={`absolute inset-x-0 top-0 h-1.5 bg-gradient-to-r ${theme.accent}`} />
+                      {featured && (
+                        <span className="absolute right-5 top-5 rounded-full bg-gradient-to-r from-violet-600 to-fuchsia-600 px-2.5 py-1 text-[10px] font-black uppercase tracking-wide text-white shadow-sm">Most popular</span>
+                      )}
+                      <span className={`grid h-11 w-11 place-items-center rounded-2xl ring-1 ${theme.badge}`}><Icon size={20} /></span>
+                      <p className="mt-5 text-xs font-extrabold uppercase tracking-widest text-slate-400">{cfg.label}</p>
+                      <p className="mt-1 flex items-baseline gap-1">
+                        <span className="text-3xl font-black tracking-tight text-slate-950">₹{cfg.price_inr.toLocaleString("en-IN")}</span>
+                        <span className="text-xs font-bold text-slate-400">/month</span>
+                      </p>
+                      <ul className="mt-5 space-y-2.5">{storeBullets(cfg, key).map((line) => <li key={line} className="flex items-start gap-2 text-xs leading-5 text-slate-600"><CheckCircle2 size={14} className="mt-0.5 shrink-0 text-indigo-500" />{line}</li>)}</ul>
+                      <button onClick={() => navigate(`/onboarding?plan=${key}`)} className="mt-6 inline-flex w-full items-center justify-center gap-1.5 rounded-xl border border-slate-200 py-2.5 text-xs font-extrabold text-slate-800 transition group-hover:border-indigo-300 group-hover:text-indigo-700">Get started <ArrowRight size={14}/></button>
+                    </div>
+                  );
+                }) : <p className="col-span-3 text-center text-sm text-slate-400">Loading plans…</p>}
+              </div>
+              <p className="mx-auto mt-5 max-w-xl text-center text-xs text-slate-400">Every plan is reviewed by RMS before activation. Basic keeps your current single-store workflow; Professional and Enterprise start you on the multi-store HQ workspace.</p>
+            </div>
+          </div>
+        </section>
+
         <section id="partners" className="bg-white py-20">
           <div className="mx-auto max-w-7xl px-5 sm:px-8 lg:px-10">
             <div className="mx-auto max-w-3xl text-center"><p className="text-xs font-extrabold uppercase tracking-[0.2em] text-violet-600">Join the RMS network</p><h2 className="mt-4 text-3xl font-black tracking-tight text-slate-950 sm:text-4xl">Built for retailers and their supply partners.</h2><p className="mt-4 leading-7 text-slate-600">Apply once, complete verification, and receive access to the workspace appropriate for your business.</p></div>
@@ -143,7 +263,7 @@ export default function ProfessionalRoleSelector() {
       </main>
 
       <footer className="border-t border-slate-200 bg-white">
-        <div className="mx-auto flex w-full max-w-7xl flex-col gap-3 px-5 py-7 text-xs text-slate-500 sm:flex-row sm:items-center sm:justify-between sm:px-8 lg:px-10"><span>© {new Date().getFullYear()} RMS. Protected business access.</span><div className="flex gap-5"><a href="#about" className="hover:text-indigo-700">About RMS</a><a href="#partners" className="hover:text-indigo-700">Partner onboarding</a><button onClick={() => navigate("/admin/login")} className="hover:text-indigo-700">Sign in</button></div></div>
+        <div className="mx-auto flex w-full max-w-7xl flex-col gap-3 px-5 py-7 text-xs text-slate-500 sm:flex-row sm:items-center sm:justify-between sm:px-8 lg:px-10"><span>© {new Date().getFullYear()} RMS. Protected business access.</span><div className="flex gap-5"><a href="#about" className="hover:text-indigo-700">About RMS</a><a href="#pricing" className="hover:text-indigo-700">Pricing</a><a href="#partners" className="hover:text-indigo-700">Partner onboarding</a><button onClick={() => navigate("/admin/login")} className="hover:text-indigo-700">Sign in</button></div></div>
       </footer>
     </div>
   );
