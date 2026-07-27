@@ -5,6 +5,10 @@ import axios from "axios";
 import { useParams, useNavigate } from "react-router-dom";
 
 const API_BASE = `${APP_API_URL}`;
+const authHeaders = () => {
+  const token = localStorage.getItem("admin_token") || localStorage.getItem("access_token") || localStorage.getItem("token") || "";
+  return token ? { Authorization: `Bearer ${token}` } : {};
+};
 
 /* ─────────────────────────────────────────
    GLOBAL STYLES
@@ -363,7 +367,7 @@ export default function EditProduct() {
     if (!sku) return;
     setLoading(true);
 
-    axios.get(`${API_BASE}/api/products/${sku}`)
+    axios.get(`${API_BASE}/api/products/${sku}`, { headers: authHeaders() })
       .then(res => {
         const d = res.data.data;
         setProduct(d);
@@ -435,7 +439,7 @@ export default function EditProduct() {
       newFiles.forEach(f => fd.append("images", f));
 
       const skuKey = product.base_sku || product.sku;
-      await axios.put(`${API_BASE}/api/products/${skuKey}`, fd);
+      await axios.put(`${API_BASE}/api/products/${skuKey}`, fd, { headers: authHeaders() });
       setToast({ msg: "Saved successfully!", type: "ok" });
       setTimeout(() => navigate("/products"), 1300);
     } catch (err) {

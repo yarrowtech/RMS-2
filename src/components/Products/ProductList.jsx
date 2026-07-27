@@ -5,6 +5,10 @@ import axios from "axios";
 import { useNavigate } from "react-router-dom";
 
 const API_BASE = `${APP_API_URL}`;
+const authHeaders = () => {
+  const token = localStorage.getItem("admin_token") || localStorage.getItem("access_token") || localStorage.getItem("token") || "";
+  return token ? { Authorization: `Bearer ${token}` } : {};
+};
 
 // ─── Helpers ───
 const fmt = (n) => {
@@ -71,6 +75,29 @@ const S = `
   }
 
   /* ── Header ── */
+  /* Single-store workspace: colourful guidance without changing HQ product screens */
+  .pl-store-root {
+    background-color: #eef4ff;
+    background-image:
+      radial-gradient(circle at 4% 8%, rgba(59,130,246,.23) 0, transparent 30%),
+      radial-gradient(circle at 92% 10%, rgba(139,92,246,.20) 0, transparent 28%),
+      linear-gradient(145deg, #f4f8ff 0%, #effcf9 52%, #f7f2ff 100%);
+  }
+  .pl-store-root .pl-head {
+    border-color: transparent;
+    background: linear-gradient(115deg, #312e81 0%, #4f46e5 48%, #0e7490 100%);
+    box-shadow: 0 14px 34px rgba(79,70,229,.24);
+  }
+  .pl-store-root .pl-head-title { color: #fff; }
+  .pl-store-root .pl-head-sub { color: #dbeafe; }
+  .pl-store-root .pl-eyebrow { color: #c4b5fd; }
+  .pl-store-root .pl-head-icon { background: rgba(255,255,255,.16); color: #fff; box-shadow: inset 0 0 0 1px rgba(255,255,255,.25); }
+  .pl-store-root .pl-add-btn { background: #fff; color: #3730a3; box-shadow: 0 5px 16px rgba(15,23,42,.19); }
+  .pl-store-root .pl-add-btn:hover { box-shadow: 0 8px 22px rgba(15,23,42,.28); }
+  .pl-store-root .pl-search-wrap { border-color: #c7d2fe; box-shadow: 0 6px 20px rgba(79,70,229,.10); }
+  .pl-store-root .pl-table-card { border-color: #dbeafe; box-shadow: 0 10px 28px rgba(30,64,175,.09); }
+  .pl-store-root .pl-table thead { background: linear-gradient(110deg, #3730a3, #4f46e5 54%, #0891b2); }
+  .pl-store-root .pl-table tbody tr:hover { background: #f5f3ff; }
   .pl-head {
     display: flex; align-items: center; justify-content: space-between;
     gap: 16px; margin-bottom: 28px;
@@ -98,6 +125,38 @@ const S = `
   .pl-add-btn:hover { transform: translateY(-1px); box-shadow: 0 7px 20px rgba(249,115,22,0.36); }
 
   /* ── Search ── */
+  .pl-eyebrow { color: var(--amber-dk); font-size: 10px; font-weight: 800; letter-spacing: 1.2px; text-transform: uppercase; margin-bottom: 3px; }
+  .pl-store-guide {
+    display: grid; grid-template-columns: minmax(260px, 1.2fr) minmax(260px, 1fr) auto;
+    align-items: center; gap: 22px; margin: -8px 0 20px; padding: 22px 24px;
+    background: linear-gradient(135deg, #0f766e, #0f766e 55%, #115e59);
+    color: #fff; border-radius: var(--xl); box-shadow: 0 12px 30px rgba(15,118,110,0.18);
+  }
+  .pl-store-guide h2 { font-size: 18px; letter-spacing: -0.25px; margin-bottom: 6px; }
+  .pl-store-guide p:not(.pl-guide-kicker) { color: rgba(255,255,255,.82); font-size: 12px; line-height: 1.6; max-width: 520px; }
+  .pl-guide-kicker { color: #99f6e4; font-size: 10px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase; margin-bottom: 5px; }
+  .pl-guide-steps { display: grid; grid-template-columns: 1fr 1fr; gap: 9px 12px; font-size: 11px; color: #ecfeff; }
+  .pl-guide-steps span { display: flex; align-items: center; gap: 7px; }
+  .pl-guide-steps b { display: inline-grid; place-items: center; width: 19px; height: 19px; border-radius: 999px; background: rgba(255,255,255,.18); color: #fff; font-size: 10px; }
+  .pl-guide-actions { display: flex; flex-direction: column; gap: 8px; min-width: 154px; }
+  .pl-guide-actions button { border-radius: 8px; padding: 9px 12px; font-family: var(--sans); font-size: 11px; font-weight: 700; cursor: pointer; transition: transform .15s, background .15s; white-space: nowrap; }
+  .pl-guide-actions button:hover { transform: translateY(-1px); }
+  .pl-guide-link { color: #fff; background: rgba(255,255,255,.1); border: 1px solid rgba(255,255,255,.3); }
+  .pl-guide-primary { color: #115e59; background: #fff; border: 1px solid #fff; }
+  .pl-error { margin: 0 0 18px; padding: 12px 15px; border: 1px solid #fecaca; border-radius: 10px; background: #fff1f2; color: #b91c1c; font-size: 12px; font-weight: 600; }
+  @media(max-width:980px) {
+    .pl-store-guide { grid-template-columns: 1fr 1fr; }
+    .pl-guide-actions { flex-direction: row; grid-column: 1 / -1; }
+  }
+  @media(max-width:620px) {
+    .pl-root { padding: 20px 14px 48px; }
+    .pl-head { align-items: flex-start; padding: 18px; }
+    .pl-head-icon { width: 38px; height: 38px; }
+    .pl-head-title { font-size: 19px; }
+    .pl-add-btn { padding: 9px 12px; font-size: 12px; }
+    .pl-store-guide { grid-template-columns: 1fr; padding: 20px; gap: 17px; }
+    .pl-guide-actions { flex-direction: column; grid-column: auto; }
+  }
   .pl-search-wrap {
     margin-bottom: 20px;
     background: var(--white); border: 1.5px solid var(--stone-200);
@@ -709,19 +768,24 @@ function ProductModal({ product, onClose, onEdit, onInvView, onInvEdit }) {
 // Main ProductList
 // ─────────────────────────────────────────
 export default function ProductList() {
+  const isSingleStore = localStorage.getItem("admin_account_type") === "single_store";
+  const storeName = localStorage.getItem("admin_store_name") || localStorage.getItem("store_name") || "your store";
   const [products, setProducts]         = useState([]);
   const [search, setSearch]             = useState("");
   const [loading, setLoading]           = useState(false);
+  const [error, setError]               = useState("");
   const [selectedProduct, setSelectedProduct] = useState(null);
   const navigate = useNavigate();
 
   const fetchProducts = async () => {
     setLoading(true);
+    setError("");
     try {
-      const res = await axios.get(`${API_BASE}/api/products/`);
+      const res = await axios.get(`${API_BASE}/api/products/`, { headers: authHeaders() });
       setProducts(res.data.data || []);
     } catch (err) {
       console.error(err);
+      setError(err.response?.data?.detail || "Could not load products. Please refresh or sign in again.");
     } finally {
       setLoading(false);
     }
@@ -745,7 +809,7 @@ export default function ProductList() {
     const sku = p.sku || p.base_sku;
     if (!window.confirm(`Delete "${p.product_name}"?`)) return;
     try {
-      await axios.delete(`${API_BASE}/api/products/${sku}`);
+      await axios.delete(`${API_BASE}/api/products/${sku}`, { headers: authHeaders() });
       fetchProducts();
     } catch { alert("❌ Failed to delete product"); }
   };
@@ -753,22 +817,46 @@ export default function ProductList() {
   return (
     <>
       <style>{S}</style>
-      <div className="pl-root">
+      <div className={`pl-root${isSingleStore ? " pl-store-root" : ""}`}>
 
         {/* Header */}
         <div className="pl-head">
           <div className="pl-head-left">
-            <div className="pl-head-icon">📦</div>
+            <div className="pl-head-icon">P</div>
             <div>
-              <h1 className="pl-head-title">Product Master</h1>
-              <p className="pl-head-sub">{products.length} product{products.length !== 1 ? "s" : ""} total</p>
+              <p className="pl-eyebrow">{isSingleStore ? "Single-store catalogue" : "Product management"}</p>
+              <h1 className="pl-head-title">{isSingleStore ? "Store Products" : "Product Master"}</h1>
+              <p className="pl-head-sub">
+                {isSingleStore ? `Products available at ${storeName}` : `${products.length} product${products.length !== 1 ? "s" : ""} total`}
+              </p>
             </div>
           </div>
           <button className="pl-add-btn" onClick={() => navigate("/products/add")}>
-            ＋ Add Product
+            Add product
           </button>
         </div>
 
+        {isSingleStore && (
+          <section className="pl-store-guide" aria-label="Set up your store catalogue">
+            <div>
+              <p className="pl-guide-kicker">Recommended setup</p>
+              <h2>Build a catalogue your team can sell from</h2>
+              <p>Create product groups first, then add products with prices and variants. Receive opening stock through purchasing or GRN so the stock history stays accurate.</p>
+            </div>
+            <div className="pl-guide-steps">
+              <span><b>1</b> Product groups</span>
+              <span><b>2</b> Products & prices</span>
+              <span><b>3</b> Receive stock</span>
+              <span><b>4</b> Sell in POS</span>
+            </div>
+            <div className="pl-guide-actions">
+              <button className="pl-guide-link" onClick={() => navigate("/product-mapping")}>Set product groups</button>
+              <button className="pl-guide-primary" onClick={() => navigate("/products/add")}>Add first product</button>
+            </div>
+          </section>
+        )}
+
+        {error && <div className="pl-error" role="alert">{error}</div>}
         {/* Search */}
         <div className="pl-search-wrap">
           <span className="pl-search-icon">🔍</span>

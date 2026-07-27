@@ -6,6 +6,10 @@ import axios from "axios";
 import { useNavigate } from "react-router-dom";
 
 const API_BASE = `${APP_API_URL}`;
+const authHeaders = () => {
+  const token = localStorage.getItem("admin_token") || localStorage.getItem("access_token") || localStorage.getItem("token") || "";
+  return token ? { Authorization: `Bearer ${token}` } : {};
+};
 const SIZE_OPTIONS = ["S", "M", "L", "XL", "XXL"];
 const UNIT_OPTIONS = [
   { value: "pcs", label: "Pieces" },
@@ -783,7 +787,7 @@ export default function AddProduct() {
   const [loading, setLoading]         = useState(false);
 
   useEffect(() => {
-    axios.get(`${API_BASE}/api/product-mapping/grouped`)
+    axios.get(`${API_BASE}/api/product-mapping/grouped`, { headers: authHeaders() })
       .then((res) => {
         const data = res.data.data || {};
         setMappingData(data);
@@ -902,7 +906,7 @@ export default function AddProduct() {
         }
         fd.append("variants", JSON.stringify(variants));
         (p.images || []).forEach((f) => fd.append("images", f));
-        await axios.post(`${API_BASE}/api/products/add`, fd, { headers: { "Content-Type": "multipart/form-data" } });
+        await axios.post(`${API_BASE}/api/products/add`, fd, { headers: authHeaders() });
       }
       alert("✅ Products added successfully");
       navigate("/products");

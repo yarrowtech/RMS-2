@@ -80,14 +80,14 @@ export default function StoreOwnerStaff() {
   };
 
   return (
-    <main className="min-h-screen bg-slate-50 px-4 py-6 text-slate-900 sm:px-7">
+    <main className="min-h-screen bg-gradient-to-br from-violet-50 via-sky-50 to-emerald-50 px-4 py-6 text-slate-900 sm:px-7">
       <div className="mx-auto max-w-5xl space-y-5">
-        <header className="flex flex-wrap items-center gap-3 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <button onClick={() => navigate("/dashboard/store-owner")} className="rounded-xl border border-slate-200 p-2 text-slate-600 hover:bg-slate-50"><ArrowLeft className="h-4 w-4" /></button>
-          <div><h1 className="flex items-center gap-2 text-xl font-black"><UsersRound className="h-5 w-5 text-violet-600" /> Store Staff</h1><p className="mt-1 text-sm text-slate-500">Create only Inventory or Cashier accounts for your primary store.</p></div>
+        <header className="flex flex-wrap items-center gap-3 rounded-2xl border border-indigo-200/70 bg-gradient-to-r from-indigo-950 via-violet-900 to-cyan-900 p-5 text-white shadow-xl shadow-indigo-950/15">
+          <button onClick={() => navigate("/dashboard/store-owner")} className="rounded-xl border border-white/20 bg-white/10 p-2 text-white transition hover:bg-white/20"><ArrowLeft className="h-4 w-4" /></button>
+          <div><h1 className="flex items-center gap-2 text-xl font-black"><UsersRound className="h-5 w-5 text-cyan-300" /> Store Staff</h1><p className="mt-1 text-sm text-indigo-100">Create only Inventory or Cashier accounts for your primary store.</p></div>
         </header>
 
-        <form onSubmit={addStaff} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <form onSubmit={addStaff} className="rounded-2xl border border-violet-200 bg-white/90 p-5 shadow-xl shadow-violet-950/5 backdrop-blur">
           <div className="mb-4 flex items-center gap-2"><Plus className="h-5 w-5 text-violet-600" /><h2 className="font-black">Add staff member</h2></div>
           <div className="grid gap-3 md:grid-cols-2">
             <input required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Full name" className="rounded-xl border border-slate-200 px-3 py-2.5 text-sm" />
@@ -102,7 +102,7 @@ export default function StoreOwnerStaff() {
           {message && <p className="mt-3 text-sm font-medium text-slate-600">{message}</p>}
         </form>
 
-        <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+        <section className="overflow-hidden rounded-2xl border border-cyan-200 bg-white/90 shadow-xl shadow-cyan-950/5 backdrop-blur">
           <div className="border-b border-slate-100 px-5 py-4"><h2 className="font-black">Your store staff</h2></div>
           {loading ? <p className="p-6 text-sm text-slate-500">Loading staff…</p> : staff.length === 0 ? <p className="p-6 text-sm text-slate-500">No staff accounts yet.</p> : <div className="divide-y divide-slate-100">
             {staff.map((person) => <div key={person.id} className="flex flex-wrap items-center gap-3 p-4">
