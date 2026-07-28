@@ -21,6 +21,7 @@ import InventoryManagementStockAllocation from "./InventoryManagementStockAlloca
 import InventoryManagementStoreStock from "./Inventorymanagementstorestock.jsx";
 import GRRC from "./GRRC";
 import GRN from "./GRN";
+import SupplierReturnRegister from "./SupplierReturnRegister.jsx";
 
 const COMPANY_NAME = "RMS";
 
@@ -173,9 +174,7 @@ export default function InventoryManagement() {
       case "grn.grc":
         return canReceiveAtStore ? <GRRC /> : <HQOnly />;
       case "grn.supplierReturn":
-        return isHQ
-          ? <MinimalPlaceholder title="Supplier Return Register" subtitle="All returns register with status & approvals." />
-          : <HQOnly />;
+        return canReceiveAtStore ? <SupplierReturnRegister /> : <HQOnly />;
 
       // ── REPORTS (both — API scoped by store_id in JWT) ────────────────────
       case "reports.valuation":

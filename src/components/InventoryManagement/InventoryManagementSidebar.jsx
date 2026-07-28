@@ -316,7 +316,7 @@ export default function RMSInventorySidebar({
               <div className={cn("space-y-2", sidebarOpen && "ml-4 border-l border-emerald-300/15 pl-3")}>
                 {childItem("grn.grc",           <FaExchangeAlt />, "Goods Return Challan (GRC)")}
                 {childItem("grn.grn",           <FaTruckLoading />, "Goods Receipt Note (GRN)")}
-                {isHQ && childItem("grn.supplierReturn",<FaMapMarkedAlt />, "Supplier Return Register")}
+                {canReceive && childItem("grn.supplierReturn",<FaMapMarkedAlt />, "Supplier Return Register")}
               </div>
             )}
           </>
