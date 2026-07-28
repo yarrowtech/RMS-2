@@ -191,6 +191,13 @@ async def register_vendor(request: Request):
     if not email:
         raise HTTPException(status_code=400, detail="Email is required.")
 
+    # A plan chosen on the public pricing page is an onboarding request,
+    # not an entitlement. Paid access activates only after approval and
+    # the existing signed Razorpay subscription workflow.
+    requested_plan = str(body.get("requested_plan") or "free").strip().lower()
+    if requested_plan not in {"free", "standard", "premium"}:
+        raise HTTPException(status_code=400, detail="Invalid requested plan.")
+
     # ── Resolve tenant_id — invite first, then explicit self-registration pick ──
     tenant_id = None
     source    = "self_registration"
@@ -309,6 +316,7 @@ async def register_vendor(request: Request):
         identity_doc = {k: body.get(k) for k in identity_fields}
         identity_doc["email"] = email
         identity_doc["business_type"] = registration_business_types
+        identity_doc["onboarding_requested_plan"] = requested_plan
 
         if submitted_password:
             identity_doc["password"]     = hash_password(submitted_password)
@@ -328,6 +336,7 @@ async def register_vendor(request: Request):
         "product_type": body.get("product_type", ""),
         "division": None, "section": None, "department": None,
         "status": "Pending", "source": source,
+        "requested_plan": requested_plan,
         "created_at": datetime.utcnow(),
     } for selected_id in tenant_ids]
     link_result = await vendor_tenant_links_collection.insert_many(link_docs)
@@ -341,6 +350,7 @@ async def register_vendor(request: Request):
         "link_ids":   link_ids,
         "tenant_ids": tenant_ids,
         "business_type": registration_business_types,
+        "requested_plan": requested_plan,
     }
 
 
