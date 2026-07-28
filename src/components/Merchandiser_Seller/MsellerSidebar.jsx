@@ -21,6 +21,7 @@ import {
   Network,
   ChartNoAxesCombined,
   Scissors,
+  RotateCcw,
 } from "lucide-react";
 
 const cn = (...a) => a.filter(Boolean).join(" ");
@@ -34,6 +35,7 @@ const NAV_ITEMS = [
   { key: "product-list",   label: "Product List",      icon: Boxes },
   { key: "role-operations", label: "Business Operations", icon: ClipboardList },
   { key: "purchase-order", label: "Purchase Orders",   icon: ClipboardList },
+  { key: "supplier-returns", label: "Supplier Returns", icon: RotateCcw },
   { key: "job-work",       label: "Job Work Orders",    icon: Scissors },
   { key: "purchase-invoice", label: "Purchase Invoices", icon: ReceiptText },
   { key: "finance",        label: "Finance & Analytics", icon: ChartNoAxesCombined },
@@ -124,6 +126,7 @@ export default function MsellerSidebar({
     .filter((item) => item.key !== "role-operations" || showRoleOperations)
     .filter((item) => item.key !== "b2b-trade" || showProductTools)
     .filter((item) => item.key !== "b2b-stock" || showProductTools)
+    .filter((item) => item.key !== "supplier-returns" || showProductTools)
     .filter((item) => !["catalogue", "product-list"].includes(item.key) || showProductTools)
     .map((item) => ({
       ...item,
