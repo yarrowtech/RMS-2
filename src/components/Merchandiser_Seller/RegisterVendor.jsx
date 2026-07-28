@@ -702,7 +702,7 @@ const RegisterVendor = () => {
                 <p className="text-sm font-bold text-violet-950">Requested plan: {requestedPlanLabel}</p>
                 <p className="mt-1 text-xs leading-5 text-violet-700">{requestedPlan === "free" ? "Your account starts on the Free plan after approval. You can upgrade securely from your vendor workspace." : `This application records your interest in the ${requestedPlanLabel} plan. Approval comes first; paid features activate only after secure payment.`}</p>
               </div>
-              <a href="/#pricing" className="text-xs font-bold text-violet-700 underline underline-offset-2">Change plan</a>
+              <a href="/" className="text-xs font-bold text-violet-700 underline underline-offset-2">Change plan</a>
             </div>
           </div>
         )}
