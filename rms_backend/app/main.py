@@ -28,6 +28,7 @@ from .routes.job_work_routes import router as job_work_router
 from .routes.onboarding_routes import router as onboarding_router
 from .routes.store_upgrade_routes import router as store_upgrade_router
 from .routes.retailer_signup_routes import router as retailer_signup_router
+from .routes.retailer_subscription_routes import router as retailer_subscription_router
 from .routes.vendor_role_operations_routes import router as vendor_role_operations_router
 from .routes.vendor_b2b_routes import router as vendor_b2b_router
 from .routes.hr_routes import router as hr_router
@@ -96,6 +97,7 @@ app.include_router(job_work_router)
 app.include_router(onboarding_router)
 app.include_router(store_upgrade_router)
 app.include_router(retailer_signup_router)
+app.include_router(retailer_subscription_router)
 app.include_router(vendor_role_operations_router)
 app.include_router(vendor_b2b_router)
 app.include_router(hr_router)
