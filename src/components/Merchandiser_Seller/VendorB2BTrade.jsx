@@ -126,6 +126,20 @@ export default function VendorB2BTrade() {
       <div className="flex flex-col justify-between gap-5 sm:flex-row sm:items-end"><div><div className="mb-4 grid h-12 w-12 place-items-center rounded-2xl bg-white/10 ring-1 ring-white/15"><ShoppingCart className="h-6 w-6 text-teal-200" /></div><h1 className="text-2xl font-black tracking-tight sm:text-3xl">Vendor B2B Trade</h1><p className="mt-2 max-w-2xl text-sm leading-6 text-slate-300">Buy from and sell to accepted Business Network partners. This workspace is separate from retailer purchase orders, GRC and GRN.</p></div><button onClick={refresh} disabled={loading} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-white/15 bg-white/10 px-4 text-sm font-bold hover:bg-white/15 disabled:opacity-50"><RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />Refresh</button></div>
     </section>
 
+    <section className="rounded-3xl border border-teal-100 bg-gradient-to-br from-teal-50 via-white to-indigo-50 p-5 shadow-sm sm:p-6">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between"><div><p className="text-[11px] font-black uppercase tracking-[0.16em] text-teal-700">How Vendor B2B Trade works</p><h2 className="mt-1 text-xl font-black text-slate-900">Trade with another connected business in five steps</h2><p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">This module is for vendor-to-vendor buying and selling. It does not change your retailer Purchase Orders, retailer GRC/GRN, or retailer stock.</p></div><span className="inline-flex w-fit items-center gap-2 rounded-full border border-teal-200 bg-white px-3 py-1.5 text-xs font-bold text-teal-700"><UsersRound className="h-4 w-4" />Business Network required</span></div>
+      <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+        {[
+          ["1", "Connect", "Use Business Network to send or accept a business connection."],
+          ["2", "Send RFQ", "Choose an accepted supplier and describe quantity, specification and target price."],
+          ["3", "Quote & award", "Supplier quotes; buyer reviews and awards the best quotation to create a B2B PO."],
+          ["4", "Confirm & receive", "Supplier confirms the order; buyer records quantities received and quality remarks."],
+          ["5", "Invoice & ledger", "Supplier issues a B2B invoice; the buyer receipt updates the separate B2B Stock Ledger."],
+        ].map(([step, title, description]) => <div key={step} className="rounded-2xl border border-white bg-white/80 p-4 shadow-sm"><span className="grid h-7 w-7 place-items-center rounded-lg bg-teal-600 text-xs font-black text-white">{step}</span><h3 className="mt-3 text-sm font-black text-slate-900">{title}</h3><p className="mt-1 text-xs leading-5 text-slate-500">{description}</p></div>)}
+      </div>
+      <p className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs leading-5 text-amber-800"><b>Important:</b> record a B2B receipt only after goods arrive. If a retailer has returned goods, use the separate Supplier Returns tab instead.</p>
+    </section>
+
     <div className="flex flex-wrap gap-2 rounded-2xl border border-slate-200 bg-white p-2 shadow-sm">{[["rfqs", ClipboardPlus, "RFQs & Quotations"], ["orders", PackageCheck, "Purchase & Sales Orders"], ["invoices", FileText, "B2B Invoices"]].map(([key, Icon, label]) => <button key={key} onClick={() => setTab(key)} className={`flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition ${tab === key ? "bg-teal-600 text-white shadow-sm" : "text-slate-500 hover:bg-slate-50 hover:text-slate-900"}`}><Icon className="h-4 w-4" />{label}</button>)}</div>
     {error && <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">{error}</div>}
     {notice && <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-700">{notice}</div>}
