@@ -211,6 +211,7 @@ export default function ProfessionalRoleSelector() {
                         {cfg.price_inr > 0 && <span className="text-xs font-bold text-slate-400">/month</span>}
                       </p>
                       <ul className="mt-5 space-y-2.5">{vendorBullets(cfg).map((line) => <li key={line} className="flex items-start gap-2 text-xs leading-5 text-slate-600"><CheckCircle2 size={14} className="mt-0.5 shrink-0 text-emerald-500" />{line}</li>)}</ul>
+                      <button onClick={() => navigate(`/vendor/register?plan=${encodeURIComponent(key)}`)} className={`mt-6 inline-flex w-full items-center justify-center gap-1.5 rounded-xl border py-2.5 text-xs font-extrabold transition ${key === "premium" ? "border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100" : key === "standard" ? "border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100" : "border-slate-200 text-slate-700 hover:border-slate-300 hover:bg-slate-50"}`}>{key === "free" ? "Get started free" : `Apply for ${cfg.label}`} <ArrowRight size={14}/></button>
                     </div>
                   );
                 }) : <p className="col-span-3 text-center text-sm text-slate-400">Loading plans…</p>}

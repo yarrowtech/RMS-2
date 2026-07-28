@@ -423,6 +423,9 @@ const RegisterVendor = () => {
 
   const [params]    = useSearchParams();
   const token       = params.get("token") || "";
+  const requestedPlanParam = (params.get("plan") || "free").trim().toLowerCase();
+  const requestedPlan = ["free", "standard", "premium"].includes(requestedPlanParam) ? requestedPlanParam : "free";
+  const requestedPlanLabel = requestedPlan.charAt(0).toUpperCase() + requestedPlan.slice(1);
 
   const [loading,      setLoading]      = useState(false);
   const [success,      setSuccess]      = useState(false);
@@ -585,6 +588,7 @@ const RegisterVendor = () => {
           tenant_id: token ? undefined : selectedTenantIds[0],
           tenant_ids: token ? undefined : selectedTenantIds,
           source: token ? "invite_link" : "self_registration",
+          requested_plan: requestedPlan,
           ...(token && vendorForm.password ? { password: vendorForm.password } : {}),
         }),
       });
@@ -653,7 +657,9 @@ const RegisterVendor = () => {
         <p className="text-gray-300 mb-6 max-w-sm text-sm">
           {token
             ? "Your details have been submitted. CitiMart will review and approve your profile shortly."
-            : "Your vendor details have been submitted for review. You'll receive an approval email once verified by the admin."}
+            : requestedPlan === "free"
+              ? "Your vendor details have been submitted for review. You'll receive an approval email once verified by the admin."
+              : `Your ${requestedPlanLabel} plan request has been submitted for review. Paid features activate only after approval and secure payment.`}
         </p>
         <a href="/merchandiser-seller/login"
           className="bg-purple-600 hover:bg-purple-700 px-5 py-2 rounded-md font-medium transition-all">
@@ -689,6 +695,17 @@ const RegisterVendor = () => {
           </div>
         )}
 
+        {!token && (
+          <div className="px-8 pt-8">
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-violet-200 bg-violet-50 px-5 py-4">
+              <div>
+                <p className="text-sm font-bold text-violet-950">Requested plan: {requestedPlanLabel}</p>
+                <p className="mt-1 text-xs leading-5 text-violet-700">{requestedPlan === "free" ? "Your account starts on the Free plan after approval. You can upgrade securely from your vendor workspace." : `This application records your interest in the ${requestedPlanLabel} plan. Approval comes first; paid features activate only after secure payment.`}</p>
+              </div>
+              <a href="/#pricing" className="text-xs font-bold text-violet-700 underline underline-offset-2">Change plan</a>
+            </div>
+          </div>
+        )}
         {/* RETAILER PICKER — self-registration only (no invite token) */}
         {!token && (
           <div className="px-8 pt-8">
