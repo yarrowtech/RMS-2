@@ -1,8 +1,9 @@
-﻿import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
+import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
 
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import axios from "axios";
 import ReactDOM from "react-dom";
+import DocumentConversation from "../DocumentConversation.jsx";
 
 /* ─────────── design tokens ─────────── */
 const T = {
@@ -537,7 +538,7 @@ function EmptyState() {
 function POCard({
   po, flatItems, expanded, onToggle,
   itemsDraft, onAddItem, onItemChange, onProductSelect,
-  onSave, onSubmit, onPreFill, onToggleNewProduct, saving,
+  onSave, onSubmit, onPreFill, onToggleNewProduct, onOpenConversation, saving,
 }) {
   const draft     = itemsDraft[po._id] || [];
   const canSubmit = po.status === "SentToVendor" || po.status === "WalkinAccepted";
@@ -631,6 +632,10 @@ function POCard({
         </div>
 
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <IconBtn variant="ghost" onClick={onOpenConversation}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a4 4 0 01-4 4H7l-4 3V7a4 4 0 014-4h10a4 4 0 014 4z"/></svg>
+            Message
+          </IconBtn>
           <IconBtn variant="ghost" onClick={onToggle}>
             {expanded
               ? <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -967,6 +972,7 @@ export default function VendorPurchaseOrders({ vendorName }) {
   const [expanded,   setExpanded]   = useState(null);
   const [itemsDraft, setItemsDraft] = useState({});
   const [saving,     setSaving]     = useState(false);
+  const [conversationPo, setConversationPo] = useState(null);
 
   const getToken = () =>
     localStorage.getItem("access_token") ||
@@ -1337,6 +1343,7 @@ export default function VendorPurchaseOrders({ vendorName }) {
                     onSave={() => saveItemsToPO(poKey)}
                     onSubmit={() => submitPO(poKey)}
                     onPreFill={(id, items) => preFillDraft(id, items)}
+                    onOpenConversation={() => setConversationPo(po)}
                     saving={saving}
                   />
                 );
@@ -1345,6 +1352,7 @@ export default function VendorPurchaseOrders({ vendorName }) {
           )}
         </div>
       </div>
+      {conversationPo && <DocumentConversation documentType="purchase_order" documentId={conversationPo._id || conversationPo.id} actor="vendor" title={conversationPo.orderNo || "Purchase Order conversation"} onClose={() => setConversationPo(null)} />}
     </>
   );
 }

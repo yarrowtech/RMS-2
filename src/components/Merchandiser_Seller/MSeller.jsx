@@ -192,6 +192,7 @@ export default function MSeller() {
   const [searchQuery,    setSearchQuery]    = useState("");
   const [editingProduct, setEditingProduct] = useState(null);
   const [inquiryNotificationCount, setInquiryNotificationCount] = useState(0);
+  const [messageNotificationCount, setMessageNotificationCount] = useState(0);
   const [jobWorkEnabled, setJobWorkEnabled] = useState(false);
   const [dashboardSummary, setDashboardSummary] = useState(null);
   const [dashboardSummaryLoading, setDashboardSummaryLoading] = useState(true);
@@ -287,6 +288,29 @@ export default function MSeller() {
     fetchProfile();
   }, [activeTab]);
 
+  useEffect(() => {
+    let cancelled = false;
+    const token = getToken();
+    if (!token) return undefined;
+    const refresh = async () => {
+      try {
+        const response = await fetch(`${APP_API_URL}/api/document-messages/vendor/unread-count`, {
+          headers: { Authorization: `Bearer ${token}` }, cache: "no-store",
+        });
+        const data = await response.json().catch(() => ({}));
+        if (response.ok && !cancelled) setMessageNotificationCount(Number(data.count) || 0);
+      } catch { /* retain the last known count */ }
+    };
+    refresh();
+    const timer = window.setInterval(refresh, 30000);
+    window.addEventListener("focus", refresh);
+    window.addEventListener("document-messages-read", refresh);
+    return () => {
+      cancelled = true; window.clearInterval(timer);
+      window.removeEventListener("focus", refresh);
+      window.removeEventListener("document-messages-read", refresh);
+    };
+  }, []);
   const handleLogout = useCallback(() => {
     localStorage.removeItem("vendor_token");
     localStorage.removeItem("access_token");
@@ -380,6 +404,7 @@ export default function MSeller() {
     title:     "RMS",
     subtitle:  "Merchandiser Seller",
     inquiryNotificationCount,
+    messageNotificationCount,
     jobWorkEnabled,
     businessTypes: vendorProfile?.business_type || [],
   };

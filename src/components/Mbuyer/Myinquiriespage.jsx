@@ -1,4 +1,5 @@
 import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
+import DocumentConversation from "../DocumentConversation.jsx";
 
 import React, { useState, useEffect, useCallback } from "react";
 import { MessageSquare, RefreshCw, CheckCircle2, Trophy, Filter, ShoppingBag, Plus, Trash2, ArrowLeft, Download, Scale } from "lucide-react";
@@ -86,6 +87,7 @@ export default function MyInquiriesPage() {
   const [awardRequestKey, setAwardRequestKey] = useState(null);
   const [approvalAwards, setApprovalAwards] = useState([]);
   const [approvalBusyId, setApprovalBusyId] = useState(null);
+  const [conversationInquiry, setConversationInquiry] = useState(null);
 
   // Order-creation drawer Ã¢â‚¬â€ appears after converting a Responded inquiry
   const [orderDraft, setOrderDraft] = useState(null); // { vendorName, items }
@@ -438,6 +440,7 @@ export default function MyInquiriesPage() {
                               </div>
                             )}
                             <div className="mb-2 flex flex-wrap gap-1.5">
+                              <button onClick={() => setConversationInquiry(inq)} className="inline-flex items-center gap-1 rounded border border-indigo-200 bg-indigo-50 px-2 py-1 text-[10px] font-bold text-indigo-700"><MessageSquare className="h-3 w-3" />Message vendor</button>
                               {["Pending","Responded","Countered","Expired"].includes(inq.status) && <button onClick={()=>changeLifecycle(inq,"close")} className="rounded border border-slate-200 px-2 py-1 text-[10px] font-bold text-slate-600">Close</button>}
                               {["Pending","Responded","Countered","Expired","Closed"].includes(inq.status) && <button onClick={()=>changeLifecycle(inq,"cancel")} className="rounded border border-rose-200 px-2 py-1 text-[10px] font-bold text-rose-600">Cancel</button>}
                               {["Expired","Closed","Cancelled"].includes(inq.status) && <button onClick={()=>changeLifecycle(inq,"reopen")} className="rounded border border-indigo-200 px-2 py-1 text-[10px] font-bold text-indigo-600">Reopen</button>}
@@ -467,6 +470,8 @@ export default function MyInquiriesPage() {
           })()
         )}
       </div>
+
+      {conversationInquiry && <DocumentConversation documentType="rfq" documentId={conversationInquiry._id} actor="admin" title={conversationInquiry.item_name || "RFQ conversation"} onClose={() => setConversationInquiry(null)} />}
 
       {/* Order-creation drawer Ã¢â‚¬â€ appears once a Responded inquiry is converted */}
       {orderDraft && (

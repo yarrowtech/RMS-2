@@ -33,6 +33,7 @@ from .routes.vendor_role_operations_routes import router as vendor_role_operatio
 from .routes.vendor_b2b_routes import router as vendor_b2b_router
 from .routes.hr_routes import router as hr_router
 from .routes.supplier_return_routes import router as supplier_return_router
+from .routes.document_message_routes import router as document_message_router
    
 
 
@@ -103,6 +104,7 @@ app.include_router(vendor_role_operations_router)
 app.include_router(vendor_b2b_router)
 app.include_router(hr_router)
 app.include_router(supplier_return_router)
+app.include_router(document_message_router)
 
 
 

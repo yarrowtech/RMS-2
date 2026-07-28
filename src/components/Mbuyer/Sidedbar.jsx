@@ -434,6 +434,7 @@ export default function MerchendiserBuyerSidebar({
   sidebarOpen = true,
   setSidebarOpen,
   inquiryResponseCount = 0,
+  messageNotificationCount = 0,
 }) {
   const isDrawer = mode === "drawer";
   const showText = sidebarOpen;
@@ -484,11 +485,13 @@ export default function MerchendiserBuyerSidebar({
     { key: "sample-or-real", label: "Sample or Real", icon: <FaVials /> },
   ];
 
+  const communicationNotificationCount = inquiryResponseCount + messageNotificationCount;
+
   const navItems = [
     { key: "dashboard", label: "Dashboard", icon: <FaChartPie />, accent: "#a78bfa" },
     { key: "vendorlist", label: "Vendor List", icon: <FaStore />, accent: "#38bdf8" },
     { key: "retailer-whatsapp", label: "WhatsApp", icon: <FaWhatsapp />, accent: "#25d366" },
-    { key: "quick-order", label: "Quick Order", icon: <FaShoppingCart />, accent: "#fbbf24", badge: inquiryResponseCount > 0 ? inquiryResponseCount : null },
+    { key: "quick-order", label: "Quick Order", icon: <FaShoppingCart />, accent: "#fbbf24", badge: communicationNotificationCount > 0 ? communicationNotificationCount : null },
     { key: "buyer-grn", label: "Buyer GRN", icon: <FaClipboardCheck />, accent: "#2dd4bf" },
     { key: "purchase-invoice", label: "Purchase Invoice", icon: <FaFileInvoiceDollar />, accent: "#f59e0b" },
     { key: "task-list", label: "Task List", icon: <FaTasks />, accent: "#fb7185" },
