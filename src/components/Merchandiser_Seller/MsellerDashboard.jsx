@@ -2,7 +2,7 @@ import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
 import React, { useState, useEffect, useCallback } from "react";
 import {
   Crown, Zap, TrendingUp, Image as ImageIcon, MessageSquare, Users, ShoppingBag,
-  ArrowUpRight, Clock, CheckCircle2, AlertTriangle, RefreshCw, ChevronRight,
+  ArrowUpRight, Clock, CheckCircle2, AlertTriangle, RefreshCw, ChevronRight, ListChecks, Circle, PackagePlus, MessageCircle, Store,
 } from "lucide-react";
 
 /**
@@ -17,7 +17,7 @@ import {
  * Props:
  *   onNavigate(tabKey) — called when a quick-action card is clicked, so
  *   the parent shell can switch tabs. tabKey values used below:
- *   "catalogue" | "inquiries" | "subscription" | "category" | "retailers" | "orders"
+ *   "catalogue" | "subscription" | "categories" | "whatsapp" | "retailers" | "purchase-order"
  *   If you don't have a callback wired yet, pass a no-op — the cards will
  *   just not navigate anywhere until you do.
  */
@@ -77,8 +77,53 @@ function KpiCard({ icon: Icon, label, value, accent, onClick }) {
   );
 }
 
+function VendorGetStarted({ businessTypes, catalogueCount, activeRetailers, hasWhatsApp, hasOrders, onNavigate }) {
+  const typeLabel = businessTypes.length
+    ? businessTypes.map((type) => String(type).replace(/_/g, " ")).join(", ")
+    : "vendor";
+  const steps = [
+    { label: "Confirm your business type", detail: "Set the products and operations your business provides.", tab: "categories", done: businessTypes.length > 0, icon: ListChecks },
+    { label: "Add your catalogue", detail: "Add products, variants, images and your selling price.", tab: "catalogue", done: catalogueCount > 0, icon: PackagePlus },
+    { label: "Connect WhatsApp", detail: "Use your business number for catalogues and buyer conversations.", tab: "whatsapp", done: hasWhatsApp, icon: MessageCircle },
+    { label: "Connect with retailers", detail: "Review your retailer connections and make your catalogue discoverable.", tab: "retailers", done: activeRetailers > 0, icon: Store },
+    { label: "Review orders and inquiries", detail: "Respond to buyer requests and purchase orders from one place.", tab: "purchase-order", done: hasOrders, icon: CheckCircle2 },
+  ];
+  const completed = steps.filter((step) => step.done).length;
+
+  return (
+    <section className="overflow-hidden rounded-2xl border border-teal-200 bg-white shadow-sm">
+      <div className="flex flex-wrap items-start justify-between gap-4 border-b border-teal-100 bg-gradient-to-r from-teal-50 via-cyan-50 to-indigo-50 px-5 py-4">
+        <div>
+          <div className="flex items-center gap-2 text-teal-700"><ListChecks className="h-4 w-4" /><span className="text-xs font-black uppercase tracking-[.16em]">Get started</span></div>
+          <h2 className="mt-1 text-lg font-black text-slate-900">Set up your {typeLabel} workspace</h2>
+          <p className="mt-1 text-sm text-slate-600">Complete these steps in order. Each opens the existing RMS workspace you need.</p>
+        </div>
+        <div className="rounded-xl bg-white px-3 py-2 text-right shadow-sm ring-1 ring-teal-100">
+          <p className="text-xs font-semibold text-slate-500">Setup progress</p>
+          <p className="text-lg font-black text-teal-700">{completed} / {steps.length}</p>
+        </div>
+      </div>
+      <div className="grid divide-y divide-slate-100 md:grid-cols-5 md:divide-x md:divide-y-0">
+        {steps.map((step, index) => {
+          const Icon = step.icon;
+          return (
+            <button key={step.label} onClick={() => onNavigate(step.tab)} className="group p-4 text-left transition hover:bg-teal-50/70">
+              <div className="flex items-center justify-between gap-2"><span className="text-xs font-black text-teal-600">0{index + 1}</span>{step.done ? <CheckCircle2 className="h-5 w-5 text-emerald-500" /> : <Circle className="h-5 w-5 text-slate-300 group-hover:text-teal-500" />}</div>
+              <Icon className="mt-4 h-5 w-5 text-indigo-600" />
+              <p className="mt-3 text-sm font-black text-slate-900">{step.label}</p>
+              <p className="mt-1 min-h-12 text-xs leading-5 text-slate-500">{step.detail}</p>
+              <span className="mt-3 inline-flex items-center gap-1 text-xs font-bold text-indigo-600">{step.done ? "Manage" : "Open"} <ChevronRight className="h-3.5 w-3.5" /></span>
+            </button>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
 export default function MSellerDashboard({ onNavigate = () => {} }) {
   const [vendorName, setVendorName] = useState("");
+  const [businessTypes, setBusinessTypes] = useState([]);
+  const [hasWhatsApp, setHasWhatsApp] = useState(false);
   const [sub, setSub] = useState(null);
   const [catalogueCount, setCatalogueCount] = useState(0);
   const [inquiries, setInquiries] = useState([]);
@@ -101,7 +146,11 @@ export default function MSellerDashboard({ onNavigate = () => {} }) {
       ]);
 
       const me = await meRes.json();
-      if (meRes.ok) setVendorName(me.name || me.vendor_name || "there");
+      if (meRes.ok) {
+        setVendorName(me.name || me.vendor_name || "there");
+        setBusinessTypes(Array.isArray(me.business_type) ? me.business_type : []);
+        setHasWhatsApp(Boolean(me.whatsapp_connected || me.whatsapp_number || me.whatsapp_phone || me.whatsapp));
+      }
 
       if (subRes.ok) setSub((await subRes.json()).data);
 
@@ -198,6 +247,15 @@ export default function MSellerDashboard({ onNavigate = () => {} }) {
           </div>
         )}
 
+        <VendorGetStarted
+          businessTypes={businessTypes}
+          catalogueCount={catalogueCount}
+          activeRetailers={activeRetailers}
+          hasWhatsApp={hasWhatsApp}
+          hasOrders={orders.length > 0}
+          onNavigate={onNavigate}
+        />
+
         {/* KPI cards */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
           <KpiCard icon={ImageIcon} label="Catalogue items" value={catalogueCount}
@@ -205,13 +263,13 @@ export default function MSellerDashboard({ onNavigate = () => {} }) {
             onClick={() => onNavigate("catalogue")} />
           <KpiCard icon={MessageSquare} label="Pending inquiries" value={pendingInquiries}
             accent={{ bg: "bg-amber-100", text: "text-amber-600" }}
-            onClick={() => onNavigate("inquiries")} />
+            onClick={() => onNavigate("catalogue")} />
           <KpiCard icon={Users} label="Active retailers" value={activeRetailers}
             accent={{ bg: "bg-emerald-100", text: "text-emerald-600" }}
             onClick={() => onNavigate("retailers")} />
           <KpiCard icon={ShoppingBag} label="Open orders" value={openOrders}
             accent={{ bg: "bg-sky-100", text: "text-sky-600" }}
-            onClick={() => onNavigate("orders")} />
+            onClick={() => onNavigate("purchase-order")} />
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -220,7 +278,7 @@ export default function MSellerDashboard({ onNavigate = () => {} }) {
           <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
             <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
               <p className="text-sm font-black text-slate-900">Recent inquiries</p>
-              <button onClick={() => onNavigate("inquiries")}
+              <button onClick={() => onNavigate("catalogue")}
                 className="text-xs font-bold text-indigo-600 hover:text-indigo-800 flex items-center gap-1">
                 View all <ChevronRight className="w-3 h-3" />
               </button>
@@ -261,7 +319,7 @@ export default function MSellerDashboard({ onNavigate = () => {} }) {
           <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
             <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
               <p className="text-sm font-black text-slate-900">Recent orders</p>
-              <button onClick={() => onNavigate("orders")}
+              <button onClick={() => onNavigate("purchase-order")}
                 className="text-xs font-bold text-indigo-600 hover:text-indigo-800 flex items-center gap-1">
                 View all <ChevronRight className="w-3 h-3" />
               </button>
@@ -297,8 +355,8 @@ export default function MSellerDashboard({ onNavigate = () => {} }) {
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
             {[
               ["catalogue",   ImageIcon,     "Add catalogue item"],
-              ["category",    Users,         "Set your category"],
-              ["inquiries",   MessageSquare, "Respond to inquiries"],
+              ["categories",  Users,         "Set your category"],
+              ["catalogue",   MessageSquare, "Respond to inquiries"],
               ["subscription",Crown,         "Manage subscription"],
             ].map(([key, Icon, label]) => (
               <button key={key} onClick={() => onNavigate(key)}
