@@ -5,7 +5,7 @@ import {
   CheckCircle, XCircle, AlertCircle, Store, Users,
   Crown, Zap, Rocket, ChevronDown, ChevronUp, CreditCard, Gift,
 } from "lucide-react";
-import toast from "react-hot-toast";
+import toast, { Toaster } from "react-hot-toast";
 
 function loadRazorpayCheckout() {
   if (window.Razorpay) return Promise.resolve();
@@ -47,8 +47,10 @@ const apiFetch = async (path, opts = {}) => {
     },
     ...opts,
   });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.detail || "Request failed");
+  const raw = await res.text();
+  let data = {};
+  try { data = raw ? JSON.parse(raw) : {}; } catch { data = { detail: raw }; }
+  if (!res.ok) throw new Error(data.detail || `Request failed (${res.status})`);
   return data;
 };
 
@@ -556,6 +558,7 @@ export default function RetailersTab({ pendingOnboarding, onConsumeOnboarding })
 
   return (
     <div className="space-y-4">
+      <Toaster position="top-right" toastOptions={{ duration: 6000, style: { maxWidth: 460, fontWeight: 600 } }} />
       {/* Header */}
       <div className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">
         <div className="p-5 border-b border-slate-100 flex flex-col sm:flex-row gap-3 items-start sm:items-center justify-between">
