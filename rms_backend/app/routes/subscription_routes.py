@@ -616,6 +616,10 @@ async def razorpay_webhook(request: Request):
     retailer_result = await process_retailer_payment_link_webhook(event, event_id)
     if retailer_result is not None:
         return retailer_result
+    from .retailer_subscription_routes import process_retailer_renewal_payment_link_webhook
+    renewal_result = await process_retailer_renewal_payment_link_webhook(event, event_id)
+    if renewal_result is not None:
+        return renewal_result
     payment_entity = ((event.get("payload") or {}).get("payment") or {}).get("entity") or {}
     order_id = str(payment_entity.get("order_id") or "")
     payment_id = str(payment_entity.get("id") or "")

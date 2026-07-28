@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import {
-  ArrowRight, Boxes, Building2, CheckCircle2, CircleDot, Crown, LogOut, PackagePlus, ShoppingCart, Store, Tags, UsersRound, X,
+  ArrowRight, Boxes, Building2, CalendarClock, CheckCircle2, CircleDot, CreditCard, Crown, LogOut, PackagePlus, ShoppingCart, Store, Tags, UsersRound, X,
 } from "lucide-react";
 import { clearAuthData } from "../../utils/authRedirect.js";
 import { API_BASE_URL } from "../../config/api.js";
@@ -94,6 +94,32 @@ const STARTING_STEPS = [
   { number: "04", title: "Check store stock", text: "Review quantity, movement and adjustments before you begin selling.", path: "/dashboard/inventory", action: "Open stock", icon: Boxes },
   { number: "05", title: "Start billing", text: "Use Point of Sale when products and opening stock are ready.", path: "/dashboard/cashier", action: "Open POS", icon: Store },
 ];
+function StorePlanStatus({ subscription, loading, renewing, onRenew }) {
+  if (loading || !subscription?.is_paid_plan) return null;
+  const dueDate = subscription.next_payment_due
+    ? new Date(subscription.next_payment_due).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })
+    : "Now";
+  const urgent = subscription.access_state !== "active" || Number(subscription.days_remaining) <= 7;
+  const statusText = subscription.access_state === "active"
+    ? `${subscription.days_remaining} day${Number(subscription.days_remaining) === 1 ? "" : "s"} left`
+    : subscription.access_state === "grace" ? "Grace period active" : "Renewal required";
+
+  return (
+    <section className={`flex flex-wrap items-center justify-between gap-4 rounded-2xl border p-5 shadow-sm ${urgent ? "border-amber-200 bg-amber-50" : "border-emerald-200 bg-emerald-50"}`}>
+      <div className="flex min-w-0 items-start gap-3">
+        <div className={`grid h-11 w-11 shrink-0 place-items-center rounded-xl ${urgent ? "bg-amber-500 text-white" : "bg-emerald-600 text-white"}`}><CalendarClock className="h-5 w-5" /></div>
+        <div>
+          <p className="text-xs font-black uppercase tracking-[.16em] text-slate-500">RMS subscription</p>
+          <h2 className="mt-1 text-lg font-black text-slate-950">{subscription.plan_label} Plan · {statusText}</h2>
+          <p className="mt-1 text-sm text-slate-600">Next payment due {dueDate} · ₹{Number(subscription.amount_inr || 0).toLocaleString("en-IN")}/month</p>
+        </div>
+      </div>
+      <button type="button" onClick={onRenew} disabled={renewing} className={`inline-flex h-11 items-center justify-center gap-2 rounded-xl px-4 text-sm font-black text-white transition disabled:opacity-60 ${urgent ? "bg-amber-600 hover:bg-amber-700" : "bg-emerald-600 hover:bg-emerald-700"}`}>
+        <CreditCard className="h-4 w-4" /> {renewing ? "Opening secure payment…" : "Renew securely"}
+      </button>
+    </section>
+  );
+}
 export default function StoreOwnerDashboard() {
   const ownerName = localStorage.getItem("admin_name") || "Store Owner";
   const storeName = localStorage.getItem("admin_store_name") || "Your Store";
@@ -109,6 +135,9 @@ export default function StoreOwnerDashboard() {
   const [upgradePaying, setUpgradePaying] = useState(false);
   const [upgradeMessage, setUpgradeMessage] = useState("");
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
+  const [subscription, setSubscription] = useState(null);
+  const [subscriptionLoading, setSubscriptionLoading] = useState(true);
+  const [renewingSubscription, setRenewingSubscription] = useState(false);
 
   const upgradeRequest = useCallback(async (path, options = {}) => {
     const token = localStorage.getItem("admin_token") || localStorage.getItem("access_token") || localStorage.getItem("token") || "";
@@ -140,6 +169,32 @@ export default function StoreOwnerDashboard() {
   }, [upgradeRequest]);
 
   useEffect(() => { loadUpgrade(); }, [loadUpgrade]);
+
+  const loadSubscription = useCallback(async () => {
+    try {
+      setSubscriptionLoading(true);
+      setSubscription(await upgradeRequest("/api/retailer-subscriptions/me"));
+    } catch {
+      setSubscription(null);
+    } finally {
+      setSubscriptionLoading(false);
+    }
+  }, [upgradeRequest]);
+
+  useEffect(() => { loadSubscription(); }, [loadSubscription]);
+
+  const renewSubscription = async () => {
+    try {
+      setRenewingSubscription(true);
+      const renewal = await upgradeRequest("/api/retailer-subscriptions/renew", { method: "POST" });
+      if (!renewal.payment_link) throw new Error("Razorpay did not return a secure payment link.");
+      window.location.assign(renewal.payment_link);
+    } catch (error) {
+      setUpgradeMessage(error.message || "Could not start secure renewal.");
+    } finally {
+      setRenewingSubscription(false);
+    }
+  };
 
   const toggleDepartment = (key) => {
     setUpgradeDepartments((prev) => prev.includes(key) ? prev.filter((d) => d !== key) : [...prev, key]);
@@ -280,6 +335,8 @@ export default function StoreOwnerDashboard() {
               ))}
             </div>
           </section>
+
+          <StorePlanStatus subscription={subscription} loading={subscriptionLoading} renewing={renewingSubscription} onRenew={renewSubscription} />
 
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-white/70 bg-white/55 px-5 py-4 shadow-sm">
             <div><p className="text-xs font-black uppercase tracking-[.16em] text-slate-400">Your workspace</p><h2 className="mt-1 text-xl font-black text-slate-950">Daily store operations</h2></div>

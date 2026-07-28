@@ -239,6 +239,7 @@ async def send_retailer_payment_link(signup_id: str, current_admin: CurrentAdmin
         "company_name": signup["company_name"], "plan": signup["plan"],
         "amount_paise": amount_paise, "amount_inr": plan_cfg["price_inr"],
         "currency": "INR", "status": "payment_link_created",
+        "razorpay_order_id": f"payment_link:{payment_link_id}",
         "razorpay_payment_link_id": payment_link_id,
         "razorpay_payment_link_url": payment_link_url,
         "razorpay_payment_link_reference": reference_id,
