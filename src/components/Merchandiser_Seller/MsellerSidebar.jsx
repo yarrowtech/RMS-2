@@ -109,6 +109,7 @@ export default function MsellerSidebar({
   sidebarOpen = true,
   setSidebarOpen,
   inquiryNotificationCount = 0,
+  messageNotificationCount = 0,
   jobWorkEnabled = false,
   businessTypes = [],
 }) {
@@ -121,6 +122,7 @@ export default function MsellerSidebar({
   const roleOperationType = ["fabric_supplier", "wholesaler", "manufacturer", "distributor", "exporter", "retailer"]
     .find((type) => selectedTypes.includes(type));
   const showRoleOperations = selectedTypes.some((type) => ROLE_OPERATION_TYPES.has(type));
+  const communicationNotificationCount = inquiryNotificationCount + messageNotificationCount;
   const visibleNavItems = NAV_ITEMS
     .filter((item) => item.key !== "job-work" || jobWorkEnabled)
     .filter((item) => item.key !== "role-operations" || showRoleOperations)
@@ -245,8 +247,8 @@ export default function MsellerSidebar({
               )}
               <Icon size={17} strokeWidth={isActive ? 2.2 : 1.8} className="flex-shrink-0" />
               {showText && <span className="flex-1 truncate text-left">{label}</span>}
-              {key === "catalogue" && inquiryNotificationCount > 0 && !isActive && (
-                <span className={`${showText ? "min-w-5 px-1.5" : "absolute right-1 top-1"} flex h-5 items-center justify-center rounded-full bg-amber-400 text-[9px] font-black text-emerald-950`}>{inquiryNotificationCount}</span>
+              {key === "catalogue" && communicationNotificationCount > 0 && !isActive && (
+                <span className={`${showText ? "min-w-5 px-1.5" : "absolute right-1 top-1"} flex h-5 items-center justify-center rounded-full bg-amber-400 text-[9px] font-black text-emerald-950`}>{communicationNotificationCount}</span>
               )}
             </button>
           );

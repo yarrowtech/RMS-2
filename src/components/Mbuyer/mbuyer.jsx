@@ -1,4 +1,4 @@
-﻿import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
+import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
 
 
 // import React, { Suspense, useEffect, useMemo, useState } from "react";
@@ -87,8 +87,6 @@ import ProcurementNotificationCenter from "../ProcurementNotificationCenter.jsx"
 //   const [active, setActive] = useState("dashboard");
 //   const [desktopSidebarOpen, setDesktopSidebarOpen] = useState(true);
 //   const [drawerOpen, setDrawerOpen] = useState(false);
-
-//   const pageTitle = useMemo(() => labelFromKey(active), [active]);
 
 //   const handleLogout = () => {
 //     window.location.href = "/admin/login";
@@ -343,6 +341,7 @@ export default function Mbuyer() {
   const [desktopSidebarOpen, setDesktopSidebarOpen] = useState(true);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [inquiryResponseCount, setInquiryResponseCount] = useState(0);
+  const [messageNotificationCount, setMessageNotificationCount] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -364,6 +363,30 @@ export default function Mbuyer() {
     refresh(); const timer=window.setInterval(refresh,30000); window.addEventListener("focus",refresh);
     return()=>{cancelled=true;window.clearInterval(timer);window.removeEventListener("focus",refresh)};
   }, [active]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const token = localStorage.getItem("admin_token") || localStorage.getItem("token");
+    if (!token) return undefined;
+    const refresh = async () => {
+      try {
+        const response = await fetch(`${APP_API_URL}/api/document-messages/admin/unread-count`, {
+          headers: { Authorization: `Bearer ${token}` }, cache: "no-store",
+        });
+        const data = await response.json().catch(() => ({}));
+        if (response.ok && !cancelled) setMessageNotificationCount(Number(data.count) || 0);
+      } catch { /* retain the last known count */ }
+    };
+    refresh();
+    const timer = window.setInterval(refresh, 30000);
+    window.addEventListener("focus", refresh);
+    window.addEventListener("document-messages-read", refresh);
+    return () => {
+      cancelled = true; window.clearInterval(timer);
+      window.removeEventListener("focus", refresh);
+      window.removeEventListener("document-messages-read", refresh);
+    };
+  }, []);
 
   const pageTitle = useMemo(() => labelFromKey(active), [active]);
 
@@ -443,6 +466,7 @@ export default function Mbuyer() {
             sidebarOpen={desktopSidebarOpen}
             setSidebarOpen={setDesktopSidebarOpen}
             inquiryResponseCount={inquiryResponseCount}
+            messageNotificationCount={messageNotificationCount}
           />
         </aside>
 
@@ -461,6 +485,7 @@ export default function Mbuyer() {
                 sidebarOpen={true}
                 setSidebarOpen={() => setDrawerOpen(false)}
                 inquiryResponseCount={inquiryResponseCount}
+                messageNotificationCount={messageNotificationCount}
               />
             </div>
           </>

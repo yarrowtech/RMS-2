@@ -1,4 +1,5 @@
 import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
+import DocumentConversation from "../DocumentConversation.jsx";
 
 
 // import React, { useState, useEffect, useCallback } from "react";
@@ -539,6 +540,7 @@ import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
 //   const [loading, setLoading] = useState(true);
 //   const [respondingId, setRespondingId] = useState(null);
 //   const [respForm, setRespForm] = useState({});
+//   const [conversationInquiry, setConversationInquiry] = useState(null);
 
 //   const fetchInquiries = useCallback(async () => {
 //     setLoading(true);
@@ -1287,6 +1289,7 @@ function InquiriesPanel() {
   const [loading, setLoading] = useState(true);
   const [respondingId, setRespondingId] = useState(null);
   const [respForm, setRespForm] = useState({});
+  const [conversationInquiry, setConversationInquiry] = useState(null);
 
   const fetchInquiries = useCallback(async () => {
     setLoading(true);
@@ -1422,6 +1425,9 @@ function InquiriesPanel() {
             </details>
           )}
 
+          <div className="px-4 pb-3">
+            <button onClick={() => setConversationInquiry(inq)} className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-3 text-xs font-bold text-indigo-700 hover:bg-indigo-100"><MessageSquare className="h-3.5 w-3.5" />Message buyer</button>
+          </div>
           {["Pending", "Countered", "Responded"].includes(inq.status) && respondingId !== inq._id && (
             <div className="px-4 pb-3">
               <button onClick={() => openRespond(inq)}
@@ -1487,6 +1493,7 @@ function InquiriesPanel() {
           )}
         </div>
       ))}
+      {conversationInquiry && <DocumentConversation documentType="rfq" documentId={conversationInquiry._id} actor="vendor" title={conversationInquiry.item_name || "RFQ conversation"} onClose={() => setConversationInquiry(null)} />}
     </div>
   );
 }

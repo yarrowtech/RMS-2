@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { API_BASE_URL } from "../../config/api.js";
+import DocumentConversation from "../DocumentConversation.jsx";
 import { CheckCircle2, CircleAlert, ClipboardList, Loader2, RefreshCw, RotateCcw, Send, Truck } from "lucide-react";
 
 function headers(json = false) {
@@ -37,6 +38,7 @@ export default function VendorSupplierReturns() {
   const [savingId, setSavingId] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [conversationReturn, setConversationReturn] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true); setError("");
@@ -79,9 +81,11 @@ export default function VendorSupplierReturns() {
         <div className="p-5 sm:p-6"><div className="overflow-x-auto rounded-2xl border border-slate-200"><table className="min-w-full text-left text-xs"><thead className="bg-slate-50 text-[10px] font-black uppercase tracking-wide text-slate-500"><tr><th className="px-4 py-3">Item</th><th className="px-4 py-3">Barcode</th><th className="px-4 py-3 text-right">Return qty</th><th className="px-4 py-3">Reason</th></tr></thead><tbody>{(item.lines || []).map((line, index) => <tr key={`${item._id}-${index}`} className="border-t border-slate-100 text-slate-700"><td className="px-4 py-3 font-bold">{line.description || "Item"}</td><td className="px-4 py-3 font-mono text-slate-500">{line.vendor_barcode || line.rms_barcode || "—"}</td><td className="px-4 py-3 text-right font-black text-rose-600">{line.quantity}</td><td className="px-4 py-3">{line.reason || "Rejected at receipt"}</td></tr>)}</tbody></table></div>
           {item.note && <p className="mt-3 rounded-xl bg-slate-50 px-4 py-3 text-sm text-slate-600"><span className="font-bold text-slate-800">Buyer note:</span> {item.note}</p>}
           {item.vendor_response_note && <p className="mt-3 rounded-xl border border-sky-100 bg-sky-50 px-4 py-3 text-sm text-sky-800"><span className="font-bold">Your latest response:</span> {item.vendor_response_note}</p>}
+          <button onClick={() => setConversationReturn(item)} className="mt-3 inline-flex items-center gap-1.5 rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs font-bold text-indigo-700 hover:bg-indigo-100"><Send className="h-3.5 w-3.5" />Message buyer</button>
           {!isClosed && <div className="mt-5 rounded-2xl border border-orange-100 bg-orange-50/60 p-4"><div className="flex items-center gap-2"><Send className="h-4 w-4 text-orange-600" /><h3 className="text-sm font-black text-slate-800">Respond to this return</h3></div><textarea value={notes[item._id] || ""} onChange={(event) => setNotes((current) => ({ ...current, [item._id]: event.target.value }))} maxLength={600} className="mt-3 min-h-20 w-full rounded-xl border border-orange-100 bg-white px-3 py-2 text-sm outline-none focus:border-orange-400" placeholder="Add a reference, credit note number, replacement date or dispute reason..." /><div className="mt-3 flex flex-wrap gap-2"><button disabled={isSaving} onClick={() => respond(item, "acknowledge")} className="inline-flex items-center gap-1.5 rounded-xl bg-slate-900 px-3 py-2 text-xs font-bold text-white hover:bg-slate-800 disabled:opacity-50"><CheckCircle2 className="h-3.5 w-3.5" />Acknowledge</button><button disabled={isSaving} onClick={() => respond(item, "replacement")} className="rounded-xl border border-violet-200 bg-white px-3 py-2 text-xs font-bold text-violet-700 hover:bg-violet-50 disabled:opacity-50">Offer replacement</button><button disabled={isSaving} onClick={() => respond(item, "credit_note")} className="rounded-xl border border-emerald-200 bg-white px-3 py-2 text-xs font-bold text-emerald-700 hover:bg-emerald-50 disabled:opacity-50">Offer credit note</button><button disabled={isSaving} onClick={() => respond(item, "dispute")} className="inline-flex items-center gap-1.5 rounded-xl border border-rose-200 bg-white px-3 py-2 text-xs font-bold text-rose-700 hover:bg-rose-50 disabled:opacity-50"><CircleAlert className="h-3.5 w-3.5" />Dispute</button></div></div>}
         </div>
       </article>;
     })}</div>}
+    {conversationReturn && <DocumentConversation documentType="supplier_return" documentId={conversationReturn._id} actor="vendor" title={conversationReturn.srn_no || "Supplier Return conversation"} onClose={() => setConversationReturn(null)} />}
   </div>;
 }

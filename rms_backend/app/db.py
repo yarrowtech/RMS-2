@@ -24,6 +24,7 @@ reorder_rules_collection = db["reorder_rules"]
 stock_adjustments_collection = db["stock_adjustments"]
 damage_return_collection     = db["damage_return"]
 supplier_returns_collection  = db["supplier_returns"]
+document_messages_collection = db["document_messages"]
 sales_collection = db["sales"]
 stock_transfers_collection = db["stock_transfers"]
 budgets_collection = db["budgets"]
@@ -145,6 +146,9 @@ async def ensure_procurement_indexes():
     await barcode_label_settings_collection.create_index("tenant_id", unique=True, name="barcode_label_settings_tenant")
     await supplier_returns_collection.create_index([('tenant_id', 1), ('created_at', -1)], name='supplier_returns_tenant_created')
     await supplier_returns_collection.create_index([('vendor_id', 1), ('created_at', -1)], name='supplier_returns_vendor_created')
+    await document_messages_collection.create_index([("tenant_id", 1), ("document_type", 1), ("document_id", 1), ("created_at", 1)], name="document_messages_thread")
+    await document_messages_collection.create_index([("tenant_id", 1), ("read_by_buyer", 1), ("created_at", -1)], name="document_messages_buyer_unread")
+    await document_messages_collection.create_index([("vendor_id", 1), ("read_by_vendor", 1), ("created_at", -1)], name="document_messages_vendor_unread")
     await hr_employee_profiles_collection.create_index([("tenant_id", 1), ("admin_id", 1)], unique=True, name="hr_profile_tenant_admin")
     await hr_attendance_collection.create_index([("tenant_id", 1), ("admin_id", 1), ("date", 1)], unique=True, name="hr_attendance_tenant_admin_date")
     await hr_attendance_collection.create_index([("tenant_id", 1), ("date", 1)], name="hr_attendance_tenant_date")

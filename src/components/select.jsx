@@ -4,7 +4,7 @@ import {
   ArrowRight, BadgeCheck, BarChart3, Boxes, Building2, CheckCircle2,
   Factory, Globe2, Handshake, Layers3, LockKeyhole, Mail, PackageCheck,
   ShieldCheck, ShoppingCart, Store, Truck, UserPlus, Users, Workflow,
-  Zap, Crown, TrendingUp, Sparkles, Rocket,
+  Zap, Crown, TrendingUp, Sparkles, Rocket, Bot, MessageCircle, X, ChevronRight,
 } from "lucide-react";
 import { API_BASE_URL } from "../config/api.js";
 
@@ -95,6 +95,63 @@ function storeBullets(cfg, key) {
   ];
 }
 
+function RMSGuide({ navigate }) {
+  const [open, setOpen] = useState(false);
+  const [selected, setSelected] = useState(null);
+
+  const topics = [
+    {
+      key: "retailer",
+      label: "I want to run a retailer",
+      answer: "Choose Retailer onboarding for a multi-store or HQ business. RMS reviews the application, then activates the workspace after the selected plan is confirmed.",
+      action: "Start retailer onboarding",
+      onAction: () => navigate("/onboarding?type=retailer"),
+    },
+    {
+      key: "store",
+      label: "I own one store",
+      answer: "Choose the Single-store owner route. You start with products, purchasing, stock receiving and POS, then can upgrade to a multi-store retailer later.",
+      action: "Set up one store",
+      onAction: () => navigate("/onboarding?type=single_store"),
+    },
+    {
+      key: "vendor",
+      label: "I am a vendor or supplier",
+      answer: "Partner registration is for vendors, wholesalers, manufacturers, exporters, distributors, fabric suppliers and job-work partners. Select your business type and plan during registration.",
+      action: "Register as a partner",
+      onAction: () => navigate("/vendor/register"),
+    },
+    {
+      key: "plans",
+      label: "Show plans and pricing",
+      answer: "Plans are shown openly below. You can apply directly from your selected plan; RMS reviews every request before access is activated.",
+      action: "View pricing",
+      onAction: () => document.getElementById("pricing")?.scrollIntoView({ behavior: "smooth" }),
+    },
+  ];
+
+  const activeTopic = topics.find((topic) => topic.key === selected);
+
+  return (
+    <div className="fixed bottom-5 right-5 z-50 flex flex-col items-end gap-3 sm:bottom-7 sm:right-7">
+      {open && (
+        <section className="w-[calc(100vw-2.5rem)] max-w-sm overflow-hidden rounded-3xl border border-indigo-100 bg-white shadow-[0_24px_80px_rgba(30,41,59,0.26)]" aria-label="RMS Guide">
+          <header className="flex items-start justify-between gap-3 bg-gradient-to-br from-indigo-700 via-violet-700 to-slate-950 px-5 py-4 text-white">
+            <div className="flex items-center gap-3"><span className="grid h-10 w-10 place-items-center rounded-2xl bg-white/15"><Bot size={21} /></span><div><p className="text-sm font-black">RMS Guide</p><p className="mt-0.5 text-[11px] text-indigo-100">A quick guide to getting started</p></div></div>
+            <button type="button" onClick={() => setOpen(false)} className="grid h-8 w-8 place-items-center rounded-xl text-indigo-100 transition hover:bg-white/10" aria-label="Close RMS Guide"><X size={18} /></button>
+          </header>
+          <div className="space-y-4 bg-slate-50 px-4 py-4">
+            <div className="rounded-2xl border border-indigo-100 bg-indigo-50/70 p-3 text-sm leading-6 text-slate-700"><span className="font-extrabold text-indigo-700">Hi! I am the RMS Guide.</span> Choose what describes you and I will point you to the correct secure path.</div>
+            {activeTopic && <div className="rounded-2xl border border-emerald-100 bg-white p-4 shadow-sm"><p className="text-sm leading-6 text-slate-700">{activeTopic.answer}</p><button type="button" onClick={activeTopic.onAction} className="mt-3 inline-flex items-center gap-1.5 rounded-xl bg-indigo-600 px-3 py-2 text-xs font-extrabold text-white transition hover:bg-indigo-700">{activeTopic.action}<ArrowRight size={14} /></button></div>}
+            <div className="grid gap-2">{topics.map((topic) => <button key={topic.key} type="button" onClick={() => setSelected(topic.key)} className={`flex items-center justify-between rounded-xl border px-3.5 py-3 text-left text-xs font-bold transition ${selected === topic.key ? "border-indigo-300 bg-indigo-50 text-indigo-700" : "border-slate-200 bg-white text-slate-700 hover:border-indigo-200 hover:bg-indigo-50/50"}`}><span>{topic.label}</span><ChevronRight size={15} /></button>)}</div>
+            <p className="px-1 text-center text-[10px] leading-4 text-slate-400">This guide does not request passwords, payment details or private business data.</p>
+          </div>
+        </section>
+      )}
+      <button type="button" onClick={() => setOpen((current) => !current)} className="group flex items-center gap-2 rounded-2xl bg-gradient-to-r from-indigo-600 via-violet-600 to-fuchsia-600 px-4 py-3 text-sm font-extrabold text-white shadow-[0_14px_36px_rgba(109,40,217,0.35)] transition hover:-translate-y-0.5 hover:shadow-[0_18px_42px_rgba(109,40,217,0.42)]" aria-expanded={open} aria-label="Open RMS Guide"><span className="grid h-7 w-7 place-items-center rounded-xl bg-white/15">{open ? <X size={16} /> : <MessageCircle size={16} />}</span><span>{open ? "Close guide" : "Need help?"}</span><span className="hidden rounded-full bg-white/15 px-2 py-0.5 text-[10px] sm:inline">RMS Guide</span></button>
+    </div>
+  );
+}
 export default function ProfessionalRoleSelector() {
   const navigate = useNavigate();
   const [vendorTiers, setVendorTiers] = useState(null);
@@ -262,6 +319,8 @@ export default function ProfessionalRoleSelector() {
           </div>
         </section>
       </main>
+
+      <RMSGuide navigate={navigate} />
 
       <footer className="border-t border-slate-200 bg-white">
         <div className="mx-auto flex w-full max-w-7xl flex-col gap-3 px-5 py-7 text-xs text-slate-500 sm:flex-row sm:items-center sm:justify-between sm:px-8 lg:px-10"><span>© {new Date().getFullYear()} RMS. Protected business access.</span><div className="flex gap-5"><a href="#about" className="hover:text-indigo-700">About RMS</a><a href="#pricing" className="hover:text-indigo-700">Pricing</a><a href="#partners" className="hover:text-indigo-700">Partner onboarding</a><button onClick={() => navigate("/admin/login")} className="hover:text-indigo-700">Sign in</button></div></div>
