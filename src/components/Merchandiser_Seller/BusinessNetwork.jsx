@@ -148,6 +148,33 @@ export default function BusinessNetwork() {
         {notice && <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-700">{notice}</div>}
 
         {tab === "discover" && (
+          <section className="overflow-hidden rounded-2xl border border-teal-100 bg-gradient-to-r from-teal-50 via-white to-indigo-50 shadow-sm">
+            <div className="flex flex-col gap-4 border-b border-teal-100/80 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-[0.16em] text-teal-700">First time here?</p>
+                <h2 className="mt-1 text-base font-black text-slate-900">How to use Business Network</h2>
+                <p className="mt-1 text-xs leading-5 text-slate-500">Build trusted B2B relationships before sharing private contact details or trading.</p>
+              </div>
+              <button onClick={() => setTab("visibility")} className="inline-flex h-10 shrink-0 items-center justify-center rounded-xl bg-teal-600 px-4 text-xs font-bold text-white hover:bg-teal-700">Set up my profile</button>
+            </div>
+            <div className="grid divide-y divide-teal-100/80 sm:grid-cols-4 sm:divide-x sm:divide-y-0">
+              {[
+                ["1", "Publish your profile", "Open My visibility, add your products, MOQ and service areas, then turn visibility on."],
+                ["2", "Discover businesses", "Search by product, business type and location to find suppliers, buyers or partners."],
+                ["3", "Send a clear request", "Use Connect and explain what you need. Your plan controls how many requests you can send."],
+                ["4", "Accept, then trade", "Once accepted, contact details unlock. Use Vendor B2B Trade for RFQs and orders."],
+              ].map(([step, title, description]) => (
+                <div key={step} className="p-4">
+                  <span className="grid h-7 w-7 place-items-center rounded-full bg-teal-600 text-[11px] font-black text-white">{step}</span>
+                  <h3 className="mt-3 text-sm font-black text-slate-900">{title}</h3>
+                  <p className="mt-1 text-xs leading-5 text-slate-500">{description}</p>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {tab === "discover" && (
           <>
             <section className="grid gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm md:grid-cols-[1fr_220px_220px_auto]">
               <div className="relative"><Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><input value={filters.q} onChange={e => setFilters({ ...filters, q: e.target.value })} placeholder="Products, category or business name" className="h-11 w-full rounded-xl border border-slate-200 pl-10 pr-3 text-sm outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-100" /></div>
