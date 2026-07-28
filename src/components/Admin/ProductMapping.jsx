@@ -28,6 +28,8 @@ function authFetch(url, options = {}) {
 
 const ProductMapping = () => {
   const isSingleStore = localStorage.getItem("admin_account_type") === "single_store";
+  // State used by the table and mapping fetch; without it this route crashes.
+  const [mappings, setMappings] = useState([]);
   const [groupedData, setGroupedData] = useState({});
   const [form, setForm] = useState({
     product_type: "",
@@ -43,8 +45,9 @@ const ProductMapping = () => {
     setLoading(true);
     try {
       const res = await authFetch(`${API_BASE_URL}/api/product-mapping/`);
+      if (!res.ok) throw new Error("Could not load product mappings");
       const data = await res.json();
-      setMappings(data);
+      setMappings(Array.isArray(data) ? data : []);
     } catch (err) {
       console.error(err);
       alert("Failed to load mappings");
