@@ -8,13 +8,24 @@ function headers(json = false) {
   return { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(json ? { "Content-Type": "application/json" } : {}) };
 }
 
+function readableApiError(detail, fallback = "Request failed") {
+  if (typeof detail === "string" && detail.trim()) return detail;
+  if (Array.isArray(detail)) {
+    return detail.map((item) => item?.msg || item?.message || "Invalid request").join(". ");
+  }
+  if (detail && typeof detail === "object") {
+    return detail.message || detail.error || detail.msg || fallback;
+  }
+  return fallback;
+}
+
 async function api(path, options = {}) {
   const response = await fetch(`${API_BASE_URL}/api/supplier-returns${path}`, {
     ...options,
     headers: { ...headers(Boolean(options.body)), ...(options.headers || {}) },
   });
   const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data.detail || "Request failed");
+  if (!response.ok) throw new Error(readableApiError(data.detail));
   return data;
 }
 

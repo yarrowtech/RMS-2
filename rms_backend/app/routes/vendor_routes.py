@@ -96,7 +96,7 @@ def decode_token(token: str):
         return None
 
 
-async def require_vendor_identity(authorization: Optional[str]) -> dict:
+async def require_vendor_identity(authorization: Optional[str] = Header(None)) -> dict:
     """Authenticate a vendor portal request and return its vendor identity."""
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Authorization token missing")
