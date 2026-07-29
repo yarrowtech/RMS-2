@@ -498,6 +498,36 @@ function NewProductInline({ row, onFieldChange, onCancel }) {
   );
 }
 
+function PurchaseOrderGuide() {
+  const steps = [
+    ["1", "Receive", "A retailer creates and assigns the PO to your vendor account. It appears here as Sent to Vendor or Awaiting Me."],
+    ["2", "Review", "Open the PO, confirm the buyer, requested product, quantity, delivery details and the buyer rate."],
+    ["3", "Match items", "Select the exact product or variant from your catalogue. If it is not listed, choose Create new product and enter its details."],
+    ["4", "Save", "Click Save Items first. New products receive your vendor barcode and are added to your own product catalogue with zero opening stock."],
+    ["5", "Submit", "Click Submit PO to send your confirmed quantities and rates back to the buyer. A price change above 10% requires buyer approval."],
+    ["6", "Fulfil", "After buyer approval, prepare dispatch. The retailer receives the goods through GRC and GRN; any rejected items can be handled in Supplier Returns."],
+  ];
+  return (
+    <details open style={{ marginBottom: 28, border: `1px solid ${T.border}`, borderRadius: 18, background: "linear-gradient(135deg, #FFFFFF 0%, #F5F3FF 100%)", boxShadow: "0 5px 18px rgba(15,27,45,0.05)", overflow: "hidden" }}>
+      <summary style={{ cursor: "pointer", listStyle: "none", padding: "16px 20px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <span style={{ width: 36, height: 36, borderRadius: 11, display: "grid", placeItems: "center", background: T.violetSoft, color: T.violet, fontWeight: 800 }}>i</span>
+          <div><p style={{ margin: 0, color: T.navy, fontSize: 14, fontWeight: 800 }}>How Purchase Orders work</p><p style={{ margin: "3px 0 0", color: T.muted, fontSize: 12 }}>A simple guide from retailer request to confirmed supply</p></div>
+        </div>
+        <span style={{ borderRadius: 999, padding: "5px 9px", background: "#FFFFFF", color: T.violet, fontSize: 11, fontWeight: 700, border: `1px solid ${T.border}` }}>Show / hide guide</span>
+      </summary>
+      <div style={{ borderTop: `1px solid ${T.border}`, padding: "18px 20px 20px" }}>
+        <div style={{ display: "flex", gap: 10, alignItems: "flex-start", padding: "11px 13px", marginBottom: 16, borderRadius: 10, background: T.skySoft, color: "#0C4A6E", fontSize: 12, lineHeight: 1.55 }}>
+          <strong>Important:</strong><span>Retailer buyers create and send purchase orders. As a vendor, you review the assigned PO, match or add your products, confirm your price and quantity, then submit it for buyer approval.</span>
+        </div>
+        <div style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fit, minmax(215px, 1fr))" }}>
+          {steps.map(([number, title, text]) => <div key={number} style={{ display: "flex", gap: 10, padding: "12px", borderRadius: 12, background: "#FFFFFF", border: `1px solid ${T.border}` }}><span style={{ display: "grid", placeItems: "center", width: 25, height: 25, flexShrink: 0, borderRadius: "50%", background: `linear-gradient(135deg, ${T.orange}, ${T.coral})`, color: "#fff", fontSize: 11, fontWeight: 800 }}>{number}</span><div><p style={{ margin: 0, color: T.navy, fontSize: 12, fontWeight: 800 }}>{title}</p><p style={{ margin: "4px 0 0", color: T.muted, fontSize: 11, lineHeight: 1.55 }}>{text}</p></div></div>)}
+        </div>
+        <p style={{ margin: "16px 0 0", color: T.muted, fontSize: 11, lineHeight: 1.6 }}>Need clarification before submitting? Use the <strong style={{ color: T.violet }}>Message</strong> button on that PO. The conversation remains securely attached to the buyer, vendor and document.</p>
+      </div>
+    </details>
+  );
+}
 function StatCard({ label, value, accent }) {
   return (
     <div style={{
@@ -1300,6 +1330,8 @@ export default function VendorPurchaseOrders({ vendorName }) {
               </div>
             </div>
           </div>
+
+          <PurchaseOrderGuide />
 
           {!loading && orders.length > 0 && (
             <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 28 }}>
