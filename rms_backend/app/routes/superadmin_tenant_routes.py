@@ -7,7 +7,7 @@ from bson import ObjectId
 from ..routes.auth_routes import get_current_superadmin
 from ..db import admins_collection, stores_collection
 from ..auth import create_password_setup_token
-from ..email_utils import send_password_setup_email
+from ..email_utils import send_password_setup_email, send_tenant_status_email
 from ..config import settings
 from ..retailer_plans import INTERNAL_FREE_PLAN, RETAILER_PLAN_LIMITS, normalize_retailer_plan, retailer_plan_config
 
@@ -262,12 +262,22 @@ async def update_tenant(
     if payload.address      is not None: patch["address"]      = payload.address.strip()
     if payload.city         is not None: patch["city"]         = payload.city.strip()
     if payload.state        is not None: patch["state"]        = payload.state.strip()
+    status_changed = False
     if payload.status       is not None:
         if payload.status not in ("active", "suspended"):
             raise HTTPException(status_code=400, detail="status must be 'active' or 'suspended'")
+        status_changed = payload.status != tenant.get("status", "active")
         patch["status"] = payload.status
 
     await tenants_collection.update_one({"tenant_id": tenant_id}, {"$set": patch})
+    if status_changed and tenant.get("hq_admin_email"):
+        try:
+            await send_tenant_status_email(
+                tenant["hq_admin_email"], tenant.get("hq_admin_name") or "there",
+                patch.get("company_name", tenant.get("company_name", "")), payload.status,
+            )
+        except Exception:
+            pass
     return {"message": f"Tenant '{tenant_id}' updated."}
 
 

@@ -12,7 +12,7 @@ from ..utils import hash_password, verify_password
 from ..models import TokenResponse
 from ..config import settings
 from bson import ObjectId
-from ..email_utils import send_reset_password_email
+from ..email_utils import send_reset_password_email, send_password_changed_email
 from fastapi import Header
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -380,6 +380,10 @@ async def reset_password(req: ResetPasswordRequest):
                 "$unset": {"reset_token": ""},
             },
         )
+        try:
+            await send_password_changed_email(vendor.get("email"), vendor.get("name") or vendor.get("vendor_name") or "Vendor")
+        except Exception as e:
+            print("❌ EMAIL ERROR:", str(e))
         return {"message": "Password reset successful"}
 
     user = await admins_collection.find_one({"_id": ObjectId(user_id)})
@@ -401,4 +405,8 @@ async def reset_password(req: ResetPasswordRequest):
             "$unset": {"reset_token": "", "reset_requested": "", "reset_approved": "", "reset_requested_at": ""},
         },
     )
+    try:
+        await send_password_changed_email(user.get("email"), user.get("name") or "there")
+    except Exception as e:
+        print("❌ EMAIL ERROR:", str(e))
     return {"message": "Password reset successful"}

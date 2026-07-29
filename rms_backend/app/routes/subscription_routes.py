@@ -45,7 +45,9 @@ from urllib import request as urlrequest
 
 from ..db import vendor_subscriptions_collection, vendor_subscription_payments_collection, vendor_catalogue_collection, vendors_collection
 from ..config import settings
+from ..email_utils import send_subscription_receipt_email, send_subscription_expiring_email
 from .vendor_routes import decode_token
+from .auth_routes import get_current_superadmin
 
 router = APIRouter(prefix="/api/subscriptions", tags=["Vendor Subscriptions"])
 razorpay_webhook_router = APIRouter(prefix="/api/payments/razorpay", tags=["Razorpay Payments"])
@@ -360,6 +362,64 @@ async def get_my_subscription(authorization: str = Header(None)):
     }
 
 
+async def _authorize_cron_or_superadmin(authorization: Optional[str], x_cron_secret: Optional[str]) -> None:
+    """Two independent ways in: a CRON_SECRET header (for an external
+    scheduler with no user login), or a real Super Admin bearer token
+    (for manually triggering it from an authenticated session). Neither
+    is optional-Depends-friendly to combine, so this checks both by hand."""
+    if settings.cron_secret and x_cron_secret == settings.cron_secret:
+        return
+    if authorization and authorization.startswith("Bearer "):
+        try:
+            await get_current_superadmin(token=authorization.split(" ", 1)[1])
+            return
+        except HTTPException:
+            pass
+    raise HTTPException(status_code=401, detail="Provide a valid X-Cron-Secret header, or a Super Admin bearer token.")
+
+
+@router.post("/send-expiry-reminders")
+async def send_expiry_reminders(
+    authorization: Optional[str] = Header(None),
+    x_cron_secret: Optional[str] = Header(None, alias="X-Cron-Secret"),
+):
+    """Email every vendor whose paid plan is lapsed or renews within 7 days —
+    the in-app banner (see /me above) only reaches vendors actively logged
+    in, so this is what actually reaches someone who isn't. Meant to run
+    once a day from an external scheduler (this process has no in-process
+    cron); auth via either a Super Admin JWT or CRON_SECRET so a scheduler
+    with no user login can call it."""
+    await _authorize_cron_or_superadmin(authorization, x_cron_secret)
+
+    now = datetime.utcnow()
+    reminder_window = now + timedelta(days=7)
+    sent, lapsed_sent = 0, 0
+    async for sub in vendor_subscriptions_collection.find({
+        "status": "active",
+        "tier": {"$ne": "free"},
+        "expires_at": {"$lte": reminder_window},
+    }):
+        vendor = await vendors_collection.find_one({"_id": sub["vendor_id"]})
+        if not vendor or not vendor.get("email"):
+            continue
+        expires_at = sub.get("expires_at")
+        lapsed = bool(expires_at and expires_at <= now)
+        days_left = max((expires_at - now).days, 0) if expires_at and not lapsed else 0
+        tier_label = TIER_CONFIG.get(sub.get("tier"), {}).get("label", sub.get("tier", "").title())
+        try:
+            delivered = await send_subscription_expiring_email(
+                vendor["email"], vendor.get("name") or vendor.get("vendor_name") or "there",
+                tier_label, days_left, lapsed,
+            )
+        except Exception:
+            delivered = False
+        if delivered:
+            sent += 1
+            if lapsed:
+                lapsed_sent += 1
+    return {"status": "success", "reminders_sent": sent, "lapsed_reminders_sent": lapsed_sent}
+
+
 async def _extend_existing_catalogue_items(vendor_id: str, visibility_days: int, image_limit: Optional[int] = None) -> int:
     """
     ⚠️ FIX: previously, upgrading or renewing only touched the
@@ -446,6 +506,15 @@ async def _activate_paid_vendor_subscription(payment: dict, payment_id: str) -> 
         },
         upsert=True,
     )
+    vendor = await vendors_collection.find_one({"_id": payment["vendor_id"]})
+    if vendor and vendor.get("email"):
+        try:
+            await send_subscription_receipt_email(
+                vendor["email"], vendor.get("name") or vendor.get("vendor_name") or "there",
+                tier_cfg["label"], tier_cfg["price_inr"], expires_at,
+            )
+        except Exception:
+            pass
     return await _extend_existing_catalogue_items(vendor_id, tier_cfg["visibility_days"], tier_cfg["image_limit"])
 
 

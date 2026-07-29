@@ -390,7 +390,7 @@ export default function MSeller() {
       case "whatsapp":       return <VendorWhatsAppConnect />;
       case "profile":        return <ProfileCard profile={vendorProfile} />;
       case "help-support":   return <HelpCard />;
-      case "settings":       return <MsellerSettings />;
+      case "settings":       return <MsellerSettings onNavigate={setActiveTab} />;
 
       default:
         return <div className="text-sm text-slate-400">Select a section from the sidebar.</div>;

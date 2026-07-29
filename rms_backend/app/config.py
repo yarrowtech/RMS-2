@@ -29,6 +29,12 @@ class Settings(BaseSettings):
     superadmin_name: str = Field(..., env='SUPERADMIN_NAME')
     superadmin_password: str = Field(..., env='SUPERADMIN_PASSWORD')
 
+    # Shared secret for server-to-server calls from an external scheduler
+    # (OS cron / cloud scheduler) that has no user login — e.g. the daily
+    # subscription expiry reminder sweep. Optional: unset disables that path,
+    # a Super Admin JWT still works either way.
+    cron_secret: Optional[str] = Field(None, env='CRON_SECRET')
+
 
     cloudinary_cloud_name: str
     cloudinary_api_key: str
