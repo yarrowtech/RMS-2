@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, EmailStr, Field
 
 from ..db import onboarding_requests_collection
+from ..email_utils import send_onboarding_declined_email, send_onboarding_received_email
 from .auth_routes import CurrentAdmin, get_current_superadmin
 
 router = APIRouter(prefix="/api/onboarding", tags=["Onboarding"])
@@ -78,6 +79,10 @@ async def create_onboarding_request(payload: OnboardingRequestCreate):
         "review_note": "", "created_at": now, "updated_at": now,
     }
     result = await onboarding_requests_collection.insert_one(document)
+    try:
+        await send_onboarding_received_email(email, document["contact_name"], document["business_name"])
+    except Exception as e:
+        print("❌ EMAIL ERROR:", str(e))
     return {"message": "Your onboarding request has been received. Our RMS team will contact you after review.", "request_id": str(result.inserted_id)}
 
 
@@ -103,4 +108,9 @@ async def review_onboarding_request(request_id: str, payload: OnboardingRequestR
     update = {"status": payload.status, "review_note": _clean(payload.review_note), "reviewed_by": current_admin.get("email", "Super Admin"), "updated_at": now}
     await onboarding_requests_collection.update_one({"_id": request["_id"]}, {"$set": update})
     request.update(update)
+    if payload.status == "DECLINED":
+        try:
+            await send_onboarding_declined_email(request["email"], request["contact_name"], request["business_name"], update["review_note"])
+        except Exception as e:
+            print("❌ EMAIL ERROR:", str(e))
     return {"message": "Onboarding request updated.", "request": _view(request)}

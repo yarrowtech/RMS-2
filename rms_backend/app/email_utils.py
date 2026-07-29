@@ -2,7 +2,9 @@
 from fastapi_mail import FastMail, MessageSchema, ConnectionConfig
 from pydantic import EmailStr
 from typing import List
+from datetime import datetime
 from app.config import settings
+from app.db import email_failures_collection
 
 conf = None
 
@@ -93,9 +95,22 @@ def _divider() -> str:
 def _note(text: str) -> str:
     return f'<p style="font-size:12px;color:#999;text-align:center;">{text}</p>'
 
+async def _log_email_failure(subject: str, recipients: List[str], reason: str) -> None:
+    """Persist every send failure so production has something queryable —
+    print() output is easy to lose once nobody is watching stdout."""
+    try:
+        await email_failures_collection.insert_one({
+            "subject": subject, "recipients": recipients, "reason": reason,
+            "resolved": False, "created_at": datetime.utcnow(),
+        })
+    except Exception:
+        pass  # Logging the failure must never itself raise into the caller.
+
+
 async def _send(subject: str, recipients: List[str], html: str) -> bool:
     if not conf:
         print("Email skipped: SMTP is not configured.")
+        await _log_email_failure(subject, recipients, "SMTP is not configured.")
         return False
     try:
         fm = FastMail(conf)
@@ -106,6 +121,7 @@ async def _send(subject: str, recipients: List[str], html: str) -> bool:
         return True
     except Exception as e:
         print(f"Email failed [{subject}]: {e}")
+        await _log_email_failure(subject, recipients, str(e))
         return False
 
 # 1. ADMIN — Password setup (existing, unchanged behaviour)
@@ -451,4 +467,162 @@ async def send_reset_password_email(
         subject="Reset your CitiMart RMS password",
         recipients=[email],
         html=_wrap(DANGER, "Password Reset Request", body),
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 9. ANY USER — Password changed confirmation
+# ─────────────────────────────────────────────────────────────────────────────
+async def send_password_changed_email(email: EmailStr, name: str) -> bool:
+    """Sent right after a password reset actually completes — the reset-link
+    email only proves someone requested a reset, not that it succeeded. This
+    is what lets the real account owner notice a reset they didn't ask for."""
+    body = f"""
+      <h2 style="color:#222;">Hello, {name}</h2>
+      <p style="font-size:15px;color:#444;">
+        Your CitiMart RMS password was just changed.
+      </p>
+      <p style="font-size:14px;color:#555;margin-top:12px;">
+        If this was you, no action is needed.
+      </p>
+      {_divider()}
+      {_note("If you did not make this change, contact your administrator immediately — someone else may have access to your account.")}
+    """
+    return await _send(
+        subject="Your CitiMart RMS password was changed",
+        recipients=[email],
+        html=_wrap(DANGER, "Password Changed", body),
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 10. ONBOARDING — Application received / declined
+# ─────────────────────────────────────────────────────────────────────────────
+async def send_onboarding_received_email(email: EmailStr, contact_name: str, business_name: str) -> bool:
+    """Sent the moment a public onboarding request is submitted — until now
+    the applicant only saw a JSON success response, nothing in their inbox."""
+    body = f"""
+      <h2 style="color:#222;margin-bottom:8px;">Hi {contact_name},</h2>
+      <p style="font-size:15px;color:#444;">
+        Thanks for applying to bring <strong style="color:{PRIMARY};">{business_name}</strong> onto RMS.
+      </p>
+      <p style="font-size:14px;color:#555;margin-top:12px;">
+        Our team will review your business details and follow up by email. There is nothing further you need to do right now.
+      </p>
+      {_divider()}
+      {_note("If you did not submit this request, you can ignore this email.")}
+    """
+    return await _send(
+        subject=f"We received your RMS application — {business_name}",
+        recipients=[email],
+        html=_wrap(PRIMARY, "Application Received", body, "RMS Platform"),
+    )
+
+
+async def send_onboarding_declined_email(email: EmailStr, contact_name: str, business_name: str, review_note: str = "") -> bool:
+    """Sent when Super Admin declines an onboarding request — until now a
+    decline only changed a status label the applicant could never see."""
+    note_block = (
+        f'<div style="margin:16px 0;padding:14px;border:1px solid #fecaca;background:#fef2f2;border-radius:8px;">'
+        f'<p style="margin:0;color:#7f1d1d;font-size:13px;">{review_note}</p></div>'
+    ) if review_note else ""
+    body = f"""
+      <h2 style="color:#222;margin-bottom:8px;">Hi {contact_name},</h2>
+      <p style="font-size:15px;color:#444;">
+        Thank you for your interest in bringing <strong>{business_name}</strong> onto RMS. After review, we are not able to proceed with this application at this time.
+      </p>
+      {note_block}
+      {_divider()}
+      {_note("If you believe this was a mistake, reply to this email and our team will take another look.")}
+    """
+    return await _send(
+        subject=f"Update on your RMS application — {business_name}",
+        recipients=[email],
+        html=_wrap(WARNING, "Application Update", body, "RMS Platform"),
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 11. SUPERADMIN — Tenant suspended / reactivated
+# ─────────────────────────────────────────────────────────────────────────────
+async def send_tenant_status_email(email: EmailStr, name: str, company_name: str, status: str) -> bool:
+    """Sent when Super Admin flips a tenant between active/suspended — until
+    now this happened silently with no notice to the retailer."""
+    suspended = status == "suspended"
+    color = DANGER if suspended else SUCCESS
+    headline = "Your RMS account has been suspended" if suspended else "Your RMS account is active again"
+    detail = (
+        "All logins for your team are temporarily disabled. Contact RMS support to resolve this."
+        if suspended else
+        "Your team can sign in and resume normal operations."
+    )
+    body = f"""
+      <h2 style="color:#222;margin-bottom:8px;">Hi {name},</h2>
+      <p style="font-size:15px;color:#444;">
+        <strong style="color:{color};">{headline}</strong> for <strong>{company_name}</strong>.
+      </p>
+      <p style="font-size:14px;color:#555;margin-top:12px;">{detail}</p>
+      {_divider()}
+      {_note("This is an automated notice from CitiMart RMS.")}
+    """
+    return await _send(
+        subject=f"{'Account suspended' if suspended else 'Account reactivated'} — {company_name}",
+        recipients=[email],
+        html=_wrap(color, headline, body, "RMS Platform"),
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 12. VENDOR — Subscription payment receipt
+# ─────────────────────────────────────────────────────────────────────────────
+async def send_subscription_receipt_email(email: EmailStr, name: str, tier_label: str, price_inr: int, expires_at) -> bool:
+    """Sent right after a vendor's Razorpay subscription payment is captured
+    and activated — confirms the charge and when it renews."""
+    expiry_text = expires_at.strftime("%d %b %Y") if hasattr(expires_at, "strftime") else str(expires_at)
+    body = f"""
+      <h2 style="color:#222;margin-bottom:8px;">Hi {name},</h2>
+      <p style="font-size:15px;color:#444;">
+        Your payment for the <strong style="color:{SUCCESS};">{tier_label}</strong> vendor plan was received.
+      </p>
+      <div style="margin:20px 0;padding:16px;border:1px solid #bbf7d0;background:#f0fdf4;border-radius:10px;">
+        <p style="margin:0;color:#166534;font-size:13px;font-weight:700;">Amount charged</p>
+        <p style="margin:6px 0 0;color:#052e16;font-size:20px;font-weight:800;">Rs. {price_inr:,.0f}</p>
+        <p style="margin:10px 0 0;color:#166534;font-size:13px;">Active until {expiry_text}</p>
+      </div>
+      {_divider()}
+      {_note("This is an automated payment receipt from CitiMart RMS.")}
+    """
+    return await _send(
+        subject=f"Payment received — {tier_label} plan activated",
+        recipients=[email],
+        html=_wrap(SUCCESS, "Payment Received", body, "© CitiMart RMS · Vendor Subscriptions"),
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 13. VENDOR — Subscription expiring / lapsed reminder
+# ─────────────────────────────────────────────────────────────────────────────
+async def send_subscription_expiring_email(email: EmailStr, name: str, tier_label: str, days_until_expiry: int, lapsed: bool) -> bool:
+    """Email counterpart to the in-app renewal banner — reaches vendors who
+    aren't actively logged in when their plan is about to lapse or already
+    has. Triggered by a scheduled sweep, not a single user action."""
+    if lapsed:
+        headline = f"Your {tier_label} plan has lapsed"
+        detail = "Your catalogue is now running on Free plan limits. Renew to restore your previous visibility and limits."
+        color = DANGER
+    else:
+        headline = f"Your {tier_label} plan renews in {days_until_expiry} day{'s' if days_until_expiry != 1 else ''}"
+        detail = "Renew before it expires to avoid dropping back to Free plan limits."
+        color = WARNING
+    body = f"""
+      <h2 style="color:#222;margin-bottom:8px;">Hi {name},</h2>
+      <p style="font-size:15px;color:#444;"><strong style="color:{color};">{headline}</strong></p>
+      <p style="font-size:14px;color:#555;margin-top:12px;">{detail}</p>
+      {_divider()}
+      {_note("This is an automated reminder from CitiMart RMS.")}
+    """
+    return await _send(
+        subject=headline,
+        recipients=[email],
+        html=_wrap(color, "Subscription Reminder", body, "© CitiMart RMS · Vendor Subscriptions"),
     )

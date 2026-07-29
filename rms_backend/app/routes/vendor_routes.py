@@ -635,6 +635,97 @@ async def get_vendor_profile(authorization: str = Header(None)):
     return vendor
 
 
+@vendor_bp.patch("/me/settings")
+async def update_vendor_settings(request: Request, vendor: dict = Depends(require_vendor_identity)):
+    """Update safe vendor profile fields and vendor-portal preferences."""
+    body = await request.json()
+    profile = body.get("profile") or {}
+    preferences = body.get("preferences") or {}
+    if not isinstance(profile, dict) or not isinstance(preferences, dict):
+        raise HTTPException(status_code=400, detail="profile and preferences must be objects.")
+
+    updates = {}
+    profile_limits = {
+        "name": 160,
+        "contactMobile": 40,
+        "address": 500,
+        "city": 120,
+        "website": 255,
+    }
+    for field, maximum in profile_limits.items():
+        if field not in profile:
+            continue
+        value = str(profile.get(field) or "").strip()
+        if len(value) > maximum:
+            raise HTTPException(status_code=400, detail=f"{field} must be {maximum} characters or fewer.")
+        if field == "name" and not value:
+            raise HTTPException(status_code=400, detail="Business name cannot be empty.")
+        updates[field] = value
+
+    current_settings = vendor.get("settings") if isinstance(vendor.get("settings"), dict) else {}
+    default_notifications = {
+        "purchase_orders": True,
+        "rfqs_and_messages": True,
+        "supplier_returns": True,
+        "email_alerts": True,
+        "whatsapp_alerts": False,
+    }
+    default_orders = {
+        "default_lead_time_days": 7,
+        "minimum_order_quantity": 1,
+        "default_payment_terms": "",
+        "return_policy": "",
+    }
+    notifications = {**default_notifications, **(current_settings.get("notification_preferences") or {})}
+    order_defaults = {**default_orders, **(current_settings.get("order_preferences") or {})}
+
+    requested_notifications = preferences.get("notifications") or {}
+    if not isinstance(requested_notifications, dict):
+        raise HTTPException(status_code=400, detail="Notification preferences must be an object.")
+    for field in default_notifications:
+        if field in requested_notifications:
+            notifications[field] = bool(requested_notifications[field])
+
+    requested_orders = preferences.get("order_preferences") or {}
+    if not isinstance(requested_orders, dict):
+        raise HTTPException(status_code=400, detail="Order preferences must be an object.")
+    for field in ("default_lead_time_days", "minimum_order_quantity"):
+        if field in requested_orders:
+            try:
+                value = int(requested_orders[field])
+            except (TypeError, ValueError):
+                raise HTTPException(status_code=400, detail=f"{field} must be a whole number.")
+            if value < 0 or value > 3650:
+                raise HTTPException(status_code=400, detail=f"{field} must be between 0 and 3650.")
+            order_defaults[field] = value
+    for field, maximum in (("default_payment_terms", 160), ("return_policy", 1000)):
+        if field in requested_orders:
+            value = str(requested_orders[field] or "").strip()
+            if len(value) > maximum:
+                raise HTTPException(status_code=400, detail=f"{field} must be {maximum} characters or fewer.")
+            order_defaults[field] = value
+
+    updates["settings.notification_preferences"] = notifications
+    updates["settings.order_preferences"] = order_defaults
+    updates["settings.updated_at"] = datetime.utcnow()
+    await vendors_collection.update_one({"_id": vendor["_id"]}, {"$set": updates})
+    updated = await vendors_collection.find_one({"_id": vendor["_id"]})
+    return {
+        "message": "Vendor settings saved.",
+        "data": {
+            "name": updated.get("name", ""),
+            "email": updated.get("email", ""),
+            "contactMobile": updated.get("contactMobile", ""),
+            "address": updated.get("address", ""),
+            "city": updated.get("city", ""),
+            "website": updated.get("website", ""),
+            "settings": {
+                "notification_preferences": notifications,
+                "order_preferences": order_defaults,
+            },
+        },
+    }
+
 VALID_BUSINESS_TYPES = {
     "general_vendor", "wholesaler", "manufacturer", "retailer",
     "fabric_supplier", "exporter", "distributor", "job_worker",

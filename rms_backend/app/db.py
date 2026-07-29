@@ -74,6 +74,11 @@ onboarding_requests_collection = db["onboarding_requests"]
 store_upgrade_requests_collection = db["store_upgrade_requests"]
 store_upgrade_payments_collection = db["store_upgrade_payments"]
 retailer_signups_collection = db["retailer_signups"]
+# Every email send failure lands here (SMTP not configured, send exception,
+# etc.) so production has something queryable when a user reports "I never
+# got the email" — print() output is easy to lose once stdout isn't a
+# terminal someone is watching.
+email_failures_collection = db["email_failures"]
 retailer_subscription_payments_collection = db["retailer_subscription_payments"]
 barcode_label_settings_collection = db["barcode_label_settings"]
 
@@ -159,3 +164,4 @@ async def ensure_procurement_indexes():
     await hr_salary_records_collection.create_index([("tenant_id", 1), ("admin_id", 1), ("month", 1)], unique=True, name="hr_salary_tenant_admin_month")
     await hr_salary_records_collection.create_index([("tenant_id", 1), ("store_id", 1), ("month", -1)], name="hr_salary_store_month")
     await hr_holidays_collection.create_index([("tenant_id", 1), ("date", 1)], name="hr_holidays_tenant_date")
+    await email_failures_collection.create_index([("resolved", 1), ("created_at", -1)], name="email_failures_resolved_created")
