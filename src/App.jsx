@@ -18,6 +18,7 @@ import MSeller from "./components/Merchandiser_Seller/MSeller.jsx";
 import ProductMapping from "./components/ProductMapping.jsx";
 import InventoryManagement from "./components/InventoryManagement/InventoryManagement.jsx";
 import StockPlanForecasting from "./components/StockPlanForecastingDepartment/StockPlanForecasting.jsx";
+import ForecastAnalytics from "./components/ForecastAnalytics.jsx";
 import ProductionJobWork from "./components/Production/ProductionJobWork.jsx";
 import Admin from "./components/Admin/Admin";
 import GRRC from "./components/InventoryManagement/GRRC.jsx";
@@ -49,6 +50,7 @@ import POPublicView from "./components/Popublicview.jsx";
 import StoreOwnerDashboard from "./components/StoreOwner/StoreOwnerDashboard.jsx";
 import StorePurchasing from "./components/StoreOwner/StorePurchasing.jsx";
 import StoreOwnerStaff from "./components/StoreOwner/StoreOwnerStaff.jsx";
+import RetailerHelpSupport from "./components/RetailerHelpSupport.jsx";
 
 
 export default function App() {
@@ -68,6 +70,7 @@ export default function App() {
             handleAuthRedirect() which navigates here automatically.
             Path must match DEPARTMENT_ROUTES redirect_url in auth_routes.py  */}
         <Route path="/dashboard/select" element={<DepartmentSelector />} />
+        <Route path="/support" element={<DepartmentRouteGuard department={["HQ", "IT", "Administrator", "HR", "Cashier", "Finance", "Logistics", "Design & Pattern", "Inventory", "Stock Planning & Forecasting", "Forecast & Analytics", "Third Party", "Production & Job Work", "Merchandiser Buyer", "Store Owner"]}><RetailerHelpSupport /></DepartmentRouteGuard>} />
 
         {/* â”€â”€ Direct dashboard routes â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             These match the DEPARTMENT_ROUTES values in auth_routes.py exactly.
@@ -82,6 +85,7 @@ export default function App() {
         <Route path="/dashboard/design"             element={<DepartmentRouteGuard department="Design & Pattern"><DesignPattern /></DepartmentRouteGuard>} />
         <Route path="/dashboard/inventory"          element={<DepartmentRouteGuard department={["Inventory", "Store Owner"]}><InventoryManagement /></DepartmentRouteGuard>} />
         <Route path="/dashboard/stock-planning"     element={<DepartmentRouteGuard department="Stock Planning & Forecasting"><StockPlanForecasting /></DepartmentRouteGuard>} />
+        <Route path="/dashboard/forecast-analytics" element={<DepartmentRouteGuard department="Forecast & Analytics"><ForecastAnalytics /></DepartmentRouteGuard>} />
         <Route path="/dashboard/third-party"        element={<DepartmentRouteGuard department="Third Party"><ThirdPartyDept /></DepartmentRouteGuard>} />
         <Route path="/dashboard/production"         element={<DepartmentRouteGuard department="Production & Job Work"><ProductionJobWork /></DepartmentRouteGuard>} />
         <Route path="/dashboard/merchandiser-buyer" element={<DepartmentRouteGuard department="Merchandiser Buyer"><Mbuyer /></DepartmentRouteGuard>} />
@@ -121,7 +125,8 @@ export default function App() {
         {/* Inventory / Warehouse */}
         <Route path="/inventory" element={<DepartmentRouteGuard department={["Inventory", "Store Owner"]}><InventoryManagement /></DepartmentRouteGuard>} />
         <Route path="/stock"     element={<DepartmentRouteGuard department="Stock Planning & Forecasting"><StockPlanForecasting /></DepartmentRouteGuard>} />
-       
+        <Route path="/forecast-analytics" element={<DepartmentRouteGuard department="Forecast & Analytics"><ForecastAnalytics /></DepartmentRouteGuard>} />
+
 
         {/* Purchase / Warehouse Flow */}
         <Route path="/grrc"              element={<DepartmentRouteGuard department="Inventory"><GRRC /></DepartmentRouteGuard>} />

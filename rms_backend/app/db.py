@@ -79,6 +79,7 @@ retailer_signups_collection = db["retailer_signups"]
 # got the email" — print() output is easy to lose once stdout isn't a
 # terminal someone is watching.
 email_failures_collection = db["email_failures"]
+support_tickets_collection = db["support_tickets"]
 retailer_subscription_payments_collection = db["retailer_subscription_payments"]
 barcode_label_settings_collection = db["barcode_label_settings"]
 
@@ -104,6 +105,14 @@ hr_attendance_collection        = db["hr_attendance"]
 hr_leave_requests_collection    = db["hr_leave_requests"]
 hr_salary_records_collection    = db["hr_salary_records"]
 hr_holidays_collection          = db["hr_holidays"]
+
+# Forecast & Analytics automation output — recomputed wholesale on every
+# cron run (delete-then-insert per tenant), not incrementally patched, so
+# these always reflect exactly what the last run saw. Not a source of
+# truth for anything; purely a cache of _compute_demand_forecast() output
+# so the UI doesn't have to wait for a live computation to show alerts.
+forecast_low_stock_alerts_collection = db["forecast_low_stock_alerts"]
+forecast_restock_drafts_collection   = db["forecast_restock_drafts"]
 
 async def ensure_procurement_indexes():
     """Create the indexes required by catalogue/RFQ hot paths and idempotency."""
@@ -165,3 +174,8 @@ async def ensure_procurement_indexes():
     await hr_salary_records_collection.create_index([("tenant_id", 1), ("store_id", 1), ("month", -1)], name="hr_salary_store_month")
     await hr_holidays_collection.create_index([("tenant_id", 1), ("date", 1)], name="hr_holidays_tenant_date")
     await email_failures_collection.create_index([("resolved", 1), ("created_at", -1)], name="email_failures_resolved_created")
+    await support_tickets_collection.create_index([("vendor_id", 1), ("updated_at", -1)], name="support_tickets_vendor_updated")
+    await support_tickets_collection.create_index([("actor_type", 1), ("tenant_id", 1), ("updated_at", -1)], name="support_tickets_tenant_updated")
+    await support_tickets_collection.create_index([("status", 1), ("updated_at", -1)], name="support_tickets_status_updated")
+    await forecast_low_stock_alerts_collection.create_index([("tenant_id", 1), ("days_remaining", 1)], name="forecast_alerts_tenant_urgency")
+    await forecast_restock_drafts_collection.create_index([("tenant_id", 1)], unique=True, name="forecast_restock_draft_tenant_unique")

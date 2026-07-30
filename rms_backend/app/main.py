@@ -28,12 +28,14 @@ from .routes.job_work_routes import router as job_work_router
 from .routes.onboarding_routes import router as onboarding_router
 from .routes.store_upgrade_routes import router as store_upgrade_router
 from .routes.retailer_signup_routes import router as retailer_signup_router
+from .routes.forecast_analytics_routes import router as forecast_analytics_router
 from .routes.retailer_subscription_routes import router as retailer_subscription_router
 from .routes.vendor_role_operations_routes import router as vendor_role_operations_router
 from .routes.vendor_b2b_routes import router as vendor_b2b_router
 from .routes.hr_routes import router as hr_router
 from .routes.supplier_return_routes import router as supplier_return_router
 from .routes.document_message_routes import router as document_message_router
+from .routes.support_routes import router as support_router
    
 
 
@@ -99,12 +101,14 @@ app.include_router(job_work_router)
 app.include_router(onboarding_router)
 app.include_router(store_upgrade_router)
 app.include_router(retailer_signup_router)
+app.include_router(forecast_analytics_router)
 app.include_router(retailer_subscription_router)
 app.include_router(vendor_role_operations_router)
 app.include_router(vendor_b2b_router)
 app.include_router(hr_router)
 app.include_router(supplier_return_router)
 app.include_router(document_message_router)
+app.include_router(support_router)
 
 
 

@@ -1,4 +1,4 @@
-﻿
+
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import jwt, JWTError
@@ -92,6 +92,7 @@ async def get_tenant(token: str = Depends(oauth2_scheme)) -> Dict[str, Any]:
         "store_type":  payload.get("store_type") or admin.get("store_type"),
         "admin_id":    user_id,
         "admin_name":  admin.get("name") or admin.get("full_name") or admin.get("email", ""),
+        "admin_email": admin.get("email") or "",
         "department":  payload.get("department") or admin.get("department", ""),
         # Carried through so require_permission() below doesn't need a
         # second DB round-trip â€” this dict already reflects the live record.

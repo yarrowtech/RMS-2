@@ -39,6 +39,7 @@ import VendorAnalytics      from "./VendorAnalytics.jsx";
 import VendorCatalogueTab   from "./Vendorcataloguetab.jsx";
 import VendorSubscriptionTab from "./Vendorsubscriptiontab.jsx";
 import VendorWhatsAppConnect from "./Vendorwhatsappconnect.jsx";
+import VendorHelpSupport from "./VendorHelpSupport.jsx";
 import PurchaseInvoice from "../PurchaseInvoice.jsx";
 import ProcurementNotificationCenter from "../ProcurementNotificationCenter.jsx";
 
@@ -126,34 +127,6 @@ function ProfileCard({ profile }) {
             <InfoRow icon={Mail}      label="Email"         value={profile.email} />
             <InfoRow icon={Phone}     label="Mobile"        value={profile.contactMobile || "-"} />
             <InfoRow icon={MapPin}    label="Address"       value={profile.address || "-"} />
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function HelpCard() {
-  const contacts = [
-    { icon: Mail,  text: "support@rmshelpdesk.com" },
-    { icon: Phone, text: "+91 1800 123 456" },
-    { icon: Clock, text: "Mon-Sat, 9 AM - 6 PM" },
-  ];
-  return (
-    <div className="max-w-md">
-      <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-        <div className="p-6">
-          <div className="mb-1 flex items-center gap-3">
-            <div className="grid h-10 w-10 place-items-center rounded-xl bg-teal-50">
-              <HeadphonesIcon size={18} className="text-teal-600" />
-            </div>
-            <h2 className="text-lg font-bold tracking-tight text-slate-900">Help & Support</h2>
-          </div>
-          <p className="mb-5 text-sm text-slate-500">Our team is ready to help you anytime.</p>
-          <div className="space-y-2.5">
-            {contacts.map(({ icon: Icon, text }) => (
-              <InfoRow key={text} icon={Icon} label="" value={text} />
-            ))}
           </div>
         </div>
       </div>
@@ -389,7 +362,7 @@ export default function MSeller() {
       case "subscription":   return <VendorSubscriptionTab />;
       case "whatsapp":       return <VendorWhatsAppConnect />;
       case "profile":        return <ProfileCard profile={vendorProfile} />;
-      case "help-support":   return <HelpCard />;
+      case "help-support":   return <VendorHelpSupport />;
       case "settings":       return <MsellerSettings onNavigate={setActiveTab} />;
 
       default:

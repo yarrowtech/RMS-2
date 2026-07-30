@@ -40,6 +40,7 @@ const DEPT_COLOR_BY_ID = {
   "IT":                           "cyan",
   "Design & Pattern":             "rose",
   "Stock Planning & Forecasting": "blue",
+  "Forecast & Analytics":         "violet",
   "Third Party":                  "slate",
   "Production & Job Work":        "fuchsia",
   "Cashier":                      "orange",

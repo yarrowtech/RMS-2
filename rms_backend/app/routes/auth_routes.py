@@ -315,7 +315,12 @@ async def forgot_password(req: ForgotPasswordRequest):
 
         reset_link = f"{settings.frontend_base_url}/reset-password?token={token}"
         try:
-            await send_reset_password_email(email=req.email, name=user.get("name", "User"), link=reset_link)
+            await send_reset_password_email(
+                email=req.email, name=user.get("name", "User"), link=reset_link,
+                role="admin",
+                account_type=user.get("account_type", "department_retailer"),
+                store_name=user.get("store_name", ""),
+            )
         except Exception as e:
             print("❌ EMAIL ERROR:", str(e))
 
@@ -334,7 +339,8 @@ async def forgot_password(req: ForgotPasswordRequest):
         reset_link = f"{settings.frontend_base_url}/reset-password?token={token}"
         try:
             await send_reset_password_email(
-                email=req.email, name=vendor.get("name") or vendor.get("vendor_name") or "Vendor", link=reset_link
+                email=req.email, name=vendor.get("name") or vendor.get("vendor_name") or "Vendor", link=reset_link,
+                role="vendor",
             )
         except Exception as e:
             print("❌ EMAIL ERROR:", str(e))

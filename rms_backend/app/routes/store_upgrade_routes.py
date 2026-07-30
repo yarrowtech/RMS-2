@@ -172,6 +172,7 @@ DEPARTMENT_PERMISSIONS = {
     "Production & Job Work":         ["job_work"],
     "HR":                            ["hr"],
     "IT":                            [],
+    "Forecast & Analytics":          ["forecast_analytics"],
 }
 
 # What a Single Store Owner already has (superadmin_tenant_routes.py:176-188)
