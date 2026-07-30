@@ -4,6 +4,7 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import RetailersTab from './Superadminretailerstab.jsx';
 import SuperAdminOnboardingRequests from './SuperAdminOnboardingRequests.jsx';
 import SuperadminVendorManagementModal from './SuperadminVendorManagementModal';
+import SuperAdminSupportInbox from './SuperAdminSupportInbox.jsx';
 import { useNavigate } from 'react-router-dom';
 import {
   Crown, Shield, Users, Settings, Activity, Eye, Trash2,
@@ -12,7 +13,7 @@ import {
   Bell, Database, BarChart2, Globe, Key, FileText, Layers, Hash,
   ChevronRight, ToggleLeft, ToggleRight, Mail, Clock, Ban,
   ArrowRight, Server, Wifi, HardDrive, Zap, ShieldCheck, ShieldOff,
-  UserCheck, UserX, SendHorizonal, Store, Edit, Plus, IndianRupee
+  UserCheck, UserX, SendHorizonal, Store, Edit, Plus, IndianRupee, Headphones
 } from 'lucide-react';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -1301,6 +1302,7 @@ export default function SuperAdmin() {
     { id: 'admins',    label: 'Administrators', icon: Shield    },
     { id: 'vendors',   label: 'Vendors',         icon: Store     },
     { id: 'finance',   label: 'Platform Finance', icon: IndianRupee },
+    { id: 'support',   label: 'Support Inbox', icon: Headphones },
     { id: 'retailers', label: 'Retailers',       icon: Building2 },
     { id: 'onboarding', label: 'Onboarding',     icon: UserPlus },
     { id: 'controls',  label: 'My Controls',    icon: Key      },
@@ -1548,6 +1550,10 @@ export default function SuperAdmin() {
 
         {activeTab === 'finance' && (
           <PanelPlatformFinance />
+        )}
+
+        {activeTab === 'support' && (
+          <SuperAdminSupportInbox />
         )}
 
         {/* ── TAB: Retailers ── */}

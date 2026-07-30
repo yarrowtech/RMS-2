@@ -3,9 +3,10 @@
 // import React, { Suspense, useMemo, useState } from "react";
 import { logoutOrReturnToDepartmentSelector } from "../../utils/authRedirect";
 // import { FaBars } from "react-icons/fa";
-// import { Settings as SettingsIcon } from "lucide-react";
+// import { CircleHelp, Settings as SettingsIcon } from "lucide-react";
 // import AdminSidebar from "./AdminSidebar";
 // import AdminSettings from "./AdminSettings";
+// import RetailerHelpSupport from "../RetailerHelpSupport";
 // import AdminDashboard from "./AdminDashboard";
 // import AdminProduct from "./AdminProduct";
 // import ProductMapping from "./ProductMapping";
@@ -27,6 +28,7 @@ import { logoutOrReturnToDepartmentSelector } from "../../utils/authRedirect";
 //   const labels = {
 //     "dashboard":             "Dashboard",
 //     "__settings":            "Settings",
+//     "__support":             "Help & Support",
 //     // HQ
 //     "products":              "Products",
 //     "productMapping":        "Product Mapping",
@@ -119,6 +121,7 @@ import { logoutOrReturnToDepartmentSelector } from "../../utils/authRedirect";
 
 //   const renderPage = () => {
 //     if (active === "__settings") return <AdminSettings />;
+//     if (active === "__support") return <RetailerHelpSupport />;
 
 //     // ── HQ ADMIN ─────────────────────────────────────────────────────────────
 //     if (isHQ) {
@@ -349,6 +352,15 @@ import { logoutOrReturnToDepartmentSelector } from "../../utils/authRedirect";
 //               <p className="text-sm text-slate-700 capitalize">{pageTitle}</p>
 //             </div>
 //             <div className="flex items-center gap-3">
+//               <button
+//                 type="button"
+//                 onClick={() => setActive("__support")}
+//                 className="grid h-9 w-9 place-items-center rounded-lg border border-slate-200 bg-slate-50 text-slate-600 transition hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-700"
+//                 aria-label="Help and support"
+//                 title="Help & Support"
+//               >
+//                 <CircleHelp size={18} className="text-slate-800" />
+//               </button>
 //               {isStore && (
 //                 <span className="px-3 py-1 bg-indigo-100 text-indigo-700 rounded-full text-xs font-bold">
 //                   🏪 {storeName}
@@ -382,9 +394,10 @@ import { logoutOrReturnToDepartmentSelector } from "../../utils/authRedirect";
 
 import React, { Suspense, useMemo, useState } from "react";
 import { FaBars } from "react-icons/fa";
-import { Settings as SettingsIcon } from "lucide-react";
+import { CircleHelp, Settings as SettingsIcon } from "lucide-react";
 import AdminSidebar from "./AdminSidebar";
 import AdminSettings from "./AdminSettings";
+import RetailerHelpSupport from "../RetailerHelpSupport";
 import AdminDashboard from "./AdminDashboard";
 import AdminProduct from "./AdminProduct";
 import ProductMapping from "./ProductMapping";
@@ -417,6 +430,7 @@ function labelFromKey(key) {
   const labels = {
     "dashboard":             "Dashboard",
     "__settings":            "Settings",
+    "__support":             "Help & Support",
     // HQ
     "products":              "Products",
     "productMapping":        "Product Mapping",
@@ -503,6 +517,7 @@ export default function AdminModule() {
 
   const renderPage = () => {
     if (active === "__settings") return <AdminSettings />;
+    if (active === "__support") return <RetailerHelpSupport />;
 
     // ── HQ ADMIN ─────────────────────────────────────────────────────────────
     if (isHQ) {
@@ -670,6 +685,15 @@ export default function AdminModule() {
               <p className="mt-0.5 text-xs font-medium capitalize text-slate-500">{pageTitle}</p>
             </div>
             <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => setActive("__support")}
+                className="grid h-9 w-9 place-items-center rounded-lg border border-slate-200 bg-slate-50 text-slate-600 transition hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-700"
+                aria-label="Help and support"
+                title="Help & Support"
+              >
+                <CircleHelp size={18} className="text-slate-800" />
+              </button>
               {isStore && (
                 <span className="px-3 py-1 bg-indigo-100 text-indigo-700 rounded-full text-xs font-bold">
                   🏪 {storeName}

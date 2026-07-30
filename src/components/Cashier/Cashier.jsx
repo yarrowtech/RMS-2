@@ -1,11 +1,12 @@
 import React, { Suspense, useMemo, useState } from "react";
 import { logoutOrReturnToDepartmentSelector } from "../../utils/authRedirect";
 import { FaBars } from "react-icons/fa";
-import { Settings as SettingsIcon } from "lucide-react";
+import { CircleHelp, Settings as SettingsIcon } from "lucide-react";
 import CashierSidebar from "./CashierSidebar";
 import CashierDashboard from "./CashierDashboard";
 import CashierPOS from "./CashierPOS";
 import CashierSettings from "./CashierSettings";
+import RetailerHelpSupport from "../RetailerHelpSupport";
 import CashierCustomer from "./CashierCustomer";
 import CashierFinance from "./CashierFinance";
 import CashierReport from "./CashierReport";
@@ -24,6 +25,8 @@ function labelFromKey(key) {
       return "Finance";
     case "reports":
       return "Reports";
+    case "__support":
+      return "Help & Support";
     case "__settings":
       return "Settings";
     default:
@@ -95,6 +98,9 @@ export default function Cashier() {
           <CashierReport  />
         );
 
+      case "__support":
+        return <RetailerHelpSupport />;
+
       case "__settings":
         return <CashierSettings />;
 
@@ -125,6 +131,16 @@ export default function Cashier() {
             <p className="text-xs font-medium text-emerald-700">{pageTitle}</p>
           </div>
 
+          <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setActive("__support")}
+            className="rounded-lg border border-slate-200 bg-slate-50 p-2 text-slate-700 transition hover:bg-slate-100"
+            aria-label="Help and support"
+            title="Help & Support"
+          >
+            <CircleHelp size={18} className="text-slate-900" />
+          </button>
           <button
             type="button"
             onClick={onSettingsClick}
@@ -134,6 +150,7 @@ export default function Cashier() {
           >
             <SettingsIcon size={18} className="text-slate-900" />
           </button>
+          </div>
         </div>
       </div>
 
@@ -188,6 +205,15 @@ export default function Cashier() {
               <p className="mt-0.5 text-xs font-semibold uppercase tracking-wider text-emerald-700">{pageTitle}</p>
             </div>
 
+            <button
+              type="button"
+              onClick={() => setActive("__support")}
+              className="grid h-9 w-9 place-items-center rounded-lg border border-slate-200 bg-slate-50 text-slate-600 transition hover:border-emerald-200 hover:bg-emerald-50 hover:text-emerald-700"
+              aria-label="Help and support"
+              title="Help & Support"
+            >
+              <CircleHelp size={18} className="text-slate-800" />
+            </button>
             <button
               type="button"
               onClick={onSettingsClick}

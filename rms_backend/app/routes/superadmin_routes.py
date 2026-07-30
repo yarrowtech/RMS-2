@@ -498,6 +498,9 @@ async def approve_reset(
             email=user["email"],
             name=user.get("name", "Admin"),
             link=reset_link,
+            role="admin",
+            account_type=user.get("account_type", "department_retailer"),
+            store_name=user.get("store_name", ""),
         )
     except Exception as e:
         print(f"EMAIL ERROR (approve-reset): {e}")

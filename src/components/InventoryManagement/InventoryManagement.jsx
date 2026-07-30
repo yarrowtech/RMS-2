@@ -2,7 +2,7 @@
 
 import React, { Suspense, useMemo, useState } from "react";
 import { logoutOrReturnToDepartmentSelector } from "../../utils/authRedirect";
-import { FaBars, FaCog } from "react-icons/fa";
+import { FaBars, FaCog, FaQuestionCircle } from "react-icons/fa";
 import InventoryManagementSidebar from "./InventoryManagementSidebar";
 import InventoryManagementCurrentStockList from "./InventoryManagementCurrentStockList";
 import InventoryManagementStockLedgerMovement from "./InventoryManagementStockLedgerMovement";
@@ -22,6 +22,7 @@ import InventoryManagementStoreStock from "./Inventorymanagementstorestock.jsx";
 import GRRC from "./GRRC";
 import GRN from "./GRN";
 import SupplierReturnRegister from "./SupplierReturnRegister.jsx";
+import RetailerHelpSupport from "../RetailerHelpSupport";
 
 const COMPANY_NAME = "RMS";
 
@@ -68,6 +69,7 @@ function labelFromKey(key, storeName = "") {
     case "reports.warehouseWise": return "Warehouse Wise Stock";
 
     case "settings":              return "Settings";
+    case "support":               return "Help & Support";
     default:                      return "Inventory Dashboard";
   }
 }
@@ -187,6 +189,8 @@ export default function InventoryManagement() {
         return <InventoryManagementWareHouseWizeStock />;
 
       // ── SETTINGS (both) ───────────────────────────────────────────────────
+      case "support":
+        return <RetailerHelpSupport />;
       case "settings":
         return <InventoryManagementSettings />;
 
@@ -297,12 +301,22 @@ export default function InventoryManagement() {
                   )}
                 </div>
               </div>
+              <div className="flex items-center gap-2">
+              <button
+                onClick={() => setActive("support")}
+                className="rounded-xl border border-emerald-100 bg-emerald-50 p-2.5 text-emerald-700 shadow-sm transition hover:border-emerald-200 hover:bg-emerald-100"
+                aria-label="Help and support"
+                title="Help & Support"
+              >
+                <FaQuestionCircle className="text-emerald-700" size={16} />
+              </button>
               <button
                 onClick={() => setActive("settings")}
                 className="rounded-xl border border-emerald-100 bg-emerald-50 p-2.5 text-emerald-700 shadow-sm transition hover:border-emerald-200 hover:bg-emerald-100"
               >
                 <FaCog className="text-emerald-700" size={16} />
               </button>
+              </div>
             </div>
           </header>
 

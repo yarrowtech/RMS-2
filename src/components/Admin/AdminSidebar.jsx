@@ -321,7 +321,7 @@ import {
   FaShoppingCart,
   FaIdBadge,
 } from "react-icons/fa";
-import { PanelLeft, PanelRight, PackageCheck, Building2, Wrench, Shield, DollarSign, Palette, TrendingUp, Network, Factory, Package } from "lucide-react";
+import { PanelLeft, PanelRight, PackageCheck, Building2, Wrench, Shield, DollarSign, Palette, TrendingUp, Network, Factory, Package, LineChart } from "lucide-react";
 import { FaSitemap } from "react-icons/fa";
 import { useNavigate } from "react-router-dom";
 
@@ -346,6 +346,7 @@ const DEPARTMENT_WORKSPACES = [
   { department: "Merchandiser Buyer",           path: "/merchandiser-buyer",  icon: Building2,   label: "Merchandiser Buyer" },
   { department: "Design & Pattern",             path: "/design",              icon: Palette,     label: "Design & Pattern" },
   { department: "Stock Planning & Forecasting", path: "/stock",               icon: TrendingUp,  label: "Stock Planning" },
+  { department: "Forecast & Analytics",         path: "/forecast-analytics",  icon: LineChart,   label: "Forecast & Analytics" },
   { department: "Third Party",                  path: "/third-party",         icon: Network,     label: "Third Party" },
   { department: "Production & Job Work",        path: "/production",          icon: Factory,     label: "Production & Job Work" },
 ];

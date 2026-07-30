@@ -451,20 +451,49 @@ async def send_questionnaire_received_email(
 # 8. ADMIN — Password reset (existing, unchanged)
 # ─────────────────────────────────────────────────────────────────────────────
 async def send_reset_password_email(
-    email: EmailStr, name: str, link: str
+    email: EmailStr, name: str, link: str,
+    role: str = "admin",
+    account_type: str = "department_retailer",
+    store_name: str = "",
 ):
-    """Password reset link for any admin user."""
+    """
+    Password reset link — copy branches by who's resetting, since the blast
+    radius differs a lot: a vendor reset only affects their own portal, a
+    single-store retailer reset only affects their one store, but an HQ
+    (department_retailer) reset affects every department and store that
+    admin manages. role/account_type come straight from what forgot_password
+    already has on hand (admins_collection.account_type / vendor lookup),
+    so this doesn't need any new data to be collected.
+    """
+    if role == "vendor":
+        context_line = "We received a request to reset your CitiMart Vendor Portal password."
+        warning = "If you didn't request this, you can safely ignore this email. The link expires in 1 hour."
+        subject = "Reset your CitiMart Vendor Portal password"
+    elif account_type == "single_store":
+        store_phrase = f" for <strong>{store_name}</strong>" if store_name else ""
+        context_line = f"We received a request to reset your CitiMart RMS password{store_phrase}."
+        warning = "If you didn't request this, you can safely ignore this email. The link expires in 1 hour."
+        subject = "Reset your CitiMart RMS password"
+    else:
+        context_line = "We received a request to reset your CitiMart RMS password."
+        warning = (
+            "This reset applies to your HQ account — it controls access across every "
+            "department and store you manage. If you didn't request this, contact your "
+            "Super Admin immediately rather than ignoring it. The link expires in 1 hour."
+        )
+        subject = "Reset your CitiMart RMS HQ account password"
+
     body = f"""
       <h2 style="color:#222;">Hello, {name}</h2>
       <p style="font-size:15px;color:#444;">
-        We received a request to reset your CitiMart RMS password.
+        {context_line}
       </p>
       {_btn(link, "🔐 Reset Password", DANGER)}
       {_divider()}
-      {_note("If you didn't request this, you can safely ignore this email. The link expires in 1 hour.")}
+      {_note(warning)}
     """
-    await _send(
-        subject="Reset your CitiMart RMS password",
+    return await _send(
+        subject=subject,
         recipients=[email],
         html=_wrap(DANGER, "Password Reset Request", body),
     )
