@@ -16,7 +16,9 @@ from bson import ObjectId
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from ..config import settings
 from ..db import support_tickets_collection
+from ..email_utils import send_support_ticket_created_email, send_support_ticket_reply_email
 from .deps import get_tenant
 from .vendor_routes import require_vendor_identity
 
@@ -80,6 +82,7 @@ def _serialize_ticket(doc: Dict[str, Any], can_reply: bool) -> Dict[str, Any]:
         "tenant_id": doc.get("tenant_id"),
         "admin_id": doc.get("admin_id"),
         "requester_name": doc.get("requester_name", ""),
+        "requester_email": doc.get("requester_email", ""),
         "department": doc.get("department"),
         "store_id": doc.get("store_id"),
         "store_name": doc.get("store_name"),
@@ -133,6 +136,9 @@ async def vendor_create_ticket(payload: TicketCreateRequest, vendor: dict = Depe
     }
     result = await support_tickets_collection.insert_one(doc)
     doc["_id"] = result.inserted_id
+    await send_support_ticket_created_email(
+        settings.superadmin_email, f"{doc['vendor_name']} (Vendor)", doc["category"], doc["subject"], doc["description"],
+    )
     return {"data": _serialize_ticket(doc, can_reply=True)}
 
 
@@ -237,6 +243,7 @@ async def retailer_create_ticket(payload: TicketCreateRequest, ctx: dict = Depen
         "tenant_id": ctx["tenant_id"],
         "admin_id": ctx["admin_id"],
         "requester_name": ctx.get("admin_name", ""),
+        "requester_email": ctx.get("admin_email", ""),
         "department": ctx.get("department"),
         "store_id": ctx.get("store_id"),
         "store_name": ctx.get("store_name"),
@@ -258,6 +265,10 @@ async def retailer_create_ticket(payload: TicketCreateRequest, ctx: dict = Depen
     }
     result = await support_tickets_collection.insert_one(doc)
     doc["_id"] = result.inserted_id
+    requester_label = f"{doc['requester_name']} — {doc['tenant_id']}" + (f" ({doc['department']})" if doc.get("department") else "")
+    await send_support_ticket_created_email(
+        settings.superadmin_email, requester_label, doc["category"], doc["subject"], doc["description"],
+    )
     return {"data": _serialize_ticket(doc, can_reply=True)}
 
 
@@ -285,6 +296,15 @@ async def retailer_reply_ticket(ticket_id: str, payload: TicketReplyRequest, ctx
         {"$push": {"messages": message}, "$set": {"status": "waiting_on_rms", "updated_at": now}},
     )
     doc = await support_tickets_collection.find_one({"_id": oid})
+
+    # Notify the original requester when someone ELSE (HQ, or a same-store
+    # peer) replies — not when they're replying to their own ticket.
+    if doc.get("admin_id") != ctx["admin_id"] and doc.get("requester_email"):
+        replier_label = ctx.get("admin_name", "") + (f" ({ctx['department']})" if ctx.get("department") else "")
+        await send_support_ticket_reply_email(
+            doc["requester_email"], doc.get("requester_name", ""), doc["subject"], replier_label, message["message"],
+        )
+
     return {"data": _serialize_ticket(doc, can_reply=_retailer_can_touch(ctx, doc))}
 
 
@@ -373,4 +393,13 @@ async def superadmin_update_ticket(ticket_id: str, payload: TicketUpdateRequest,
     await support_tickets_collection.update_one({"_id": oid}, mongo_update)
 
     doc = await support_tickets_collection.find_one({"_id": oid})
+
+    if reply_text:
+        if doc.get("actor_type") == "vendor":
+            recipient, name = doc.get("vendor_email"), doc.get("vendor_name", "")
+        else:
+            recipient, name = doc.get("requester_email"), doc.get("requester_name", "")
+        if recipient:
+            await send_support_ticket_reply_email(recipient, name, doc["subject"], "RMS Support", reply_text)
+
     return {"data": _serialize_ticket(doc, can_reply=doc.get("status") not in CLOSED_STATUSES)}

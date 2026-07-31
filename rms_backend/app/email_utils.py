@@ -655,3 +655,62 @@ async def send_subscription_expiring_email(email: EmailStr, name: str, tier_labe
         recipients=[email],
         html=_wrap(color, "Subscription Reminder", body, "© CitiMart RMS · Vendor Subscriptions"),
     )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 14. SUPPORT TICKETS — new ticket (to ops) / new reply (to requester)
+#
+# Shared across the vendor AND retailer support surfaces (support_routes.py)
+# — the ticket system itself has no email hooks otherwise, so a ticket sitting
+# untouched is invisible to anyone not actively watching the inbox UI.
+# ─────────────────────────────────────────────────────────────────────────────
+async def send_support_ticket_created_email(
+    ops_email: EmailStr, requester_label: str, category: str, subject: str, description: str
+) -> bool:
+    """Sent to the ops/Super Admin inbox the moment ANY new ticket (vendor or
+    retailer) is submitted — the Support Inbox UI only updates for someone
+    already looking at it."""
+    snippet = (description or "")[:280]
+    body = f"""
+      <h2 style="color:#222;margin-bottom:8px;">New support ticket</h2>
+      <p style="font-size:14px;color:#444;">
+        From <strong>{requester_label}</strong> &middot; {category}
+      </p>
+      <div style="margin:16px 0;padding:14px;border:1px solid #e5e7eb;background:#f8fafc;border-radius:8px;">
+        <p style="margin:0 0 6px;color:#111;font-size:14px;font-weight:700;">{subject}</p>
+        <p style="margin:0;color:#555;font-size:13px;">{snippet}{'…' if len(description or '') > 280 else ''}</p>
+      </div>
+      {_divider()}
+      {_note("Reply from the RMS Support Inbox.")}
+    """
+    return await _send(
+        subject=f"New support ticket — {subject}",
+        recipients=[ops_email],
+        html=_wrap(PRIMARY, "New Support Ticket", body, "RMS Support"),
+    )
+
+
+async def send_support_ticket_reply_email(
+    email: EmailStr, name: str, subject: str, replier_label: str, message: str
+) -> bool:
+    """Sent to a ticket's original requester whenever someone else (RMS
+    support, or — for retailer tickets — an HQ/store admin) adds a reply, so
+    they don't have to keep the portal open to notice a response."""
+    snippet = (message or "")[:280]
+    body = f"""
+      <h2 style="color:#222;margin-bottom:8px;">Hi {name},</h2>
+      <p style="font-size:15px;color:#444;">
+        <strong style="color:{PRIMARY};">{replier_label}</strong> replied to your support ticket:
+      </p>
+      <p style="margin:8px 0 16px;color:#111;font-size:14px;font-weight:700;">{subject}</p>
+      <div style="margin:0 0 16px;padding:14px;border:1px solid #e5e7eb;background:#f8fafc;border-radius:8px;">
+        <p style="margin:0;color:#555;font-size:13px;white-space:pre-wrap;">{snippet}{'…' if len(message or '') > 280 else ''}</p>
+      </div>
+      {_divider()}
+      {_note("Sign in to your RMS portal to view the full conversation and reply.")}
+    """
+    return await _send(
+        subject=f"New reply on your support ticket — {subject}",
+        recipients=[email],
+        html=_wrap(PRIMARY, "New Support Reply", body, "RMS Support"),
+    )
