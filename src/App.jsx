@@ -1,6 +1,8 @@
 
 // App.jsx
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { useEffect } from "react";
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
+import { initSessionTracking, trackPageView } from "./utils/analytics.js";
 import RoleSelector from "./components/select";
 import Cashier from "./components/Cashier/Cashier";
 import HR from "./components/hr";
@@ -53,9 +55,21 @@ import StoreOwnerStaff from "./components/StoreOwner/StoreOwnerStaff.jsx";
 import RetailerHelpSupport from "./components/RetailerHelpSupport.jsx";
 
 
+// Fires page-view + session tracking on every route change. Rendered once,
+// inside <BrowserRouter> so useLocation() works, but outside <Routes> so it
+// runs regardless of which route matches — covers every page (public,
+// vendor, retailer, super admin) without touching individual page files.
+function UsageTracker() {
+  const location = useLocation();
+  useEffect(() => { initSessionTracking(); }, []);
+  useEffect(() => { trackPageView(location.pathname); }, [location.pathname]);
+  return null;
+}
+
 export default function App() {
   return (
     <BrowserRouter>
+      <UsageTracker />
       <Routes>
         {/* Main roles */}
         <Route path="/" element={<RoleSelector />} />

@@ -1159,9 +1159,11 @@ async def create_vendor_invite(request: Request, ctx: dict = Depends(get_hq_tena
     body = await request.json()
 
     company_name     = (body.get("company_name") or body.get("companyName", "")).strip()
+    brand_name       = (body.get("brand_name") or body.get("brandName", "")).strip()
     contact_name     = (body.get("contact_person") or body.get("contactName", "")).strip()
     mobile           = body.get("mobile", "").strip()
     email            = (body.get("email") or "").strip()
+    address          = (body.get("address") or "").strip()
     product_category = (body.get("product_type") or body.get("productCategory", "")).strip()
     expires_in_days  = int(body.get("expiresInDays", 7))
 
@@ -1173,9 +1175,11 @@ async def create_vendor_invite(request: Request, ctx: dict = Depends(get_hq_tena
     invite_doc = {
         "token":           raw_token,
         "companyName":     company_name,
+        "brandName":       brand_name,
         "contactName":     contact_name,
         "mobile":          mobile,
         "email":           email,
+        "address":         address,
         "productCategory": product_category,
         "status":          "Pending",
         "created_by":      ctx.get("admin_id", "M-Buyer"),
@@ -1211,9 +1215,11 @@ async def get_invite_by_token(token: str):
 
     return {
         "companyName":     invite["companyName"],
+        "brandName":       invite.get("brandName", ""),
         "contactName":     invite["contactName"],
         "mobile":          invite["mobile"],
         "email":           invite.get("email", ""),
+        "address":         invite.get("address", ""),
         "productCategory": invite.get("productCategory", ""),
         "expiresAt":       invite["expires_at"].isoformat(),
     }
@@ -1411,9 +1417,11 @@ async def accept_questionnaire_submission(
     invite_doc = {
         "token":           raw_token,
         "companyName":     submission.get("vendorName", ""),
+        "brandName":       submission.get("brandName", ""),
         "contactName":     submission.get("contactPerson", ""),
         "mobile":          submission.get("phoneNumber", ""),
         "email":           "",
+        "address":         submission.get("address", ""),
         "productCategory": submission.get("productCategory", ""),
         "status":          "Pending",
         "source":          "questionnaire",

@@ -5,6 +5,7 @@ import RetailersTab from './Superadminretailerstab.jsx';
 import SuperAdminOnboardingRequests from './SuperAdminOnboardingRequests.jsx';
 import SuperadminVendorManagementModal from './SuperadminVendorManagementModal';
 import SuperAdminSupportInbox from './SuperAdminSupportInbox.jsx';
+import UsageAnalytics from './UsageAnalytics.jsx';
 import { useNavigate } from 'react-router-dom';
 import {
   Crown, Shield, Users, Settings, Activity, Eye, Trash2,
@@ -1303,6 +1304,7 @@ export default function SuperAdmin() {
     { id: 'vendors',   label: 'Vendors',         icon: Store     },
     { id: 'finance',   label: 'Platform Finance', icon: IndianRupee },
     { id: 'support',   label: 'Support Inbox', icon: Headphones },
+    { id: 'analytics', label: 'Usage Analytics', icon: BarChart2 },
     { id: 'retailers', label: 'Retailers',       icon: Building2 },
     { id: 'onboarding', label: 'Onboarding',     icon: UserPlus },
     { id: 'controls',  label: 'My Controls',    icon: Key      },
@@ -1554,6 +1556,10 @@ export default function SuperAdmin() {
 
         {activeTab === 'support' && (
           <SuperAdminSupportInbox />
+        )}
+
+        {activeTab === 'analytics' && (
+          <UsageAnalytics />
         )}
 
         {/* ── TAB: Retailers ── */}

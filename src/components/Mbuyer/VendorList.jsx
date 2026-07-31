@@ -129,9 +129,11 @@ const Vendors = ({ showQuestionnaires = true }) => {
         headers: authHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({
           company_name:   formValues.companyName,
+          brand_name:     formValues.brandName,
           contact_person: formValues.contactName,
           mobile:         formValues.mobile,
           email:          formValues.email,
+          address:        formValues.address,
           product_type:   formValues.productCategory,
           invited_by:     localStorage.getItem("admin_name") || "M-Buyer",
         }),
@@ -425,7 +427,7 @@ const Vendors = ({ showQuestionnaires = true }) => {
 // ADD VENDOR MODAL
 // ─────────────────────────────────────────────────────────────────────────────
 const AddVendorModal = ({ onClose, onGenerate }) => {
-  const [form,  setForm]  = useState({ companyName:"", contactName:"", mobile:"", email:"", productCategory:"" });
+  const [form,  setForm]  = useState({ companyName:"", brandName:"", contactName:"", mobile:"", email:"", address:"", productCategory:"" });
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const set = field => e => setForm({ ...form, [field]: e.target.value });
@@ -453,9 +455,13 @@ const AddVendorModal = ({ onClose, onGenerate }) => {
         {error && <div className="bg-red-50 border border-red-200 text-red-600 text-sm rounded-md px-3 py-2">⚠️ {error}</div>}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <LabeledInput label="Company / Vendor Name *" value={form.companyName}  onChange={set("companyName")}     placeholder="e.g. Sunrise Textiles" />
+          <LabeledInput label="Brand Name (if on card)" value={form.brandName}    onChange={set("brandName")}       placeholder="e.g. Sunrise" />
           <LabeledInput label="Contact Person Name *"   value={form.contactName}  onChange={set("contactName")}     placeholder="e.g. Rajesh Kumar" />
           <LabeledInput label="Mobile Number *"         value={form.mobile}       onChange={set("mobile")}           placeholder="10-digit number" />
           <LabeledInput label="Email (if on card)"      value={form.email}        onChange={set("email")}            placeholder="vendor@example.com" />
+          <div className="sm:col-span-2">
+            <LabeledInput label="Address (if on card)"  value={form.address}      onChange={set("address")}          placeholder="e.g. 12 MG Road, Mumbai" />
+          </div>
           <div className="sm:col-span-2">
             <LabeledInput label="Product Category *"    value={form.productCategory} onChange={set("productCategory")} placeholder="e.g. Apparel, Electronics" />
           </div>
