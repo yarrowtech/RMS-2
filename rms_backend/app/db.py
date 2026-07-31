@@ -114,6 +114,15 @@ hr_holidays_collection          = db["hr_holidays"]
 forecast_low_stock_alerts_collection = db["forecast_low_stock_alerts"]
 forecast_restock_drafts_collection   = db["forecast_restock_drafts"]
 
+# Product-usage analytics (page views, feature clicks, session start/end,
+# device type) — separate from audit_logs_collection, which is a
+# compliance-style record of discrete admin actions. This is aggregate
+# behavioural data for Super Admin's Usage Analytics tab, and ingestion is
+# deliberately public (see analytics_routes.py) since half of what needs
+# tracking — landing page visits, onboarding attempts — happens before
+# anyone has a login token.
+usage_events_collection = db["usage_events"]
+
 async def ensure_procurement_indexes():
     """Create the indexes required by catalogue/RFQ hot paths and idempotency."""
     await purchaseorders_collection.create_index([("tenant_id", 1), ("orderNo", 1)], name="po_tenant_number")
@@ -179,3 +188,7 @@ async def ensure_procurement_indexes():
     await support_tickets_collection.create_index([("status", 1), ("updated_at", -1)], name="support_tickets_status_updated")
     await forecast_low_stock_alerts_collection.create_index([("tenant_id", 1), ("days_remaining", 1)], name="forecast_alerts_tenant_urgency")
     await forecast_restock_drafts_collection.create_index([("tenant_id", 1)], unique=True, name="forecast_restock_draft_tenant_unique")
+    await usage_events_collection.create_index([("session_id", 1), ("event_type", 1)], name="usage_events_session_type")
+    await usage_events_collection.create_index([("event_type", 1), ("created_at", -1)], name="usage_events_type_created")
+    await usage_events_collection.create_index([("path", 1), ("event_type", 1), ("created_at", -1)], name="usage_events_path_type_created")
+    await usage_events_collection.create_index([("feature", 1), ("event_type", 1), ("created_at", -1)], name="usage_events_feature_type_created")

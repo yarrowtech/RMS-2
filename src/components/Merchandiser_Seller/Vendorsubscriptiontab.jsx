@@ -1,6 +1,7 @@
 import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
 import React, { useState, useEffect, useCallback } from "react";
 import { Check, Zap, Crown, TrendingUp, RefreshCw } from "lucide-react";
+import { trackFeature } from "../../utils/analytics.js";
 
 const API_BASE = APP_API_URL;
 
@@ -139,6 +140,7 @@ export default function VendorSubscriptionTab() {
 
   const handleUpgrade = async (tierKey, isRenewal = false) => {
     if (tierKey === mySub?.tier && !isRenewal) return;
+    trackFeature("subscription.cta_click", { tier: tierKey, is_renewal: isRenewal, actor: "vendor" });
     setUpgrading(tierKey);
     setError(null);
     setPaymentNotice("");

@@ -1,4 +1,5 @@
 import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
+import { trackFeature } from "../../utils/analytics.js";
 
 // import React, { useState, useEffect } from "react";
 // import { useSearchParams } from "react-router-dom";
@@ -501,9 +502,11 @@ const RegisterVendor = () => {
         } else {
           const info = {
             company_name:   json.companyName    || json.company_name   || "",
+            brand_name:     json.brandName       || json.brand_name     || "",
             contact_person: json.contactName    || json.contact_person || "",
             mobile:         json.mobile         || "",
             email:          json.email          || "",
+            address:        json.address        || "",
             product_type:   json.productCategory || json.product_type  || "",
             website:        json.website        || "",
           };
@@ -512,9 +515,11 @@ const RegisterVendor = () => {
           setVendorForm(p => ({
             ...p,
             name:          info.company_name,
+            brandName:     info.brand_name,
             contactName:   info.contact_person,
             contactMobile: info.mobile,
             email:         info.email,
+            address:       info.address,
             productType:   info.product_type,
             website:       info.website,
           }));
@@ -532,9 +537,11 @@ const RegisterVendor = () => {
       ...initialState,
       // keep pre-filled fields if invite
       name:          inviteInfo?.company_name   || "",
+      brandName:     inviteInfo?.brand_name     || "",
       contactName:   inviteInfo?.contact_person || "",
       contactMobile: inviteInfo?.mobile         || "",
       email:         inviteInfo?.email          || "",
+      address:       inviteInfo?.address        || "",
       productType:   inviteInfo?.product_type   || "",
       website:       inviteInfo?.website        || "",
     });
@@ -599,6 +606,7 @@ const RegisterVendor = () => {
       }
 
       const json = await res.json();
+      trackFeature("vendor.onboarding_submitted", { source: token ? "invite_link" : "self_registration" });
 
       // If invite token → mark it as used
       if (token) {
@@ -776,7 +784,8 @@ const RegisterVendor = () => {
               onChange={handleChange("name")} placeholder="Vendor Name"
               prefilled={!!inviteInfo?.company_name} />
             <InputField label="Brand Name" value={vendorForm.brandName}
-              onChange={handleChange("brandName")} placeholder="Brand Name" />
+              onChange={handleChange("brandName")} placeholder="Brand Name"
+              prefilled={!!inviteInfo?.brand_name} />
             <InputField label="Company Type" value={vendorForm.companyType}
               onChange={handleChange("companyType")} placeholder="Pvt. Ltd / LLP / Proprietorship" />
             <InputField label="Industry Type" value={vendorForm.industryType}
@@ -828,7 +837,8 @@ const RegisterVendor = () => {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div className="md:col-span-2">
               <InputTextArea label="Address*" value={vendorForm.address}
-                onChange={handleChange("address")} placeholder="Full business address" />
+                onChange={handleChange("address")} placeholder="Full business address"
+                prefilled={!!inviteInfo?.address} />
             </div>
             <InputField label="City*" value={vendorForm.cityName}
               onChange={handleChange("cityName")} placeholder="City Name" />
@@ -924,11 +934,19 @@ const SelectField = ({ label, value, onChange, options = [] }) => (
   </div>
 );
 
-const InputTextArea = ({ label, value, onChange, placeholder }) => (
+const InputTextArea = ({ label, value, onChange, placeholder, prefilled }) => (
   <div className="flex flex-col gap-1">
-    <label className="text-sm font-medium text-gray-700">{label}</label>
+    <label className="text-sm font-medium text-gray-700 flex items-center gap-1.5">
+      {label}
+      {prefilled && (
+        <span className="text-[10px] bg-indigo-100 text-indigo-600 px-1.5 py-0.5 rounded font-semibold">
+          pre-filled
+        </span>
+      )}
+    </label>
     <textarea value={value} onChange={onChange} placeholder={placeholder}
-      className="w-full border border-gray-300 rounded-md px-3 py-2 text-[13px] bg-white focus:outline-none focus:ring-2 focus:ring-purple-400 h-24 resize-none" />
+      className={`w-full border rounded-md px-3 py-2 text-[13px] focus:outline-none focus:ring-2 focus:ring-purple-400 h-24 resize-none
+        ${prefilled ? "border-indigo-200 bg-indigo-50 text-indigo-700" : "border-gray-300 bg-white"}`} />
   </div>
 );
 

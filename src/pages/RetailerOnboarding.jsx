@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { ArrowLeft, Building2, CheckCircle2, Crown, Rocket, Send, Store } from "lucide-react";
 import { API_BASE_URL } from "../config/api.js";
+import { trackFeature } from "../utils/analytics.js";
 
 const MODULES = ["Inventory & stock", "POS & billing", "Purchasing & vendors", "Finance", "Department workspaces", "Reports & analytics"];
 const inputStyle = "mt-1.5 w-full rounded-xl border border-slate-200 px-3.5 py-3 text-sm outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100";
@@ -34,6 +35,7 @@ export default function RetailerOnboarding() {
       const response = await fetch(`${API_BASE_URL}/api/onboarding/requests`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...form, account_type: accountType, requested_plan: plan, store_count: singleStore ? 1 : Number(form.store_count) || 1 }) });
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail || "We could not submit your request.");
+      trackFeature("onboarding.submitted", { plan, account_type: accountType });
       setSubmitted(true);
     } catch (err) { setError(err.message || "We could not submit your request."); } finally { setLoading(false); }
   };
