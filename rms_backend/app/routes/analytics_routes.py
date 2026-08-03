@@ -12,15 +12,17 @@ decoded best-effort to attach tenant/role context; a missing or invalid
 token just means an anonymous event, never a 401 — a tracking call must
 never be able to break the page that fired it.
 """
+from collections import defaultdict
 from datetime import datetime, timedelta
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
+from bson import ObjectId
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from jose import JWTError, jwt
 from pydantic import BaseModel, Field
 
 from ..config import settings
-from ..db import usage_events_collection
+from ..db import admins_collection, usage_events_collection, vendors_collection
 
 router = APIRouter(prefix="/api/analytics", tags=["Analytics"])
 
@@ -49,12 +51,13 @@ def _best_effort_identity(authorization: Optional[str]) -> Dict[str, Any]:
         return {}
 
     if payload.get("vendor_id"):
-        return {"role": "vendor", "vendor_id": payload.get("vendor_id")}
+        return {"role": "vendor", "vendor_id": payload.get("vendor_id"), "email": payload.get("email")}
     if payload.get("role") == "super_admin":
-        return {"role": "super_admin"}
+        return {"role": "super_admin", "admin_id": payload.get("sub")}
     if payload.get("role") in ("ADMIN", "admin"):
         return {
             "role": "admin",
+            "admin_id": payload.get("sub"),
             "tenant_id": payload.get("tenant_id"),
             "scope": payload.get("scope"),
             "department": payload.get("department"),
@@ -168,3 +171,92 @@ async def analytics_summary(days: int = Query(30, ge=1, le=365), admin: dict = D
         },
         "subscription_cta_taps": subscription_taps,
     }
+
+
+@router.get("/users")
+async def analytics_users(
+    days: int = Query(30, ge=1, le=365),
+    limit: int = Query(50, ge=1, le=200),
+    admin: dict = Depends(_require_superadmin),
+):
+    """Per-user drill-down: who's actually using RMS, which portal, which
+    pages they open, which features they use. Grouped in Python over the
+    matched cursor (same manual-aggregation style as forecast_analytics_routes
+    .py's _compute_demand_forecast) rather than a heavy Mongo pipeline, since
+    "top N pages/features per user" doesn't collapse cleanly into one
+    aggregate stage anyway."""
+    since = datetime.utcnow() - timedelta(days=days)
+    match: Dict[str, Any] = {"created_at": {"$gte": since}, "role": {"$in": ["admin", "vendor"]}}
+
+    users: Dict[str, Dict[str, Any]] = {}
+    async for doc in usage_events_collection.find(match, {
+        "role": 1, "admin_id": 1, "vendor_id": 1, "tenant_id": 1, "department": 1,
+        "scope": 1, "email": 1, "event_type": 1, "path": 1, "feature": 1,
+        "session_id": 1, "created_at": 1,
+    }):
+        role = doc.get("role")
+        user_key = doc.get("admin_id") if role == "admin" else doc.get("vendor_id")
+        if not user_key:
+            continue
+
+        u = users.get(user_key)
+        if not u:
+            u = users[user_key] = {
+                "user_key": user_key, "role": role,
+                "tenant_id": doc.get("tenant_id"), "department": doc.get("department"),
+                "scope": doc.get("scope"), "email": doc.get("email"),
+                "sessions": set(), "page_views": 0, "feature_uses": 0,
+                "pages": defaultdict(int), "features": defaultdict(int),
+                "last_active": doc.get("created_at"),
+            }
+        session_id = doc.get("session_id")
+        if session_id:
+            u["sessions"].add(session_id)
+        created = doc.get("created_at")
+        if isinstance(created, datetime) and (not u["last_active"] or created > u["last_active"]):
+            u["last_active"] = created
+        if not u.get("email") and doc.get("email"):
+            u["email"] = doc.get("email")
+
+        if doc.get("event_type") == "page_view":
+            u["page_views"] += 1
+            if doc.get("path"):
+                u["pages"][doc["path"]] += 1
+        elif doc.get("event_type") == "feature_used":
+            u["feature_uses"] += 1
+            if doc.get("feature"):
+                u["features"][doc["feature"]] += 1
+
+    # Resolve display names in two batched lookups rather than one per user.
+    admin_ids = [ObjectId(k) for k, u in users.items() if u["role"] == "admin" and ObjectId.is_valid(k)]
+    vendor_ids = [ObjectId(k) for k, u in users.items() if u["role"] == "vendor" and ObjectId.is_valid(k)]
+    names: Dict[str, str] = {}
+    if admin_ids:
+        async for a in admins_collection.find({"_id": {"$in": admin_ids}}, {"name": 1, "email": 1}):
+            names[str(a["_id"])] = a.get("name") or a.get("email", "")
+    if vendor_ids:
+        async for v in vendors_collection.find({"_id": {"$in": vendor_ids}}, {"name": 1, "vendor_name": 1}):
+            names[str(v["_id"])] = v.get("name") or v.get("vendor_name", "")
+
+    rows: List[dict] = []
+    for key, u in users.items():
+        top_pages = sorted(u["pages"].items(), key=lambda kv: kv[1], reverse=True)[:5]
+        top_features = sorted(u["features"].items(), key=lambda kv: kv[1], reverse=True)[:5]
+        rows.append({
+            "user_key": key,
+            "role": u["role"],
+            "name": names.get(key, ""),
+            "email": u.get("email", ""),
+            "tenant_id": u.get("tenant_id"),
+            "department": u.get("department"),
+            "scope": u.get("scope"),
+            "sessions": len(u["sessions"]),
+            "page_views": u["page_views"],
+            "feature_uses": u["feature_uses"],
+            "last_active": u["last_active"].isoformat() if isinstance(u["last_active"], datetime) else None,
+            "top_pages": [{"path": p, "views": c} for p, c in top_pages],
+            "top_features": [{"feature": f, "count": c} for f, c in top_features],
+        })
+
+    rows.sort(key=lambda r: r["last_active"] or "", reverse=True)
+    return {"range_days": days, "count": len(rows), "data": rows[:limit]}
