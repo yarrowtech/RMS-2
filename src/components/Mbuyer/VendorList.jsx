@@ -455,7 +455,7 @@ const AddVendorModal = ({ onClose, onGenerate }) => {
         {error && <div className="bg-red-50 border border-red-200 text-red-600 text-sm rounded-md px-3 py-2">⚠️ {error}</div>}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <LabeledInput label="Company / Vendor Name *" value={form.companyName}  onChange={set("companyName")}     placeholder="e.g. Sunrise Textiles" />
-          <LabeledInput label="Brand Name (if on card)" value={form.brandName}    onChange={set("brandName")}       placeholder="e.g. Sunrise" />
+          <LabeledInput label="Brand Name(s) (if on card)" value={form.brandName}    onChange={set("brandName")}       placeholder="e.g. Sunrise, Sunrise Kids (comma-separated if multiple)" />
           <LabeledInput label="Contact Person Name *"   value={form.contactName}  onChange={set("contactName")}     placeholder="e.g. Rajesh Kumar" />
           <LabeledInput label="Mobile Number *"         value={form.mobile}       onChange={set("mobile")}           placeholder="10-digit number" />
           <LabeledInput label="Email (if on card)"      value={form.email}        onChange={set("email")}            placeholder="vendor@example.com" />
