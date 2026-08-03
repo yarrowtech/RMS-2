@@ -27,8 +27,8 @@ from .deps import get_hq_tenant
 from ..config import settings
 from ..db import (
     admins_collection, grn_collection, inventory_collection, product_collection,
-    purchaseorders_collection, sales_collection, vendor_catalogue_collection,
-    vendor_tenant_links_collection, vendors_collection,
+    purchaseorders_collection, sales_collection, stores_collection, store_stock_collection,
+    vendor_catalogue_collection, vendor_tenant_links_collection, vendors_collection,
     forecast_low_stock_alerts_collection, forecast_restock_drafts_collection,
 )
 
@@ -361,14 +361,22 @@ async def get_dashboard(ctx: TenantCtx = Depends(_require_forecast_context)):
 # other half: a cron-triggered pass (no in-process scheduler here — same
 # pattern as subscription_routes.py's /send-expiry-reminders) that, for
 # every tenant with this department enabled, checks real on-hand stock
-# (inventory_collection.stockQty) against the same moving-average demand
-# used everywhere else in this file, and:
+# against the same moving-average demand used everywhere else in this file,
+# and:
 #   - flags items projected to run out soon (a genuine signal, not a guess —
-#     current stock ÷ average daily sales)
+#     current stock ÷ average daily sales), checked BOTH at HQ/central
+#     inventory AND at every individual store that keeps its own stock
+#     ledger (store_stock_collection) — a store can be critically low on
+#     something even while the central warehouse total looks fine, and the
+#     original HQ-only version of this check would have missed that
+#     entirely for any multi-store tenant.
 #   - saves a ROI-ranked restock draft with NO budget constraint, since a
 #     cron job has no budget to apply — that stays a human decision made
 #     interactively via /purchase-plan. This is a starting point to review,
-#     not an auto-approved order.
+#     not an auto-approved order. Restock stays tenant-wide/HQ-scoped (not
+#     per-store) — purchasing is a centralized HQ decision everywhere else
+#     in RMS (PO creation, vendor approval), so a restock draft follows the
+#     same shape rather than fragmenting into per-store purchase drafts.
 # Both are recomputed wholesale each run (delete + reinsert per tenant) so
 # they never carry stale rows forward.
 # ═══════════════════════════════════════════════════════════════════════════
@@ -377,16 +385,27 @@ LOW_STOCK_WARNING_DAYS = 14
 LOW_STOCK_CRITICAL_DAYS = 3
 
 
-async def _run_forecast_automation_for_tenant(tenant_id: str) -> dict:
-    forecast_rows = await _compute_demand_forecast(tenant_id, None, lookback_days=90, limit=500)
+async def _stock_map(tenant_id: str, store_id: Optional[str]) -> Dict[str, float]:
+    """Current on-hand qty per barcode — store_stock_collection for a given
+    store, inventory_collection (HQ/central) when store_id is None. Same
+    branching already used for live receiving in inventoryroutes.py."""
+    collection = store_stock_collection if store_id else inventory_collection
+    query: Dict[str, Any] = {"tenant_id": tenant_id}
+    if store_id:
+        query["store_id"] = store_id
 
     stock_by_barcode: Dict[str, float] = {}
-    async for doc in inventory_collection.find({"tenant_id": tenant_id}, {"barcode": 1, "stockQty": 1}):
+    async for doc in collection.find(query, {"barcode": 1, "stockQty": 1}):
         bc = (doc.get("barcode") or "").strip()
         if bc:
             stock_by_barcode[bc] = float(doc.get("stockQty", 0) or 0)
+    return stock_by_barcode
 
-    now = datetime.utcnow()
+
+def _build_alerts(
+    tenant_id: str, store_id: Optional[str], store_name: str,
+    forecast_rows: List[dict], stock_by_barcode: Dict[str, float], now: datetime,
+) -> List[dict]:
     alerts = []
     for row in forecast_rows:
         stock_qty = stock_by_barcode.get(row["barcode"], 0.0)
@@ -397,15 +416,43 @@ async def _run_forecast_automation_for_tenant(tenant_id: str) -> dict:
         if days_remaining >= LOW_STOCK_WARNING_DAYS:
             continue
         alerts.append({
-            "tenant_id": tenant_id, "barcode": row["barcode"], "name": row["name"], "sku": row["sku"],
+            "tenant_id": tenant_id, "store_id": store_id, "store_name": store_name,
+            "barcode": row["barcode"], "name": row["name"], "sku": row["sku"],
             "stock_qty": round(stock_qty, 2), "avg_weekly_qty": row["avg_weekly_qty"],
             "days_remaining": days_remaining,
             "severity": "critical" if days_remaining < LOW_STOCK_CRITICAL_DAYS else "warning",
             "created_at": now, "updated_at": now,
         })
+    return alerts
+
+
+async def _run_forecast_automation_for_tenant(tenant_id: str) -> dict:
+    now = datetime.utcnow()
+
+    # HQ / central inventory — tenant-wide, store_id=None. Unchanged from
+    # before this change, so a tenant with no per-store stock tracking at
+    # all still gets exactly the alerts it always did.
+    hq_forecast_rows = await _compute_demand_forecast(tenant_id, None, lookback_days=90, limit=500)
+    hq_stock = await _stock_map(tenant_id, None)
+    alerts = _build_alerts(tenant_id, None, "HQ / Central", hq_forecast_rows, hq_stock, now)
+
+    # Per-store — additive. Only stores that actually have a stock ledger in
+    # store_stock_collection get checked; a store with none simply isn't
+    # tracked at that level yet, same as before this change.
+    stores = await stores_collection.find(
+        {"tenant_id": tenant_id, "active": True}, {"_id": 1, "name": 1}
+    ).to_list(length=200)
+    for store in stores:
+        store_id = str(store["_id"])
+        store_stock = await _stock_map(tenant_id, store_id)
+        if not store_stock:
+            continue
+        store_forecast_rows = await _compute_demand_forecast(tenant_id, store_id, lookback_days=90, limit=500)
+        alerts += _build_alerts(tenant_id, store_id, store.get("name", ""), store_forecast_rows, store_stock, now)
+
     alerts.sort(key=lambda a: a["days_remaining"])
 
-    restock_lines = _lines_from_forecast(forecast_rows)[:100]
+    restock_lines = _lines_from_forecast(hq_forecast_rows)[:100]
 
     await forecast_low_stock_alerts_collection.delete_many({"tenant_id": tenant_id})
     if alerts:
@@ -468,6 +515,7 @@ async def get_low_stock_alerts(ctx: TenantCtx = Depends(_require_forecast_contex
     async for doc in cursor:
         rows.append({
             "barcode": doc["barcode"], "name": doc.get("name", ""), "sku": doc.get("sku", ""),
+            "store_id": doc.get("store_id"), "store_name": doc.get("store_name") or "HQ / Central",
             "stock_qty": doc.get("stock_qty", 0), "avg_weekly_qty": doc.get("avg_weekly_qty", 0),
             "days_remaining": doc.get("days_remaining"), "severity": doc.get("severity", "warning"),
             "updated_at": doc.get("updated_at").isoformat() if isinstance(doc.get("updated_at"), datetime) else None,

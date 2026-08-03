@@ -304,14 +304,15 @@ function AlertsView() {
       <div className="fa-panel overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
-            <thead><tr>{["Item", "SKU", "Stock on hand", "Weekly avg sold", "Days remaining", "Severity"].map((h) => <th key={h} className="whitespace-nowrap px-4 py-2.5 text-left font-bold uppercase">{h}</th>)}</tr></thead>
+            <thead><tr>{["Item", "SKU", "Location", "Stock on hand", "Weekly avg sold", "Days remaining", "Severity"].map((h) => <th key={h} className="whitespace-nowrap px-4 py-2.5 text-left font-bold uppercase">{h}</th>)}</tr></thead>
             <tbody className="divide-y divide-slate-100">
-              {loading ? <tr><td colSpan={6} className="px-4 py-8 text-center text-slate-400">Loading…</td></tr>
-                : rows.length === 0 ? <tr><td colSpan={6} className="px-4 py-8 text-center text-slate-400">No low-stock items right now — nothing is projected to run out within 14 days.</td></tr>
+              {loading ? <tr><td colSpan={7} className="px-4 py-8 text-center text-slate-400">Loading…</td></tr>
+                : rows.length === 0 ? <tr><td colSpan={7} className="px-4 py-8 text-center text-slate-400">No low-stock items right now — nothing is projected to run out within 14 days.</td></tr>
                 : rows.map((row) => (
-                  <tr key={row.barcode}>
+                  <tr key={`${row.store_id || "hq"}-${row.barcode}`}>
                     <td className="px-4 py-2.5 font-semibold text-slate-800">{row.name || row.barcode}</td>
                     <td className="px-4 py-2.5 font-mono text-xs">{row.sku}</td>
+                    <td className="px-4 py-2.5 text-xs font-semibold text-slate-500">{row.store_name || "HQ / Central"}</td>
                     <td className="px-4 py-2.5">{row.stock_qty}</td>
                     <td className="px-4 py-2.5">{row.avg_weekly_qty}</td>
                     <td className="px-4 py-2.5 font-bold">{row.days_remaining} days</td>
