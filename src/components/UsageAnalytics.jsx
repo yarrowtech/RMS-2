@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { Eye, Layers, Loader2, MonitorSmartphone, RefreshCw, Timer, UserPlus, Users, Zap } from "lucide-react";
+import { ChevronDown, ChevronUp, Eye, Layers, Loader2, MonitorSmartphone, RefreshCw, Timer, UserPlus, Users, Zap } from "lucide-react";
 import { API_BASE_URL } from "../config/api.js";
 
 const RANGES = [
@@ -33,6 +33,105 @@ function StatCard({ icon: Icon, label, value, tone }) {
       <div className={`inline-flex h-9 w-9 items-center justify-center rounded-xl ${tone}`}><Icon className="h-4.5 w-4.5" /></div>
       <p className="mt-3 text-2xl font-black text-slate-900">{value}</p>
       <p className="mt-0.5 text-xs font-bold text-slate-500">{label}</p>
+    </div>
+  );
+}
+
+function fmtWhen(iso) {
+  if (!iso) return "—";
+  return new Date(iso).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" });
+}
+
+const ROLE_STYLE = {
+  admin: "bg-indigo-100 text-indigo-700",
+  vendor: "bg-teal-100 text-teal-700",
+};
+
+function UserActivityRow({ row, isOpen, onToggle }) {
+  return (
+    <>
+      <tr className="cursor-pointer hover:bg-slate-50" onClick={() => onToggle(row.user_key)}>
+        <td className="px-4 py-2.5">
+          <p className="font-semibold text-slate-800">{row.name || row.email || row.user_key}</p>
+          {row.name && row.email && <p className="text-xs text-slate-400">{row.email}</p>}
+        </td>
+        <td className="px-4 py-2.5"><span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-black ${ROLE_STYLE[row.role] || "bg-slate-100 text-slate-600"}`}>{row.role === "admin" ? "Retailer" : "Vendor"}</span></td>
+        <td className="px-4 py-2.5 text-xs text-slate-500">{row.role === "admin" ? [row.tenant_id, row.department].filter(Boolean).join(" · ") : "—"}</td>
+        <td className="px-4 py-2.5">{fmt(row.sessions)}</td>
+        <td className="px-4 py-2.5">{fmt(row.page_views)}</td>
+        <td className="px-4 py-2.5">{fmt(row.feature_uses)}</td>
+        <td className="px-4 py-2.5 text-xs text-slate-500">{fmtWhen(row.last_active)}</td>
+        <td className="px-4 py-2.5 text-slate-400">{isOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}</td>
+      </tr>
+      {isOpen && (
+        <tr>
+          <td colSpan={8} className="bg-slate-50 px-4 py-4">
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div>
+                <p className="text-xs font-black uppercase tracking-wide text-slate-500">Pages opened</p>
+                {!row.top_pages.length ? <p className="mt-1.5 text-xs text-slate-400">No page views recorded.</p> : (
+                  <ul className="mt-1.5 space-y-1">
+                    {row.top_pages.map((p) => (
+                      <li key={p.path} className="flex items-center justify-between text-xs"><span className="text-slate-600">{p.path}</span><span className="font-bold text-slate-800">{p.views}</span></li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+              <div>
+                <p className="text-xs font-black uppercase tracking-wide text-slate-500">Features used</p>
+                {!row.top_features.length ? <p className="mt-1.5 text-xs text-slate-400">No feature usage recorded.</p> : (
+                  <ul className="mt-1.5 space-y-1">
+                    {row.top_features.map((f) => (
+                      <li key={f.feature} className="flex items-center justify-between text-xs"><span className="text-slate-600">{f.feature}</span><span className="font-bold text-slate-800">{f.count}</span></li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </div>
+          </td>
+        </tr>
+      )}
+    </>
+  );
+}
+
+function UserActivityTable({ days }) {
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [expanded, setExpanded] = useState("");
+
+  const load = useCallback(async () => {
+    setLoading(true); setError("");
+    try { const result = await api(`/users?days=${days}&limit=50`); setRows(result.data || []); }
+    catch (err) { setError(err.message || "Could not load per-user activity."); }
+    finally { setLoading(false); }
+  }, [days]);
+
+  useEffect(() => { load(); }, [load]);
+
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white shadow-sm">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 p-5">
+        <div>
+          <h3 className="font-black text-slate-900">Per-user activity</h3>
+          <p className="mt-1 text-xs text-slate-500">Which retailer admins and vendors are actually using RMS, which pages they open, which features they use. Click a row to expand.</p>
+        </div>
+        <button onClick={load} className="inline-flex items-center gap-1.5 rounded-xl bg-slate-100 px-3 py-2 text-xs font-bold text-slate-600 hover:bg-slate-200"><RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />Refresh</button>
+      </div>
+      {error && <div className="mx-5 mt-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">{error}</div>}
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead><tr>{["User", "Portal", "Tenant / Department", "Sessions", "Page views", "Feature uses", "Last active", ""].map((h) => <th key={h} className="whitespace-nowrap px-4 py-2.5 text-left text-xs font-bold uppercase text-slate-500">{h}</th>)}</tr></thead>
+          <tbody className="divide-y divide-slate-100">
+            {loading ? <tr><td colSpan={8} className="px-4 py-10 text-center text-slate-400">Loading…</td></tr>
+              : !rows.length ? <tr><td colSpan={8} className="px-4 py-10 text-center text-slate-400">No signed-in activity recorded yet in this range.</td></tr>
+              : rows.map((row) => (
+                <UserActivityRow key={row.user_key} row={row} isOpen={expanded === row.user_key} onToggle={(k) => setExpanded((cur) => cur === k ? "" : k)} />
+              ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
@@ -163,6 +262,8 @@ export default function UsageAnalytics() {
               </div>
             </div>
           </div>
+
+          <UserActivityTable days={days} />
         </>
       )}
     </section>

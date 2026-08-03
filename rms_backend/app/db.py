@@ -192,3 +192,5 @@ async def ensure_procurement_indexes():
     await usage_events_collection.create_index([("event_type", 1), ("created_at", -1)], name="usage_events_type_created")
     await usage_events_collection.create_index([("path", 1), ("event_type", 1), ("created_at", -1)], name="usage_events_path_type_created")
     await usage_events_collection.create_index([("feature", 1), ("event_type", 1), ("created_at", -1)], name="usage_events_feature_type_created")
+    await usage_events_collection.create_index([("role", 1), ("admin_id", 1), ("created_at", -1)], name="usage_events_role_admin_created")
+    await usage_events_collection.create_index([("role", 1), ("vendor_id", 1), ("created_at", -1)], name="usage_events_role_vendor_created")
