@@ -80,6 +80,20 @@ def serialize_doc(doc):
     return doc
 
 
+def _parse_brand_names(raw) -> List[str]:
+    """A vendor can carry more than one brand (a distributor repping several
+    lines, for instance). Accepts a list OR a comma-separated string so the
+    SAME plain text input already used on the buyer's "Add Vendor" modal and
+    the vendor's own registration form can express multiple brands without
+    needing a dedicated tag-input widget on either side — the caller just
+    types "Nike, Adidas, Puma"."""
+    if isinstance(raw, list):
+        return [b.strip() for b in raw if isinstance(b, str) and b.strip()]
+    if isinstance(raw, str):
+        return [b.strip() for b in raw.split(",") if b.strip()]
+    return []
+
+
 def create_token(data: dict, expires_in: int = 3600):
     to_encode = data.copy()
     expire = datetime.utcnow() + timedelta(seconds=expires_in)
@@ -317,6 +331,15 @@ async def register_vendor(request: Request):
         identity_doc["email"] = email
         identity_doc["business_type"] = registration_business_types
         identity_doc["onboarding_requested_plan"] = requested_plan
+
+        # brandName is a plain text field on the form, but can carry more
+        # than one brand as a comma-separated list ("Nike, Adidas, Puma") —
+        # normalize it into brandNames here so anything that wants to work
+        # with them individually can, while brandName itself stays a clean,
+        # consistently-joined string for every existing display fallback
+        # elsewhere in the app.
+        identity_doc["brandNames"] = _parse_brand_names(identity_doc.get("brandName"))
+        identity_doc["brandName"] = ", ".join(identity_doc["brandNames"])
 
         if submitted_password:
             identity_doc["password"]     = hash_password(submitted_password)
@@ -1159,7 +1182,7 @@ async def create_vendor_invite(request: Request, ctx: dict = Depends(get_hq_tena
     body = await request.json()
 
     company_name     = (body.get("company_name") or body.get("companyName", "")).strip()
-    brand_name       = (body.get("brand_name") or body.get("brandName", "")).strip()
+    brand_names      = _parse_brand_names(body.get("brand_names") or body.get("brandNames") or body.get("brand_name") or body.get("brandName"))
     contact_name     = (body.get("contact_person") or body.get("contactName", "")).strip()
     mobile           = body.get("mobile", "").strip()
     email            = (body.get("email") or "").strip()
@@ -1175,7 +1198,8 @@ async def create_vendor_invite(request: Request, ctx: dict = Depends(get_hq_tena
     invite_doc = {
         "token":           raw_token,
         "companyName":     company_name,
-        "brandName":       brand_name,
+        "brandNames":      brand_names,
+        "brandName":       ", ".join(brand_names),  # kept in sync — every existing display fallback (.get("brandName")) elsewhere in the app keeps working, now showing all brands instead of just one.
         "contactName":     contact_name,
         "mobile":          mobile,
         "email":           email,
@@ -1216,6 +1240,7 @@ async def get_invite_by_token(token: str):
     return {
         "companyName":     invite["companyName"],
         "brandName":       invite.get("brandName", ""),
+        "brandNames":      invite.get("brandNames") or _parse_brand_names(invite.get("brandName")),
         "contactName":     invite["contactName"],
         "mobile":          invite["mobile"],
         "email":           invite.get("email", ""),
@@ -1418,6 +1443,7 @@ async def accept_questionnaire_submission(
         "token":           raw_token,
         "companyName":     submission.get("vendorName", ""),
         "brandName":       submission.get("brandName", ""),
+        "brandNames":      _parse_brand_names(submission.get("brandNames") or submission.get("brandName")),
         "contactName":     submission.get("contactPerson", ""),
         "mobile":          submission.get("phoneNumber", ""),
         "email":           "",

@@ -502,7 +502,7 @@ const RegisterVendor = () => {
         } else {
           const info = {
             company_name:   json.companyName    || json.company_name   || "",
-            brand_name:     json.brandName       || json.brand_name     || "",
+            brand_name:     (Array.isArray(json.brandNames) && json.brandNames.length ? json.brandNames.join(", ") : (json.brandName || json.brand_name || "")),
             contact_person: json.contactName    || json.contact_person || "",
             mobile:         json.mobile         || "",
             email:          json.email          || "",
@@ -783,8 +783,8 @@ const RegisterVendor = () => {
             <InputField label="Vendor Name*" value={vendorForm.name}
               onChange={handleChange("name")} placeholder="Vendor Name"
               prefilled={!!inviteInfo?.company_name} />
-            <InputField label="Brand Name" value={vendorForm.brandName}
-              onChange={handleChange("brandName")} placeholder="Brand Name"
+            <InputField label="Brand Name(s)" value={vendorForm.brandName}
+              onChange={handleChange("brandName")} placeholder="e.g. Nike, Adidas (comma-separated if multiple)"
               prefilled={!!inviteInfo?.brand_name} />
             <InputField label="Company Type" value={vendorForm.companyType}
               onChange={handleChange("companyType")} placeholder="Pvt. Ltd / LLP / Proprietorship" />
