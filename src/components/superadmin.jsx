@@ -49,6 +49,20 @@ const apiFetch = async (path, options = {}) => {
   return data;
 };
 
+const timeAgo = (iso) => {
+  if (!iso) return '';
+  const diffMs = Date.now() - new Date(iso).getTime();
+  const mins = Math.floor(diffMs / 60000);
+  if (mins < 1) return 'Just now';
+  if (mins < 60) return `${mins} min ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs} hr${hrs === 1 ? '' : 's'} ago`;
+  const days = Math.floor(hrs / 24);
+  if (days === 1) return 'Yesterday';
+  if (days < 7) return `${days} days ago`;
+  return new Date(iso).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
+};
+
 // ─── Add Admin Modal ───────────────────────────────────────────────────────────
 
 const AddAdminModal = ({ isOpen, onClose, formData, formErrors, onInputChange, onDepartmentToggle, onPermissionToggle, onSubmit, retailers = [] }) => {
@@ -441,6 +455,7 @@ const PanelAnalytics = ({ admins }) => {
 const PanelAuditLogs = ({ onNavigate, logs }) => (
   <div className="space-y-3">
     <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
+      {!logs.length && <p className="p-3 text-center text-xs text-gray-400">No activity recorded yet.</p>}
       {logs.map((log, idx) => {
         const dotColor = { create: 'bg-green-500', update: 'bg-blue-500', warning: 'bg-amber-500', delete: 'bg-red-500', info: 'bg-gray-400' };
         return (
@@ -1080,7 +1095,20 @@ export default function SuperAdmin() {
     finally { setResetLoading(false); }
   }, []);
 
+  const [auditLogs, setAuditLogs] = useState([]);
+  const [auditLogsLoading, setAuditLogsLoading] = useState(true);
+
+  const fetchAuditLogs = useCallback(async () => {
+    setAuditLogsLoading(true);
+    try {
+      const data = await apiFetch('/superadmin/audit-logs?limit=100');
+      setAuditLogs((data.logs || []).map((log) => ({ ...log, time: timeAgo(log.time) })));
+    } catch (err) { console.error('Fetch audit logs:', err); }
+    finally { setAuditLogsLoading(false); }
+  }, []);
+
   useEffect(() => { fetchAdmins(); }, [fetchAdmins]);
+  useEffect(() => { fetchAuditLogs(); }, [fetchAuditLogs]);
 
   // Auto-fetch reset requests when that card opens
   useEffect(() => {
@@ -1225,14 +1253,7 @@ export default function SuperAdmin() {
     a.email?.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
-  const logs = [
-    { time: '2 min ago', actor: 'Super Admin', action: 'Created administrator account', type: 'create' },
-    { time: '18 min ago', actor: 'Super Admin', action: 'Updated permissions for an admin', type: 'update' },
-    { time: '1 hr ago', actor: 'Super Admin', action: 'Approved password reset for John Smith', type: 'info' },
-    { time: '3 hr ago', actor: 'Super Admin', action: 'Rejected reset request from Mike Davis', type: 'warning' },
-    { time: '4 hr ago', actor: 'Super Admin', action: 'Deleted inactive administrator account', type: 'delete' },
-    { time: 'Yesterday', actor: 'Super Admin', action: 'System configuration reviewed', type: 'info' },
-  ];
+  const logs = auditLogs;
 
   const controlCards = [
     {
@@ -1267,7 +1288,7 @@ export default function SuperAdmin() {
       id: 'audit-logs', icon: FileText, label: 'Audit Logs',
       desc: 'Complete record of all actions',
       color: 'from-gray-600 to-gray-700',
-      panel: <PanelAuditLogs onNavigate={navigateToTab} logs={logs} />,
+      panel: <PanelAuditLogs onNavigate={navigateToTab} logs={logs.slice(0, 8)} />,
     },
     {
       id: 'system-config', icon: Database, label: 'System Config',
@@ -1376,7 +1397,22 @@ export default function SuperAdmin() {
                       </button>
                     </div>
                     <div className="border-t border-gray-100 pt-1">
-                      <button onClick={() => navigate('/')}
+                      <button onClick={() => {
+                        const token = getToken();
+                        if (token) {
+                          try {
+                            fetch(`${API_BASE}/auth/logout`, {
+                              method: 'POST',
+                              headers: { Authorization: `Bearer ${token}` },
+                              keepalive: true,
+                            }).catch(() => {});
+                          } catch {
+                            // Logging out must never be blocked by this.
+                          }
+                        }
+                        localStorage.removeItem('superadmin_token');
+                        navigate('/');
+                      }}
                         className="w-full px-4 py-2 text-left text-sm text-red-600 hover:bg-red-50 flex items-center gap-3 transition-colors font-semibold">
                         <LogOut className="w-4 h-4" /> Logout
                       </button>
@@ -1709,16 +1745,25 @@ export default function SuperAdmin() {
         {/* ── TAB: Logs ── */}
         {activeTab === 'logs' && (
           <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
-            <div className="p-5 border-b border-gray-100">
-              <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
-                <Activity className="w-5 h-5 text-green-600" /> Activity Logs
-              </h2>
-              <p className="text-xs text-gray-500 mt-0.5">All recorded actions under this session</p>
+            <div className="p-5 border-b border-gray-100 flex items-center justify-between gap-3">
+              <div>
+                <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+                  <Activity className="w-5 h-5 text-green-600" /> Activity Logs
+                </h2>
+                <p className="text-xs text-gray-500 mt-0.5">Logins, logouts, approvals and account changes across the platform</p>
+              </div>
+              <button onClick={fetchAuditLogs} className="inline-flex items-center gap-1.5 rounded-lg bg-gray-100 px-3 py-1.5 text-xs font-bold text-gray-600 hover:bg-gray-200">
+                <RefreshCw className={`w-3.5 h-3.5 ${auditLogsLoading ? 'animate-spin' : ''}`} /> Refresh
+              </button>
             </div>
             <div className="divide-y divide-gray-50">
-              {logs.map((log, idx) => (
-                <div key={idx} className="flex items-start gap-4 p-4 hover:bg-gray-50 transition-colors">
-                  <div className={`w-2.5 h-2.5 rounded-full mt-1.5 shrink-0 ${logDot[log.type]}`} />
+              {auditLogsLoading ? (
+                <div className="p-10 text-center text-sm text-gray-400">Loading…</div>
+              ) : !logs.length ? (
+                <div className="p-10 text-center text-sm text-gray-400">No activity recorded yet.</div>
+              ) : logs.map((log, idx) => (
+                <div key={log.id || idx} className="flex items-start gap-4 p-4 hover:bg-gray-50 transition-colors">
+                  <div className={`w-2.5 h-2.5 rounded-full mt-1.5 shrink-0 ${logDot[log.type] || logDot.info}`} />
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center justify-between gap-2 mb-0.5">
                       <span className="font-semibold text-gray-900 text-sm">{log.actor}</span>

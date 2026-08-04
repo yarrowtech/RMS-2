@@ -285,6 +285,18 @@ export default function MSeller() {
     };
   }, []);
   const handleLogout = useCallback(() => {
+    const token = localStorage.getItem("vendor_token") || localStorage.getItem("access_token") || localStorage.getItem("token");
+    if (token) {
+      try {
+        fetch(`${APP_API_URL}/auth/logout`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}` },
+          keepalive: true,
+        }).catch(() => {});
+      } catch {
+        // Logging out must never be blocked by this.
+      }
+    }
     localStorage.removeItem("vendor_token");
     localStorage.removeItem("access_token");
     localStorage.removeItem("admin_token");

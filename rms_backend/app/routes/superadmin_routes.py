@@ -20,6 +20,7 @@ from ..email_utils import (
     send_store_created_email,
 )
 from ..utils import verify_password, create_access_token
+from ..activity_log import log_activity
 from app.config import settings
 from .deps import get_hq_tenant
 
@@ -52,6 +53,7 @@ async def superadmin_login(payload: SuperAdminLogin):
         {"sub": str(admin["_id"]), "role": "super_admin"},
         expires_delta=timedelta(days=1),
     )
+    await log_activity(admin.get("name") or admin.get("email", ""), "Super Admin logged in", type="info")
     return {
         "access_token": token,
         "token_type": "bearer",
@@ -253,6 +255,12 @@ async def create_admin(
         print(f"⚠️ Email failed for new admin {payload.email}: {e}")
         print(traceback.format_exc())   # ← shows exact line that failed
  
+    await log_activity(
+        current_admin.get("name") or current_admin.get("email", ""),
+        f"Created administrator account: {payload.name} ({primary_dept})",
+        type="create",
+    )
+
     return {
         "message":            "Admin created successfully. Setup email sent.",
         "admin_id":           admin_id,
@@ -261,7 +269,7 @@ async def create_admin(
         "store_id":           store_id,
         "store_name":         store_name,
     }
- 
+
 
 # ============================================================
 # 4. GET SINGLE ADMIN
@@ -300,10 +308,18 @@ async def delete_admin(
     current_admin: CurrentAdmin = Depends(get_current_superadmin),
 ):
     try:
+        target = await admins_collection.find_one({"_id": ObjectId(admin_id)}, {"name": 1, "email": 1})
         result = await admins_collection.delete_one({"_id": ObjectId(admin_id)})
         if result.deleted_count == 0:
             raise HTTPException(status_code=404, detail="Admin not found")
+        await log_activity(
+            current_admin.get("name") or current_admin.get("email", ""),
+            f"Deleted administrator account: {(target or {}).get('name') or (target or {}).get('email', admin_id)}",
+            type="delete",
+        )
         return {"message": "Admin deleted successfully"}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -348,12 +364,18 @@ async def update_admin_status(
     if payload.status not in ("Active", "Suspended"):
         raise HTTPException(status_code=400, detail="status must be 'Active' or 'Suspended'")
 
+    target = await admins_collection.find_one({"_id": ObjectId(admin_id)}, {"name": 1, "email": 1})
     result = await admins_collection.update_one(
         {"_id": ObjectId(admin_id)},
         {"$set": {"status": payload.status, "updated_at": datetime.utcnow()}},
     )
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Admin not found")
+    await log_activity(
+        current_admin.get("name") or current_admin.get("email", ""),
+        f"{'Suspended' if payload.status == 'Suspended' else 'Reactivated'} administrator: {(target or {}).get('name') or (target or {}).get('email', admin_id)}",
+        type="warning" if payload.status == "Suspended" else "update",
+    )
     return {"message": f"Admin status set to {payload.status}"}
 
 

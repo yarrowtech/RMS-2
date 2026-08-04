@@ -8,6 +8,7 @@ from ..routes.auth_routes import get_current_superadmin
 from ..db import admins_collection, stores_collection
 from ..auth import create_password_setup_token
 from ..email_utils import send_password_setup_email, send_tenant_status_email
+from ..activity_log import log_activity
 from ..config import settings
 from ..retailer_plans import INTERNAL_FREE_PLAN, RETAILER_PLAN_LIMITS, normalize_retailer_plan, retailer_plan_config
 
@@ -278,6 +279,12 @@ async def update_tenant(
             )
         except Exception:
             pass
+    if status_changed:
+        await log_activity(
+            current_admin.get("name") or current_admin.get("email", ""),
+            f"{'Suspended' if payload.status == 'suspended' else 'Reactivated'} retailer: {patch.get('company_name', tenant.get('company_name', tenant_id))}",
+            type="warning" if payload.status == "suspended" else "update",
+        )
     return {"message": f"Tenant '{tenant_id}' updated."}
 
 
