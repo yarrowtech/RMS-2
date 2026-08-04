@@ -57,6 +57,22 @@ const TIER_COLOR = {
   premium: { bg: "bg-amber-100", text: "text-amber-700", ring: "ring-amber-300", btn: "bg-amber-600 hover:bg-amber-700" },
 };
 
+// Reflects the vendor's ACTUAL active tier, not the plan-comparison cards
+// below (those already carry their own per-tier accent regardless of what
+// the vendor currently has). Free stays exactly as it always looked;
+// Standard/Premium get a progressively richer page wash + current-plan
+// card so paying for an upgrade visibly feels like one.
+const PAGE_BACKGROUND = {
+  free: "bg-[#F6F7FB]",
+  standard: "bg-gradient-to-b from-indigo-50 via-white to-white",
+  premium: "bg-gradient-to-b from-amber-50 via-white to-white",
+};
+const CURRENT_PLAN_CARD = {
+  free: "bg-white rounded-2xl border border-slate-200 p-5 space-y-4",
+  standard: "bg-white rounded-2xl border border-indigo-200 ring-1 ring-indigo-100 shadow-lg shadow-indigo-100/60 p-5 space-y-4",
+  premium: "bg-gradient-to-br from-amber-50 to-white rounded-2xl border border-amber-200 ring-1 ring-amber-100 shadow-lg shadow-amber-100/60 p-5 space-y-4",
+};
+
 function UsageBar({ used, limit, label }) {
   const unlimited = limit === null || limit === undefined;
   const pct = unlimited ? 0 : Math.min(100, (used / Math.max(limit, 1)) * 100);
@@ -198,8 +214,10 @@ export default function VendorSubscriptionTab() {
     );
   }
 
+  const activeTier = mySub?.tier || "free";
+
   return (
-    <div className="min-h-full bg-[#F6F7FB] p-4 sm:p-6">
+    <div className={`min-h-full ${PAGE_BACKGROUND[activeTier] || PAGE_BACKGROUND.free} p-4 sm:p-6`}>
       <div className="max-w-4xl mx-auto space-y-6">
         <div>
           <h1 className="text-xl font-black text-slate-900">Subscription</h1>
@@ -237,11 +255,22 @@ export default function VendorSubscriptionTab() {
         )}
 
         {mySub && (
-          <div className="bg-white rounded-2xl border border-slate-200 p-5 space-y-4">
+          <div className={CURRENT_PLAN_CARD[activeTier] || CURRENT_PLAN_CARD.free}>
             <div className="flex items-center justify-between gap-4">
-              <div>
-                <p className="text-xs font-bold text-slate-400 uppercase tracking-wide">Current plan</p>
-                <p className="text-lg font-black text-slate-900">{mySub.label}</p>
+              <div className="flex items-center gap-3">
+                {activeTier !== "free" && (() => {
+                  const CurrentTierIcon = TIER_ICON[activeTier] || Zap;
+                  const currentColors = TIER_COLOR[activeTier] || TIER_COLOR.free;
+                  return (
+                    <span className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl ${currentColors.bg}`}>
+                      <CurrentTierIcon className={`h-5 w-5 ${currentColors.text}`} />
+                    </span>
+                  );
+                })()}
+                <div>
+                  <p className="text-xs font-bold text-slate-400 uppercase tracking-wide">Current plan</p>
+                  <p className="text-lg font-black text-slate-900">{mySub.label}</p>
+                </div>
               </div>
               {mySub.status === "pending_payment" && (
                 <span className="px-3 py-1 bg-amber-100 text-amber-700 rounded-full text-xs font-bold">Awaiting payment</span>
