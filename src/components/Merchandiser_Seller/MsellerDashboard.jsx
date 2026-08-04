@@ -120,7 +120,7 @@ function VendorGetStarted({ businessTypes, catalogueCount, activeRetailers, hasW
     </section>
   );
 }
-export default function MSellerDashboard({ onNavigate = () => {} }) {
+export default function MSellerDashboard({ onNavigate = () => {}, planTier = "free" }) {
   const [vendorName, setVendorName] = useState("");
   const [businessTypes, setBusinessTypes] = useState([]);
   const [hasWhatsApp, setHasWhatsApp] = useState(false);
@@ -194,9 +194,15 @@ export default function MSellerDashboard({ onNavigate = () => {} }) {
   const recentOrders = [...orders]
     .sort((a, b) => new Date(b.orderDate || 0) - new Date(a.orderDate || 0))
     .slice(0, 4);
+  const activeTier = sub?.tier || planTier;
+  const dashboardBackground = {
+    free: "bg-[#F6F7FB]",
+    standard: "bg-gradient-to-b from-indigo-50/70 via-sky-50/40 to-transparent",
+    premium: "bg-[radial-gradient(circle_at_top_right,rgba(251,191,36,0.18),transparent_28rem),linear-gradient(135deg,rgba(255,247,237,0.9),rgba(255,255,255,0.7),rgba(248,250,252,0.7))]",
+  }[activeTier] || "bg-[#F6F7FB]";
 
   return (
-    <div className="min-h-full bg-[#F6F7FB] p-4 sm:p-6">
+    <div className={`min-h-full ${dashboardBackground} p-4 sm:p-6`}>
       <div className="max-w-6xl mx-auto space-y-6">
 
         {/* Header / greeting + tier banner */}

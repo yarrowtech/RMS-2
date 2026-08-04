@@ -3,13 +3,16 @@ import React, { useState } from "react";
 import {
   ArrowLeft,
   ArrowRight,
+  BarChart3,
   CheckCircle2,
   Eye,
   EyeOff,
   LockKeyhole,
   LogIn,
   Mail,
+  MessageCircle,
   ShieldCheck,
+  Sparkles,
   Store,
   UserPlus,
 } from "lucide-react";
@@ -83,22 +86,22 @@ const MSellerLogin = () => {
       <main className="relative z-10 mx-auto grid min-h-[calc(100vh-108px)] w-full max-w-7xl items-center gap-10 px-5 pb-12 sm:px-8 lg:grid-cols-[1.04fr_0.96fr] lg:px-10">
         <section className="hidden overflow-hidden rounded-[2rem] bg-gradient-to-br from-slate-950 via-[#102b2c] to-emerald-950 p-10 text-white shadow-2xl shadow-emerald-950/20 lg:block">
           <div className="flex items-center gap-2 text-xs font-extrabold uppercase tracking-[0.18em] text-emerald-300">
-            <ShieldCheck size={16} />
-            Approved partners only
+            <Sparkles size={16} />
+            Grow with RMS
           </div>
           <h1 className="mt-7 max-w-lg text-4xl font-black leading-[1.1] tracking-[-0.04em]">
-            Your business connection to the RMS retail network.
+            Sell smarter. Manage less. Grow faster with RMS.
           </h1>
           <p className="mt-5 max-w-lg text-base leading-7 text-emerald-50/65">
-            Access retailer enquiries, maintain your catalogue, manage orders and keep communication in one secure partner workspace.
+            One professional workspace to build your catalogue, reach retailers, manage orders and keep your business moving.
           </p>
 
           <div className="mt-10 grid gap-3">
             {[
-              "Maintain your verified company and catalogue profile",
-              "Receive and respond to retailer requirements",
-              "Track purchase orders and business activity",
-              "Connect through secure WhatsApp communication",
+              "Add products once — share them with every connected retailer",
+              "Receive inquiries and purchase orders in one workspace",
+              "Keep invoices, payments, returns and follow-ups organised",
+              "Know what is selling before stock stops moving",
             ].map((item) => (
               <div key={item} className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/[0.055] px-4 py-3.5 text-sm font-semibold text-emerald-50/85">
                 <CheckCircle2 size={17} className="shrink-0 text-emerald-400" />
@@ -107,7 +110,21 @@ const MSellerLogin = () => {
             ))}
           </div>
 
-          <div className="mt-10 border-t border-white/10 pt-6">
+
+          <div className="mt-6 grid grid-cols-3 gap-2 rounded-2xl border border-white/10 bg-black/10 p-2">
+            {[
+              ["Free", "Start your catalogue", Store],
+              ["Standard", "More visibility", MessageCircle],
+              ["Premium", "Advanced insight", BarChart3],
+            ].map(([plan, benefit, Icon]) => (
+              <div key={plan} className="rounded-xl bg-white/[0.06] p-3">
+                <Icon size={16} className={plan === "Premium" ? "text-amber-300" : "text-emerald-300"} />
+                <p className="mt-3 text-xs font-extrabold text-white">{plan}</p>
+                <p className="mt-1 text-[10px] leading-4 text-emerald-50/60">{benefit}</p>
+              </div>
+            ))}
+          </div>
+          <div className="mt-8 border-t border-white/10 pt-6">
             <p className="text-xs text-emerald-100/50">New vendor, wholesaler, exporter or manufacturer?</p>
             <a href="/merchandiser-seller/register" className="mt-3 inline-flex items-center gap-2 text-sm font-extrabold text-emerald-300 transition hover:text-white">
               Apply to join RMS <ArrowRight size={16} />

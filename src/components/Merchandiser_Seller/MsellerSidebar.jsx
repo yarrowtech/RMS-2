@@ -112,6 +112,7 @@ export default function MsellerSidebar({
   messageNotificationCount = 0,
   jobWorkEnabled = false,
   businessTypes = [],
+  planTier = "free",
 }) {
   const isDrawer = mode === "drawer";
   const showText = sidebarOpen;
@@ -123,6 +124,11 @@ export default function MsellerSidebar({
     .find((type) => selectedTypes.includes(type));
   const showRoleOperations = selectedTypes.some((type) => ROLE_OPERATION_TYPES.has(type));
   const communicationNotificationCount = inquiryNotificationCount + messageNotificationCount;
+  const planTheme = {
+    free: { background: "linear-gradient(185deg,#0E7C66 0%,#0B5C4C 100%)", mutedText: "text-emerald-100/70", avatar: "bg-emerald-400/90 text-emerald-950", activeBar: "bg-amber-400" },
+    standard: { background: "linear-gradient(185deg,#3730a3 0%,#2563eb 55%,#0891b2 100%)", mutedText: "text-indigo-100/75", avatar: "bg-cyan-200 text-indigo-950", activeBar: "bg-cyan-300" },
+    premium: { background: "linear-gradient(185deg,#312e81 0%,#6d28d9 48%,#c2410c 100%)", mutedText: "text-amber-100/80", avatar: "bg-amber-300 text-amber-950", activeBar: "bg-amber-300" },
+  }[planTier] || { background: "linear-gradient(185deg,#0E7C66 0%,#0B5C4C 100%)", mutedText: "text-emerald-100/70", avatar: "bg-emerald-400/90 text-emerald-950", activeBar: "bg-amber-400" };
   const visibleNavItems = NAV_ITEMS
     .filter((item) => item.key !== "job-work" || jobWorkEnabled)
     .filter((item) => item.key !== "role-operations" || showRoleOperations)
@@ -167,7 +173,7 @@ export default function MsellerSidebar({
         "shadow-[0_8px_28px_-6px_rgba(15,23,42,0.28)]",
         isDrawer ? "w-full" : sidebarOpen ? "w-[276px]" : "w-[88px]"
       )}
-      style={{ background: "linear-gradient(185deg,#0E7C66 0%,#0B5C4C 100%)" }}
+      style={{ background: planTheme.background }}
     >
       {/* ── Header ── */}
       <div className={cn("relative shrink-0 flex items-center gap-3 px-4 pt-5 pb-4", !sidebarOpen && "justify-center px-3")}>
@@ -177,7 +183,7 @@ export default function MsellerSidebar({
         {sidebarOpen && (
           <div className="min-w-0">
             <p className="truncate text-sm font-bold tracking-tight text-white">{title}</p>
-            <p className="truncate text-[11px] font-medium text-emerald-100/70">{subtitle}</p>
+            <p className={cn("truncate text-[11px] font-medium", planTheme.mutedText)}>{subtitle}</p>
           </div>
         )}
         {sidebarOpen && (
@@ -210,13 +216,13 @@ export default function MsellerSidebar({
             !sidebarOpen && "justify-center px-2"
           )}
         >
-          <div className="grid h-8 w-8 flex-shrink-0 place-items-center rounded-full bg-emerald-400/90 text-[13px] font-bold text-emerald-950">
+          <div className={cn("grid h-8 w-8 flex-shrink-0 place-items-center rounded-full text-[13px] font-bold", planTheme.avatar)}>
             {userName?.[0]?.toUpperCase() ?? "V"}
           </div>
           {sidebarOpen && (
             <div className="min-w-0">
               <p className="truncate text-[13px] font-semibold text-white">{userName}</p>
-              <p className="text-[10.5px] font-medium text-emerald-100/60">{workspaceLabel}</p>
+              <p className={cn("text-[10.5px] font-medium", planTheme.mutedText)}>{workspaceLabel}</p>
             </div>
           )}
         </div>
@@ -243,7 +249,7 @@ export default function MsellerSidebar({
               )}
             >
               {isActive && (
-                <span className="absolute left-0 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-r-full bg-amber-400" />
+                <span className={cn("absolute left-0 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-r-full", planTheme.activeBar)} />
               )}
               <Icon size={17} strokeWidth={isActive ? 2.2 : 1.8} className="flex-shrink-0" />
               {showText && <span className="flex-1 truncate text-left">{label}</span>}
