@@ -658,6 +658,33 @@ async def send_subscription_expiring_email(email: EmailStr, name: str, tier_labe
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# 14. VENDOR — Proactive demand signal from a retailer's rising forecast
+# ─────────────────────────────────────────────────────────────────────────────
+async def send_demand_signal_email(email: EmailStr, vendor_name: str, tenant_label: str, division: str) -> bool:
+    """Reaches vendors who aren't actively logged in when a retailer they
+    already supply shows rising demand in a category they list. Deliberately
+    an aggregated trend only — no quantities, revenue, or specific SKUs —
+    see _send_vendor_demand_signals() in forecast_analytics_routes.py."""
+    body = f"""
+      <h2 style="color:#222;margin-bottom:8px;">Hi {vendor_name},</h2>
+      <p style="font-size:15px;color:#444;">
+        <strong style="color:{PRIMARY};">{tenant_label}</strong> is showing rising demand in
+        <strong>{division}</strong> — a category you supply.
+      </p>
+      <p style="font-size:14px;color:#555;margin-top:12px;">
+        This may be a good time to check in, confirm your current pricing, or send an updated quote.
+      </p>
+      {_divider()}
+      {_note("This is an automated signal from CitiMart RMS, based on the retailer's own sales trend — not a guaranteed order.")}
+    """
+    return await _send(
+        subject=f"Rising demand for {division} at {tenant_label}",
+        recipients=[email],
+        html=_wrap(PRIMARY, "Demand Signal", body, "© CitiMart RMS · Vendor Network"),
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # 14. SUPPORT TICKETS — new ticket (to ops) / new reply (to requester)
 #
 # Shared across the vendor AND retailer support surfaces (support_routes.py)
