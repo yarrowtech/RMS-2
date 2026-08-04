@@ -1990,6 +1990,37 @@ function AgingReport({ showToast }) {
     </div>
   );
 }
+function VendorInvoiceGuide() {
+  const steps = [
+    ["1", "Where these come from", "A retailer generates a Purchase Invoice against a PO you've fulfilled. It appears here automatically — you never create or edit an invoice yourself."],
+    ["2", "Balance due", "Balance = invoice total minus any payments the retailer has recorded — the same figures that feed your Finance & Analytics page."],
+    ["3", "Acknowledge", "Acknowledging confirms you've seen and agree with the invoice details. It does not mark the invoice as paid."],
+    ["4", "Payment status", "Payment status is set by the retailer's accounts team as they record receipts against this invoice, not by you."],
+    ["5", "Track payment", "Head to Finance & Analytics for the running total, overdue tracking, and to raise a payment dispute if something looks off."],
+  ];
+  return (
+    <details open className="overflow-hidden rounded-2xl border border-emerald-100 bg-gradient-to-br from-white to-emerald-50 shadow-sm">
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-4 px-5 py-4">
+        <div className="flex items-center gap-3">
+          <span className="grid h-9 w-9 place-items-center rounded-xl bg-emerald-100 text-sm font-black text-emerald-700">i</span>
+          <div><p className="text-sm font-black text-slate-900">How Purchase Invoices work</p><p className="mt-0.5 text-xs text-slate-500">Where they come from, and what Acknowledge actually means</p></div>
+        </div>
+        <span className="rounded-full border border-emerald-200 bg-white px-3 py-1 text-[11px] font-bold text-emerald-700">Show / hide guide</span>
+      </summary>
+      <div className="border-t border-emerald-100 px-5 pb-5 pt-4">
+        <div className="mb-4 rounded-xl bg-sky-50 px-3.5 py-3 text-xs leading-6 text-sky-800"><strong>Important:</strong> You cannot create or edit invoices here — retailers generate them from confirmed POs. This page is where you review and acknowledge them, not where payment is recorded.</div>
+        <div className="grid gap-2.5 sm:grid-cols-2 xl:grid-cols-3">
+          {steps.map(([number, title, text]) => (
+            <div key={number} className="flex gap-2.5 rounded-xl border border-emerald-100 bg-white p-3">
+              <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-emerald-600 text-[11px] font-black text-white">{number}</span>
+              <div><p className="text-xs font-black text-slate-900">{title}</p><p className="mt-1 text-[11px] leading-5 text-slate-500">{text}</p></div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </details>
+  );
+}
 function VendorPurchaseInvoiceView() {
   const [invoices, setInvoices] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -2039,6 +2070,8 @@ function VendorPurchaseInvoiceView() {
           </div>
           <button onClick={loadInvoices} className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-100">Refresh</button>
         </div>
+
+        <VendorInvoiceGuide />
 
         {error && <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">{error}</div>}
 

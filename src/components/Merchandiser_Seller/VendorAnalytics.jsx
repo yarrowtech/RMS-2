@@ -16,6 +16,39 @@ function LockedFeature({ title, children }) {
   return <div className="flex min-h-44 flex-col items-center justify-center rounded-2xl border border-dashed border-violet-200 bg-violet-50/60 p-6 text-center"><span className="mb-3 grid h-10 w-10 place-items-center rounded-xl bg-white text-violet-600 shadow-sm"><LockKeyhole className="h-5 w-5" /></span><h3 className="text-sm font-black text-slate-900">{title}</h3><p className="mt-1 max-w-sm text-xs leading-5 text-slate-500">{children}</p></div>;
 }
 
+function FinanceGuide() {
+  const steps = [
+    ["1", "Invoice created", "A retailer generates a Purchase Invoice against a PO you've fulfilled — it flows into this page automatically, you never create one yourself."],
+    ["2", "Retailer records payment", "When the retailer's Finance team records a payment, it appears in Payment transactions below as a read-only entry — you don't enter payments here."],
+    ["3", "Outstanding is calculated", "Outstanding = invoice total minus recorded payments, worked out automatically for every open invoice — never a manually entered balance."],
+    ["4", "Overdue is flagged", "Any invoice past its due date with a balance remaining is marked Overdue, and counts toward the Overdue metric at the top."],
+    ["5", "See something wrong?", "Click Report issue on a transaction to flag it — your note goes straight to the retailer's accounts team for review."],
+    ["6", "Higher plans unlock more", "Standard adds the retailer-by-retailer breakdown; Premium adds a next-month receipt estimate based on your recent payment history."],
+  ];
+  return (
+    <details open className="overflow-hidden rounded-2xl border border-violet-100 bg-gradient-to-br from-white to-violet-50 shadow-sm">
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-4 px-5 py-4">
+        <div className="flex items-center gap-3">
+          <span className="grid h-9 w-9 place-items-center rounded-xl bg-violet-100 text-sm font-black text-violet-700">i</span>
+          <div><p className="text-sm font-black text-slate-900">How Finance &amp; Analytics works</p><p className="mt-0.5 text-xs text-slate-500">Where these numbers come from, and what you can (and can't) do here</p></div>
+        </div>
+        <span className="rounded-full border border-violet-200 bg-white px-3 py-1 text-[11px] font-bold text-violet-700">Show / hide guide</span>
+      </summary>
+      <div className="border-t border-violet-100 px-5 pb-5 pt-4">
+        <div className="mb-4 rounded-xl bg-indigo-50 px-3.5 py-3 text-xs leading-6 text-indigo-800"><strong>Important:</strong> Payment records are entered and controlled by the retailer's Finance team, not by you. This page is a read-only mirror of what they've recorded, plus balances RMS calculates automatically.</div>
+        <div className="grid gap-2.5 sm:grid-cols-2 xl:grid-cols-3">
+          {steps.map(([number, title, text]) => (
+            <div key={number} className="flex gap-2.5 rounded-xl border border-violet-100 bg-white p-3">
+              <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-violet-600 text-[11px] font-black text-white">{number}</span>
+              <div><p className="text-xs font-black text-slate-900">{title}</p><p className="mt-1 text-[11px] leading-5 text-slate-500">{text}</p></div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </details>
+  );
+}
+
 export default function VendorAnalytics() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -66,6 +99,7 @@ export default function VendorAnalytics() {
 
   return <div className="min-h-full bg-slate-50/60 p-3 sm:p-5"><div className="mx-auto max-w-7xl space-y-5">
     <section className="overflow-hidden rounded-3xl bg-gradient-to-br from-slate-950 via-indigo-950 to-violet-900 p-5 text-white shadow-xl sm:p-7"><div className="flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between"><div><span className="inline-flex items-center gap-2 rounded-full bg-white/10 px-3 py-1 text-[11px] font-bold uppercase tracking-widest ring-1 ring-white/15"><ChartNoAxesCombined className="h-3.5 w-3.5" /> Finance workspace</span><h2 className="mt-4 text-2xl font-black tracking-tight sm:text-3xl">Analytics & Finance</h2><p className="mt-2 max-w-2xl text-sm leading-6 text-indigo-100">Track invoices, retailer-recorded receipts and automatically calculated outstanding balances.</p></div><div className="flex items-center gap-3"><span className="rounded-xl bg-white/10 px-4 py-2 text-xs font-bold ring-1 ring-white/15">{data.access.label} plan</span><button onClick={load} className="grid h-10 w-10 place-items-center rounded-xl bg-white text-slate-900 shadow-lg" title="Refresh"><RefreshCw className="h-4 w-4" /></button></div></div></section>
+    <FinanceGuide />
     {notice && <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs font-bold text-emerald-800">{notice}</div>}
     <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4"><MetricCard icon={BadgeIndianRupee} label="Total invoiced" value={money(summary.invoiced)} note={`${summary.invoice_count || 0} purchase invoices`} /><MetricCard icon={CircleDollarSign} label="Payments received" value={money(summary.paid)} note="Recorded by retailer accounts" tone="emerald" /><MetricCard icon={WalletCards} label="Outstanding" value={money(summary.outstanding)} note="Calculated from open invoices" tone="amber" /><MetricCard icon={CalendarClock} label="Overdue" value={money(summary.overdue)} note={`${summary.overdue_count || 0} invoices · ${overdueRate}% of outstanding`} tone="rose" /></section>
     <section className="grid gap-5 xl:grid-cols-[1.55fr_1fr]"><div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"><div className="mb-5 flex items-start justify-between gap-3"><div><h3 className="text-base font-black text-slate-900">Payment trend</h3><p className="mt-1 text-xs text-slate-500">Last {data.access.finance_history_months} months of recorded receipts</p></div><TrendingUp className="h-5 w-5 text-emerald-500" /></div><div className="h-64 w-full"><ResponsiveContainer width="100%" height="100%"><AreaChart data={data.monthly_receipts || []} margin={{ left: 0, right: 8, top: 8, bottom: 0 }}><defs><linearGradient id="receiptFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#7c3aed" stopOpacity={0.35} /><stop offset="100%" stopColor="#7c3aed" stopOpacity={0.02} /></linearGradient></defs><CartesianGrid strokeDasharray="4 4" vertical={false} stroke="#e2e8f0" /><XAxis dataKey="month" tick={{ fontSize: 10, fill: "#64748b" }} axisLine={false} tickLine={false} /><YAxis tick={{ fontSize: 10, fill: "#64748b" }} axisLine={false} tickLine={false} tickFormatter={(v) => `₹${Math.round(v / 1000)}k`} /><Tooltip formatter={(value) => [money(value), "Received"]} contentStyle={{ borderRadius: 12, borderColor: "#e2e8f0", fontSize: 12 }} /><Area type="monotone" dataKey="received" stroke="#7c3aed" strokeWidth={3} fill="url(#receiptFill)" /></AreaChart></ResponsiveContainer></div></div>
