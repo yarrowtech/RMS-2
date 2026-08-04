@@ -637,6 +637,107 @@ async def get_audit_logs(
 
 
 # ============================================================
+# 14b. SYSTEM HEALTH — error logs + email failures
+#
+# Separate from Activity Logs above: that's deliberate user actions
+# (who did what). This is things going WRONG — unhandled exceptions
+# (caught globally in main.py, or logged explicitly from a few spots that
+# already swallow their own exceptions, e.g. the forecast automation cron
+# and visiting-card scans) and every failed email send. Neither had a
+# Super Admin view before this — error_logs_collection/email_failures_
+# collection were both being written to, with nowhere to actually see them.
+# ============================================================
+
+@router.get("/error-logs")
+async def get_error_logs(
+    current_admin: CurrentAdmin = Depends(get_current_superadmin),
+    limit: int = Query(50, ge=1, le=500),
+    skip: int = Query(0, ge=0),
+    resolved: Optional[bool] = None,
+    source: Optional[str] = None,
+):
+    from ..db import error_logs_collection
+    query: Dict[str, Any] = {}
+    if resolved is not None:
+        query["resolved"] = resolved
+    if source:
+        query["source"] = {"$regex": source, "$options": "i"}
+
+    cursor = error_logs_collection.find(query).sort("created_at", -1).skip(skip).limit(limit)
+    logs: List[Dict[str, Any]] = []
+    async for log in cursor:
+        created = log.get("created_at")
+        logs.append({
+            "id": str(log["_id"]),
+            "source": log.get("source"),
+            "message": log.get("message"),
+            "severity": log.get("severity", "error"),
+            "traceback": log.get("traceback"),
+            "context": log.get("context") or {},
+            "resolved": bool(log.get("resolved")),
+            "created_at": created.isoformat() if isinstance(created, datetime) else None,
+        })
+    total = await error_logs_collection.count_documents(query)
+    unresolved = await error_logs_collection.count_documents({"resolved": False})
+    return {"total": total, "unresolved": unresolved, "logs": logs}
+
+
+@router.post("/error-logs/{log_id}/resolve")
+async def resolve_error_log(log_id: str, current_admin: CurrentAdmin = Depends(get_current_superadmin)):
+    from ..db import error_logs_collection
+    if not ObjectId.is_valid(log_id):
+        raise HTTPException(status_code=400, detail="Invalid error log ID")
+    result = await error_logs_collection.update_one(
+        {"_id": ObjectId(log_id)}, {"$set": {"resolved": True, "resolved_by": current_admin.get("email", ""), "resolved_at": datetime.utcnow()}},
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Error log not found")
+    return {"message": "Marked resolved."}
+
+
+@router.get("/email-failures")
+async def get_email_failures(
+    current_admin: CurrentAdmin = Depends(get_current_superadmin),
+    limit: int = Query(50, ge=1, le=500),
+    skip: int = Query(0, ge=0),
+    resolved: Optional[bool] = None,
+):
+    from ..db import email_failures_collection
+    query: Dict[str, Any] = {}
+    if resolved is not None:
+        query["resolved"] = resolved
+
+    cursor = email_failures_collection.find(query).sort("created_at", -1).skip(skip).limit(limit)
+    failures: List[Dict[str, Any]] = []
+    async for row in cursor:
+        created = row.get("created_at")
+        failures.append({
+            "id": str(row["_id"]),
+            "subject": row.get("subject"),
+            "recipients": row.get("recipients") or [],
+            "reason": row.get("reason"),
+            "resolved": bool(row.get("resolved")),
+            "created_at": created.isoformat() if isinstance(created, datetime) else None,
+        })
+    total = await email_failures_collection.count_documents(query)
+    unresolved = await email_failures_collection.count_documents({"resolved": False})
+    return {"total": total, "unresolved": unresolved, "failures": failures}
+
+
+@router.post("/email-failures/{failure_id}/resolve")
+async def resolve_email_failure(failure_id: str, current_admin: CurrentAdmin = Depends(get_current_superadmin)):
+    from ..db import email_failures_collection
+    if not ObjectId.is_valid(failure_id):
+        raise HTTPException(status_code=400, detail="Invalid email failure ID")
+    result = await email_failures_collection.update_one(
+        {"_id": ObjectId(failure_id)}, {"$set": {"resolved": True, "resolved_by": current_admin.get("email", ""), "resolved_at": datetime.utcnow()}},
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Email failure not found")
+    return {"message": "Marked resolved."}
+
+
+# ============================================================
 # 15. FEATURE FLAGS
 # ============================================================
 

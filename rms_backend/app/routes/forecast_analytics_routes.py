@@ -27,6 +27,7 @@ from .deps import get_hq_tenant
 from .procurement_notification_routes import notify_vendor
 from ..config import settings
 from ..email_utils import send_demand_signal_email
+from ..error_log import log_error
 from ..db import (
     admins_collection, grn_collection, inventory_collection, product_collection,
     procurement_notifications_collection, purchaseorders_collection, sales_collection,
@@ -590,8 +591,26 @@ async def auto_run_forecast_automation(
         ],
     })
 
-    results = [await _run_forecast_automation_for_tenant(tenant_id) for tenant_id in tenant_ids if tenant_id]
-    return {"status": "success", "tenants_processed": len(results), "results": results}
+    # One tenant's bad data (e.g. a malformed sales row) must not abort the
+    # whole run — previously a single failure here killed automation for
+    # every tenant after it in the list, silently, with nothing recorded
+    # anywhere. Each tenant is now isolated and a failure is logged instead
+    # of just crashing the request.
+    results = []
+    failed = 0
+    for tenant_id in tenant_ids:
+        if not tenant_id:
+            continue
+        try:
+            results.append(await _run_forecast_automation_for_tenant(tenant_id))
+        except Exception as exc:
+            failed += 1
+            await log_error(
+                "forecast-analytics.auto-run", f"Automation failed for tenant {tenant_id}: {exc}",
+                exc=exc, context={"tenant_id": tenant_id},
+            )
+
+    return {"status": "success", "tenants_processed": len(results), "tenants_failed": failed, "results": results}
 
 
 @router.get("/alerts")
