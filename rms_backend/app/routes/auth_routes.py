@@ -13,6 +13,7 @@ from ..models import TokenResponse
 from ..config import settings
 from bson import ObjectId
 from ..email_utils import send_reset_password_email, send_password_changed_email
+from ..activity_log import log_activity
 from fastapi import Header
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -234,6 +235,11 @@ async def login(req: LoginRequest):
     redirect_info = get_redirect_for_departments(managed)
 
     await admins_collection.update_one({"_id": admin["_id"]}, {"$set": {"last_login": datetime.utcnow()}})
+    await log_activity(
+        admin.get("name") or admin.get("email", ""),
+        f"Logged in ({admin.get('department', '') or store['scope']})",
+        type="info",
+    )
 
     return {
         "access_token": token,
@@ -281,6 +287,46 @@ async def get_admin_me(authorization: str = Header(None)):
         "scope":              _store_info(admin)["scope"],
         "account_type":       admin.get("account_type", "department_retailer"),
     }
+
+
+@router.post("/logout")
+async def logout(authorization: str = Header(None)):
+    """
+    There's no server-side session to invalidate — JWTs here are stateless,
+    logout is really just the frontend clearing localStorage. This endpoint
+    exists purely to record that in the activity log; it resolves whichever
+    actor type the token belongs to (admin/vendor/super admin) best-effort
+    and always returns 200, even with a missing or expired token, so the
+    frontend's logout flow never has to handle a failure here.
+    """
+    actor = "Unknown user"
+    role_label = ""
+    if authorization and authorization.startswith("Bearer "):
+        try:
+            payload = jwt.decode(authorization.split(" ", 1)[1], settings.secret_key, algorithms=[settings.jwt_algorithm])
+            if payload.get("vendor_id") and ObjectId.is_valid(str(payload["vendor_id"])):
+                vendor = await vendors_collection.find_one(
+                    {"_id": ObjectId(str(payload["vendor_id"]))}, {"name": 1, "vendor_name": 1, "email": 1}
+                )
+                if vendor:
+                    actor = vendor.get("name") or vendor.get("vendor_name") or vendor.get("email") or actor
+                role_label = "Vendor"
+            elif payload.get("role") == "super_admin" and payload.get("sub") and ObjectId.is_valid(str(payload["sub"])):
+                admin = await admins_collection.find_one({"_id": ObjectId(str(payload["sub"]))}, {"name": 1, "email": 1})
+                if admin:
+                    actor = admin.get("name") or admin.get("email") or actor
+                role_label = "Super Admin"
+            elif payload.get("role") in ("ADMIN", "admin") and payload.get("sub") and ObjectId.is_valid(str(payload["sub"])):
+                admin = await admins_collection.find_one({"_id": ObjectId(str(payload["sub"]))}, {"name": 1, "email": 1, "department": 1})
+                if admin:
+                    actor = admin.get("name") or admin.get("email") or actor
+                    role_label = admin.get("department", "")
+        except JWTError:
+            pass
+
+    await log_activity(actor, f"Logged out{f' ({role_label})' if role_label else ''}", type="info")
+    return {"ok": True}
+
 
 @router.get("/superadmin/me")
 async def get_superadmin_me(current_admin: CurrentAdmin = Depends(get_current_superadmin)):

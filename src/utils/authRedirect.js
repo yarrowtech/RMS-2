@@ -179,10 +179,30 @@ export function isStoreAdmin() {
 }
 
 /**
+ * Fire-and-forget: records a logout in the Super Admin Activity Log.
+ * Never awaited by callers and never throws — a logout must always
+ * succeed for the user even if this call fails or the backend is down.
+ */
+function recordLogout() {
+  const token = localStorage.getItem("admin_token") || localStorage.getItem("access_token") || localStorage.getItem("token");
+  if (!token) return;
+  try {
+    fetch(`${APP_API_URL}/auth/logout`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      keepalive: true,
+    }).catch(() => {});
+  } catch {
+    // Logging out must never be blocked by this.
+  }
+}
+
+/**
  * Wipe all auth-related localStorage keys on logout.
  * Keep in sync with DepartmentSelector logout handler.
  */
 export function clearAuthData() {
+  recordLogout();
   [
     "admin_token", "access_token", "token",
     "admin_name", "admin_email", "admin_login_data",

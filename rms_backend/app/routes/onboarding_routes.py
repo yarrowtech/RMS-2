@@ -8,6 +8,7 @@ from pydantic import BaseModel, EmailStr, Field
 
 from ..db import onboarding_requests_collection
 from ..email_utils import send_onboarding_declined_email, send_onboarding_received_email
+from ..activity_log import log_activity
 from .auth_routes import CurrentAdmin, get_current_superadmin
 
 router = APIRouter(prefix="/api/onboarding", tags=["Onboarding"])
@@ -113,4 +114,9 @@ async def review_onboarding_request(request_id: str, payload: OnboardingRequestR
             await send_onboarding_declined_email(request["email"], request["contact_name"], request["business_name"], update["review_note"])
         except Exception as e:
             print("❌ EMAIL ERROR:", str(e))
+    await log_activity(
+        current_admin.get("name") or current_admin.get("email", ""),
+        f"{'Declined' if payload.status == 'DECLINED' else payload.status.title()} onboarding request: {request.get('business_name', request_id)}",
+        type="warning" if payload.status == "DECLINED" else "update",
+    )
     return {"message": "Onboarding request updated.", "request": _view(request)}

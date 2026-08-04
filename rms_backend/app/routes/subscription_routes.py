@@ -46,6 +46,7 @@ from urllib import request as urlrequest
 from ..db import vendor_subscriptions_collection, vendor_subscription_payments_collection, vendor_catalogue_collection, vendors_collection
 from ..config import settings
 from ..email_utils import send_subscription_receipt_email, send_subscription_expiring_email
+from ..activity_log import log_activity
 from .vendor_routes import decode_token
 from .auth_routes import get_current_superadmin
 
@@ -515,6 +516,13 @@ async def _activate_paid_vendor_subscription(payment: dict, payment_id: str) -> 
             )
         except Exception:
             pass
+    # Actor is "System" here, not an admin — this fires from the Razorpay
+    # payment-verification flow, not an interactive admin action.
+    await log_activity(
+        "System",
+        f"Activated {tier_cfg['label']} subscription for vendor {(vendor or {}).get('name') or (vendor or {}).get('vendor_name') or vendor_id}",
+        type="create",
+    )
     return await _extend_existing_catalogue_items(vendor_id, tier_cfg["visibility_days"], tier_cfg["image_limit"])
 
 
