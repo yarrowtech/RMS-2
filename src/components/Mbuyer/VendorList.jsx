@@ -51,6 +51,9 @@ const Vendors = ({ showQuestionnaires = true }) => {
   const [searchPending,    setSearchPending]     = useState("");
   const [searchApproved,   setSearchApproved]    = useState("");
 
+  // Invitations tracker
+  const [showInvitations, setShowInvitations] = useState(false);
+
   // Add Vendor flow
   const [showAddVendor,  setShowAddVendor]  = useState(false);
   const [addStep,        setAddStep]        = useState("form"); // "form" | "link"
@@ -345,6 +348,15 @@ const Vendors = ({ showQuestionnaires = true }) => {
             )}
           </div>}
 
+          {/* 📨 Invitations Tracker */}
+          <button
+            onClick={() => setShowInvitations(true)}
+            className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 shadow-sm transition hover:border-violet-300 hover:text-violet-700"
+          >
+            <Mail size={18} className="text-gray-500" />
+            Invitations
+          </button>
+
           {/* ➕ Add Vendor */}
           <button
             onClick={() => { setShowAddVendor(true); setAddStep("form"); }}
@@ -381,6 +393,7 @@ const Vendors = ({ showQuestionnaires = true }) => {
       </div>
 
       {/* ── MODALS ── */}
+      {showInvitations && <InvitationsModal onClose={() => setShowInvitations(false)} />}
       {selectedVendor && (
         <VendorModal vendor={selectedVendor} onClose={() => setSelectedVendor(null)}
           onApprove={() => handleApproval(selectedVendor._id)}
@@ -852,6 +865,143 @@ const Modal = ({ children, onClose, maxWidth = "max-w-3xl" }) => createPortal(
   </div>,
   document.body
 );
+
+// ─────────────────────────────────────────────────────────────────────────────
+// INVITATIONS TRACKER — every invite this buyer has sent, and its status
+// ─────────────────────────────────────────────────────────────────────────────
+const INVITE_STATUS_STYLE = {
+  Pending:    "bg-amber-100 text-amber-700",
+  Registered: "bg-emerald-100 text-emerald-700",
+  Expired:    "bg-slate-100 text-slate-500",
+};
+
+const InvitationsModal = ({ onClose }) => {
+  const [invites, setInvites] = useState([]);
+  const [counts, setCounts] = useState({ Pending: 0, Registered: 0, Expired: 0 });
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("All");
+  const [copiedId, setCopiedId] = useState("");
+
+  const load = async () => {
+    setLoading(true); setError("");
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/vendors/invites`, { headers: authHeaders() });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.detail || "Could not load invitations.");
+      setInvites(json.data || []);
+      setCounts(json.counts || { Pending: 0, Registered: 0, Expired: 0 });
+    } catch (err) { setError(err.message || "Could not load invitations."); }
+    finally { setLoading(false); }
+  };
+
+  useEffect(() => { load(); }, []);
+
+  const filtered = invites.filter((inv) => {
+    if (statusFilter !== "All" && inv.status !== statusFilter) return false;
+    const haystack = [inv.companyName, ...(inv.brandNames || []), inv.contactName, inv.mobile, inv.email, inv.productCategory].join(" ").toLowerCase();
+    return haystack.includes(search.toLowerCase());
+  });
+
+  const copyInviteLink = (inv) => {
+    const link = `${FRONTEND_URL}/vendor/register?token=${inv.token}`;
+    navigator.clipboard.writeText(link).then(() => {
+      setCopiedId(inv.id); setTimeout(() => setCopiedId(""), 2000);
+    });
+  };
+
+  const whatsAppInvite = (inv) => {
+    const link = `${FRONTEND_URL}/vendor/register?token=${inv.token}`;
+    const msg = `Hi ${inv.contactName}, CitiMart is pleased to invite ${inv.companyName} to join our vendor network.\n\nComplete your registration here:\n${link}\n\nThis link expires in 7 days.\n\nRegards,\nCitiMart Team`;
+    const clean = (inv.mobile || "").replace(/\D/g, "");
+    const num = clean.startsWith("91") ? clean : `91${clean}`;
+    window.open(`https://wa.me/${num}?text=${encodeURIComponent(msg)}`, "_blank");
+  };
+
+  const total = counts.Pending + counts.Registered + counts.Expired;
+
+  return (
+    <Modal onClose={onClose} maxWidth="max-w-6xl">
+      <div className="flex items-center gap-3 bg-gradient-to-r from-violet-600 to-indigo-700 px-6 py-5">
+        <Mail className="h-6 w-6 text-white" />
+        <div>
+          <h2 className="text-lg font-semibold text-white">Invitations Sent</h2>
+          <p className="mt-0.5 text-xs text-indigo-200">Track every vendor invite — who's onboarded, who's still pending, who's expired</p>
+        </div>
+        <button onClick={onClose} className="ml-auto rounded-lg p-1.5 text-indigo-100 hover:bg-white/10"><X size={20} /></button>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2 border-b border-slate-100 px-5 py-3.5">
+        {[["All", total], ["Pending", counts.Pending], ["Registered", counts.Registered], ["Expired", counts.Expired]].map(([key, count]) => (
+          <button key={key} onClick={() => setStatusFilter(key)}
+            className={`rounded-lg px-3 py-1.5 text-xs font-bold transition ${statusFilter === key ? "bg-violet-600 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"}`}>
+            {key} ({count})
+          </button>
+        ))}
+        <button onClick={load} className="ml-auto inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-bold text-slate-600 hover:bg-slate-50">
+          <RefreshCcw size={13} /> Refresh
+        </button>
+      </div>
+
+      <SearchBar value={search} onChange={setSearch} placeholder="Search by company, brand, contact, mobile or email..." />
+
+      {error && <div className="mx-5 mt-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600">⚠️ {error}</div>}
+
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead className="bg-slate-50 text-left text-xs font-bold uppercase text-slate-500">
+            <tr>
+              {["Company / Brand", "Contact", "Category", "Status", "Invited by", "Sent", "Action"].map((h) => (
+                <th key={h} className="whitespace-nowrap px-4 py-2.5">{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {loading ? (
+              <tr><td colSpan={7} className="px-4 py-10 text-center text-slate-400">Loading…</td></tr>
+            ) : !filtered.length ? (
+              <tr><td colSpan={7} className="px-4 py-10 text-center text-slate-400">No invitations found.</td></tr>
+            ) : filtered.map((inv) => (
+              <tr key={inv.id} className="hover:bg-slate-50">
+                <td className="px-4 py-3">
+                  <p className="font-semibold text-slate-800">{inv.companyName}</p>
+                  {!!inv.brandNames?.length && <p className="text-xs text-slate-400">{inv.brandNames.join(", ")}</p>}
+                </td>
+                <td className="px-4 py-3">
+                  <p className="text-slate-700">{inv.contactName}</p>
+                  <p className="text-xs text-slate-400">{inv.mobile}{inv.email ? ` · ${inv.email}` : ""}</p>
+                </td>
+                <td className="px-4 py-3 text-slate-600">{inv.productCategory || "—"}</td>
+                <td className="px-4 py-3">
+                  <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-bold ${INVITE_STATUS_STYLE[inv.status] || INVITE_STATUS_STYLE.Pending}`}>{inv.status}</span>
+                </td>
+                <td className="px-4 py-3 text-xs text-slate-500">{inv.invitedBy || "—"}</td>
+                <td className="px-4 py-3 text-xs text-slate-500">{timeAgo(inv.createdAt)}</td>
+                <td className="px-4 py-3">
+                  {inv.status === "Pending" && inv.token ? (
+                    <div className="flex items-center gap-1.5">
+                      <button onClick={() => copyInviteLink(inv)} title="Copy invite link"
+                        className="rounded-lg border border-slate-200 p-1.5 text-slate-500 hover:bg-slate-100">
+                        {copiedId === inv.id ? <Check size={14} className="text-emerald-600" /> : <Copy size={14} />}
+                      </button>
+                      <button onClick={() => whatsAppInvite(inv)} title="Resend via WhatsApp"
+                        className="rounded-lg border border-slate-200 p-1.5 text-slate-500 hover:bg-emerald-50 hover:text-emerald-600">
+                        <MessageCircle size={14} />
+                      </button>
+                    </div>
+                  ) : (
+                    <span className="text-xs text-slate-300">—</span>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </Modal>
+  );
+};
 
 const SectionHeader = ({ title, color }) => (
   <div className={`bg-gradient-to-r ${color} px-5 py-3.5 text-sm font-extrabold text-white`}>

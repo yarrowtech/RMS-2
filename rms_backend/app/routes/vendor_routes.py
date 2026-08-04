@@ -60,13 +60,14 @@ from ..email_utils import (
     send_vendor_invite_email,
     send_questionnaire_received_email,
 )
-from fastapi import Form, File, UploadFile, Depends, Header
-from typing import List, Optional
+from fastapi import Form, File, UploadFile, Depends, Header, Query
+from typing import Dict, List, Optional
 import cloudinary
 import cloudinary.uploader
 
 from .deps import get_hq_tenant
 from ..db import admins_collection
+from ..activity_log import log_activity
 
 vendor_bp = APIRouter(prefix="/api/vendors", tags=["Vendors"])
 
@@ -507,6 +508,10 @@ async def approve_vendor(
     else:
         email_note = f"{vendor.get('name','This vendor')} already has login access; this retailer relationship is now live on their next login."
 
+    await log_activity(
+        approver_name, f"Approved vendor {vendor.get('name', vendor_code)} ({vendor_code})", type="create",
+    )
+
     return {
         "message": f"✅ Vendor {vendor_code} approved by {approver_name} ({approver_role}, {approver_department}). {email_note}",
         "vendor_code": vendor_code,
@@ -531,6 +536,11 @@ async def reject_vendor(link_id: str, ctx: dict = Depends(get_hq_tenant)):
         {"_id": ObjectId(link_id), "tenant_id": ctx["tenant_id"]},
         {"$set": {"status": "Rejected", "rejected_at": datetime.utcnow(), "rejected_by": ctx.get("admin_id")}}
     )
+
+    rejected_vendor = await vendors_collection.find_one({"_id": link["vendor_id"]}, {"name": 1, "vendor_name": 1})
+    vendor_label = (rejected_vendor or {}).get("name") or (rejected_vendor or {}).get("vendor_name") or str(link["vendor_id"])
+    await log_activity(ctx.get("admin_name", ""), f"Rejected vendor {vendor_label}", type="warning")
+
     return {"message": "Vendor rejected successfully."}
 
 
@@ -625,6 +635,9 @@ async def vendor_login(request: Request):
         raise HTTPException(status_code=401, detail="Incorrect password")
 
     token = create_token({"vendor_id": str(vendor["_id"]), "email": vendor["email"]})
+    await log_activity(
+        vendor.get("name") or vendor.get("vendor_name") or vendor.get("email", ""), "Vendor logged in", type="info",
+    )
     return {
         "access_token": token,
         "vendor_id":    str(vendor["_id"]),
@@ -1490,12 +1503,57 @@ async def dismiss_questionnaire_submission(submission_id: str, ctx: dict = Depen
 
 
 @vendor_bp.get("/invites")
-async def list_invites(ctx: dict = Depends(get_hq_tenant)):
-    """Returns invite links for the caller's own tenant only."""
+async def list_invites(ctx: dict = Depends(get_hq_tenant), limit: int = Query(200, ge=1, le=500)):
+    """Track every invite this tenant has ever sent — from the "Add Vendor
+    from Visiting Card" flow and questionnaire-accept — which vendors were
+    invited, who's still pending, who actually completed registration.
+
+    Status is computed fresh against expires_at rather than trusting the
+    stored value: an invite only flips to "Expired" in the DB lazily, the
+    next time someone actually opens the link (see get_invite_by_token) —
+    one nobody ever clicked would otherwise show "Pending" forever, long
+    after it's actually unusable.
+    """
+    now = datetime.utcnow()
     invites = await vendor_invites_collection.find(
-        {"tenant_id": ctx["tenant_id"]}, sort=[("created_at", -1)]
-    ).to_list(200)
-    return [serialize_doc(i) for i in invites]
+        {"tenant_id": ctx["tenant_id"]}
+    ).sort("created_at", -1).to_list(limit)
+
+    inviter_ids = [ObjectId(inv["created_by"]) for inv in invites if inv.get("created_by") and ObjectId.is_valid(str(inv["created_by"]))]
+    inviter_names: Dict[str, str] = {}
+    if inviter_ids:
+        async for a in admins_collection.find({"_id": {"$in": inviter_ids}}, {"name": 1, "email": 1}):
+            inviter_names[str(a["_id"])] = a.get("name") or a.get("email", "")
+
+    rows = []
+    counts = {"Pending": 0, "Registered": 0, "Expired": 0}
+    for inv in invites:
+        inv_status = inv.get("status", "Pending")
+        expires_at = inv.get("expires_at")
+        if inv_status == "Pending" and isinstance(expires_at, datetime) and now > expires_at:
+            inv_status = "Expired"
+        counts[inv_status] = counts.get(inv_status, 0) + 1
+        rows.append({
+            "id":              str(inv["_id"]),
+            "companyName":     inv.get("companyName", ""),
+            "brandNames":      inv.get("brandNames") or _parse_brand_names(inv.get("brandName")),
+            "contactName":     inv.get("contactName", ""),
+            "mobile":          inv.get("mobile", ""),
+            "email":           inv.get("email", ""),
+            "productCategory": inv.get("productCategory", ""),
+            "status":          inv_status,
+            "source":          inv.get("source", "visiting_card"),
+            "invitedBy":       inviter_names.get(str(inv.get("created_by")), inv.get("created_by") or ""),
+            "createdAt":       inv["created_at"].isoformat() if isinstance(inv.get("created_at"), datetime) else None,
+            "expiresAt":       expires_at.isoformat() if isinstance(expires_at, datetime) else None,
+            "vendorId":        str(inv["vendor_id"]) if inv.get("vendor_id") else None,
+            # Only still-usable invites carry their token forward — no
+            # reason to hand back a link for one that's already registered
+            # or expired.
+            "token":           inv.get("token") if inv_status == "Pending" else None,
+        })
+
+    return {"data": rows, "counts": counts, "total": len(rows)}
 
 
 @vendor_bp.post("/send-invite-email")
