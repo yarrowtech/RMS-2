@@ -188,6 +188,10 @@ async def ensure_procurement_indexes():
     await support_tickets_collection.create_index([("status", 1), ("updated_at", -1)], name="support_tickets_status_updated")
     await forecast_low_stock_alerts_collection.create_index([("tenant_id", 1), ("days_remaining", 1)], name="forecast_alerts_tenant_urgency")
     await forecast_restock_drafts_collection.create_index([("tenant_id", 1)], unique=True, name="forecast_restock_draft_tenant_unique")
+    await procurement_notifications_collection.create_index(
+        [("recipient_type", 1), ("vendor_id", 1), ("event_type", 1), ("tenant_id", 1), ("created_at", -1)],
+        name="notif_vendor_demand_signal_dedup",
+    )
     await usage_events_collection.create_index([("session_id", 1), ("event_type", 1)], name="usage_events_session_type")
     await usage_events_collection.create_index([("event_type", 1), ("created_at", -1)], name="usage_events_type_created")
     await usage_events_collection.create_index([("path", 1), ("event_type", 1), ("created_at", -1)], name="usage_events_path_type_created")

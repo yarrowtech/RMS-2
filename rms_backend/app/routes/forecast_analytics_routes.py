@@ -24,10 +24,13 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
 from .deps import get_hq_tenant
+from .procurement_notification_routes import notify_vendor
 from ..config import settings
+from ..email_utils import send_demand_signal_email
 from ..db import (
     admins_collection, grn_collection, inventory_collection, product_collection,
-    purchaseorders_collection, sales_collection, stores_collection, store_stock_collection,
+    procurement_notifications_collection, purchaseorders_collection, sales_collection,
+    stores_collection, store_stock_collection, tenants_collection,
     vendor_catalogue_collection, vendor_tenant_links_collection, vendors_collection,
     forecast_low_stock_alerts_collection, forecast_restock_drafts_collection,
 )
@@ -426,6 +429,86 @@ def _build_alerts(
     return alerts
 
 
+DEMAND_SIGNAL_COOLDOWN_DAYS = 7  # don't re-notify the same vendor+tenant+division more than once a week
+
+
+async def _send_vendor_demand_signals(tenant_id: str, forecast_rows: List[dict], now: datetime) -> int:
+    """Proactively tells vendors when a retailer they already supply shows
+    rising demand in a category they list — an AGGREGATED trend signal
+    only ("rising demand in <division>"), never raw quantities, revenue,
+    margins or which specific SKUs. Reuses the existing vendor notification
+    bell (procurement_notifications_collection / notify_vendor) rather than
+    a new collection or frontend widget — it already fetches every vendor
+    notification with no type filter, so this surfaces for free.
+
+    Matching a tenant's "division" (their own free-text taxonomy) against a
+    vendor's catalogue "category"/"item_name" (the vendor's own free-text
+    taxonomy) is inherently fuzzy — there's no shared vocabulary between the
+    two sides to join on exactly. Uses the same case-insensitive substring
+    approach get_vendor_ranking() already relies on for the same reason.
+    """
+    # Keyed case-insensitively so "Menswear" and "menswear" from the same
+    # tenant's own inconsistent data entry count as one division, not two.
+    rising_divisions_by_key: Dict[str, str] = {}
+    for row in forecast_rows:
+        if row.get("trend") != "rising":
+            continue
+        division = (row.get("division") or "").strip()
+        if division:
+            rising_divisions_by_key.setdefault(division.lower(), division)
+    rising_divisions = sorted(rising_divisions_by_key.values())
+    if not rising_divisions:
+        return 0
+
+    approved_links = await vendor_tenant_links_collection.find(
+        {"tenant_id": tenant_id, "status": "Approved"}, {"vendor_id": 1}
+    ).to_list(length=500)
+    if not approved_links:
+        return 0
+    approved_vendor_ids = [link["vendor_id"] for link in approved_links]
+
+    tenant = await tenants_collection.find_one({"tenant_id": tenant_id}, {"company_name": 1})
+    tenant_label = (tenant or {}).get("company_name") or tenant_id
+    cooldown_since = now - timedelta(days=DEMAND_SIGNAL_COOLDOWN_DAYS)
+
+    sent = 0
+    for division in rising_divisions:
+        pattern = {"$regex": division, "$options": "i"}
+        matches = await vendor_catalogue_collection.find({
+            "active": True, "vendor_id": {"$in": approved_vendor_ids},
+            "$or": [{"category": pattern}, {"item_name": pattern}],
+        }, {"vendor_id": 1}).to_list(length=500)
+        matched_vendor_ids = {str(m["vendor_id"]) for m in matches}
+
+        for vendor_id_str in matched_vendor_ids:
+            vendor_oid = ObjectId(vendor_id_str)
+            already_sent = await procurement_notifications_collection.find_one({
+                "recipient_type": "vendor", "vendor_id": vendor_oid, "event_type": "demand_signal",
+                "tenant_id": tenant_id, "metadata.division": division, "created_at": {"$gte": cooldown_since},
+            })
+            if already_sent:
+                continue
+
+            await notify_vendor(
+                vendor_oid, "demand_signal", f"Rising demand: {division}",
+                f"{tenant_label} is showing rising demand in {division} — a category you supply. "
+                f"This may be a good time to check in or send an updated quote.",
+                tenant_id=tenant_id, metadata={"division": division},
+            )
+            vendor = await vendors_collection.find_one({"_id": vendor_oid}, {"email": 1, "name": 1, "vendor_name": 1})
+            if vendor and vendor.get("email"):
+                try:
+                    await send_demand_signal_email(
+                        vendor["email"], vendor.get("name") or vendor.get("vendor_name") or "there",
+                        tenant_label, division,
+                    )
+                except Exception:
+                    pass
+            sent += 1
+
+    return sent
+
+
 async def _run_forecast_automation_for_tenant(tenant_id: str) -> dict:
     now = datetime.utcnow()
 
@@ -464,7 +547,12 @@ async def _run_forecast_automation_for_tenant(tenant_id: str) -> dict:
         "lines": restock_lines, "line_count": len(restock_lines),
     })
 
-    return {"tenant_id": tenant_id, "alerts": len(alerts), "restock_lines": len(restock_lines)}
+    demand_signals_sent = await _send_vendor_demand_signals(tenant_id, hq_forecast_rows, now)
+
+    return {
+        "tenant_id": tenant_id, "alerts": len(alerts), "restock_lines": len(restock_lines),
+        "demand_signals_sent": demand_signals_sent,
+    }
 
 
 async def _authorize_cron_or_superadmin(authorization: Optional[str], x_cron_secret: Optional[str]) -> None:
