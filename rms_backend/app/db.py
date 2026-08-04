@@ -79,6 +79,13 @@ retailer_signups_collection = db["retailer_signups"]
 # got the email" — print() output is easy to lose once stdout isn't a
 # terminal someone is watching.
 email_failures_collection = db["email_failures"]
+# System-level failures — unhandled exceptions caught by main.py's global
+# handler, plus specific spots worth logging even when the exception itself
+# is swallowed for the caller (e.g. a webhook retry, a background cron
+# tenant). Separate from audit_logs_collection (deliberate user actions)
+# and email_failures_collection (one specific failure type) — this is the
+# general "something broke" record that didn't exist anywhere before.
+error_logs_collection = db["error_logs"]
 support_tickets_collection = db["support_tickets"]
 retailer_subscription_payments_collection = db["retailer_subscription_payments"]
 barcode_label_settings_collection = db["barcode_label_settings"]
@@ -198,3 +205,7 @@ async def ensure_procurement_indexes():
     await usage_events_collection.create_index([("feature", 1), ("event_type", 1), ("created_at", -1)], name="usage_events_feature_type_created")
     await usage_events_collection.create_index([("role", 1), ("admin_id", 1), ("created_at", -1)], name="usage_events_role_admin_created")
     await usage_events_collection.create_index([("role", 1), ("vendor_id", 1), ("created_at", -1)], name="usage_events_role_vendor_created")
+    await error_logs_collection.create_index([("created_at", -1)], name="error_logs_created")
+    await error_logs_collection.create_index([("resolved", 1), ("created_at", -1)], name="error_logs_resolved_created")
+    await error_logs_collection.create_index([("source", 1), ("created_at", -1)], name="error_logs_source_created")
+    await email_failures_collection.create_index([("created_at", -1)], name="email_failures_created")

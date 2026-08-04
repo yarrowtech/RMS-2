@@ -1,5 +1,7 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from .error_log import log_error
 from .routes import superadmin_routes, auth_routes, admin_routes
 from .db import admins_collection, ensure_procurement_indexes
 from .routes import vendor_routes,order_routes, grc_routes , grn_routes,Purchaseinvoice_routes
@@ -59,6 +61,24 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    """Catches anything NOT already handled by a route's own try/except or
+    by FastAPI's own HTTPException handling (that one stays untouched —
+    this only ever sees genuinely unexpected failures: bugs, bad third-
+    party responses, etc.). Every one of RMS's ~490 routes gets this for
+    free with zero per-route changes, which is the entire point — before
+    this, an unhandled exception anywhere just vanished into a print()
+    nobody was watching."""
+    await log_error(
+        source=f"{request.method} {request.url.path}",
+        message=str(exc) or exc.__class__.__name__,
+        exc=exc,
+        context={"query": dict(request.query_params)},
+    )
+    return JSONResponse(status_code=500, content={"detail": "Something went wrong on our end. Our team has been notified."})
 
 
 

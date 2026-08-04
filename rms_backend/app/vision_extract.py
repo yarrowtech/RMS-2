@@ -17,6 +17,7 @@ from typing import Any, Dict, List, Tuple
 from urllib import error as urlerror, request as urlrequest
 
 from .config import settings
+from .error_log import log_error
 
 ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages"
 ANTHROPIC_MODEL = "claude-haiku-4-5-20251001"  # cheap + fast — reading a business card doesn't need a larger model
@@ -110,7 +111,14 @@ async def extract_visiting_card(images: List[Tuple[bytes, str]]) -> Dict[str, An
             if text.lower().startswith("json"):
                 text = text[4:]
         extracted = json.loads(text)
-    except (urlerror.URLError, KeyError, ValueError, TypeError, json.JSONDecodeError):
+    except (urlerror.URLError, KeyError, ValueError, TypeError, json.JSONDecodeError) as exc:
+        # A genuine failure (bad API key, no billing credit, network error,
+        # unparseable model response) — distinct from the model legitimately
+        # finding nothing on the card, which isn't an error. Logged so this
+        # doesn't silently look like "the AI just can't read cards" when
+        # it's actually "the API key/billing is broken."
+        detail = exc.read().decode("utf-8", errors="replace")[:500] if isinstance(exc, urlerror.HTTPError) else str(exc)
+        await log_error("vision_extract.scan_visiting_card", detail, exc=exc, context={"image_count": len(images)})
         return dict(_EMPTY_RESULT)
 
     result = dict(_EMPTY_RESULT)
