@@ -43,7 +43,7 @@ import VendorHelpSupport from "./VendorHelpSupport.jsx";
 import PurchaseInvoice from "../PurchaseInvoice.jsx";
 import ProcurementNotificationCenter from "../ProcurementNotificationCenter.jsx";
 
-/* â”€â”€ token helper â€” always use this, never localStorage directly â”€â”€ */
+/* ── token helper — always use this, never localStorage directly ── */
 const getToken = () =>
   localStorage.getItem("vendor_token") ||
   localStorage.getItem("admin_token")  ||
@@ -62,7 +62,7 @@ const formatDashboardCurrency = (amount, currency = "INR") => {
 };
 
 /* ------------------------------------------------------------------
-   Stat card â€” one icon tint per meaning (teal = inventory, amber =
+   Stat card — one icon tint per meaning (teal = inventory, amber =
    needs attention, emerald = money in). Weight kept to font-bold,
    not font-black, so the numbers don't compete with page headings.
 ------------------------------------------------------------------ */
@@ -134,6 +134,29 @@ function ProfileCard({ profile }) {
   );
 }
 
+const VENDOR_PLAN_SHELL = {
+  free: {
+    shellBg: "bg-[#F4F6F5]",
+    header: "border-slate-200 bg-white",
+    eyebrow: "text-teal-600",
+    avatar: "bg-teal-600",
+    inputFocus: "focus:border-teal-400 focus:ring-teal-100",
+  },
+  standard: {
+    shellBg: "bg-gradient-to-br from-indigo-50 via-sky-50 to-white",
+    header: "border-indigo-100 bg-white/90 backdrop-blur-xl shadow-sm shadow-indigo-100/50",
+    eyebrow: "text-indigo-600",
+    avatar: "bg-indigo-600",
+    inputFocus: "focus:border-indigo-400 focus:ring-indigo-100",
+  },
+  premium: {
+    shellBg: "bg-[radial-gradient(circle_at_top_right,rgba(251,191,36,0.20),transparent_28rem),linear-gradient(135deg,#fff7ed,#fff,#f8fafc)]",
+    header: "border-amber-100 bg-white/90 backdrop-blur-xl shadow-sm shadow-amber-100/60",
+    eyebrow: "text-amber-600",
+    avatar: "bg-gradient-to-br from-amber-500 to-orange-600",
+    inputFocus: "focus:border-amber-400 focus:ring-amber-100",
+  },
+};
 const PAGE_TITLES = {
   dashboard:        "Dashboard",
   categories:       "My Categories",
@@ -167,6 +190,7 @@ export default function MSeller() {
   const [inquiryNotificationCount, setInquiryNotificationCount] = useState(0);
   const [messageNotificationCount, setMessageNotificationCount] = useState(0);
   const [jobWorkEnabled, setJobWorkEnabled] = useState(false);
+  const [vendorPlanTier, setVendorPlanTier] = useState("free");
   const [dashboardSummary, setDashboardSummary] = useState(null);
   const [dashboardSummaryLoading, setDashboardSummaryLoading] = useState(true);
 
@@ -175,12 +199,18 @@ export default function MSeller() {
     if (!token) return;
     try {
       const headers = { Authorization: `Bearer ${token}` };
-      const profileResponse = await fetch(`${APP_API_URL}/api/vendors/me`, { headers });
+      const [profileResponse, subscriptionResponse] = await Promise.all([
+        fetch(`${APP_API_URL}/api/vendors/me`, { headers }),
+        fetch(`${APP_API_URL}/api/subscriptions/me`, { headers }),
+      ]);
       const profile = await profileResponse.json().catch(() => ({}));
       if (profileResponse.ok) setVendorProfile(profile);
+      const subscriptionData = await subscriptionResponse.json().catch(() => ({}));
+      if (subscriptionResponse.ok) setVendorPlanTier(subscriptionData?.data?.tier || "free");
       const businessTypes = Array.isArray(profile.business_type) ? profile.business_type : [];
       setJobWorkEnabled(profileResponse.ok && businessTypes.includes("job_worker"));
     } catch {
+      setVendorPlanTier("free");
       setJobWorkEnabled(false);
     }
   }, []);
@@ -345,7 +375,7 @@ export default function MSeller() {
                 tone="emerald"
               />
             </div>
-            <MSellerDashboard onNavigate={setActiveTab} />
+            <MSellerDashboard onNavigate={setActiveTab} planTier={vendorPlanTier} />
           </div>
         );
 
@@ -392,10 +422,12 @@ export default function MSeller() {
     messageNotificationCount,
     jobWorkEnabled,
     businessTypes: vendorProfile?.business_type || [],
+    planTier: vendorPlanTier,
   };
+  const shellTheme = VENDOR_PLAN_SHELL[vendorPlanTier] || VENDOR_PLAN_SHELL.free;
 
   return (
-    <div className="flex h-screen overflow-hidden bg-[#F4F6F5] font-sans">
+    <div className={`flex h-screen overflow-hidden ${shellTheme.shellBg} font-sans`}>
 
       {/* desktop sidebar */}
       <div className={cn("hidden shrink-0 p-3 transition-all duration-300 md:flex", sidebarOpen ? "w-[300px]" : "w-[112px]")}>
@@ -414,7 +446,7 @@ export default function MSeller() {
 
       {/* main */}
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-        <header className="flex h-16 shrink-0 items-center justify-between gap-4 border-b border-slate-200 bg-white px-5">
+        <header className={`flex h-16 shrink-0 items-center justify-between gap-4 border-b px-5 ${shellTheme.header}`}>
           <div className="flex items-center gap-3 min-w-0">
             <button
               type="button"
@@ -425,7 +457,7 @@ export default function MSeller() {
               <Menu size={19} />
             </button>
             <div className="min-w-0">
-              <p className="text-[10px] font-bold uppercase tracking-widest text-teal-600">
+              <p className={`text-[10px] font-bold uppercase tracking-widest ${shellTheme.eyebrow}`}>
                 Vendor Panel
               </p>
               <h1 className="truncate text-base font-bold tracking-tight text-slate-900">
@@ -441,7 +473,7 @@ export default function MSeller() {
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Search..."
-              className="w-full rounded-lg border border-slate-200 bg-slate-50 py-2 pl-9 pr-4 text-sm outline-none transition focus:border-teal-400 focus:bg-white focus:ring-2 focus:ring-teal-100"
+              className={`w-full rounded-lg border border-slate-200 bg-slate-50 py-2 pl-9 pr-4 text-sm outline-none transition focus:bg-white focus:ring-2 ${shellTheme.inputFocus}`}
             />
           </div>
 
@@ -456,7 +488,7 @@ export default function MSeller() {
             </button>
             <ProcurementNotificationCenter mode="vendor" count={inquiryNotificationCount} onCountChange={setInquiryNotificationCount} onNavigate={()=>setActiveTab("catalogue")}/>
             <div className="ml-1 hidden items-center gap-2 rounded-lg border border-slate-200 py-1.5 pl-1.5 pr-2.5 sm:flex">
-              <div className="grid h-6 w-6 place-items-center rounded-full bg-teal-600 text-[11px] font-bold text-white">
+              <div className={`grid h-6 w-6 place-items-center rounded-full text-[11px] font-bold text-white ${shellTheme.avatar}`}>
                 {vendorProfile?.name?.[0]?.toUpperCase() ?? "V"}
               </div>
               <ChevronDown size={13} className="text-slate-400" />

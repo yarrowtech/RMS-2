@@ -265,10 +265,14 @@ async def retailer_create_ticket(payload: TicketCreateRequest, ctx: dict = Depen
     }
     result = await support_tickets_collection.insert_one(doc)
     doc["_id"] = result.inserted_id
-    requester_label = f"{doc['requester_name']} — {doc['tenant_id']}" + (f" ({doc['department']})" if doc.get("department") else "")
-    await send_support_ticket_created_email(
-        settings.superadmin_email, requester_label, doc["category"], doc["subject"], doc["description"],
-    )
+    # Store-raised tickets stay within the retailer until an HQ user
+    # explicitly escalates them. Only HQ-raised tickets notify RMS support
+    # at creation time.
+    if hq_origin:
+        requester_label = f"{doc['requester_name']} — {doc['tenant_id']}" + (f" ({doc['department']})" if doc.get("department") else "")
+        await send_support_ticket_created_email(
+            settings.superadmin_email, requester_label, doc["category"], doc["subject"], doc["description"],
+        )
     return {"data": _serialize_ticket(doc, can_reply=True)}
 
 
@@ -371,7 +375,15 @@ async def superadmin_update_ticket(ticket_id: str, payload: TicketUpdateRequest,
         raise HTTPException(status_code=400, detail=f"Invalid priority '{payload.priority}'")
 
     oid = _ticket_object_id(ticket_id)
-    doc = await support_tickets_collection.find_one({"_id": oid})
+    # Keep the write path aligned with the Super Admin inbox: vendors are
+    # always visible to RMS support, while retailer tickets need escalation.
+    doc = await support_tickets_collection.find_one({
+        "_id": oid,
+        "$or": [
+            {"actor_type": "vendor"},
+            {"actor_type": "retailer", "escalated": True},
+        ],
+    })
     if not doc:
         raise HTTPException(status_code=404, detail="Support ticket not found")
 
