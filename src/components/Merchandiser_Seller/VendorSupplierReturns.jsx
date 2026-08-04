@@ -42,6 +42,39 @@ const responseClass = (status) => ({
   Disputed: "bg-rose-50 text-rose-700 ring-rose-200",
 }[status] || "bg-slate-100 text-slate-600 ring-slate-200");
 
+function SupplierReturnsGuide() {
+  const steps = [
+    ["1", "Retailer raises it", "When a retailer's warehouse finds a shortage, damage or mismatch at GRN, they raise a Supplier Return Note (SRN) against that PO — you don't create returns yourself."],
+    ["2", "Review the lines", "Each SRN lists the exact item, barcode, returned quantity and reason the retailer recorded at receipt."],
+    ["3", "Read the buyer's note", "If they've added context, it shows under Buyer note — check it before deciding how to respond."],
+    ["4", "Choose your response", "Acknowledge to accept it as-is, offer a Replacement, offer a Credit note, or Dispute if you disagree with the claim."],
+    ["5", "Message if unsure", "Use Message buyer for anything that needs clarifying first — the conversation stays attached to this specific return."],
+    ["6", "Status updates live", "The moment you respond, the retailer sees your response status update on their side — no separate confirmation step needed."],
+  ];
+  return (
+    <details open className="overflow-hidden rounded-2xl border border-orange-100 bg-gradient-to-br from-white to-orange-50 shadow-sm">
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-4 px-5 py-4">
+        <div className="flex items-center gap-3">
+          <span className="grid h-9 w-9 place-items-center rounded-xl bg-orange-100 text-sm font-black text-orange-700">i</span>
+          <div><p className="text-sm font-black text-slate-900">How Supplier Returns work</p><p className="mt-0.5 text-xs text-slate-500">Who raises them, and how to respond</p></div>
+        </div>
+        <span className="rounded-full border border-orange-200 bg-white px-3 py-1 text-[11px] font-bold text-orange-700">Show / hide guide</span>
+      </summary>
+      <div className="border-t border-orange-100 px-5 pb-5 pt-4">
+        <div className="mb-4 rounded-xl bg-rose-50 px-3.5 py-3 text-xs leading-6 text-rose-800"><strong>Important:</strong> Supplier Returns are raised by the retailer based on what was physically received, not something you initiate. Your job is to review the claim and respond — acknowledge, replace, credit, or dispute.</div>
+        <div className="grid gap-2.5 sm:grid-cols-2 xl:grid-cols-3">
+          {steps.map(([number, title, text]) => (
+            <div key={number} className="flex gap-2.5 rounded-xl border border-orange-100 bg-white p-3">
+              <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-orange-600 text-[11px] font-black text-white">{number}</span>
+              <div><p className="text-xs font-black text-slate-900">{title}</p><p className="mt-1 text-[11px] leading-5 text-slate-500">{text}</p></div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </details>
+  );
+}
+
 export default function VendorSupplierReturns() {
   const [returns, setReturns] = useState([]);
   const [notes, setNotes] = useState({});
@@ -80,6 +113,8 @@ export default function VendorSupplierReturns() {
         <button onClick={load} disabled={loading} className="inline-flex h-11 items-center justify-center gap-2 rounded-xl border border-white/20 bg-white/10 px-4 text-sm font-bold hover:bg-white/15 disabled:opacity-50"><RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />Refresh</button>
       </div>
     </section>
+
+    <SupplierReturnsGuide />
 
     {error && <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">{error}</div>}
     {notice && <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-700">{notice}</div>}
