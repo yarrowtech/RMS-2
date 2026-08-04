@@ -34,6 +34,7 @@ class Settings(BaseSettings):
     # subscription expiry reminder sweep. Optional: unset disables that path,
     # a Super Admin JWT still works either way.
     cron_secret: Optional[str] = Field(None, env='CRON_SECRET')
+    anthropic_api_key: Optional[str] = Field(None, env='ANTHROPIC_API_KEY')
 
 
     cloudinary_cloud_name: str

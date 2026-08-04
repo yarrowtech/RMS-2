@@ -6,7 +6,7 @@ import {
   CheckCircle, XCircle, Eye, Trash2, Edit, Building,
   Search, RefreshCcw, Ban, UserPlus, MessageCircle,
   Copy, Bell, ChevronRight, X, Link, ClipboardCheck,
-  Clock, Check, Mail,
+  Clock, Check, Mail, Camera,
 } from "lucide-react";
 
 const API_BASE_URL   = APP_API_URL;
@@ -443,7 +443,51 @@ const AddVendorModal = ({ onClose, onGenerate }) => {
   const [form,  setForm]  = useState({ companyName:"", brandName:"", contactName:"", mobile:"", email:"", address:"", productCategory:"" });
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [scanning, setScanning] = useState(false);
+  const [scanNotice, setScanNotice] = useState("");
   const set = field => e => setForm({ ...form, [field]: e.target.value });
+
+  function sanitizeMobile(raw) {
+    const digits = (raw || "").replace(/\D/g, "");
+    if (digits.length === 10) return digits;
+    if (digits.length === 12 && digits.startsWith("91")) return digits.slice(2);
+    return digits.slice(-10);
+  }
+
+  async function handleScanCard(event) {
+    const files = Array.from(event.target.files || []);
+    event.target.value = ""; // allow re-selecting the same file(s) later
+    if (!files.length) return;
+    if (files.length > 2) { setError("Select at most 2 images — front and back of the card."); return; }
+    setScanning(true); setScanNotice(""); setError("");
+    try {
+      const body = new FormData();
+      files.forEach((f) => body.append("files", f));
+      const res = await fetch(`${API_BASE_URL}/api/vendors/scan-visiting-card`, {
+        method: "POST", headers: authHeaders(), body,
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "Could not scan the card.");
+
+      const gotAnything = data.company_name || data.contact_name || data.mobile || data.email;
+      setForm((prev) => ({
+        ...prev,
+        companyName:     data.company_name || prev.companyName,
+        brandName:       Array.isArray(data.brand_names) && data.brand_names.length ? data.brand_names.join(", ") : prev.brandName,
+        contactName:     data.contact_name || prev.contactName,
+        mobile:          data.mobile ? sanitizeMobile(data.mobile) : prev.mobile,
+        email:           data.email || prev.email,
+        address:         data.address || prev.address,
+        productCategory: data.product_category || prev.productCategory,
+      }));
+      setScanNotice(gotAnything ? "Card scanned — please review the fields below before sending." : "Couldn't read details from that image — please fill the fields in manually.");
+    } catch (err) {
+      setScanNotice("");
+      setError(err.message || "Could not scan the card. Please fill the fields in manually.");
+    } finally {
+      setScanning(false);
+    }
+  }
 
   async function handleSubmit() {
     if (!form.companyName || !form.contactName || !form.mobile || !form.productCategory) {
@@ -465,6 +509,13 @@ const AddVendorModal = ({ onClose, onGenerate }) => {
         </div>
       </div>
       <div className="space-y-5 p-6">
+        <label className={`flex cursor-pointer items-center justify-center gap-2 rounded-xl border-2 border-dashed px-4 py-3.5 text-sm font-bold transition ${scanning ? "border-violet-300 bg-violet-50 text-violet-600" : "border-slate-200 text-slate-500 hover:border-violet-300 hover:text-violet-700"}`}>
+          {scanning ? <div className="h-4 w-4 animate-spin rounded-full border-2 border-violet-400 border-t-transparent" /> : <Camera size={17} />}
+          {scanning ? "Scanning card…" : "📷 Scan Visiting Card (auto-fill fields below)"}
+          <input type="file" accept="image/*" multiple className="hidden" disabled={scanning} onChange={handleScanCard} />
+        </label>
+        <p className="-mt-2.5 text-center text-[11px] text-slate-400">You can select 2 photos at once — front and back of the same card</p>
+        {scanNotice && <div className="rounded-md border border-violet-200 bg-violet-50 px-3 py-2 text-sm text-violet-700">✨ {scanNotice}</div>}
         {error && <div className="bg-red-50 border border-red-200 text-red-600 text-sm rounded-md px-3 py-2">⚠️ {error}</div>}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <LabeledInput label="Company / Vendor Name *" value={form.companyName}  onChange={set("companyName")}     placeholder="e.g. Sunrise Textiles" />

@@ -68,6 +68,7 @@ import cloudinary.uploader
 from .deps import get_hq_tenant
 from ..db import admins_collection
 from ..activity_log import log_activity
+from ..vision_extract import extract_visiting_card
 
 vendor_bp = APIRouter(prefix="/api/vendors", tags=["Vendors"])
 
@@ -1186,6 +1187,36 @@ async def vendor_submit_po(po_id: str, authorization: str = Header(None)):
     )
 
     return {"message": "PO submitted successfully. M-Buyer will review your submission."}
+
+
+ALLOWED_CARD_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"}
+MAX_CARD_IMAGE_BYTES = 8 * 1024 * 1024  # 8MB
+
+
+@vendor_bp.post("/scan-visiting-card")
+async def scan_visiting_card(files: List[UploadFile] = File(...), ctx: dict = Depends(get_hq_tenant)):
+    """Pre-fill the "Add Vendor from Visiting Card" form from a photo (or
+    two — front and back of the same card) via a single vision-LLM call
+    (see vision_extract.py) — no OCR service, no trained model. Always
+    returns 200 with best-effort (possibly all-empty) fields; a scan
+    failure must never block the buyer from just typing the card in
+    manually."""
+    if len(files) > 2:
+        raise HTTPException(status_code=400, detail="Scan at most 2 images at a time (front and back of the card).")
+
+    images: List[tuple] = []
+    for file in files:
+        if file.content_type not in ALLOWED_CARD_IMAGE_TYPES:
+            raise HTTPException(status_code=400, detail="Please upload JPEG, PNG, WEBP or HEIC images only.")
+        image_bytes = await file.read()
+        if len(image_bytes) > MAX_CARD_IMAGE_BYTES:
+            raise HTTPException(status_code=400, detail="Each image must be under 8MB.")
+        if not image_bytes:
+            raise HTTPException(status_code=400, detail="One of the uploaded files is empty.")
+        images.append((image_bytes, file.content_type))
+
+    extracted = await extract_visiting_card(images)
+    return extracted
 
 
 @vendor_bp.post("/invite")
