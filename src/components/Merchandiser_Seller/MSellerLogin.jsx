@@ -67,17 +67,17 @@ const MSellerLogin = () => {
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(16,185,129,0.14),transparent_34%),radial-gradient(circle_at_bottom_right,rgba(99,102,241,0.14),transparent_36%)]" />
       <div className="pointer-events-none absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-emerald-500 via-teal-500 to-indigo-500" />
 
-      <header className="relative z-20 mx-auto flex w-full max-w-7xl items-center justify-between px-5 py-5 sm:px-8 lg:px-10">
-        <a href="/" className="flex items-center gap-3" aria-label="RMS home">
+      <header className="relative z-20 mx-auto flex w-full max-w-7xl items-center justify-between px-5 py-5 sm:px-8 lg:px-10 lg:py-6">
+        <a href="/" className="flex items-center gap-3 lg:gap-4" aria-label="RMS home">
           <span className="grid h-11 w-11 place-items-center rounded-2xl bg-slate-950 text-white shadow-lg shadow-slate-900/15">
             <Store size={21} />
           </span>
           <span>
-            <span className="block text-base font-extrabold tracking-tight text-slate-950">RMS</span>
-            <span className="block text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">Partner Portal</span>
+            <span className="block text-base font-extrabold tracking-tight text-slate-950 lg:text-xl">RMS</span>
+            <span className="block text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500 lg:text-xs">Partner Portal</span>
           </span>
         </a>
-        <a href="/" className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white/80 px-3.5 py-2 text-xs font-bold text-slate-600 shadow-sm transition hover:border-emerald-200 hover:text-emerald-700">
+        <a href="/" className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white/80 px-3.5 py-2 text-xs font-bold text-slate-600 shadow-sm transition hover:border-emerald-200 hover:text-emerald-700 lg:px-5 lg:py-3 lg:text-sm">
           <ArrowLeft size={15} />
           Back to RMS
         </a>
@@ -212,7 +212,7 @@ const MSellerLogin = () => {
               <div className="flex items-start gap-3">
                 <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-white text-emerald-700 shadow-sm"><Sparkles size={17} /></span>
                 <div>
-                  <p className="text-sm font-extrabold text-slate-900">Grow with RMS</p>
+                  <p className="text-sm font-extrabold leading-5 text-slate-900">Sell smarter. Manage less. Grow faster with RMS.</p>
                   <p className="mt-1 text-xs leading-5 text-slate-600">Build your catalogue, manage orders and respond to retailer enquiries in one workspace.</p>
                 </div>
               </div>
