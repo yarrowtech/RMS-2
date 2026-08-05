@@ -125,10 +125,10 @@ export default function MsellerSidebar({
   const showRoleOperations = selectedTypes.some((type) => ROLE_OPERATION_TYPES.has(type));
   const communicationNotificationCount = inquiryNotificationCount + messageNotificationCount;
   const planTheme = {
-    free: { background: "linear-gradient(185deg,#0E7C66 0%,#0B5C4C 100%)", mutedText: "text-emerald-100/70", avatar: "bg-emerald-400/90 text-emerald-950", activeBar: "bg-amber-400" },
-    standard: { background: "linear-gradient(185deg,#3730a3 0%,#2563eb 55%,#0891b2 100%)", mutedText: "text-indigo-100/75", avatar: "bg-cyan-200 text-indigo-950", activeBar: "bg-cyan-300" },
-    premium: { background: "linear-gradient(185deg,#312e81 0%,#6d28d9 48%,#c2410c 100%)", mutedText: "text-amber-100/80", avatar: "bg-amber-300 text-amber-950", activeBar: "bg-amber-300" },
-  }[planTier] || { background: "linear-gradient(185deg,#0E7C66 0%,#0B5C4C 100%)", mutedText: "text-emerald-100/70", avatar: "bg-emerald-400/90 text-emerald-950", activeBar: "bg-amber-400" };
+    free: { background: "linear-gradient(185deg,#0E7C66 0%,#0B5C4C 100%)", mutedText: "text-emerald-100/70", avatar: "bg-emerald-400/90 text-emerald-950", activeBar: "bg-amber-400", navIdle: "text-emerald-50/65 hover:bg-white/[0.06] hover:text-white", navActive: "bg-white/[0.12] text-white", icon: "text-emerald-100", control: "text-emerald-100/80", userChip: "bg-white/[0.07] border-white/10", logout: "bg-white/[0.08] text-emerald-50 border-white/10 hover:bg-white/[0.14] hover:text-white" },
+    standard: { background: "linear-gradient(185deg,#3730a3 0%,#2563eb 55%,#0891b2 100%)", mutedText: "text-indigo-100/85", avatar: "bg-cyan-200 text-indigo-950", activeBar: "bg-cyan-300", navIdle: "text-white/85 hover:bg-white/[0.10] hover:text-white", navActive: "bg-white/[0.18] text-white shadow-sm ring-1 ring-white/10", icon: "text-indigo-100", control: "text-indigo-100/90", userChip: "bg-white/[0.11] border-white/[0.16]", logout: "bg-white/[0.12] text-white border-white/[0.16] hover:bg-white/[0.20]" },
+    premium: { background: "linear-gradient(185deg,#312e81 0%,#6d28d9 48%,#c2410c 100%)", mutedText: "text-amber-100/90", avatar: "bg-amber-300 text-amber-950", activeBar: "bg-amber-300", navIdle: "text-white/85 hover:bg-white/[0.10] hover:text-white", navActive: "bg-white/[0.18] text-white shadow-sm ring-1 ring-white/10", icon: "text-amber-100", control: "text-amber-100/90", userChip: "bg-white/[0.11] border-white/[0.16]", logout: "bg-white/[0.12] text-white border-white/[0.16] hover:bg-white/[0.20]" },
+  }[planTier] || { background: "linear-gradient(185deg,#0E7C66 0%,#0B5C4C 100%)", mutedText: "text-emerald-100/70", avatar: "bg-emerald-400/90 text-emerald-950", activeBar: "bg-amber-400", navIdle: "text-emerald-50/65 hover:bg-white/[0.06] hover:text-white", navActive: "bg-white/[0.12] text-white", icon: "text-emerald-100", control: "text-emerald-100/80", userChip: "bg-white/[0.07] border-white/10", logout: "bg-white/[0.08] text-emerald-50 border-white/10 hover:bg-white/[0.14] hover:text-white" };
   const visibleNavItems = NAV_ITEMS
     .filter((item) => item.key !== "job-work" || jobWorkEnabled)
     .filter((item) => item.key !== "role-operations" || showRoleOperations)
@@ -178,7 +178,7 @@ export default function MsellerSidebar({
       {/* ── Header ── */}
       <div className={cn("relative shrink-0 flex items-center gap-3 px-4 pt-5 pb-4", !sidebarOpen && "justify-center px-3")}>
         <div className="grid h-10 w-10 flex-shrink-0 place-items-center rounded-xl bg-white/10 border border-white/15">
-          <Store size={18} className="text-emerald-100" strokeWidth={2} />
+          <Store size={18} className={planTheme.icon} strokeWidth={2} />
         </div>
         {sidebarOpen && (
           <div className="min-w-0">
@@ -190,7 +190,7 @@ export default function MsellerSidebar({
           <button
             type="button"
             onClick={() => (isDrawer ? setSidebarOpen?.(false) : setSidebarOpen?.((s) => !s))}
-            className="ml-auto grid h-8 w-8 flex-shrink-0 place-items-center rounded-lg text-emerald-100/80 hover:bg-white/10 hover:text-white transition-colors"
+            className={cn("ml-auto grid h-8 w-8 flex-shrink-0 place-items-center rounded-lg hover:bg-white/10 hover:text-white transition-colors", planTheme.control)}
             aria-label={isDrawer ? "Close sidebar" : "Collapse sidebar"}
           >
             {isDrawer ? <X size={16} /> : <PanelLeftClose size={16} />}
@@ -200,7 +200,7 @@ export default function MsellerSidebar({
           <button
             type="button"
             onClick={() => setSidebarOpen?.(true)}
-            className="absolute right-2 top-5 grid h-7 w-7 place-items-center rounded-lg text-emerald-100/80 hover:bg-white/10 hover:text-white transition-colors"
+            className={cn("absolute right-2 top-5 grid h-7 w-7 place-items-center rounded-lg hover:bg-white/10 hover:text-white transition-colors", planTheme.control)}
             aria-label="Expand sidebar"
           >
             <PanelLeftOpen size={15} />
@@ -212,7 +212,7 @@ export default function MsellerSidebar({
       <div className={cn("shrink-0 px-4 mb-2", !sidebarOpen && "px-3")}>
         <div
           className={cn(
-            "flex items-center gap-2.5 rounded-xl bg-white/[0.07] border border-white/10 px-3 py-2.5",
+            "flex items-center gap-2.5 rounded-xl border px-3 py-2.5", planTheme.userChip,
             !sidebarOpen && "justify-center px-2"
           )}
         >
@@ -244,8 +244,8 @@ export default function MsellerSidebar({
                 "group relative w-full flex items-center gap-3 rounded-lg text-[13px] font-medium transition-colors duration-150",
                 sidebarOpen ? "px-3 py-2.5" : "px-0 py-2.5 justify-center",
                 isActive
-                  ? "bg-white/[0.12] text-white"
-                  : "text-emerald-50/65 hover:bg-white/[0.06] hover:text-white"
+                  ? planTheme.navActive
+                  : planTheme.navIdle
               )}
             >
               {isActive && (
@@ -268,8 +268,8 @@ export default function MsellerSidebar({
           onClick={onLogout}
           className={cn(
             "w-full flex items-center justify-center gap-2 rounded-lg py-2.5 text-[13px] font-semibold",
-            "bg-white/[0.08] text-emerald-50 border border-white/10",
-            "hover:bg-white/[0.14] hover:text-white transition-colors"
+            "border transition-colors",
+            planTheme.logout
           )}
         >
           <LogOut size={15} />
