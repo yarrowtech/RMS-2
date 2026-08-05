@@ -73,10 +73,10 @@ export default function DeliveryTracking() {
 
       <div style={{ marginBottom:24 }}>
         <h2 style={{ margin:0, fontSize:22, fontWeight:800, color:"#0F1B2D" }}>Delivery & Lead Time Tracking</h2>
-        <p style={{ margin:"4px 0 0", fontSize:13, color:"#64748B" }}>Average lead time per vendor and delayed PO follow-ups</p>
+        <p style={{ margin:"4px 0 0", fontSize:13, color:"#64748B" }}>Track vendor dispatches, then complete GRC before posting GRN stock.</p>
       </div>
 
-      {/* Summary */}
+      <div style={{ marginBottom:16, padding:"12px 16px", borderRadius:10, background:"#EEF2FF", border:"1px solid #C7D2FE", fontSize:12, lineHeight:1.55, color:"#3730A3" }}><b>Receiving flow:</b> Vendor marks goods dispatched → retailer checks physical goods and creates a GRC → approve the GRC → create and post the GRN to add accepted quantities to inventory. Delivery tracking does not replace GRC or GRN.</div>\n\n      {/* Summary */}
       <div style={{ display:"flex", gap:10, flexWrap:"wrap", marginBottom:20 }}>
         <SummaryCard label="Vendors Tracked" value={summary.total_vendors||0}  color="#6366F1"/>
         <SummaryCard label="Delayed POs"     value={summary.total_delayed||0}  color="#EF4444"/>

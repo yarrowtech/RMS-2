@@ -580,7 +580,7 @@ async def enrich_product_by_barcode(barcode: str, payload: ProductEnrichPayload,
             inv_sync[field] = patch[field]
     if len(inv_sync) > 1:
         await inventory_collection.update_one(
-            {"barcode": barcode},
+            {"barcode": barcode, "tenant_id": ctx["tenant_id"]},
             {"$set": inv_sync}
         )
 
@@ -1412,7 +1412,7 @@ async def enrich_product_by_barcode(barcode: str, payload: ProductEnrichPayload,
             inv_sync[field] = patch[field]
     if len(inv_sync) > 1:
         await inventory_collection.update_one(
-            {"barcode": barcode},
+            {"barcode": barcode, "tenant_id": ctx["tenant_id"]},
             {"$set": inv_sync}
         )
 

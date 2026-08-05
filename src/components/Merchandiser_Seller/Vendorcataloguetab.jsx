@@ -719,7 +719,7 @@ import DocumentConversation from "../DocumentConversation.jsx";
 // }
 
 import React, { useState, useEffect, useCallback } from "react";
-import { Image as ImageIcon, Plus, X, Trash2, MessageSquare, RefreshCw, Tag, Images } from "lucide-react";
+import { CheckCircle2, CircleHelp, Image as ImageIcon, Plus, Sparkles, X, Trash2, MessageSquare, RefreshCw, Tag, Images } from "lucide-react";
 import VendorSubscriptionTab from "./Vendorsubscriptiontab.jsx";
 
 const API_BASE = APP_API_URL;
@@ -744,23 +744,91 @@ async function vendorFetch(path, options = {}) {
   });
 }
 
+const LISTING_ESSENTIALS = [
+  { key: "photo", label: "Product photo", ready: (item) => Array.isArray(item.images) && item.images.length > 0 },
+  { key: "category", label: "Category", ready: (item) => Boolean(String(item.category || "").trim()) },
+  { key: "price", label: "Price", ready: (item) => Number(item.price_range_min) > 0 || Number(item.price_range_max) > 0 },
+  { key: "moq", label: "Minimum order quantity", ready: (item) => Number(item.moq) > 0 },
+  { key: "description", label: "Description", ready: (item) => String(item.description || "").trim().length >= 20 },
+];
+
+function ListingProgress({ item }) {
+  const checks = LISTING_ESSENTIALS.map((entry) => ({ ...entry, done: entry.ready(item) }));
+  const completed = checks.filter((entry) => entry.done).length;
+  const nextStep = checks.find((entry) => !entry.done);
+  const percent = Math.round((completed / checks.length) * 100);
+
+  return (
+    <div className="rounded-xl border border-indigo-100 bg-indigo-50/70 px-2.5 py-2">
+      <div className="flex items-center justify-between gap-2 text-[10px] font-bold text-indigo-700"><span>Retailer-ready listing</span><span>{completed}/{checks.length}</span></div>
+      <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-indigo-100"><div className="h-full rounded-full bg-indigo-600" style={{ width: `${percent}%` }} /></div>
+      {nextStep ? <p className="mt-1.5 text-[10px] leading-4 text-slate-500">Next: add {nextStep.label.toLowerCase()}.</p> : <p className="mt-1.5 flex items-center gap-1 text-[10px] font-semibold text-emerald-700"><CheckCircle2 className="h-3 w-3" />Ready to share with retailers</p>}
+    </div>
+  );
+}
+const emptyVariant = () => ({ label: "", sku: "", price: "", moq: "", stock: "" });
+
+function VariantMatrix({ variants = [], onChange }) {
+  const update = (index, field, value) => onChange(variants.map((variant, row) => row === index ? { ...variant, [field]: value } : variant));
+  const remove = (index) => onChange(variants.filter((_, row) => row !== index));
+  return (
+    <section className="rounded-xl border border-violet-100 bg-violet-50/70 p-3">
+      <div className="flex items-start justify-between gap-3"><div><p className="text-xs font-bold text-violet-950">Variant options <span className="font-normal text-violet-700">(optional)</span></p><p className="mt-0.5 text-[10px] leading-4 text-violet-700">Add a row for each colour, size, pack, or other sellable option.</p></div><button type="button" onClick={() => onChange([...variants, emptyVariant()])} className="inline-flex shrink-0 items-center gap-1 rounded-lg bg-violet-600 px-2 py-1.5 text-[10px] font-bold text-white hover:bg-violet-700"><Plus className="h-3 w-3" />Add option</button></div>
+      {variants.length > 0 && <div className="mt-3 space-y-2">{variants.map((variant, index) => <div key={index} className="rounded-lg border border-violet-100 bg-white p-2"><div className="grid grid-cols-2 gap-2 sm:grid-cols-5"><input value={variant.label} onChange={(event) => update(index, "label", event.target.value)} placeholder="Red / M" className="h-8 rounded border border-slate-200 px-2 text-xs sm:col-span-2" /><input value={variant.sku} onChange={(event) => update(index, "sku", event.target.value)} placeholder="SKU" className="h-8 rounded border border-slate-200 px-2 text-xs" /><input type="number" min="0" value={variant.price} onChange={(event) => update(index, "price", event.target.value)} placeholder="Price" className="h-8 rounded border border-slate-200 px-2 text-xs" /><button type="button" onClick={() => remove(index)} className="grid h-8 place-items-center rounded border border-rose-200 text-rose-500 hover:bg-rose-50"><Trash2 className="h-3.5 w-3.5" /></button></div><div className="mt-2 grid grid-cols-2 gap-2"><input type="number" min="0" value={variant.moq} onChange={(event) => update(index, "moq", event.target.value)} placeholder="Variant MOQ" className="h-8 rounded border border-slate-200 px-2 text-xs" /><input type="number" min="0" value={variant.stock} onChange={(event) => update(index, "stock", event.target.value)} placeholder="Available stock" className="h-8 rounded border border-slate-200 px-2 text-xs" /></div></div>)}</div>}
+    </section>
+  );
+}
 const EMPTY_ITEM_FORM = {
   item_name: "", category: "", description: "",
   price_range_min: "", price_range_max: "",
   available_sizes: "", available_colors: "", moq: "",
-  images: [],
+  variants: [], images: [],
 };
 
 function AddItemModal({ onClose, onAdded }) {
   const [form, setForm] = useState(EMPTY_ITEM_FORM);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
+  const [assistantPrompt, setAssistantPrompt] = useState("");
+  const [assisting, setAssisting] = useState(false);
 
   const handleFiles = (e) => {
     const files = Array.from(e.target.files || []);
     setForm(f => ({ ...f, images: files }));
   };
 
+const askCatalogueAssistant = async () => {
+    if (!assistantPrompt.trim() && !form.item_name.trim()) {
+      setError("Describe the product or add a product name before asking the assistant.");
+      return;
+    }
+    setAssisting(true);
+    setError(null);
+    try {
+      const res = await vendorFetch("/api/catalogue/my-catalogue/assistant", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt: assistantPrompt, item_name: form.item_name, category: form.category, available_sizes: form.available_sizes, available_colors: form.available_colors }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.detail || "Catalogue Assistant could not create a draft.");
+      const draft = body.data || {};
+      setForm((current) => ({
+        ...current,
+        item_name: draft.item_name || current.item_name,
+        category: draft.category || current.category,
+        description: draft.description || current.description,
+        available_sizes: draft.available_sizes || current.available_sizes,
+        available_colors: draft.available_colors || current.available_colors,
+        moq: draft.moq || current.moq,
+        variants: Array.isArray(draft.variants) && draft.variants.length ? draft.variants : current.variants,
+      }));
+    } catch (err) {
+      setError(err.message || "Catalogue Assistant could not create a draft.");
+    } finally {
+      setAssisting(false);
+    }
+  };
   const handleSubmit = async () => {
     if (!form.item_name.trim()) { setError("Item name is required."); return; }
     if (form.images.length === 0) { setError("At least one image is required."); return; }
@@ -776,6 +844,7 @@ function AddItemModal({ onClose, onAdded }) {
       fd.append("available_sizes", form.available_sizes);
       fd.append("available_colors", form.available_colors);
       fd.append("moq", form.moq || 0);
+      fd.append("variants", JSON.stringify(form.variants.filter((variant) => variant.label.trim())));
       form.images.forEach(img => fd.append("images", img));
 
       const res = await vendorFetch("/api/catalogue/my-catalogue", { method: "POST", body: fd });
@@ -802,6 +871,15 @@ function AddItemModal({ onClose, onAdded }) {
 
         <div className="p-5 space-y-4">
           {error && <div className="bg-rose-50 border border-rose-200 text-rose-700 text-xs font-semibold px-3 py-2 rounded-lg">{error}</div>}
+          <div className="rounded-xl border border-indigo-100 bg-indigo-50 px-3 py-2.5">
+            <p className="text-xs font-bold text-indigo-900">First item? Start with the essentials.</p>
+            <p className="mt-1 text-[11px] leading-4 text-indigo-700">A clear name, photo, price, MOQ and short description help retailers find and inquire about your product.</p>
+          </div>
+          <div className="rounded-xl border border-violet-100 bg-gradient-to-r from-violet-50 to-indigo-50 p-3">
+            <div className="flex items-start gap-2"><Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-violet-600" /><div><p className="text-xs font-bold text-violet-950">Catalogue Assistant</p><p className="mt-0.5 text-[10px] leading-4 text-violet-700">Describe the product in your own words. RMS will draft fields for you to review before saving.</p></div></div>
+            <textarea rows={2} value={assistantPrompt} onChange={(event) => setAssistantPrompt(event.target.value)} placeholder="Example: Women's cotton kurti, floral print, sizes S to XL, navy and maroon, sold in packs of 6." className="mt-2 w-full resize-none rounded-lg border border-violet-100 bg-white px-2.5 py-2 text-xs outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100" />
+            <button type="button" onClick={askCatalogueAssistant} disabled={assisting} className="mt-2 inline-flex items-center gap-1.5 rounded-lg bg-violet-600 px-3 py-2 text-[11px] font-bold text-white hover:bg-violet-700 disabled:opacity-60">{assisting ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}{assisting ? "Creating draft..." : "Create draft"}</button>
+          </div>
 
           <div>
             <label className="text-xs font-bold text-slate-600 uppercase tracking-wide block mb-1">Item Name *</label>
@@ -851,6 +929,8 @@ function AddItemModal({ onClose, onAdded }) {
               className="w-full h-10 px-3 border border-slate-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-indigo-400"
               placeholder="Red, Navy, Black (comma separated)" />
           </div>
+
+          <VariantMatrix variants={form.variants} onChange={(variants) => setForm((current) => ({ ...current, variants }))} />
 
           <div>
             <label className="text-xs font-bold text-slate-600 uppercase tracking-wide block mb-1">Description</label>
@@ -992,6 +1072,7 @@ function EditDetailsModal({ item, onClose, onSaved }) {
     available_sizes:  (item.available_sizes || []).join(", "),
     available_colors: (item.available_colors || []).join(", "),
     moq:              item.moq || "",
+    variants:         Array.isArray(item.variants) ? item.variants : [],
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
@@ -1013,6 +1094,7 @@ function EditDetailsModal({ item, onClose, onSaved }) {
           available_sizes:  form.available_sizes.split(",").map(s => s.trim()).filter(Boolean),
           available_colors: form.available_colors.split(",").map(c => c.trim()).filter(Boolean),
           moq:              Number(form.moq) || 0,
+          variants:         form.variants.filter((variant) => variant.label.trim()),
         }),
       });
       const data = await res.json();
@@ -1069,6 +1151,7 @@ function EditDetailsModal({ item, onClose, onSaved }) {
             <input value={form.available_colors} onChange={e => setForm(f => ({ ...f, available_colors: e.target.value }))}
               placeholder="Red, Navy, Black" className="w-full h-9 px-3 border border-slate-200 rounded-lg text-sm" />
           </div>
+          <VariantMatrix variants={form.variants} onChange={(variants) => setForm((current) => ({ ...current, variants }))} />
           <div>
             <label className="text-xs font-bold text-slate-600 block mb-1">MOQ</label>
             <input type="number" value={form.moq} onChange={e => setForm(f => ({ ...f, moq: e.target.value }))}
@@ -1159,6 +1242,12 @@ function CataloguePanel() {
         <div className="text-xs font-semibold text-rose-600 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2">⚠ {error}</div>
       )}
 
+      <section className="rounded-2xl border border-indigo-100 bg-gradient-to-r from-indigo-50 to-cyan-50 p-4">
+        <div className="flex gap-3"><span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-white text-indigo-600 shadow-sm"><CircleHelp className="h-4 w-4" /></span><div><h2 className="text-sm font-black text-slate-900">Create a retailer-ready catalogue</h2><p className="mt-1 text-xs leading-5 text-slate-600">Add the basics first, then improve your listing anytime from Edit and Images.</p></div></div>
+        <div className="mt-3 grid gap-2 text-xs text-slate-700 sm:grid-cols-3"><p><span className="font-black text-indigo-600">1.</span> Add a clear product name and photo.</p><p><span className="font-black text-indigo-600">2.</span> Set price, MOQ and description.</p><p><span className="font-black text-indigo-600">3.</span> Add sizes and colours if applicable.</p></div>
+        <p className="mt-3 border-t border-indigo-100 pt-3 text-[11px] leading-5 text-slate-500"><strong className="text-slate-700">Need detailed SKU or variant stock?</strong> Use Product List for operational product data; keep My Catalogue focused on what retailers should discover and inquire about.</p>
+      </section>
+
       {sub && (
         <div className="bg-white rounded-xl border border-slate-200 px-4 py-3 flex items-center gap-4">
           <div className="flex-1">
@@ -1241,6 +1330,8 @@ function CataloguePanel() {
                     <span key={s} className="px-1.5 py-0.5 bg-slate-100 text-slate-600 rounded text-[10px] font-bold">{s}</span>
                   ))}
                 </div>
+                <ListingProgress item={item} />
+                {Array.isArray(item.variants) && item.variants.length > 0 && <p className="text-[10px] font-semibold text-violet-700">{item.variants.length} variant{item.variants.length !== 1 ? "s" : ""} available</p>}
                 <div className="flex gap-1.5 pt-1">
                   <button onClick={() => setEditItem(item)}
                     className="flex-1 h-7 text-[10px] font-bold rounded border border-slate-200 hover:bg-slate-50 text-slate-600 flex items-center justify-center gap-1">

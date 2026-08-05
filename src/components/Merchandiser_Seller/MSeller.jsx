@@ -40,6 +40,7 @@ import VendorCatalogueTab   from "./Vendorcataloguetab.jsx";
 import VendorSubscriptionTab from "./Vendorsubscriptiontab.jsx";
 import VendorWhatsAppConnect from "./Vendorwhatsappconnect.jsx";
 import VendorHelpSupport from "./VendorHelpSupport.jsx";
+import VendorCopilot from "./VendorCopilot.jsx";
 import PurchaseInvoice from "../PurchaseInvoice.jsx";
 import ProcurementNotificationCenter from "../ProcurementNotificationCenter.jsx";
 
@@ -499,6 +500,7 @@ export default function MSeller() {
         <main className="flex-1 overflow-y-auto p-5 md:p-7">
           {renderContent()}
         </main>
+        <VendorCopilot activeTab={activeTab} onNavigate={setActiveTab} />
       </div>
     </div>
   );

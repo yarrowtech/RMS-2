@@ -42,9 +42,12 @@ now means "already has a link with THIS tenant", not "email exists anywhere".
 """
 
 from fastapi import APIRouter, HTTPException, Request, BackgroundTasks
+from fastapi.responses import StreamingResponse
 from bson import ObjectId
 from jose import jwt
 from datetime import datetime, timedelta
+from io import BytesIO
+from html import escape
 from ..db import (
     vendors_collection,
     vendor_tenant_links_collection,
@@ -1021,6 +1024,121 @@ async def get_my_purchase_orders(authorization: str = Header(None)):
         orders.append(po)
 
     return orders
+
+
+def _po_export_rows(po: dict) -> list:
+    """Export exactly the vendor-confirmed lines when they exist."""
+    items = (po.get("vendor_response") or {}).get("items") or po.get("items") or []
+    rows = []
+    for item in items:
+        if item.get("removed"):
+            continue
+        quantity = item.get("amendedQty") or item.get("quantity") or 0
+        rate = item.get("vendorRate") or item.get("rate") or 0
+        try:
+            quantity, rate = float(quantity), float(rate)
+        except (TypeError, ValueError):
+            quantity, rate = 0, 0
+        rows.append({
+            "sku": item.get("product_sku") or item.get("sku") or item.get("barcode") or "—",
+            "description": item.get("description") or "—",
+            "quantity": quantity,
+            "rate": rate,
+            "total": quantity * rate,
+        })
+    return rows
+
+
+def _po_export_response(po: dict, vendor: dict, fmt: str) -> StreamingResponse:
+    rows = _po_export_rows(po)
+    total = sum(row["total"] for row in rows)
+    order_no = str(po.get("orderNo") or "purchase-order").replace("/", "-").replace("\\", "-")
+    retailer = po.get("retailer_name") or po.get("ownerSite") or "Retailer"
+    vendor_name = vendor.get("name") or vendor.get("vendor_name") or "Vendor"
+    status = po.get("status") or "Draft"
+    delivery = po.get("deliveryDate") or po.get("expectedDeliveryDate") or po.get("delivery_date") or "—"
+
+    if fmt == "xlsx":
+        from openpyxl import Workbook
+        from openpyxl.styles import Alignment, Font, PatternFill
+        wb = Workbook(); ws = wb.active; ws.title = "Purchase Order"
+        ws.append(["PURCHASE ORDER", order_no])
+        ws.append(["Retailer", retailer]); ws.append(["Vendor", vendor_name]); ws.append(["Status", status]); ws.append(["Delivery date", str(delivery)])
+        ws.append([]); ws.append(["#", "SKU / Barcode", "Description", "Quantity", "Rate (INR)", "Line total (INR)"])
+        for cell in ws[7]:
+            cell.font = Font(bold=True, color="FFFFFF"); cell.fill = PatternFill("solid", fgColor="4F46E5"); cell.alignment = Alignment(horizontal="center")
+        for index, row in enumerate(rows, 1):
+            ws.append([index, row["sku"], row["description"], row["quantity"], row["rate"], row["total"]])
+        ws.append([]); ws.append(["", "", "", "", "Grand Total", total]); ws.cell(ws.max_row, 5).font = Font(bold=True); ws.cell(ws.max_row, 6).font = Font(bold=True)
+        for column in ws.columns:
+            ws.column_dimensions[column[0].column_letter].width = min(max(max(len(str(cell.value or "")) for cell in column) + 3, 12), 48)
+        buf = BytesIO(); wb.save(buf); buf.seek(0)
+        return StreamingResponse(buf, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers={"Content-Disposition": f'attachment; filename="{order_no}.xlsx"'})
+
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.units import mm
+    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+    buf = BytesIO(); doc = SimpleDocTemplate(buf, pagesize=landscape(A4), leftMargin=15 * mm, rightMargin=15 * mm, topMargin=16 * mm, bottomMargin=16 * mm)
+    styles = getSampleStyleSheet(); title = ParagraphStyle("POExportTitle", parent=styles["Heading1"], textColor=colors.HexColor("#4F46E5"))
+    elements = [Paragraph("Purchase Order", title), Paragraph(f"PO: {order_no}<br/>Retailer: {retailer}<br/>Vendor: {vendor_name}<br/>Status: {status} &nbsp; | &nbsp; Delivery: {delivery}", styles["Normal"]), Spacer(1, 8 * mm)]
+    table_data = [["#", "SKU / Barcode", "Description", "Qty", "Rate", "Total"]]
+    for index, row in enumerate(rows, 1): table_data.append([str(index), Paragraph(escape(str(row["sku"])), styles["BodyText"]), Paragraph(escape(str(row["description"])), styles["BodyText"]), str(row["quantity"]), f"{row['rate']:,.2f}", f"{row['total']:,.2f}"])
+    table_data.append(["", "", "", "", "Grand Total", f"{total:,.2f}"])
+    table = Table(table_data, repeatRows=1, colWidths=[12 * mm, 42 * mm, 110 * mm, 20 * mm, 32 * mm, 35 * mm])
+    table.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#4F46E5")), ("TEXTCOLOR", (0, 0), (-1, 0), colors.white), ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"), ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"), ("GRID", (0, 0), (-1, -1), .35, colors.HexColor("#CBD5E1")), ("ALIGN", (3, 1), (-1, -1), "RIGHT"), ("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("TOPPADDING", (0, 0), (-1, -1), 6), ("BOTTOMPADDING", (0, 0), (-1, -1), 6)]))
+    elements.extend([table, Spacer(1, 6 * mm), Paragraph(f"Generated from RMS on {datetime.utcnow().strftime('%d %b %Y, %H:%M UTC')}. This document reflects the vendor-submitted lines when available.", styles["Normal"])])
+    doc.build(elements); buf.seek(0)
+    return StreamingResponse(buf, media_type="application/pdf", headers={"Content-Disposition": f'attachment; filename="{order_no}.pdf"'})
+
+
+@vendor_bp.put("/purchaseorders/{po_id}/delivery")
+async def update_vendor_delivery(po_id: str, payload: dict, authorization: str = Header(None)):
+    """Vendor-owned dispatch data. Retailer receipt data remains read-only here."""
+    vendor = await require_vendor_identity(authorization)
+    query = vendor_po_query(po_id, vendor["_id"])
+    po = await purchaseorders_collection.find_one(query)
+    if not po:
+        raise HTTPException(status_code=404, detail="PO not found or not assigned to this vendor")
+    if po.get("status") not in {"VendorSubmitted", "Approved"}:
+        raise HTTPException(status_code=400, detail="Submit the PO before updating delivery or dispatch.")
+    status = str(payload.get("status") or "").strip()
+    allowed = {"ProductionStarted", "ReadyToDispatch", "Dispatched"}
+    if status not in allowed:
+        raise HTTPException(status_code=400, detail="Choose Production started, Ready to dispatch, or Dispatched.")
+    if status == "Dispatched" and not str(payload.get("expected_delivery_date") or "").strip():
+        raise HTTPException(status_code=400, detail="Expected delivery date is required when marking a PO as dispatched.")
+    delivery = dict(po.get("delivery") or {})
+    vendor_update = {
+        "status": status,
+        "expected_dispatch_date": str(payload.get("expected_dispatch_date") or "").strip()[:30],
+        "expected_delivery_date": str(payload.get("expected_delivery_date") or "").strip()[:30],
+        "transporter_name": str(payload.get("transporter_name") or "").strip()[:160],
+        "tracking_number": str(payload.get("tracking_number") or "").strip()[:160],
+        "vehicle_number": str(payload.get("vehicle_number") or "").strip()[:80],
+        "dispatch_note": str(payload.get("dispatch_note") or "").strip()[:1000],
+        "updated_at": datetime.utcnow(),
+        "updated_by": str(vendor.get("_id")),
+    }
+    delivery["vendor"] = vendor_update
+    timeline = list(delivery.get("timeline") or [])
+    timeline.append({"event": status, "actor": "Vendor", "at": datetime.utcnow(), "note": vendor_update["dispatch_note"]})
+    delivery["timeline"] = timeline[-30:]
+    await purchaseorders_collection.update_one(query, {"$set": {"delivery": delivery, "updatedAt": datetime.utcnow()}})
+    return {"message": "Delivery update saved", "delivery": delivery}
+
+@vendor_bp.get("/purchaseorders/{po_id}/download")
+async def download_vendor_purchase_order(po_id: str, format: str = Query("pdf"), authorization: str = Header(None)):
+    """Download a vendor-authorized PO in PDF or Excel format."""
+    vendor = await require_vendor_identity(authorization)
+    po = await purchaseorders_collection.find_one(vendor_po_query(po_id, vendor["_id"]))
+    if not po:
+        raise HTTPException(status_code=404, detail="PO not found or not assigned to this vendor")
+    fmt = format.lower()
+    if fmt not in {"pdf", "xlsx"}:
+        raise HTTPException(status_code=400, detail="format must be pdf or xlsx")
+    return _po_export_response(po, vendor, fmt)
 
 
 @vendor_bp.get("/purchaseorders/{vendor_name}")

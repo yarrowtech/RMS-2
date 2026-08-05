@@ -565,10 +565,19 @@ function EmptyState() {
 }
 
 /* ─────────── POCard ─────────── */
+function DeliveryPanel({ po, onSave }) {
+  const current = po.delivery?.vendor || {};
+  const [form, setForm] = useState({ status: current.status || "ProductionStarted", expected_dispatch_date: current.expected_dispatch_date || "", expected_delivery_date: current.expected_delivery_date || "", transporter_name: current.transporter_name || "", tracking_number: current.tracking_number || "", vehicle_number: current.vehicle_number || "", dispatch_note: current.dispatch_note || "" });
+  const [savingDelivery, setSavingDelivery] = useState(false);
+  const change = (key, value) => setForm(valueNow => ({ ...valueNow, [key]: value }));
+  const save = async () => { if (form.status === "Dispatched" && !form.expected_delivery_date) { alert("Expected delivery date is required when marking a PO as dispatched."); return; } setSavingDelivery(true); try { await onSave(form); } finally { setSavingDelivery(false); } };
+  const timeline = po.delivery?.timeline || [];
+  return <div style={{ margin:"0 24px 22px", padding:16, borderRadius:14, background:"#F5F3FF", border:"1px solid #DDD6FE" }}><p style={{ margin:"0 0 4px", fontSize:13, fontWeight:800, color:T.navy }}>Delivery & dispatch</p><p style={{ margin:"0 0 8px", fontSize:11, color:T.muted }}>You already submitted the PO, which confirms your items and rates. Use this section only when the goods are being prepared or sent.</p><div style={{ margin:"0 0 14px", padding:"9px 11px", borderRadius:9, background:"#fff", border:"1px solid #DDD6FE", fontSize:11, lineHeight:1.55, color:T.label }}><b>What to do:</b> Select <b>Production started</b> while making the goods. When they leave your location, select <b>Dispatched</b> and add the delivery date and tracking details if you have them. After arrival, the retailer records a <b>GRC</b> for the physical receipt, then posts a <b>GRN</b> to add accepted goods to stock.</div><div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))", gap:10 }}><label style={{ fontSize:11, fontWeight:700, color:T.label }}>Status<select value={form.status} onChange={e=>change("status",e.target.value)} style={{ width:"100%", marginTop:4, padding:8, borderRadius:8, border:`1px solid ${T.border}`, background:"#fff" }}><option value="ProductionStarted">Production started</option><option value="ReadyToDispatch">Ready to dispatch</option><option value="Dispatched">Dispatched</option></select></label><label style={{ fontSize:11, fontWeight:700, color:T.label }}>Expected dispatch<input type="date" value={form.expected_dispatch_date} onChange={e=>change("expected_dispatch_date",e.target.value)} style={{ width:"100%", marginTop:4, padding:7, borderRadius:8, border:`1px solid ${T.border}` }} /></label><label style={{ fontSize:11, fontWeight:700, color:T.label }}>Expected delivery<input type="date" value={form.expected_delivery_date} onChange={e=>change("expected_delivery_date",e.target.value)} style={{ width:"100%", marginTop:4, padding:7, borderRadius:8, border:`1px solid ${T.border}` }} /></label><label style={{ fontSize:11, fontWeight:700, color:T.label }}>Transporter<input value={form.transporter_name} onChange={e=>change("transporter_name",e.target.value)} style={{ width:"100%", marginTop:4, padding:7, borderRadius:8, border:`1px solid ${T.border}` }} /></label><label style={{ fontSize:11, fontWeight:700, color:T.label }}>Tracking / AWB<input value={form.tracking_number} onChange={e=>change("tracking_number",e.target.value)} style={{ width:"100%", marginTop:4, padding:7, borderRadius:8, border:`1px solid ${T.border}` }} /></label><label style={{ fontSize:11, fontWeight:700, color:T.label }}>Vehicle<input value={form.vehicle_number} onChange={e=>change("vehicle_number",e.target.value)} style={{ width:"100%", marginTop:4, padding:7, borderRadius:8, border:`1px solid ${T.border}` }} /></label></div><textarea value={form.dispatch_note} onChange={e=>change("dispatch_note",e.target.value)} placeholder="Dispatch note for retailer" style={{ width:"100%", marginTop:10, minHeight:54, padding:8, borderRadius:8, border:`1px solid ${T.border}`, resize:"vertical" }} /><div style={{ display:"flex", justifyContent:"space-between", gap:10, marginTop:10, alignItems:"center" }}><span style={{ fontSize:11, color:T.muted }}>{po.delivery?.retailer_receipt ? `Retailer receipt: ${po.delivery.retailer_receipt.status}` : "Retailer has not recorded receipt yet."}</span><IconBtn variant="violet" onClick={save} disabled={savingDelivery}>{savingDelivery ? "Saving…" : "Save delivery update"}</IconBtn></div>{timeline.length>0 && <div style={{ marginTop:12, borderTop:`1px solid #DDD6FE`, paddingTop:8 }}>{timeline.slice(-4).reverse().map((event,index)=><p key={index} style={{ margin:"4px 0", fontSize:11, color:T.label }}><b>{event.actor}</b> · {event.event} · {event.at ? new Date(event.at).toLocaleString() : ""}</p>)}</div>}</div>;
+}
 function POCard({
   po, flatItems, expanded, onToggle,
   itemsDraft, onAddItem, onItemChange, onProductSelect,
-  onSave, onSubmit, onPreFill, onToggleNewProduct, onOpenConversation, saving,
+  onSave, onSubmit, onPreFill, onToggleNewProduct, onOpenConversation, onDownload, onSaveDelivery, saving,
 }) {
   const draft     = itemsDraft[po._id] || [];
   const canSubmit = po.status === "SentToVendor" || po.status === "WalkinAccepted";
@@ -662,6 +671,14 @@ function POCard({
         </div>
 
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <IconBtn variant="ghost" onClick={() => onDownload("pdf")} title="Download printable PDF">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
+            PDF
+          </IconBtn>
+          <IconBtn variant="ghost" onClick={() => onDownload("xlsx")} title="Download Excel sheet">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
+            Excel
+          </IconBtn>
           <IconBtn variant="ghost" onClick={onOpenConversation}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a4 4 0 01-4 4H7l-4 3V7a4 4 0 014-4h10a4 4 0 014 4z"/></svg>
             Message
@@ -988,6 +1005,8 @@ function POCard({
               )}
             </div>
           )}
+
+          {po.status === "VendorSubmitted" || po.status === "Approved" ? <DeliveryPanel po={po} onSave={onSaveDelivery} /> : <div style={{ margin: "0 24px 22px", padding: "12px 14px", borderRadius: 12, background: "#F8FAFD", border: `1px dashed ${T.border}`, fontSize: 12, color: T.muted }}><b style={{ color: T.label }}>Delivery & Dispatch is locked.</b> Save your items and submit this PO first. After submission, you can update production and dispatch details.</div>}
         </div>
       )}
     </div>
@@ -1071,6 +1090,29 @@ export default function VendorPurchaseOrders({ vendorName }) {
     } catch (e) {
       console.error("[VendorPO] Failed to refresh products:", e);
     }
+  };
+
+  const downloadPurchaseOrder = async (poId, format) => {
+    const token = getToken();
+    if (!token) return alert("Session expired. Please log in again.");
+    try {
+      const response = await axios.get(`${APP_API_URL}/api/vendors/purchaseorders/${poId}/download?format=${format}`, {
+        headers: { Authorization: `Bearer ${token}` }, responseType: "blob",
+      });
+      const url = URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement("a");
+      const disposition = response.headers["content-disposition"] || "";
+      const filename = disposition.match(/filename="?([^";]+)"?/i)?.[1] || `purchase-order.${format}`;
+      link.href = url; link.download = filename; document.body.appendChild(link); link.click(); link.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      alert(err.response?.data?.detail || `Unable to download the ${format.toUpperCase()} right now.`);
+    }
+  };
+
+  const saveDelivery = async (poId, payload) => {
+    try { const token = getToken(); const res = await axios.put(`${APP_API_URL}/api/vendors/purchaseorders/${poId}/delivery`, payload, { headers: { Authorization: `Bearer ${token}` } }); alert(res.data.message || "Delivery update saved"); await refreshOrders(); }
+    catch (err) { alert(err.response?.data?.detail || "Could not save delivery update"); }
   };
 
   const toggleExpand = (id) => setExpanded(expanded === id ? null : id);
@@ -1376,6 +1418,8 @@ export default function VendorPurchaseOrders({ vendorName }) {
                     onSubmit={() => submitPO(poKey)}
                     onPreFill={(id, items) => preFillDraft(id, items)}
                     onOpenConversation={() => setConversationPo(po)}
+                    onDownload={(format) => downloadPurchaseOrder(poKey, format)}
+                    onSaveDelivery={(payload) => saveDelivery(poKey, payload)}
                     saving={saving}
                   />
                 );
