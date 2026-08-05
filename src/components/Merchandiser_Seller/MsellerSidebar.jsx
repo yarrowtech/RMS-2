@@ -33,6 +33,7 @@ const NAV_ITEMS = [
   { key: "subscription",   label: "Subscription",      icon: Crown },
   { key: "whatsapp",       label: "WhatsApp",          icon: FaWhatsapp },
   { key: "product-list",   label: "Product List",      icon: Boxes },
+  { key: "inventory",      label: "My Inventory",      icon: Boxes },
   { key: "role-operations", label: "Business Operations", icon: ClipboardList },
   { key: "purchase-order", label: "Purchase Orders",   icon: ClipboardList },
   { key: "supplier-returns", label: "Supplier Returns", icon: RotateCcw },
@@ -135,7 +136,7 @@ export default function MsellerSidebar({
     .filter((item) => item.key !== "b2b-trade" || showProductTools)
     .filter((item) => item.key !== "b2b-stock" || showProductTools)
     .filter((item) => item.key !== "supplier-returns" || showProductTools)
-    .filter((item) => !["catalogue", "product-list"].includes(item.key) || showProductTools)
+    .filter((item) => !["catalogue", "product-list", "inventory"].includes(item.key) || showProductTools)
     .map((item) => ({
       ...item,
       label: item.key === "catalogue" ? roleLabels.catalogue

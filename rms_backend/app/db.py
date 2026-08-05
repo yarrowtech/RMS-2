@@ -55,8 +55,11 @@ vendor_b2b_rfqs_collection = db["vendor_b2b_rfqs"]
 vendor_b2b_orders_collection = db["vendor_b2b_orders"]
 vendor_b2b_receipts_collection = db["vendor_b2b_receipts"]
 vendor_b2b_invoices_collection = db["vendor_b2b_invoices"]
+vendor_b2b_returns_collection = db["vendor_b2b_returns"]
 vendor_b2b_stock_collection = db["vendor_b2b_stock"]
 vendor_b2b_stock_ledger_collection = db["vendor_b2b_stock_ledger"]
+vendor_inventory_collection = db["vendor_inventory"]
+vendor_inventory_ledger_collection = db["vendor_inventory_ledger"]
 vendor_tenant_links_collection = db["vendor_tenant_links"]
 
 # SUPERADMIN / PLATFORM COLLECTIONS 
@@ -137,6 +140,10 @@ async def ensure_procurement_indexes():
     await catalogue_inquiries_collection.create_index([("vendor_id", 1), ("status", 1), ("created_at", -1)], name="inq_vendor_status_created")
     await catalogue_inquiries_collection.create_index([("tenant_id", 1), ("comparison_group_id", 1)], name="inq_tenant_comparison")
     await vendor_catalogue_collection.create_index([("vendor_id", 1), ("active", 1)], name="catalog_vendor_active")
+    await vendor_inventory_collection.create_index([("vendor_id", 1), ("catalogue_key", 1)], unique=True, name="vendor_inventory_catalogue_key")
+    await vendor_inventory_ledger_collection.create_index([("vendor_id", 1), ("inventory_id", 1), ("created_at", -1)], name="vendor_inventory_ledger_item")
+    await vendor_b2b_returns_collection.create_index([("buyer_vendor_id", 1), ("created_at", -1)], name="vendor_b2b_returns_buyer")
+    await vendor_b2b_returns_collection.create_index([("supplier_vendor_id", 1), ("created_at", -1)], name="vendor_b2b_returns_supplier")
     await vendor_role_operations_collection.create_index([("vendor_id", 1), ("role", 1)], unique=True, name="vendor_role_operations_unique")
     await vendor_subscription_payments_collection.create_index("razorpay_order_id", unique=True, name="vendor_subscription_razorpay_order_unique")
     await vendor_subscription_payments_collection.create_index([("vendor_id", 1), ("created_at", -1)], name="vendor_subscription_payment_history")

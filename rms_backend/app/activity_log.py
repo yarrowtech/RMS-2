@@ -16,7 +16,17 @@ from .db import audit_logs_collection
 ACTIVITY_TYPES = {"create", "update", "delete", "warning", "info"}
 
 
-async def log_activity(actor: str, action: str, type: str = "info", ip: Optional[str] = None) -> None:
+async def log_activity(
+    actor: str,
+    action: str,
+    type: str = "info",
+    ip: Optional[str] = None,
+    *,
+    tenant_id: Optional[str] = None,
+    tenant_name: Optional[str] = None,
+    actor_email: Optional[str] = None,
+    actor_role: Optional[str] = None,
+) -> None:
     """Best-effort — an audit-log write must never break the action it's
     recording, so failures are swallowed rather than raised."""
     try:
@@ -25,6 +35,10 @@ async def log_activity(actor: str, action: str, type: str = "info", ip: Optional
             "action": action,
             "type": type if type in ACTIVITY_TYPES else "info",
             "ip": ip,
+            "tenant_id": tenant_id,
+            "tenant_name": tenant_name,
+            "actor_email": actor_email,
+            "actor_role": actor_role,
             "created_at": datetime.utcnow(),
         })
     except Exception:

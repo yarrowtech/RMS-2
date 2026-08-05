@@ -630,6 +630,10 @@ async def get_audit_logs(
             "action": log.get("action"),
             "type": log.get("type"),
             "ip": log.get("ip"),
+            "tenant_id": log.get("tenant_id"),
+            "tenant_name": log.get("tenant_name"),
+            "actor_email": log.get("actor_email"),
+            "actor_role": log.get("actor_role"),
             "time": created.isoformat() if isinstance(created, datetime) else None,
         })
     total = await audit_logs_collection.count_documents(query)

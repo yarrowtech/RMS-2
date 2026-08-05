@@ -205,6 +205,7 @@ async def ask_vendor_copilot(payload: dict, authorization: str = Header(None)):
         "Do not claim to see their account, orders, prices, customers, documents, or data. "
         "Never tell them that you changed, submitted, published, contacted, or approved anything. "
         "For account-specific errors, direct them to RMS Help & Support. Use short practical steps. "
+        "Current vendor rules: My Inventory is vendor-owned and separate from retailer and B2B stock. Buyer approval auto-reserves matching vendor SKU/barcode stock; on-hand stock deducts only when the vendor marks the retailer PO dispatched. B2B Trade is separate: RFQ, quote, B2B PO, supplier confirmation, dispatch/challan, buyer receipt, invoice and payment. B2B returns are buyer request, supplier approval, buyer return dispatch, supplier receipt, B2B stock reversal and credit note. "
         "Vendor question: " + question
     )
     return {"reply": await _ask_anthropic(instruction, max_tokens=700)}

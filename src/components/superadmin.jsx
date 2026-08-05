@@ -1772,10 +1772,15 @@ export default function SuperAdmin() {
                   <div className={`w-2.5 h-2.5 rounded-full mt-1.5 shrink-0 ${logDot[log.type] || logDot.info}`} />
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center justify-between gap-2 mb-0.5">
-                      <span className="font-semibold text-gray-900 text-sm">{log.actor}</span>
+                      <div className="min-w-0"><span className="font-semibold text-gray-900 text-sm">{log.actor}</span>{log.actor_email && <span className="ml-2 text-xs text-gray-400">{log.actor_email}</span>}</div>
                       <span className="text-xs text-gray-400 whitespace-nowrap">{log.time}</span>
                     </div>
                     <p className="text-xs text-gray-600">{log.action}</p>
+                    <div className="mt-1.5 flex flex-wrap gap-1.5 text-[11px] font-semibold">
+                      {log.tenant_name && <span className="rounded-full bg-violet-50 px-2 py-0.5 text-violet-700">Tenant: {log.tenant_name}</span>}
+                      {log.actor_role && <span className="rounded-full bg-slate-100 px-2 py-0.5 text-slate-600">{log.actor_role}</span>}
+                      {!log.tenant_name && <span className="rounded-full bg-slate-100 px-2 py-0.5 text-slate-500">Platform activity</span>}
+                    </div>
                   </div>
                 </div>
               ))}
