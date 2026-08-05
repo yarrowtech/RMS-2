@@ -208,6 +208,16 @@ const MSellerLogin = () => {
               </button>
             </form>
 
+            <div className="mt-5 rounded-2xl border border-emerald-100 bg-gradient-to-r from-emerald-50 to-teal-50 p-4 lg:hidden">
+              <div className="flex items-start gap-3">
+                <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-white text-emerald-700 shadow-sm"><Sparkles size={17} /></span>
+                <div>
+                  <p className="text-sm font-extrabold text-slate-900">Grow with RMS</p>
+                  <p className="mt-1 text-xs leading-5 text-slate-600">Build your catalogue, manage orders and respond to retailer enquiries in one workspace.</p>
+                </div>
+              </div>
+            </div>
+
             <div className="mt-7 border-t border-slate-100 pt-6 text-center">
               <p className="text-sm text-slate-500">Not registered with RMS?</p>
               <a href="/merchandiser-seller/register" className="mt-3 inline-flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-sm font-extrabold text-emerald-700 transition hover:bg-emerald-100">
