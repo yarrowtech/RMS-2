@@ -28,6 +28,7 @@ import VendorJobWork from "./VendorJobWork.jsx";
 import VendorRoleOperations from "./VendorRoleOperations.jsx";
 import VendorB2BTrade from "./VendorB2BTrade.jsx";
 import VendorB2BStock from "./VendorB2BStock.jsx";
+import VendorInventory from "./VendorInventory.jsx";
 import MSellerDashboard     from "./MsellerDashboard.jsx";
 import MSellerCategory      from "./MsellerCategory.jsx";
 import MSellerProductList   from "./MsellerProductList.jsx";
@@ -173,6 +174,7 @@ const PAGE_TITLES = {
   "role-operations": "Business Operations",
   "b2b-trade": "Vendor B2B Trade",
   "b2b-stock": "Vendor B2B Stock",
+  inventory: "My Inventory",
   finance:          "Finance & Analytics",
   retailers:        "My Retailers",
   network:          "Business Network",
@@ -397,6 +399,7 @@ export default function MSeller() {
       case "role-operations": return <VendorRoleOperations businessTypes={vendorProfile?.business_type || []} />;
       case "b2b-trade": return <VendorB2BTrade />;
       case "b2b-stock": return <VendorB2BStock />;
+      case "inventory": return <VendorInventory />;
       case "purchase-invoice": return <PurchaseInvoice vendorMode />;
       case "finance":        return <VendorAnalytics />;
       case "retailers":      return <VendorRetailersTab />;

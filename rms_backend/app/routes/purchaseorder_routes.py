@@ -1,4 +1,4 @@
-﻿
+
 from fastapi import APIRouter, HTTPException, status, Depends, Header
 from jose import jwt, JWTError
 from ..config import settings, frontend_url
@@ -775,7 +775,19 @@ async def approve_vendor_submission(po_id: str, ctx: dict = Depends(get_hq_tenan
             "updatedAt":              datetime.utcnow(),
         }}
     )
-    return {"message": "Vendor submission approved", "netAmount": net_amount}
+    inventory_reservation = None
+    vendor_id = po.get("vendor_id")
+    if vendor_id and ObjectId.is_valid(str(vendor_id)):
+        try:
+            from .vendor_inventory_routes import auto_reserve_for_approved_po
+            inventory_reservation = await auto_reserve_for_approved_po(
+                ObjectId(str(vendor_id)), {**po, "items": updated_items}
+            )
+        except Exception:
+            # A stock tracking problem must never prevent the retailer from
+            # approving a legitimate commercial PO.
+            inventory_reservation = {"reserved": 0, "shortages": []}
+    return {"message": "Vendor submission approved", "netAmount": net_amount, "inventory_reservation": inventory_reservation}
 
 
 @router.post("/{po_id}/reject")

@@ -5,6 +5,8 @@ from typing import Optional
 import re
 from bson import ObjectId
 from fastapi import APIRouter, Header, HTTPException
+from fastapi.responses import StreamingResponse
+from io import BytesIO
 
 from ..db import (
     vendors_collection,
@@ -13,6 +15,7 @@ from ..db import (
     vendor_b2b_orders_collection,
     vendor_b2b_receipts_collection,
     vendor_b2b_invoices_collection,
+    vendor_b2b_returns_collection,
     vendor_b2b_stock_collection,
     vendor_b2b_stock_ledger_collection,
 )
@@ -57,7 +60,7 @@ def _serialise(document: dict) -> dict:
     for key in ("vendor_id", "buyer_vendor_id", "supplier_vendor_id", "rfq_id", "order_id", "stock_item_id", "reference_id"):
         if row.get(key) is not None:
             row[key] = str(row[key])
-    for key in ("created_at", "updated_at", "deadline", "quoted_at", "awarded_at", "confirmed_at", "received_at", "issued_at", "due_date"):
+    for key in ("created_at", "updated_at", "deadline", "quoted_at", "awarded_at", "confirmed_at", "received_at", "issued_at", "due_date", "dispatched_at"):
         if row.get(key):
             row[key] = row[key].isoformat() if hasattr(row[key], "isoformat") else str(row[key])
     return row
@@ -254,6 +257,61 @@ async def update_order_status(order_id: str, payload: dict, authorization: str =
     return {"message": f"Order {status.lower()}.", "status": status}
 
 
+@router.put("/orders/{order_id}/dispatch")
+async def dispatch_order(order_id: str, payload: dict, authorization: str = Header(None)):
+    vendor_id = ObjectId(_vendor_id(authorization))
+    if not ObjectId.is_valid(order_id): raise HTTPException(status_code=400, detail="Invalid order ID")
+    order = await vendor_b2b_orders_collection.find_one({"_id": ObjectId(order_id)})
+    if not order: raise HTTPException(status_code=404, detail="Order not found")
+    if order["supplier_vendor_id"] != vendor_id: raise HTTPException(status_code=403, detail="Only the selling supplier can dispatch this order")
+    if order.get("status") not in ("Confirmed", "PartiallyReceived"):
+        raise HTTPException(status_code=400, detail="Confirm the B2B order before dispatching")
+    expected_date = _text(payload.get("expected_delivery_date"), "expected delivery date", required=True, maximum=30)
+    dispatch = {
+        "challan_no": _text(payload.get("challan_no"), "challan number", maximum=100) or _document_number("B2B-DC"),
+        "dispatch_date": _text(payload.get("dispatch_date"), "dispatch date", maximum=30) or datetime.utcnow().strftime("%Y-%m-%d"),
+        "expected_delivery_date": expected_date,
+        "transporter_name": _text(payload.get("transporter_name"), "transporter name", maximum=160),
+        "tracking_number": _text(payload.get("tracking_number"), "tracking number", maximum=160),
+        "vehicle_number": _text(payload.get("vehicle_number"), "vehicle number", maximum=80),
+        "note": _text(payload.get("note"), "dispatch note", maximum=1000), "dispatched_at": datetime.utcnow(),
+    }
+    await vendor_b2b_orders_collection.update_one({"_id": order["_id"]}, {"$set": {"dispatch": dispatch, "updated_at": datetime.utcnow()}})
+    return {"message": "B2B dispatch saved.", "dispatch": {**dispatch, "dispatched_at": dispatch["dispatched_at"].isoformat()}}
+
+
+def _pdf_response(title: str, rows: list[tuple[str, str]], filename: str):
+    try:
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib.styles import getSampleStyleSheet
+        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+        from reportlab.lib import colors
+    except ImportError:
+        raise HTTPException(status_code=503, detail="PDF export is not installed on the server")
+    buf = BytesIO(); styles = getSampleStyleSheet(); doc = SimpleDocTemplate(buf, pagesize=A4, rightMargin=42, leftMargin=42, topMargin=42)
+    table = Table([[Paragraph("<b>Field</b>", styles["BodyText"]), Paragraph("<b>Details</b>", styles["BodyText"])]] + [[str(a), str(b)] for a,b in rows], colWidths=[150, 350])
+    table.setStyle(TableStyle([("BACKGROUND", (0,0), (-1,0), colors.HexColor("#4f46e5")), ("TEXTCOLOR", (0,0), (-1,0), colors.white), ("GRID", (0,0), (-1,-1), .25, colors.HexColor("#cbd5e1")), ("VALIGN", (0,0), (-1,-1), "TOP"), ("PADDING", (0,0), (-1,-1), 7)]))
+    doc.build([Paragraph(title, styles["Title"]), Spacer(1, 16), table])
+    buf.seek(0); return StreamingResponse(buf, media_type="application/pdf", headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+
+
+@router.get("/orders/{order_id}/download")
+async def download_order(order_id: str, authorization: str = Header(None)):
+    vendor_id = ObjectId(_vendor_id(authorization)); order = await vendor_b2b_orders_collection.find_one({"_id": ObjectId(order_id)}) if ObjectId.is_valid(order_id) else None
+    if not order or vendor_id not in (order["buyer_vendor_id"], order["supplier_vendor_id"]): raise HTTPException(status_code=404, detail="Order not found")
+    rows = [("B2B PO", order["order_no"]), ("Buyer", (await _vendor_summary(order["buyer_vendor_id"]))["name"]), ("Supplier", (await _vendor_summary(order["supplier_vendor_id"]))["name"]), ("Item", order["title"]), ("SKU / code", order.get("item_code", "—")), ("Quantity", f'{order["quantity"]} {order["unit"]}'), ("Rate", f'{order.get("currency", "INR")} {order.get("unit_price", 0)}'), ("Total", f'{order.get("currency", "INR")} {order.get("total_amount", 0)}'), ("Status", order.get("status", ""))]
+    return _pdf_response("B2B Purchase Order", rows, f'{order["order_no"]}.pdf')
+
+
+@router.get("/orders/{order_id}/challan")
+async def download_challan(order_id: str, authorization: str = Header(None)):
+    vendor_id = ObjectId(_vendor_id(authorization)); order = await vendor_b2b_orders_collection.find_one({"_id": ObjectId(order_id)}) if ObjectId.is_valid(order_id) else None
+    if not order or vendor_id not in (order["buyer_vendor_id"], order["supplier_vendor_id"]): raise HTTPException(status_code=404, detail="Order not found")
+    dispatch = order.get("dispatch") or {}
+    if not dispatch: raise HTTPException(status_code=400, detail="Create dispatch details before downloading a delivery challan")
+    rows = [("Challan no.", dispatch.get("challan_no", "")), ("B2B PO", order["order_no"]), ("Supplier", (await _vendor_summary(order["supplier_vendor_id"]))["name"]), ("Buyer", (await _vendor_summary(order["buyer_vendor_id"]))["name"]), ("Item", order["title"]), ("Quantity", f'{order["quantity"]} {order["unit"]}'), ("Dispatch date", dispatch.get("dispatch_date", "")), ("Expected delivery", dispatch.get("expected_delivery_date", "")), ("Transporter", dispatch.get("transporter_name") or "—"), ("Tracking / vehicle", " / ".join(filter(None, [dispatch.get("tracking_number"), dispatch.get("vehicle_number")])) or "—"), ("Note", dispatch.get("note") or "—")]
+    return _pdf_response("B2B Delivery Challan", rows, f'{dispatch.get("challan_no", "b2b-challan")}.pdf')
+
 @router.post("/orders/{order_id}/receipts", status_code=201)
 async def record_receipt(order_id: str, payload: dict, authorization: str = Header(None)):
     vendor_id = ObjectId(_vendor_id(authorization))
@@ -291,6 +349,58 @@ async def record_receipt(order_id: str, payload: dict, authorization: str = Head
     await vendor_b2b_orders_collection.update_one({"_id": order["_id"]}, {"$set": {"received_quantity": total_received, "status": status, "updated_at": now}})
     return {"message": "Vendor-side material receipt recorded.", "receipt_no": receipt["receipt_no"], "status": status}
 
+
+@router.get("/returns")
+async def list_returns(authorization: str = Header(None)):
+    vendor_id = ObjectId(_vendor_id(authorization))
+    rows = await vendor_b2b_returns_collection.find({"$or": [{"buyer_vendor_id": vendor_id}, {"supplier_vendor_id": vendor_id}]}).sort("created_at", -1).to_list(200)
+    data = await _enrich(rows, "all")
+    for row in data:
+        row["viewer_role"] = "buying" if row["buyer_vendor_id"] == str(vendor_id) else "selling"
+    return {"data": data, "count": len(rows)}
+
+
+@router.post("/orders/{order_id}/returns", status_code=201)
+async def request_return(order_id: str, payload: dict, authorization: str = Header(None)):
+    vendor_id = ObjectId(_vendor_id(authorization)); order = await vendor_b2b_orders_collection.find_one({"_id": ObjectId(order_id)}) if ObjectId.is_valid(order_id) else None
+    if not order: raise HTTPException(status_code=404, detail="Order not found")
+    if order["buyer_vendor_id"] != vendor_id: raise HTTPException(status_code=403, detail="Only the B2B buyer can request a return")
+    if order.get("status") not in ("PartiallyReceived", "Received"): raise HTTPException(status_code=400, detail="Receive goods before requesting a B2B return")
+    quantity = _number(payload.get("quantity"), "return quantity", minimum=0.001); returned = float(order.get("returned_quantity", 0) or 0)
+    if quantity > float(order.get("received_quantity", 0) or 0) - returned + .000001: raise HTTPException(status_code=400, detail="Return quantity exceeds goods currently held")
+    now = datetime.utcnow(); doc = {"return_no": _document_number("B2B-RET"), "order_id": order["_id"], "order_no": order["order_no"], "buyer_vendor_id": order["buyer_vendor_id"], "supplier_vendor_id": order["supplier_vendor_id"], "title": order["title"], "item_code": order.get("item_code", ""), "unit": order["unit"], "quantity": quantity, "currency": order.get("currency", "INR"), "credit_amount": round(quantity * float(order.get("unit_price", 0) or 0), 2), "reason": _text(payload.get("reason"), "return reason", required=True, maximum=1000), "status": "Requested", "created_at": now, "updated_at": now}
+    result = await vendor_b2b_returns_collection.insert_one(doc)
+    return {"message": "B2B return request sent to supplier.", "return_id": str(result.inserted_id), "return_no": doc["return_no"]}
+
+
+@router.patch("/returns/{return_id}/status")
+async def update_return_status(return_id: str, payload: dict, authorization: str = Header(None)):
+    vendor_id = ObjectId(_vendor_id(authorization)); ret = await vendor_b2b_returns_collection.find_one({"_id": ObjectId(return_id)}) if ObjectId.is_valid(return_id) else None
+    if not ret: raise HTTPException(status_code=404, detail="B2B return not found")
+    action = str(payload.get("action") or "").lower(); now = datetime.utcnow()
+    if action in ("approve", "reject"):
+        if ret["supplier_vendor_id"] != vendor_id or ret.get("status") != "Requested": raise HTTPException(status_code=403, detail="Only the supplier can respond to a requested return")
+        status = "Approved" if action == "approve" else "Rejected"; update = {"status": status, "supplier_note": _text(payload.get("note"), "note", maximum=500), "updated_at": now}
+    elif action == "dispatch":
+        if ret["buyer_vendor_id"] != vendor_id or ret.get("status") != "Approved": raise HTTPException(status_code=403, detail="Supplier approval is required before dispatching the return")
+        update = {"status": "Dispatched", "return_dispatch": {"challan_no": _text(payload.get("challan_no"), "challan", maximum=100) or _document_number("B2B-RET-DC"), "expected_delivery_date": _text(payload.get("expected_delivery_date"), "expected delivery date", required=True, maximum=30), "transporter_name": _text(payload.get("transporter_name"), "transporter", maximum=160), "tracking_number": _text(payload.get("tracking_number"), "tracking", maximum=160), "dispatched_at": now}, "updated_at": now}
+    elif action == "receive":
+        if ret["supplier_vendor_id"] != vendor_id or ret.get("status") != "Dispatched": raise HTTPException(status_code=403, detail="Only the supplier can receive a dispatched return")
+        order = await vendor_b2b_orders_collection.find_one({"_id": ret["order_id"]}); item_key = _item_key(ret.get("item_code", ""), ret["title"], (order or {}).get("category", ""), ret["unit"])
+        stock = await vendor_b2b_stock_collection.find_one({"vendor_id": ret["buyer_vendor_id"], "item_key": item_key, "unit": ret["unit"]})
+        if not stock or float(stock.get("quantity", 0) or 0) < float(ret["quantity"]): raise HTTPException(status_code=400, detail="Buyer B2B stock is insufficient to complete this return")
+        qty = float(ret["quantity"]); cost = float(stock.get("average_cost", 0) or 0); await vendor_b2b_stock_collection.update_one({"_id": stock["_id"]}, {"$inc": {"quantity": -qty, "total_value": -round(qty * cost, 2)}, "$set": {"updated_at": now}})
+        await vendor_b2b_stock_ledger_collection.insert_one({"vendor_id": ret["buyer_vendor_id"], "stock_item_id": stock["_id"], "item_key": item_key, "movement_type": "B2B Return", "quantity_in": 0, "quantity_out": qty, "unit_cost": cost, "value": round(qty * cost, 2), "reference_type": "return", "reference_id": ret["_id"], "reference_no": ret["return_no"], "note": ret["reason"], "created_at": now})
+        await vendor_b2b_orders_collection.update_one({"_id": ret["order_id"]}, {"$inc": {"returned_quantity": qty}, "$set": {"updated_at": now}})
+        invoice = await vendor_b2b_invoices_collection.find_one({"order_id": ret["order_id"]}, sort=[("issued_at", -1)])
+        credit_note = {"credit_no": _document_number("B2B-CN"), "amount": ret["credit_amount"], "return_no": ret["return_no"], "issued_at": now}
+        if invoice:
+            balance = max(0, round(float(invoice.get("balance_due", invoice.get("amount", 0)) or 0) - float(ret["credit_amount"]), 2)); credits = round(float(invoice.get("credit_amount", 0) or 0) + float(ret["credit_amount"]), 2)
+            await vendor_b2b_invoices_collection.update_one({"_id": invoice["_id"]}, {"$set": {"balance_due": balance, "credit_amount": credits, "payment_status": "Credited" if balance == 0 else "PartiallyPaid", "updated_at": now}, "$push": {"credit_notes": credit_note}})
+        update = {"status": "Received", "credit_note": credit_note, "updated_at": now}
+    else: raise HTTPException(status_code=400, detail="action must be approve, reject, dispatch, or receive")
+    await vendor_b2b_returns_collection.update_one({"_id": ret["_id"]}, {"$set": update})
+    return {"message": f"B2B return {update['status'].lower()}.", "status": update["status"]}
 
 @router.get("/stock")
 async def list_b2b_stock(authorization: str = Header(None)):
@@ -349,6 +459,41 @@ async def create_invoice(order_id: str, payload: dict, authorization: str = Head
     if order["supplier_vendor_id"] != vendor_id: raise HTTPException(status_code=403, detail="Only the selling supplier can issue an invoice")
     if order.get("status") not in ("Confirmed", "PartiallyReceived", "Received"): raise HTTPException(status_code=400, detail="Confirm the order before issuing an invoice")
     now = datetime.utcnow()
-    invoice = {"invoice_no": _text(payload.get("invoice_no"), "invoice_no", maximum=100) or _document_number("B2B-INV"), "order_id": order["_id"], "order_no": order["order_no"], "buyer_vendor_id": order["buyer_vendor_id"], "supplier_vendor_id": order["supplier_vendor_id"], "title": order["title"], "currency": order.get("currency", "INR"), "amount": _number(payload.get("amount"), "amount", minimum=0, required=False) or order["total_amount"], "due_date": _text(payload.get("due_date"), "due_date", maximum=30), "status": "Issued", "issued_at": now, "created_at": now}
+    invoice = {"invoice_no": _text(payload.get("invoice_no"), "invoice_no", maximum=100) or _document_number("B2B-INV"), "order_id": order["_id"], "order_no": order["order_no"], "buyer_vendor_id": order["buyer_vendor_id"], "supplier_vendor_id": order["supplier_vendor_id"], "title": order["title"], "currency": order.get("currency", "INR"), "amount": _number(payload.get("amount"), "amount", minimum=0, required=False) or order["total_amount"], "due_date": _text(payload.get("due_date"), "due_date", maximum=30), "status": "Issued", "payment_status": "Unpaid", "paid_amount": 0.0, "balance_due": _number(payload.get("amount"), "amount", minimum=0, required=False) or order["total_amount"], "payments": [], "issued_at": now, "created_at": now}
     result = await vendor_b2b_invoices_collection.insert_one(invoice)
     return {"message": "Vendor sales invoice issued.", "invoice_id": str(result.inserted_id), "invoice_no": invoice["invoice_no"]}
+
+
+@router.post("/invoices/{invoice_id}/payments", status_code=201)
+async def record_invoice_payment(invoice_id: str, payload: dict, authorization: str = Header(None)):
+    vendor_id = ObjectId(_vendor_id(authorization))
+    if not ObjectId.is_valid(invoice_id): raise HTTPException(status_code=400, detail="Invalid invoice ID")
+    invoice = await vendor_b2b_invoices_collection.find_one({"_id": ObjectId(invoice_id)})
+    if not invoice: raise HTTPException(status_code=404, detail="B2B invoice not found")
+    if invoice["buyer_vendor_id"] != vendor_id: raise HTTPException(status_code=403, detail="Only the B2B buyer can record payment")
+    amount = _number(payload.get("amount"), "payment amount", minimum=0.01)
+    balance = float(invoice.get("balance_due", invoice.get("amount", 0)) or 0)
+    if amount > balance + 0.000001: raise HTTPException(status_code=400, detail=f"Payment exceeds outstanding balance ({balance:g})")
+    now = datetime.utcnow(); paid = round(float(invoice.get("paid_amount", 0) or 0) + amount, 2); due = round(balance - amount, 2)
+    payment = {"payment_no": _document_number("B2B-PAY"), "amount": amount, "payment_date": _text(payload.get("payment_date"), "payment date", maximum=30) or now.strftime("%Y-%m-%d"), "payment_mode": _text(payload.get("payment_mode"), "payment mode", maximum=50) or "Bank transfer", "reference_no": _text(payload.get("reference_no"), "reference no", maximum=100), "note": _text(payload.get("note"), "note", maximum=500), "recorded_at": now}
+    payment_status = "Paid" if due <= 0.000001 else "PartiallyPaid"
+    await vendor_b2b_invoices_collection.update_one({"_id": invoice["_id"]}, {"$set": {"paid_amount": paid, "balance_due": max(0, due), "payment_status": payment_status, "updated_at": now}, "$push": {"payments": payment}})
+    return {"message": "B2B payment recorded.", "payment": {**payment, "recorded_at": payment["recorded_at"].isoformat()}, "balance_due": max(0, due), "payment_status": payment_status}
+
+
+@router.get("/finance-ledger")
+async def b2b_finance_ledger(authorization: str = Header(None)):
+    vendor_id = ObjectId(_vendor_id(authorization)); today = datetime.utcnow().strftime("%Y-%m-%d")
+    invoices = await vendor_b2b_invoices_collection.find({"$or": [{"buyer_vendor_id": vendor_id}, {"supplier_vendor_id": vendor_id}]}).sort("issued_at", -1).to_list(300)
+    receivable = [row for row in invoices if row["supplier_vendor_id"] == vendor_id]; payable = [row for row in invoices if row["buyer_vendor_id"] == vendor_id]
+    def summary(rows):
+        return {"invoiced": round(sum(float(r.get("amount", 0) or 0) for r in rows), 2), "paid": round(sum(float(r.get("paid_amount", 0) or 0) for r in rows), 2), "outstanding": round(sum(float(r.get("balance_due", r.get("amount", 0)) or 0) for r in rows), 2), "overdue": round(sum(float(r.get("balance_due", 0) or 0) for r in rows if r.get("due_date") and r.get("due_date") < today), 2)}
+    return {"receivable": summary(receivable), "payable": summary(payable), "invoices": await _enrich(invoices, "all")}
+
+
+@router.get("/invoices/{invoice_id}/download")
+async def download_invoice(invoice_id: str, authorization: str = Header(None)):
+    vendor_id = ObjectId(_vendor_id(authorization)); invoice = await vendor_b2b_invoices_collection.find_one({"_id": ObjectId(invoice_id)}) if ObjectId.is_valid(invoice_id) else None
+    if not invoice or vendor_id not in (invoice["buyer_vendor_id"], invoice["supplier_vendor_id"]): raise HTTPException(status_code=404, detail="Invoice not found")
+    rows = [("Invoice", invoice["invoice_no"]), ("B2B PO", invoice.get("order_no", "")), ("Supplier", (await _vendor_summary(invoice["supplier_vendor_id"]))["name"]), ("Buyer", (await _vendor_summary(invoice["buyer_vendor_id"]))["name"]), ("Item", invoice.get("title", "")), ("Invoice amount", f'{invoice.get("currency", "INR")} {invoice.get("amount", 0)}'), ("Paid", f'{invoice.get("currency", "INR")} {invoice.get("paid_amount", 0)}'), ("Outstanding", f'{invoice.get("currency", "INR")} {invoice.get("balance_due", invoice.get("amount", 0))}'), ("Due date", invoice.get("due_date") or "—")]
+    return _pdf_response("B2B Tax / Sales Invoice", rows, f'{invoice["invoice_no"]}.pdf')

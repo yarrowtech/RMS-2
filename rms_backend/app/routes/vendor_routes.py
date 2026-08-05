@@ -629,19 +629,25 @@ async def vendor_login(request: Request):
     if not vendor:
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
-    has_approved = await vendor_tenant_links_collection.find_one({
+    approved_links = await vendor_tenant_links_collection.find({
         "vendor_id": vendor["_id"], "status": "Approved",
-    })
-    if not has_approved:
+    }).to_list(length=None)
+    if not approved_links:
         raise HTTPException(status_code=403, detail="Vendor not approved yet by any retailer.")
 
     if not verify_password(password, vendor.get("password", "")):
         raise HTTPException(status_code=401, detail="Incorrect password")
 
     token = create_token({"vendor_id": str(vendor["_id"]), "email": vendor["email"]})
-    await log_activity(
-        vendor.get("name") or vendor.get("vendor_name") or vendor.get("email", ""), "Vendor logged in", type="info",
-    )
+    for link in approved_links:
+        tenant = await tenants_collection.find_one({"tenant_id": link.get("tenant_id")}, {"company_name": 1})
+        await log_activity(
+            vendor.get("name") or vendor.get("vendor_name") or vendor.get("email", ""),
+            "Vendor logged in", type="info",
+            tenant_id=link.get("tenant_id"),
+            tenant_name=(tenant or {}).get("company_name") or link.get("tenant_id"),
+            actor_email=vendor.get("email"), actor_role="Vendor",
+        )
     return {
         "access_token": token,
         "vendor_id":    str(vendor["_id"]),
@@ -1126,6 +1132,9 @@ async def update_vendor_delivery(po_id: str, payload: dict, authorization: str =
     timeline.append({"event": status, "actor": "Vendor", "at": datetime.utcnow(), "note": vendor_update["dispatch_note"]})
     delivery["timeline"] = timeline[-30:]
     await purchaseorders_collection.update_one(query, {"$set": {"delivery": delivery, "updatedAt": datetime.utcnow()}})
+    if status == "Dispatched":
+        from .vendor_inventory_routes import consume_reservations_for_po
+        await consume_reservations_for_po(vendor["_id"], po)
     return {"message": "Delivery update saved", "delivery": delivery}
 
 @vendor_bp.get("/purchaseorders/{po_id}/download")

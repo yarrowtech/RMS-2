@@ -239,6 +239,10 @@ async def login(req: LoginRequest):
         admin.get("name") or admin.get("email", ""),
         f"Logged in ({admin.get('department', '') or store['scope']})",
         type="info",
+        tenant_id=store["tenant_id"],
+        tenant_name=store["store_name"],
+        actor_email=admin.get("email"),
+        actor_role=admin.get("department") or "Retailer Admin",
     )
 
     return {
@@ -301,6 +305,9 @@ async def logout(authorization: str = Header(None)):
     """
     actor = "Unknown user"
     role_label = ""
+    actor_email = None
+    tenant_id = None
+    tenant_name = None
     if authorization and authorization.startswith("Bearer "):
         try:
             payload = jwt.decode(authorization.split(" ", 1)[1], settings.secret_key, algorithms=[settings.jwt_algorithm])
@@ -310,21 +317,32 @@ async def logout(authorization: str = Header(None)):
                 )
                 if vendor:
                     actor = vendor.get("name") or vendor.get("vendor_name") or vendor.get("email") or actor
+                    actor_email = vendor.get("email")
                 role_label = "Vendor"
             elif payload.get("role") == "super_admin" and payload.get("sub") and ObjectId.is_valid(str(payload["sub"])):
                 admin = await admins_collection.find_one({"_id": ObjectId(str(payload["sub"]))}, {"name": 1, "email": 1})
                 if admin:
                     actor = admin.get("name") or admin.get("email") or actor
+                    actor_email = admin.get("email")
                 role_label = "Super Admin"
             elif payload.get("role") in ("ADMIN", "admin") and payload.get("sub") and ObjectId.is_valid(str(payload["sub"])):
                 admin = await admins_collection.find_one({"_id": ObjectId(str(payload["sub"]))}, {"name": 1, "email": 1, "department": 1})
                 if admin:
                     actor = admin.get("name") or admin.get("email") or actor
+                    actor_email = admin.get("email")
                     role_label = admin.get("department", "")
         except JWTError:
             pass
 
-    await log_activity(actor, f"Logged out{f' ({role_label})' if role_label else ''}", type="info")
+    if "payload" in locals():
+        tenant_id = payload.get("tenant_id")
+        tenant_name = payload.get("store_name")
+        actor_email = actor_email or payload.get("email")
+    await log_activity(
+        actor, f"Logged out{f' ({role_label})' if role_label else ''}", type="info",
+        tenant_id=tenant_id, tenant_name=tenant_name, actor_email=actor_email,
+        actor_role=role_label or None,
+    )
     return {"ok": True}
 
 
