@@ -135,6 +135,18 @@ function QuickOrderTabs({ activeView, onChange }) {
     </div>
   );
 }
+function QuickOrderGuide({ activeView }) {
+  const details = activeView === "order"
+    ? [
+        ["1. Search catalogue", "Use this when you know the product and want to compare approved vendors."],
+        ["2. Request and compare", "Send the same requirement, review prices and select one winning vendor."],
+        ["3. Review before PO", "A PO is created only after final review. For colour/size items, keep each SKU or variant as a separate order line."],
+      ]
+    : activeView === "rfq"
+      ? [["Use Open RFQ", "Use this when the product is not available in the catalogue or you need fresh quotes."], ["Give complete requirements", "Add material, quantity, colour, size, target price and delivery date so vendors can quote correctly."], ["Choose later", "Nothing is ordered here. Monitor responses in My Inquiries, then select a vendor before creating the PO."]]
+      : [["Monitor all requests", "See quotations, vendor responses and the current status of every sourcing request."], ["Choose one supplier", "Compare a response and create one PO for one vendor—do not mix vendors on the same PO."], ["After PO", "Vendor confirms, dispatches, and the receiving team completes GRC/GRN and the purchase invoice."]];
+  return <details className="rounded-2xl border border-indigo-100 bg-indigo-50/70 p-4 text-sm text-slate-700"><summary className="cursor-pointer list-none font-black text-indigo-950">How to use this tab <span className="ml-2 text-xs font-semibold text-indigo-600">Open guide</span></summary><div className="mt-4 grid gap-3 md:grid-cols-3">{details.map(([title, copy]) => <div key={title} className="rounded-xl border border-white bg-white/80 p-3"><p className="font-black text-slate-900">{title}</p><p className="mt-1 text-xs leading-5 text-slate-600">{copy}</p></div>)}</div><p className="mt-3 border-t border-indigo-100 pt-3 text-xs font-semibold text-indigo-800">Tip: use Create Quick Order for catalogue items, Create Open RFQ for new sourcing, and My Inquiries to continue work later.</p></details>;
+}
 function OpenRfqPanel({ onOpenInquiries }) {
   const empty = { item_name:"", category:"", material:"", audience:"", requested_qty:1, requested_size:"", requested_color:"", target_price:"", price_range_min:"", price_range_max:"", delivery_date:"", reference_image_url:"", buyer_note:"", response_deadline:"", allow_alternatives:true };
   const [form,setForm]=useState(empty), [vendors,setVendors]=useState([]), [selected,setSelected]=useState(new Set());
@@ -442,7 +454,7 @@ export default function QuickOrderFromCatalogue() {
   }
 
   if (activeView === "rfq") {
-    return <div className="min-h-full bg-[#F6F7FB] p-4 sm:p-6"><div className="mx-auto max-w-5xl space-y-5"><QuickOrderTabs activeView={activeView} onChange={setActiveView}/><OpenRfqPanel onOpenInquiries={()=>setActiveView("inquiries")}/></div></div>;
+    return <div className="min-h-full bg-[#F6F7FB] p-4 sm:p-6"><div className="mx-auto max-w-5xl space-y-5"><QuickOrderTabs activeView={activeView} onChange={setActiveView}/><QuickOrderGuide activeView={activeView}/><OpenRfqPanel onOpenInquiries={()=>setActiveView("inquiries")}/></div></div>;
   }
 
   if (activeView === "inquiries") {
