@@ -2107,6 +2107,11 @@ async def get_gr_returns(search: Optional[str] = Query(None), ctx: dict = Depend
             "qc":              d.get("qc", ""),
             "photos":          d.get("photos", []),   # list of {id, src, name}
             "createdAt": d["createdAt"].isoformat() if isinstance(d.get("createdAt"), datetime) else "",
+            "sourceType": d.get("sourceType", "legacy"),
+            "sourceId": d.get("sourceId", ""),
+            "sourceReference": d.get("sourceReference", ""),
+            "status": d.get("status", "Draft"),
+            "amount": d.get("amount", 0),
         })
     if search:
         q = search.lower()
@@ -2169,6 +2174,11 @@ async def get_next_plans(search: Optional[str] = Query(None), ctx: dict = Depend
             "price":    d.get("price", ""),
             "size":     d.get("size", ""),
             "createdAt": d["createdAt"].isoformat() if isinstance(d.get("createdAt"), datetime) else "",
+            "sourceType": d.get("sourceType", "legacy"),
+            "sourceId": d.get("sourceId", ""),
+            "sourceReference": d.get("sourceReference", ""),
+            "status": d.get("status", "Draft"),
+            "amount": d.get("amount", 0),
         })
     if search:
         q = search.lower()
@@ -2251,6 +2261,11 @@ async def get_debit_notes(search: Optional[str] = Query(None), ctx: dict = Depen
             "vendorSeal":           d.get("vendorSeal", ""),
             "authorisedSignatory":  d.get("authorisedSignatory", ""),
             "createdAt": d["createdAt"].isoformat() if isinstance(d.get("createdAt"), datetime) else "",
+            "sourceType": d.get("sourceType", "legacy"),
+            "sourceId": d.get("sourceId", ""),
+            "sourceReference": d.get("sourceReference", ""),
+            "status": d.get("status", "Draft"),
+            "amount": d.get("amount", 0),
         })
     if search:
         q = search.lower()
@@ -2259,6 +2274,14 @@ async def get_debit_notes(search: Optional[str] = Query(None), ctx: dict = Depen
 
 @router.post("/debit-notes")
 async def create_debit_note(payload: dict, ctx: dict = Depends(get_hq_tenant)):
+    if payload.get("sourceType") and not str(payload.get("sourceId") or "").strip():
+        raise HTTPException(status_code=400, detail="A source record is required for a debit note.")
+    try:
+        linked_amount = float(payload.get("amount") or 0)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="Amount must be a number.")
+    if linked_amount < 0:
+        raise HTTPException(status_code=400, detail="Amount cannot be negative.")
     items = payload.get("items", [])
     # Strip local-only id from items before storing
     clean_items = [{k: v for k, v in it.items() if k != "id"} for it in items]
@@ -2289,6 +2312,11 @@ async def create_debit_note(payload: dict, ctx: dict = Depends(get_hq_tenant)):
         "cinNo":                payload.get("cinNo", ""),
         "vendorSeal":           payload.get("vendorSeal", ""),
         "authorisedSignatory":  payload.get("authorisedSignatory", ""),
+        "sourceType":           payload.get("sourceType", "legacy"),
+        "sourceId":             str(payload.get("sourceId", "")),
+        "sourceReference":      str(payload.get("sourceReference", ""))[:160],
+        "status":               "Draft",
+        "amount":               round(linked_amount, 2),
         "createdAt":            datetime.utcnow(),
         "updatedAt":            datetime.utcnow(),
     }
