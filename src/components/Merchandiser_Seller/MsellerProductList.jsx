@@ -1,4 +1,4 @@
-﻿import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
+import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
 
 // import React, { useEffect, useState } from "react";
 // import axios from "axios";
@@ -1358,6 +1358,10 @@ export default function ProductList({
           </button>
         </div>
 
+        <details className="shrink-0 mb-4 rounded-2xl border border-indigo-100 bg-indigo-50 px-4 py-3 text-xs text-slate-700">
+          <summary className="cursor-pointer font-bold text-indigo-900">How to use My Product List</summary>
+          <div className="mt-2 grid gap-2 leading-5 sm:grid-cols-3"><p><b>Find:</b> search by product, SKU or barcode before creating a duplicate.</p><p><b>Maintain:</b> keep product names, variants and selling details accurate. Use one SKU/barcode per sellable variant.</p><p><b>Stock:</b> review availability here, but use receiving/GRN and inventory processes for actual stock movements.</p></div>
+        </details>
         <div className="shrink-0 mb-4 flex w-full max-w-[480px] items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm transition focus-within:border-indigo-500 focus-within:ring-4 focus-within:ring-indigo-50">
           <span className="shrink-0 text-[14px] text-slate-900">Search</span>
           <input

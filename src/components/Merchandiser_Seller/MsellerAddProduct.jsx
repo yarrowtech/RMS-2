@@ -574,6 +574,10 @@ export default function AddProduct({ onSuccess, onClose } = {}) {
           </div>
         </div>
 
+        <details className="mb-5 rounded-2xl border border-indigo-200 bg-indigo-50/90 p-4 text-sm text-indigo-950">
+          <summary className="cursor-pointer font-bold">How to add products correctly</summary>
+          <div className="mt-3 grid gap-2 text-xs leading-5 text-indigo-900 sm:grid-cols-2"><p><b>1. Start with identity:</b> add a clear product name, SKU/barcode and business category.</p><p><b>2. Set the sellable details:</b> price, tax and available quantity should reflect what you can actually supply.</p><p><b>3. Use variants:</b> create separate size, colour or pack variants when they have different SKU, barcode, price or stock.</p><p><b>4. Review before saving:</b> save only accurate information. You can edit a product later; stock should be changed through the correct inventory/receipt process.</p></div>
+        </details>
         <form onSubmit={handleSubmit}>
           {products.map((form, idx) => (
             <div key={idx} className="relative mb-5 overflow-hidden rounded-2xl border border-white/30 bg-white/70 p-4 shadow-lg backdrop-blur-xl sm:p-6">
