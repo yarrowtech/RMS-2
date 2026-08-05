@@ -414,7 +414,7 @@ export default function Mbuyer() {
       case "vendorlist":         return <VendorList />;
       case "retailer-whatsapp": return <RetailerWhatsAppConnect />;
       case "gr-update-return":  return <Mbuyer1GRUpdateReturn />;
-      case "next-plan":         return <Mbuyer1NextPlan />;
+      case "next-plan":         return <Mbuyer1NextPlan onNavigate={setActive} />;
       case "debit-note":        return <Mbuyer1DebitNote />;
       case "quick-order":        return <QuickOrderFromCatalogue />;
       case "purchase-plan":     return <PurchasePlan onNavigate={setActive} />;
