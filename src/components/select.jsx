@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   ArrowRight, BadgeCheck, BarChart3, Boxes, Building2, CheckCircle2,
-  Factory, Globe2, Handshake, Layers3, LockKeyhole, Mail, PackageCheck,
+  Factory, Globe2, Handshake, Layers3, LockKeyhole, Mail, Menu, PackageCheck,
   ShieldCheck, ShoppingCart, Store, Truck, UserPlus, Users, Workflow,
   Zap, Crown, TrendingUp, Sparkles, Rocket, Bot, MessageCircle, X, ChevronRight,
 } from "lucide-react";
@@ -156,6 +156,7 @@ export default function ProfessionalRoleSelector() {
   const navigate = useNavigate();
   const [vendorTiers, setVendorTiers] = useState(null);
   const [storePlans, setStorePlans] = useState(null);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   useEffect(() => {
     fetch(`${API_BASE_URL}/api/subscriptions/tiers`)
@@ -174,20 +175,34 @@ export default function ProfessionalRoleSelector() {
       <div className="pointer-events-none absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-indigo-500 via-violet-500 to-emerald-500" />
 
       <header className="relative z-30 border-b border-slate-200/70 bg-white/75 backdrop-blur-xl">
-        <div className="mx-auto flex w-full max-w-7xl items-center justify-between px-5 py-4 sm:px-8 lg:px-10">
-          <a href="#top" className="flex items-center gap-3">
-            <span className="grid h-11 w-11 place-items-center rounded-2xl bg-slate-950 text-white shadow-lg shadow-slate-900/15"><Store size={21} /></span>
-            <span><span className="block text-base font-extrabold tracking-tight text-slate-950">RMS</span><span className="block text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">Retail Management System</span></span>
+        <div className="mx-auto flex w-full max-w-7xl items-center justify-between px-4 py-3 sm:px-8 sm:py-5 lg:px-10">
+          <a href="#top" className="flex min-w-0 items-center gap-2.5 sm:gap-3">
+            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-slate-950 text-white shadow-lg shadow-slate-900/15 sm:h-12 sm:w-12 sm:rounded-2xl"><Store size={20} className="sm:hidden" /><Store size={22} className="hidden sm:block" /></span>
+            <span className="min-w-0"><span className="block text-base font-extrabold tracking-tight text-slate-950 sm:text-lg">RMS</span><span className="hidden text-[11px] font-bold uppercase tracking-[0.18em] text-slate-500 sm:block">Retail Management System</span></span>
           </a>
-          <nav className="hidden items-center gap-7 text-sm font-semibold text-slate-600 lg:flex">
+          <nav className="hidden items-center gap-8 text-[15px] font-semibold text-slate-600 lg:flex" aria-label="Main navigation">
             <a href="#about" className="hover:text-indigo-700">What is RMS?</a>
             <a href="#workflow" className="hover:text-indigo-700">How it works</a>
             <a href="#departments" className="hover:text-indigo-700">Capabilities</a>
             <a href="#pricing" className="hover:text-indigo-700">Pricing</a>
             <a href="#partners" className="hover:text-indigo-700">For partners</a>
           </nav>
-          <button onClick={() => navigate("/admin/login")} className="rounded-xl bg-slate-950 px-4 py-2.5 text-xs font-bold text-white shadow-sm transition hover:bg-indigo-700">Sign in</button>
+          <div className="flex items-center gap-2 sm:gap-3">
+            <button onClick={() => navigate("/admin/login")} className="rounded-xl bg-slate-950 px-3.5 py-2.5 text-xs font-bold text-white shadow-sm transition hover:bg-indigo-700 sm:px-5 sm:py-3 sm:text-sm">Sign in</button>
+            <button type="button" onClick={() => setMobileMenuOpen((open) => !open)} className="grid h-10 w-10 place-items-center rounded-xl border border-slate-200 bg-white text-slate-700 shadow-sm transition hover:border-indigo-200 hover:text-indigo-700 lg:hidden" aria-label={mobileMenuOpen ? "Close navigation menu" : "Open navigation menu"} aria-expanded={mobileMenuOpen}>
+              {mobileMenuOpen ? <X size={19} /> : <Menu size={20} />}
+            </button>
+          </div>
         </div>
+        {mobileMenuOpen && (
+          <nav className="border-t border-slate-200/70 bg-white px-4 py-3 shadow-lg lg:hidden" aria-label="Mobile navigation">
+            <div className="mx-auto grid max-w-7xl gap-1">
+              {[
+                ["What is RMS?", "#about"], ["How it works", "#workflow"], ["Capabilities", "#departments"], ["Pricing", "#pricing"], ["For partners", "#partners"],
+              ].map(([label, href]) => <a key={href} href={href} onClick={() => setMobileMenuOpen(false)} className="rounded-xl px-3.5 py-3 text-sm font-semibold text-slate-700 transition hover:bg-indigo-50 hover:text-indigo-700">{label}</a>)}
+            </div>
+          </nav>
+        )}
       </header>
 
       <main id="top" className="relative z-10">
