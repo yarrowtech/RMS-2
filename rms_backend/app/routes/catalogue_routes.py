@@ -48,10 +48,13 @@ from typing import Optional, List
 from bson import ObjectId
 from io import BytesIO
 import uuid
+import json
 import os
+from urllib import error as urlerror, request as urlrequest
 import cloudinary
 import cloudinary.uploader
 
+from ..config import settings
 from ..db import (
     vendor_catalogue_collection,
     catalogue_inquiries_collection,
@@ -127,6 +130,128 @@ async def get_my_catalogue(authorization: str = Header(None)):
     return {"status": "success", "data": items}
 
 
+def _normalise_catalogue_variants(raw) -> list:
+    """Accept a small, buyer-facing variant matrix without trusting client values."""
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw or "[]")
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=400, detail="Variants must be valid JSON.")
+    if raw is None:
+        return []
+    if not isinstance(raw, list) or len(raw) > 100:
+        raise HTTPException(status_code=400, detail="Provide between 0 and 100 variants.")
+
+    variants = []
+    for row in raw:
+        if not isinstance(row, dict):
+            raise HTTPException(status_code=400, detail="Each variant must be an object.")
+        label = str(row.get("label") or "").strip()
+        if not label:
+            continue
+        if len(label) > 120:
+            raise HTTPException(status_code=400, detail="Variant label is too long.")
+        try:
+            price = max(0.0, float(row.get("price") or 0))
+            moq = max(0, int(float(row.get("moq") or 0)))
+            stock = max(0, int(float(row.get("stock") or 0)))
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="Variant price, MOQ and stock must be numbers.")
+        variants.append({
+            "label": label,
+            "sku": str(row.get("sku") or "").strip()[:100],
+            "price": price,
+            "moq": moq,
+            "stock": stock,
+        })
+    return variants
+
+
+async def _ask_anthropic(instruction: str, max_tokens: int = 900) -> str:
+    """Shared Anthropic client for optional vendor-assistant features."""
+    if not settings.anthropic_api_key:
+        raise HTTPException(status_code=503, detail="RMS AI Assistant is not configured yet.")
+    request_payload = {
+        "model": "claude-haiku-4-5-20251001",
+        "max_tokens": max_tokens,
+        "messages": [{"role": "user", "content": instruction}],
+    }
+    req = urlrequest.Request(
+        "https://api.anthropic.com/v1/messages",
+        data=json.dumps(request_payload).encode("utf-8"),
+        headers={"content-type": "application/json", "x-api-key": settings.anthropic_api_key, "anthropic-version": "2023-06-01"},
+        method="POST",
+    )
+    try:
+        with urlrequest.urlopen(req, timeout=30) as response:
+            return json.loads(response.read().decode("utf-8"))["content"][0]["text"].strip()
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=502, detail="RMS AI Assistant could not respond. Please try again.") from exc
+
+
+@router.post("/vendor-copilot/ask")
+async def ask_vendor_copilot(payload: dict, authorization: str = Header(None)):
+    """Optional AI help. It never performs RMS actions or reads vendor records."""
+    _decode_vendor(authorization)
+    if payload.get("consent") is not True:
+        raise HTTPException(status_code=400, detail="Consent is required before sending a question to AI.")
+    question = str(payload.get("question") or "").strip()[:2000]
+    page = str(payload.get("page") or "RMS workspace").strip()[:100]
+    if not question:
+        raise HTTPException(status_code=400, detail="Enter a question first.")
+    instruction = (
+        "You are RMS Co-pilot, a concise, friendly guide for a wholesale vendor portal. "
+        "The vendor is currently on the '" + page + "' page. Answer only with safe workflow guidance. "
+        "Do not claim to see their account, orders, prices, customers, documents, or data. "
+        "Never tell them that you changed, submitted, published, contacted, or approved anything. "
+        "For account-specific errors, direct them to RMS Help & Support. Use short practical steps. "
+        "Vendor question: " + question
+    )
+    return {"reply": await _ask_anthropic(instruction, max_tokens=700)}
+
+
+@router.post("/my-catalogue/assistant")
+async def draft_catalogue_item_with_ai(payload: dict, authorization: str = Header(None)):
+    """Suggest a catalogue draft. The vendor must review it before saving."""
+    _decode_vendor(authorization)
+    if not settings.anthropic_api_key:
+        raise HTTPException(status_code=503, detail="Catalogue Assistant is not configured yet.")
+
+    prompt = str(payload.get("prompt") or "").strip()[:2000]
+    context = {
+        "item_name": str(payload.get("item_name") or "").strip()[:160],
+        "category": str(payload.get("category") or "").strip()[:100],
+        "available_sizes": str(payload.get("available_sizes") or "").strip()[:300],
+        "available_colors": str(payload.get("available_colors") or "").strip()[:300],
+    }
+    if not prompt and not any(context.values()):
+        raise HTTPException(status_code=400, detail="Describe the product or provide some product details first.")
+
+    instruction = (
+        "You assist a wholesale vendor creating a retailer-facing catalogue listing. "
+        "Return ONLY a JSON object with keys: item_name, category, description, available_sizes, available_colors, "
+        "suggested_moq, variants. variants must be an array of up to 12 objects with label, sku, price, moq, stock. "
+        "Use empty strings or an empty array for information not supplied; do not invent prices, tax, certification, or stock. "
+        "Write a concise factual description suitable for retail buyers. Product context: " + json.dumps(context) + ". Vendor notes: " + prompt
+    )
+    try:
+        raw = await _ask_anthropic(instruction)
+        if raw.startswith("```"):
+            raw = raw.strip("`").removeprefix("json").strip()
+        suggestion = json.loads(raw)
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=502, detail="Catalogue Assistant could not generate a draft. Please try again.") from exc
+
+    return {"data": {
+        "item_name": str(suggestion.get("item_name") or "").strip()[:160],
+        "category": str(suggestion.get("category") or "").strip()[:100],
+        "description": str(suggestion.get("description") or "").strip()[:2000],
+        "available_sizes": str(suggestion.get("available_sizes") or "").strip()[:300],
+        "available_colors": str(suggestion.get("available_colors") or "").strip()[:300],
+        "moq": max(0, int(float(suggestion.get("suggested_moq") or 0))),
+        "variants": _normalise_catalogue_variants(suggestion.get("variants") or []),
+    }}
+
 @router.post("/my-catalogue", status_code=201)
 async def add_catalogue_item(
     authorization:      str            = Header(None),
@@ -138,6 +263,7 @@ async def add_catalogue_item(
     available_sizes:      str            = Form(""),   # comma-separated, e.g. "S,M,L,XL"
     available_colors:     str            = Form(""),   # comma-separated
     moq:                  int            = Form(0),
+    variants:             str            = Form("[]"),
     images:                List[UploadFile] = File([]),
 ):
     """
@@ -206,6 +332,8 @@ async def add_catalogue_item(
     if not image_urls:
         raise HTTPException(status_code=400, detail="At least one image is required.")
 
+    normalised_variants = _normalise_catalogue_variants(variants)
+
     now = datetime.utcnow()
     doc = {
         "vendor_id":         ObjectId(vendor_id),
@@ -218,6 +346,7 @@ async def add_catalogue_item(
         "available_sizes":   [s.strip() for s in available_sizes.split(",") if s.strip()],
         "available_colors":  [c.strip() for c in available_colors.split(",") if c.strip()],
         "moq":               max(0, moq),
+        "variants":          normalised_variants,
         "active":            True,
         "tier_at_upload":    tier["tier"],
         "created_at":        now,
@@ -252,8 +381,10 @@ async def update_catalogue_item(item_id: str, payload: dict, authorization: str 
         raise HTTPException(status_code=404, detail="Catalogue item not found.")
 
     allowed = {"item_name", "category", "description", "price_range_min", "price_range_max",
-               "available_sizes", "available_colors", "moq", "active"}
+               "available_sizes", "available_colors", "moq", "variants", "active"}
     patch = {k: v for k, v in payload.items() if k in allowed}
+    if "variants" in patch:
+        patch["variants"] = _normalise_catalogue_variants(patch["variants"])
     patch["updated_at"] = datetime.utcnow()
 
     # Reactivating a previously-expired item ("active": False -> True) must

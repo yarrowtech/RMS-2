@@ -169,7 +169,7 @@ async def resolve_po(po_no: str, tenant_id: str) -> dict:
 # before it can be scoped correctly.
 # ─────────────────────────────────────────────
 
-async def resolve_real_barcode_for_grc(item: dict) -> str:
+async def resolve_real_barcode_for_grc(item: dict, tenant_id: str) -> str:
     """
     Ensure every GRC item carries a real product barcode.
 
@@ -194,13 +194,13 @@ async def resolve_real_barcode_for_grc(item: dict) -> str:
 
     # Exact name match
     prod = await product_collection.find_one(
-        {"product_name": {"$regex": f"^{desc}$", "$options": "i"}}
+        {"product_name": {"$regex": f"^{desc}$", "$options": "i"}, "tenant_id": tenant_id}
     )
 
     # Partial name match
     if not prod:
         prod = await product_collection.find_one(
-            {"product_name": {"$regex": desc, "$options": "i"}}
+            {"product_name": {"$regex": desc, "$options": "i"}, "tenant_id": tenant_id}
         )
 
     if prod:
@@ -288,7 +288,7 @@ async def create_grc(grc: GRCModel, ctx: dict = Depends(get_receiving_tenant)):
         item["vendorBarcode"] = (item.get("vendorBarcode") or "").strip()
         if is_po_linked and not (item.get("poBarcode") or "").strip():
             item["poBarcode"] = (item.get("barcode") or "").strip()
-        item["barcode"] = await resolve_real_barcode_for_grc(item)
+        item["barcode"] = await resolve_real_barcode_for_grc(item, ctx["tenant_id"])
         if not item["barcode"] or item["barcode"].startswith("ITEM/"):
             item["barcode"] = await generate_rms_barcode(ctx["tenant_id"])
 
@@ -430,7 +430,7 @@ async def update_grc(grc_id: str, grc: GRCModel, ctx: dict = Depends(get_receivi
         item["vendorBarcode"] = (item.get("vendorBarcode") or "").strip()
         if is_po_linked and not (item.get("poBarcode") or "").strip():
             item["poBarcode"] = (item.get("barcode") or "").strip()
-        item["barcode"] = await resolve_real_barcode_for_grc(item)
+        item["barcode"] = await resolve_real_barcode_for_grc(item, ctx["tenant_id"])
         if not item["barcode"] or item["barcode"].startswith("ITEM/"):
             item["barcode"] = await generate_rms_barcode(ctx["tenant_id"])
 
