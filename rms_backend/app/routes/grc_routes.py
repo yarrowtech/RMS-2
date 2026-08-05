@@ -262,6 +262,14 @@ async def create_grc(grc: GRCModel, ctx: dict = Depends(get_receiving_tenant)):
         po = await resolve_po(po_no, ctx["tenant_id"])
         grc_dict["po_id"]      = str(po["_id"])
         grc_dict["vendorName"] = po.get("vendorName", grc_dict.get("vendorName", ""))
+        # Optional vendor dispatch details save re-entry, but never overwrite retailer input.
+        dispatch = (po.get("delivery") or {}).get("vendor") or {}
+        if not grc_dict.get("vehicleNo") and dispatch.get("vehicle_number"):
+            grc_dict["vehicleNo"] = dispatch["vehicle_number"]
+        if not grc_dict.get("deliveryNote") and dispatch.get("tracking_number"):
+            grc_dict["deliveryNote"] = dispatch["tracking_number"]
+        if not grc_dict.get("remarks") and dispatch.get("dispatch_note"):
+            grc_dict["remarks"] = dispatch["dispatch_note"]
 
         # Build barcode → PO item map for rate/qty cross-reference
         po_item_map = {}
