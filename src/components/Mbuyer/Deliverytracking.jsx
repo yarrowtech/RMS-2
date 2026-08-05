@@ -40,6 +40,8 @@ export default function DeliveryTracking() {
   const [noteText,   setNoteText]   = useState("");
   const [noteSaving, setNoteSaving] = useState(false);
   const [expandedVendor, setExpandedVendor] = useState(null);
+  const [shipments, setShipments] = useState([]);
+  const [receiptSaving, setReceiptSaving] = useState("");
 
   const fetch = async () => {
     try {
@@ -48,6 +50,8 @@ export default function DeliveryTracking() {
       setVendors(res.data.vendors || []);
       setDelayed(res.data.delayed_pos || []);
       setSummary(res.data.summary || {});
+      const shipmentRes = await axios.get(`${API}/delivery-receipts`);
+      setShipments(shipmentRes.data?.data || []);
     } catch {} finally { setLoading(false); }
   };
 
@@ -55,6 +59,18 @@ export default function DeliveryTracking() {
 
   const maxLead = Math.max(...vendors.map(v => v.avg_lead_days || 0), 1);
 
+  const recordReceipt = async (shipment, status) => {
+    const receiver_name = window.prompt("Receiver name (optional):") || "";
+    const receiving_location = window.prompt("Warehouse / store (optional):") || "";
+    const remarks = window.prompt("Receipt remarks (optional):") || "";
+    try {
+      setReceiptSaving(shipment.id);
+      await axios.put(`${API}/purchaseorders/${shipment.id}/receipt`, { status, received_date: new Date().toISOString().slice(0, 10), receiver_name, receiving_location, remarks });
+      await fetch();
+    } catch (error) {
+      alert(error.response?.data?.detail || "Unable to save receipt status");
+    } finally { setReceiptSaving(""); }
+  };
   const addNote = async (poId) => {
     if (!noteText.trim()) return;
     try {
@@ -76,7 +92,15 @@ export default function DeliveryTracking() {
         <p style={{ margin:"4px 0 0", fontSize:13, color:"#64748B" }}>Track vendor dispatches, then complete GRC before posting GRN stock.</p>
       </div>
 
-      <div style={{ marginBottom:16, padding:"12px 16px", borderRadius:10, background:"#EEF2FF", border:"1px solid #C7D2FE", fontSize:12, lineHeight:1.55, color:"#3730A3" }}><b>Receiving flow:</b> Vendor marks goods dispatched → retailer checks physical goods and creates a GRC → approve the GRC → create and post the GRN to add accepted quantities to inventory. Delivery tracking does not replace GRC or GRN.</div>\n\n      {/* Summary */}
+      <div style={{ marginBottom:16, padding:"12px 16px", borderRadius:10, background:"#EEF2FF", border:"1px solid #C7D2FE", fontSize:12, lineHeight:1.55, color:"#3730A3" }}><b>Receiving flow:</b> Vendor marks goods dispatched → retailer checks physical goods and creates a GRC → approve the GRC → create and post the GRN to add accepted quantities to inventory. Delivery tracking does not replace GRC or GRN.</div>\n\n      {shipments.length > 0 && <div style={{ marginBottom:20, background:"#fff", border:"1px solid #BFDBFE", borderRadius:14, padding:16 }}>
+        <b style={{ color:"#0F1B2D" }}>Dispatched purchase orders</b>
+        <p style={{ margin:"4px 0 0", fontSize:12, color:"#64748B" }}>Record the physical receipt, then create the GRC and approved GRN separately.</p>
+        {shipments.map(shipment => <div key={shipment.id} style={{ marginTop:12, paddingTop:12, borderTop:"1px solid #E2E8F0", display:"flex", justifyContent:"space-between", gap:10, flexWrap:"wrap" }}>
+          <div><b>{shipment.orderNo}</b><span style={{ marginLeft:8, color:"#64748B", fontSize:12 }}>{shipment.vendorName}</span><div style={{ marginTop:4, fontSize:12, color:"#475569" }}>Vendor: {shipment.delivery?.vendor?.status || "—"} · Expected delivery: {shipment.delivery?.vendor?.expected_delivery_date || "—"} · Tracking: {shipment.delivery?.vendor?.tracking_number || "—"}</div><div style={{ marginTop:3, fontSize:11, color:"#64748B" }}>Receipt: {shipment.delivery?.retailer_receipt?.status || "Not recorded"}</div></div>
+          <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>{[["Received","#16A34A"],["PartiallyReceived","#D97706"],["Rejected","#DC2626"]].map(([status,color])=><button key={status} disabled={receiptSaving===shipment.id} onClick={()=>recordReceipt(shipment,status)} style={{ padding:"6px 9px", borderRadius:8, border:"none", background:color, color:"#fff", fontSize:11, fontWeight:700, cursor:"pointer" }}>{status === "PartiallyReceived" ? "Partial" : status}</button>)}</div>
+        </div>)}
+      </div>}
+      {/* Summary */}
       <div style={{ display:"flex", gap:10, flexWrap:"wrap", marginBottom:20 }}>
         <SummaryCard label="Vendors Tracked" value={summary.total_vendors||0}  color="#6366F1"/>
         <SummaryCard label="Delayed POs"     value={summary.total_delayed||0}  color="#EF4444"/>
