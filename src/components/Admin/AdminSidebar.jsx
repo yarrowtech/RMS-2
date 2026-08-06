@@ -441,13 +441,13 @@ export default function AdminSidebar({
 
   const headerTiltRef = useTilt({ disabled: true });
 
-  const ACTIVE_GRAD = "bg-indigo-600";
+  const ACTIVE_GRAD = "bg-white/20 shadow-sm shadow-indigo-950/20";
   const ACTIVE_TXT  = "text-white";
-  const ACTIVE_BR   = "border-indigo-500";
+  const ACTIVE_BR   = "border-white/30";
 
   const topBtnBase =
     "group relative flex w-full items-center gap-3 rounded-xl border text-[13px] font-semibold transition-colors " +
-    "border-transparent bg-transparent hover:border-white/5 hover:bg-white/[0.06]";
+    "border-transparent bg-transparent hover:border-white/15 hover:bg-white/[0.10]";
 
   const topBtnPad  = sidebarOpen ? "px-3 py-2.5" : "px-3 py-2.5 justify-center";
 
@@ -460,7 +460,7 @@ export default function AdminSidebar({
   const topBtn = (key, icon, label) => (
     <button key={key} type="button" onClick={() => onSelect(key)}
       className={cn(topBtnBase, topBtnPad,
-        active === key ? cn(ACTIVE_GRAD, ACTIVE_TXT, ACTIVE_BR) : "text-slate-300 hover:text-white"
+        active === key ? cn(ACTIVE_GRAD, ACTIVE_TXT, ACTIVE_BR) : "text-indigo-100 hover:text-white"
       )}
       title={label} aria-label={label}>
       <span className="text-lg">{icon}</span>
@@ -470,7 +470,7 @@ export default function AdminSidebar({
 
   // ── Section label ─────────────────────────────────────────────────────────
   const sectionLabel = (label) => showText && (
-    <p className="px-2 pb-1 pt-4 text-[9px] font-bold uppercase tracking-[0.18em] text-slate-500">
+    <p className="px-2 pb-1 pt-4 text-[9px] font-bold uppercase tracking-[0.18em] text-indigo-100/70">
       {label}
     </p>
   );
@@ -487,18 +487,18 @@ export default function AdminSidebar({
       {/* ── Header ──────────────────────────────────────────────────────────── */}
       <div className="relative p-3 shrink-0">
         <div ref={headerTiltRef}
-          className={cn("rounded-xl border border-slate-800 bg-slate-900", sidebarOpen ? "p-3.5" : "p-3")}
+          className={cn("rounded-xl border border-white/20 bg-white/10 backdrop-blur", sidebarOpen ? "p-3.5" : "p-3")}
           >
           <div className={cn("flex items-center", sidebarOpen ? "gap-3" : "justify-center")}>
             {sidebarOpen && (
               <div className="min-w-0">
                 <h2 className="text-sm font-bold text-white truncate">{title}</h2>
-                <p className="text-[11px] font-medium text-slate-400 truncate">{subtitle}</p>
+                <p className="text-[11px] font-medium text-indigo-100/80 truncate">{subtitle}</p>
               </div>
             )}
             <button type="button"
               onClick={() => { if (isDrawer) return setSidebarOpen?.(false); setSidebarOpen?.(s => !s); }}
-              className={cn("ml-auto grid h-8 w-8 place-items-center rounded-lg border border-slate-700 bg-slate-800 text-slate-300 transition hover:bg-slate-700 hover:text-white", !sidebarOpen && "ml-0")}
+              className={cn("ml-auto grid h-8 w-8 place-items-center rounded-lg border border-white/20 bg-white/10 text-indigo-100 transition hover:bg-white/20 hover:text-white", !sidebarOpen && "ml-0")}
               aria-label={isDrawer ? "Close sidebar" : "Toggle sidebar"}>
               {isDrawer ? <span className="font-black text-slate-300">×</span>
                 : sidebarOpen ? <PanelLeft size={18} className="text-slate-300" />
@@ -507,7 +507,7 @@ export default function AdminSidebar({
           </div>
 
           {sidebarOpen && (
-            <div className="mt-3 rounded-lg border border-indigo-400/20 bg-indigo-500/10 p-3 text-indigo-100">
+            <div className="mt-3 rounded-lg border border-white/15 bg-white/10 p-3 text-white">
               <p className="text-sm font-semibold">Welcome, {userName}</p>
               <p className="text-xs opacity-90">
                 {isStore ? `🏪 ${storeName}` : "HQ Admin operations ready!"}
@@ -560,7 +560,7 @@ export default function AdminSidebar({
                 without that department (bounced straight back to /admin). */}
             {managedDepartments.includes("Inventory") && (
               <button type="button" onClick={() => navigate("/grn")}
-                className={cn(topBtnBase, topBtnPad, "text-slate-300 hover:text-white")}
+                className={cn(topBtnBase, topBtnPad, "text-indigo-100 hover:text-white")}
                 title="GRN / Receiving" aria-label="GRN / Receiving">
                 <PackageCheck size={14} />
                 {showText && <span className="flex-1 text-left">GRN / Receiving</span>}
@@ -572,7 +572,7 @@ export default function AdminSidebar({
                 {sectionLabel("Departments")}
                 {departmentWorkspaces.map(({ department, path, icon: Icon, label }) => (
                   <button key={department} type="button" onClick={() => navigate(path)}
-                    className={cn(topBtnBase, topBtnPad, "text-slate-300 hover:text-white")}
+                    className={cn(topBtnBase, topBtnPad, "text-indigo-100 hover:text-white")}
                     title={label} aria-label={label}>
                     <Icon size={16} />
                     {showText && <span className="flex-1 text-left">{label}</span>}
@@ -590,9 +590,9 @@ export default function AdminSidebar({
       </nav>
 
       {/* ── Logout ──────────────────────────────────────────────────────────── */}
-      <div className="sticky bottom-0 z-20 shrink-0 border-t border-slate-800 bg-slate-950 p-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))]">
+      <div className="sticky bottom-0 z-20 shrink-0 border-t border-white/15 bg-indigo-950/20 p-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))]">
         <button type="button" onClick={onLogout}
-          className="flex w-full items-center justify-center gap-2 rounded-xl border border-rose-500/20 bg-rose-500/10 py-2.5 text-[13px] font-semibold text-rose-300 transition hover:bg-rose-500/20 hover:text-rose-200">
+          className="flex w-full items-center justify-center gap-2 rounded-xl border border-rose-200/30 bg-rose-500/15 py-2.5 text-[13px] font-semibold text-rose-100 transition hover:bg-rose-500/25 hover:text-white">
           <FaSignOutAlt className="text-base" />
           {showText && "Logout"}
         </button>
