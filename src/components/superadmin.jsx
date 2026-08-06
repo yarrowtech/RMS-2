@@ -1,6 +1,7 @@
 import { API_BASE_URL as APP_API_URL } from "../config/api.js";
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
+import toast from 'react-hot-toast';
 import RetailersTab from './Superadminretailerstab.jsx';
 import SuperAdminOnboardingRequests from './SuperAdminOnboardingRequests.jsx';
 import SuperadminVendorManagementModal from './SuperadminVendorManagementModal';
@@ -1058,15 +1059,17 @@ export default function SuperAdmin() {
   const handleSaveTenantId = async () => {
     try {
       const token = localStorage.getItem('superadmin_token') || '';
-      await fetch(`${API_BASE}/superadmin/admins/${editingAdmin.id}/tenant`, {
+      const res = await fetch(`${API_BASE}/superadmin/admins/${editingAdmin.id}/tenant`, {
         method: 'PATCH',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ tenant_id: editTenantId.trim() }),
       });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || 'Could not update tenant ID.');
       setAdmins(prev => prev.map(a => a.id === editingAdmin.id ? { ...a, tenant_id: editTenantId.trim() } : a));
       setEditingAdmin(null);
-      toast('Tenant ID updated!', 'success');
-    } catch (e) { toast(e.message, 'error'); }
+      toast.success('Tenant ID updated!');
+    } catch (e) { toast.error(e.message); }
   };
   const [activeControlCard, setActiveControlCard] = useState(null);
   const [admins, setAdmins] = useState([]);
