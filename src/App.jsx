@@ -73,6 +73,12 @@ export default function App() {
       <UsageTracker />
       <Toaster
         position="top-right"
+        // Several modals in this app (e.g. Hqadminmanagement.jsx's Add
+        // Admin) use a backdrop at z-index 99999 with backdrop-blur-sm on
+        // the overlay itself — anything behind it at a lower z-index gets
+        // visually blurred along with the page, not just hidden. Toasts
+        // need to sit above every modal, unaffected by that blur.
+        containerStyle={{ zIndex: 999999 }}
         toastOptions={{
           duration: 4000,
           style: { borderRadius: "14px", background: "#0f172a", color: "#fff", fontWeight: 600, fontSize: "13px" },
