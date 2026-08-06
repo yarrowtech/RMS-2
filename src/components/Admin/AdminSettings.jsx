@@ -1,221 +1,34 @@
-import React, { useMemo, useState } from "react";
-import { User, IdCard, ShieldCheck, LockKeyhole, Mail, Phone } from "lucide-react";
+import React, { useCallback, useEffect, useState } from "react";
+import { Bell, Building2, KeyRound, Loader2, Save, ShieldCheck, UserRound } from "lucide-react";
+import { API_BASE_URL } from "../../config/api.js";
 
-const cn = (...a) => a.filter(Boolean).join(" ");
+const token = () => localStorage.getItem("admin_token") || localStorage.getItem("token") || "";
+const api = async (path, options = {}) => {
+  const response = await fetch(`${API_BASE_URL}/admin/settings${path}`, { ...options, headers: { Authorization: `Bearer ${token()}`, "Content-Type": "application/json", ...(options.headers || {}) } });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(body.detail || "Could not save settings.");
+  return body;
+};
+const input = "mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100";
+const Label = ({ children, ...props }) => <label className="block text-xs font-bold text-slate-600">{children}<input {...props} className={input}/></label>;
 
-const Field = ({ label, value, editable, onChange, type = "text" }) => (
-  <div className="space-y-1.5">
-    <label className="text-xs font-semibold text-black-700">{label}</label>
-
-    {editable ? (
-      <input
-        type={type}
-        value={value}
-        onChange={(e) => onChange?.(e.target.value)}
-        className="
-          w-full px-3 py-2 text-sm rounded-xl
-          border border-blue-500 bg-white
-          outline-none
-          focus:ring-2 focus:ring-blue-500/30
-          focus:border-blue-600
-        "
-      />
-    ) : (
-      <div
-        className="
-          w-full px-3 py-2 text-sm rounded-xl
-          border border-blue-500 bg-blue-50/40
-        "
-      >
-        {value || <span className="text-black-300">—</span>}
-      </div>
-    )}
-  </div>
-);
-
-const Section = ({ icon: Icon, title, subtitle, right, children }) => (
-  <section
-    className="
-      rounded-3xl
-      border border-blue-500
-      bg-white
-      shadow-[0_30px_90px_rgba(15,23,42,0.10)]
-    "
-  >
-    <div className="px-5 py-4 flex items-start gap-3 border-b border-blue-500">
-      <div className="mt-0.5 w-10 h-10 rounded-2xl bg-blue-600/10 text-black-700 grid place-items-center">
-        <Icon className="w-5 h-5" />
-      </div>
-
-      <div className="flex-1">
-        <h2 className="text-sm sm:text-base font-bold text-black-900">{title}</h2>
-        {subtitle && <p className="text-xs sm:text-sm text-black-600">{subtitle}</p>}
-      </div>
-
-      {right && <div>{right}</div>}
-    </div>
-
-    <div className="p-5">{children}</div>
-  </section>
-);
-
-export default function SettingsProfilePage() {
-  const [profile, setProfile] = useState({
-    fullName: "Your Name",
-    email: "you@example.com",
-    phone: "+91 00000 00000",
-    gender: "—",
-    city: "—",
-  });
-
-  const [account] = useState({
-    userName: "Your Username",
-    role: "Manager",
-    status: "Active",
-    createdAt: "—",
-    lastLogin: "—",
-  });
-
-  const [pwd, setPwd] = useState({
-    current: "",
-    next: "",
-    confirm: "",
-  });
-
-  const pwdOk = useMemo(() => {
-    return pwd.current && pwd.next.length >= 8 && pwd.next === pwd.confirm;
-  }, [pwd]);
-
-  return (
-    <div className="w-full bg-black-50">
-      <div className="w-full px-6 py-6 space-y-6">
-        <div></div>
-
-        <Section
-          icon={User}
-          title="Personal Profile"
-          right={
-            <button
-              className="
-              px-4 py-2 text-sm font-semibold rounded-xl
-              bg-blue-600 text-white hover:bg-blue-700
-            "
-            >
-              Save
-            </button>
-          }
-        >
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <Field
-              label="Full Name"
-              value={profile.fullName}
-              editable
-              onChange={(v) => setProfile((p) => ({ ...p, fullName: v }))}
-            />
-            <Field
-              label="Email"
-              value={profile.email}
-              editable
-              onChange={(v) => setProfile((p) => ({ ...p, email: v }))}
-            />
-            <Field
-              label="Phone"
-              value={profile.phone}
-              editable
-              onChange={(v) => setProfile((p) => ({ ...p, phone: v }))}
-            />
-            <Field
-              label="City"
-              value={profile.city}
-              editable
-              onChange={(v) => setProfile((p) => ({ ...p, city: v }))}
-            />
-            <Field
-              label="Gender"
-              value={profile.gender}
-              editable
-              onChange={(v) => setProfile((p) => ({ ...p, gender: v }))}
-            />
-
-            <div className="rounded-2xl border border-blue-500 bg-blue-50/40 p-4">
-              <div className="flex items-center gap-2 font-semibold text-sm text-black-700">
-                <Mail className="w-4 h-4" /> Quick Contact
-              </div>
-              <p className="mt-2 text-xs text-black-600">
-                Keep your email & phone updated for account recovery.
-              </p>
-              <div className="mt-3 flex items-center gap-2 text-xs text-black-600">
-                <Phone className="w-4 h-4" /> OTP / 2FA support
-              </div>
-            </div>
-          </div>
-        </Section>
-
-        <Section icon={IdCard} title="Account Details">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <Field label="User Name" value={account.userName} />
-            <Field label="Role" value={account.role} />
-            <Field label="Account Status" value={account.status} />
-            <Field label="Created At" value={account.createdAt} />
-            <Field label="Last Login" value={account.lastLogin} />
-
-            <div className="rounded-2xl border border-blue-500 bg-white p-4">
-              <div className="flex items-center gap-2 font-semibold text-sm text-black-700">
-                <ShieldCheck className="w-4 h-4 text-emerald-600" />
-                Security Tips
-              </div>
-              <ul className="mt-2 text-xs text-black-600 space-y-1">
-                <li>• Use a strong password</li>
-                <li>• Don’t reuse passwords</li>
-                <li>• Enable 2FA</li>
-              </ul>
-            </div>
-          </div>
-        </Section>
-
-        <Section
-          icon={LockKeyhole}
-          title="Reset Password"
-          right={
-            <button
-              disabled={!pwdOk}
-              className={cn(
-                "px-4 py-2 text-sm font-semibold rounded-xl",
-                pwdOk
-                  ? "bg-blue-600 text-white hover:bg-blue-700"
-                  : "bg-blue-200 text-blue-700 cursor-not-allowed"
-              )}
-            >
-              Update Password
-            </button>
-          }
-        >
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <Field
-              label="Current Password"
-              type="password"
-              value={pwd.current}
-              editable
-              onChange={(v) => setPwd((p) => ({ ...p, current: v }))}
-            />
-            <div className="hidden sm:block" />
-            <Field
-              label="New Password"
-              type="password"
-              value={pwd.next}
-              editable
-              onChange={(v) => setPwd((p) => ({ ...p, next: v }))}
-            />
-            <Field
-              label="Confirm New Password"
-              type="password"
-              value={pwd.confirm}
-              editable
-              onChange={(v) => setPwd((p) => ({ ...p, confirm: v }))}
-            />
-          </div>
-        </Section>
-      </div>
-    </div>
-  );
+export default function AdminSettings() {
+  const [data, setData] = useState(null); const [tab, setTab] = useState("account"); const [busy, setBusy] = useState(false); const [message, setMessage] = useState(""); const [error, setError] = useState("");
+  const [profile, setProfile] = useState({}); const [organisation, setOrganisation] = useState({}); const [password, setPassword] = useState({ current_password: "", new_password: "", confirm: "" });
+  const load = useCallback(async () => { try { setError(""); const next = await api(""); setData(next); setProfile(next.profile || {}); setOrganisation(next.organisation || {}); } catch (e) { setError(e.message); } }, []);
+  useEffect(() => { load(); }, [load]);
+  const saveProfile = async () => { try { setBusy(true); setError(""); const response = await api("/profile", { method: "PATCH", body: JSON.stringify(profile) }); setMessage(response.message); } catch (e) { setError(e.message); } finally { setBusy(false); } };
+  const savePassword = async () => { if (password.new_password !== password.confirm) return setError("New password and confirmation do not match."); try { setBusy(true); setError(""); const response = await api("/password", { method: "PATCH", body: JSON.stringify({ current_password: password.current_password, new_password: password.new_password }) }); setMessage(response.message); setPassword({ current_password: "", new_password: "", confirm: "" }); } catch (e) { setError(e.message); } finally { setBusy(false); } };
+  const saveOrganisation = async () => { try { setBusy(true); setError(""); const response = await api("/organisation", { method: "PUT", body: JSON.stringify(organisation) }); setMessage(response.message); setOrganisation(response.organisation || organisation); } catch (e) { setError(e.message); } finally { setBusy(false); } };
+  if (!data && !error) return <div className="grid min-h-[360px] place-items-center"><Loader2 className="h-7 w-7 animate-spin text-indigo-600"/></div>;
+  const access = data?.access || {}; const canManageOrg = Boolean(data?.can_manage_organisation);
+  const tabs = [["account", UserRound, "My account"], ["access", ShieldCheck, "Access"], ["security", KeyRound, "Security"], ...(canManageOrg ? [["organisation", Building2, "Organisation"]] : [])];
+  return <div className="min-h-full bg-slate-50 p-4 sm:p-6 lg:p-8"><div className="mx-auto max-w-5xl space-y-5"><section className="rounded-3xl bg-gradient-to-br from-slate-950 via-indigo-950 to-violet-800 p-6 text-white shadow-xl"><p className="text-xs font-extrabold uppercase tracking-[.18em] text-indigo-200">Role-aware configuration</p><h1 className="mt-2 text-2xl font-black">Settings</h1><p className="mt-2 max-w-3xl text-sm leading-6 text-indigo-100">Your account settings are private. Organisation settings are visible only to HQ admins and apply to this retailer tenant.</p></section>
+    <div className="flex flex-wrap gap-2 rounded-2xl border border-slate-200 bg-white p-2 shadow-sm">{tabs.map(([key, Icon, label]) => <button key={key} onClick={() => setTab(key)} className={`inline-flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-bold ${tab === key ? "bg-indigo-600 text-white" : "text-slate-600 hover:bg-slate-50"}`}><Icon className="h-4 w-4"/>{label}</button>)}</div>
+    {message && <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm font-bold text-emerald-700">{message}</div>}{error && <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm font-bold text-rose-700">{error}</div>}
+    {tab === "account" && <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"><div className="flex items-center gap-3"><UserRound className="h-5 w-5 text-indigo-600"/><div><h2 className="font-black text-slate-900">My profile and notifications</h2><p className="text-sm text-slate-500">These details identify you in RMS records and notifications.</p></div></div><div className="mt-5 grid gap-4 sm:grid-cols-2"><Label value={profile.name || ""} onChange={e => setProfile({ ...profile, name: e.target.value })}>Full name</Label><Label value={profile.email || ""} disabled>Email</Label><Label value={profile.phone || ""} onChange={e => setProfile({ ...profile, phone: e.target.value })}>Phone</Label><Label value={profile.city || ""} onChange={e => setProfile({ ...profile, city: e.target.value })}>City</Label></div><div className="mt-5 flex flex-wrap gap-4"><label className="flex items-center gap-2 text-sm font-semibold text-slate-700"><input type="checkbox" checked={Boolean(profile.notification_email)} onChange={e => setProfile({ ...profile, notification_email: e.target.checked })}/> Email notifications</label><label className="flex items-center gap-2 text-sm font-semibold text-slate-700"><input type="checkbox" checked={Boolean(profile.notification_whatsapp)} onChange={e => setProfile({ ...profile, notification_whatsapp: e.target.checked })}/> WhatsApp notifications</label></div><button disabled={busy} onClick={saveProfile} className="mt-5 inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-black text-white disabled:opacity-60"><Save className="h-4 w-4"/>Save profile</button></section>}
+    {tab === "access" && <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"><h2 className="font-black text-slate-900">Your assigned access</h2><p className="mt-1 text-sm text-slate-500">Only an HQ admin can change department assignments and permissions.</p><div className="mt-5 grid gap-4 sm:grid-cols-3"><div className="rounded-xl bg-indigo-50 p-4"><p className="text-xs font-bold uppercase tracking-wide text-indigo-500">Scope</p><p className="mt-1 font-black text-indigo-950">{access.scope === "hq" ? "HQ admin" : `Store admin${access.store_name ? ` · ${access.store_name}` : ""}`}</p></div><div className="rounded-xl bg-slate-50 p-4 sm:col-span-2"><p className="text-xs font-bold uppercase tracking-wide text-slate-500">Departments</p><div className="mt-2 flex flex-wrap gap-2">{(access.managed_departments || [access.department]).map(value => <span key={value} className="rounded-full bg-white px-3 py-1 text-xs font-bold text-slate-700 ring-1 ring-slate-200">{value}</span>)}</div></div></div><div className="mt-4 rounded-xl border border-slate-200 p-4"><p className="text-xs font-bold uppercase tracking-wide text-slate-500">Permissions</p><div className="mt-2 flex flex-wrap gap-2">{(access.permissions || []).length ? access.permissions.map(value => <span key={value} className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-bold text-emerald-700">{value}</span>) : <span className="text-sm text-slate-500">Standard department access</span>}</div></div></section>}
+    {tab === "security" && <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"><h2 className="font-black text-slate-900">Change password</h2><p className="mt-1 text-sm text-slate-500">Use at least 8 characters. Your current password is required.</p><div className="mt-5 grid gap-4 sm:grid-cols-2"><Label type="password" value={password.current_password} onChange={e => setPassword({ ...password, current_password: e.target.value })}>Current password</Label><div className="hidden sm:block"/><Label type="password" value={password.new_password} onChange={e => setPassword({ ...password, new_password: e.target.value })}>New password</Label><Label type="password" value={password.confirm} onChange={e => setPassword({ ...password, confirm: e.target.value })}>Confirm new password</Label></div><button disabled={busy} onClick={savePassword} className="mt-5 inline-flex items-center gap-2 rounded-xl bg-slate-950 px-4 py-2.5 text-sm font-black text-white disabled:opacity-60"><KeyRound className="h-4 w-4"/>Update password</button></section>}
+    {tab === "organisation" && <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"><h2 className="font-black text-slate-900">Organisation and document settings</h2><p className="mt-1 text-sm text-slate-500">HQ-only. Controls tenant identity and default document labels; existing document numbers are not changed.</p><div className="mt-5 grid gap-4 sm:grid-cols-2"><Label value={organisation.legal_name || ""} onChange={e => setOrganisation({ ...organisation, legal_name: e.target.value })}>Legal business name</Label><Label value={organisation.gstin || ""} onChange={e => setOrganisation({ ...organisation, gstin: e.target.value })}>GSTIN</Label><Label value={organisation.currency || "INR"} onChange={e => setOrganisation({ ...organisation, currency: e.target.value.toUpperCase() })}>Currency</Label><Label value={organisation.timezone || "Asia/Kolkata"} onChange={e => setOrganisation({ ...organisation, timezone: e.target.value })}>Timezone</Label><Label type="number" value={organisation.financial_year_start_month || 4} onChange={e => setOrganisation({ ...organisation, financial_year_start_month: Number(e.target.value) })}>Financial year starts (month 1–12)</Label><Label value={organisation.po_prefix || "PO"} onChange={e => setOrganisation({ ...organisation, po_prefix: e.target.value })}>PO prefix</Label><Label value={organisation.grn_prefix || "GRN"} onChange={e => setOrganisation({ ...organisation, grn_prefix: e.target.value })}>GRN prefix</Label><Label value={organisation.invoice_prefix || "PI"} onChange={e => setOrganisation({ ...organisation, invoice_prefix: e.target.value })}>Purchase invoice prefix</Label></div><label className="mt-4 block text-xs font-bold text-slate-600">Business address<textarea value={organisation.address || ""} onChange={e => setOrganisation({ ...organisation, address: e.target.value })} className={`${input} min-h-24`} /></label><button disabled={busy} onClick={saveOrganisation} className="mt-5 inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-black text-white disabled:opacity-60"><Building2 className="h-4 w-4"/>Save organisation settings</button></section>}
+  </div></div>;
 }

@@ -13,7 +13,7 @@ from datetime import datetime
 from typing import Any, Dict, Optional
 
 from bson import ObjectId
-from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, UploadFile, File
 from pydantic import BaseModel, Field
 
 from ..config import settings
@@ -21,6 +21,10 @@ from ..db import support_tickets_collection
 from ..email_utils import send_support_ticket_created_email, send_support_ticket_reply_email
 from .deps import get_tenant
 from .vendor_routes import require_vendor_identity
+import cloudinary
+import cloudinary.uploader
+
+cloudinary.config(cloud_name=settings.cloudinary_cloud_name, api_key=settings.cloudinary_api_key, api_secret=settings.cloudinary_api_secret, secure=True)
 
 router = APIRouter(prefix="/api/support", tags=["Support"])
 
@@ -213,6 +217,23 @@ def _retailer_can_touch(ctx: Dict[str, Any], doc: Dict[str, Any]) -> bool:
         return True
     return bool(ctx.get("store_id")) and doc.get("store_id") == ctx.get("store_id")
 
+
+@router.post("/retailer/attachments")
+async def upload_retailer_support_attachment(file: UploadFile = File(...), ctx: dict = Depends(get_tenant)):
+    """Upload a support screenshot/PDF and return its secure storage URL."""
+    allowed_types = {"image/jpeg", "image/png", "image/webp", "application/pdf"}
+    if file.content_type not in allowed_types:
+        raise HTTPException(status_code=400, detail="Attach a JPG, PNG, WEBP or PDF file.")
+    raw = await file.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail="The selected file is empty.")
+    if len(raw) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Attachments must be 10 MB or smaller.")
+    try:
+        result = cloudinary.uploader.upload(raw, folder=f"rms/support/{ctx['tenant_id']}", resource_type="auto", public_id=f"{ctx['admin_id']}_{datetime.utcnow().strftime('%Y%m%d%H%M%S')}", use_filename=True, unique_filename=True)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="Could not upload the attachment. Please try again.") from exc
+    return {"url": result.get("secure_url"), "name": file.filename, "content_type": file.content_type}
 
 @router.get("/retailer/tickets")
 async def retailer_list_tickets(ctx: dict = Depends(get_tenant)):

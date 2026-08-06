@@ -268,8 +268,15 @@ export default function QuickOrderFromCatalogue() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [category, businessType, step]);
 
+  const vendorKey = (item) => String(item?.vendor_id || item?.vendor_name || "").trim().toLowerCase();
   const toggleItem = (item) => {
     const wasSelected = selectedMap.has(item._id);
+    const chosenVendor = selectedItems[0] && vendorKey(selectedItems[0]);
+    if (!wasSelected && chosenVendor && vendorKey(item) !== chosenVendor) {
+      setSubmitError("A consolidated PO can contain items from one vendor only. Remove the current selection or create a separate PO for this vendor.");
+      return;
+    }
+    setSubmitError(null);
     setSelectedMap(prev => {
       const next = new Map(prev);
       if (next.has(item._id)) next.delete(item._id); else next.set(item._id, item);
@@ -282,7 +289,6 @@ export default function QuickOrderFromCatalogue() {
       return next;
     });
   };
-
   const updateItemRequest = (itemId, field, value) => {
     setItemRequests(prev => ({
       ...prev,
@@ -365,13 +371,20 @@ export default function QuickOrderFromCatalogue() {
       const json = await res.json();
       if (!res.ok) throw new Error(json.detail || "Failed to select this quote.");
 
-      setOrderVendorName(json.vendor_name || row.vendor_name);
-      setOrderItems([{
-        description: json.po_item_prefill.description,
-        quantity:    String(json.po_item_prefill.quantity),
-        rate:        String(json.po_item_prefill.rate),
-        remarks:     json.po_item_prefill.remarks || "",
-      }]);
+      const chosenVendor = json.vendor_name || row.vendor_name;
+      const matchingQuotes = rows.filter((quote) => String(quote.vendor_name || "").trim().toLowerCase() === String(chosenVendor || "").trim().toLowerCase() && quote.status === "Responded");
+      const consolidatedLines = matchingQuotes.map((quote) => {
+        const response = quote.vendor_response || {};
+        const sourceItem = selectedItems.find((item) => String(item._id) === String(quote.catalogue_item_id || quote.item_id || "")) || selectedItems.find((item) => item.item_name === quote.item_name);
+        const requested = itemRequests[sourceItem?._id] || {};
+        const size = response.confirmed_size || requested.requested_size || "";
+        const color = response.confirmed_color || requested.requested_color || "";
+        return { description: quote.item_name || json.po_item_prefill.description, sku: sourceItem?.sku || "", barcode: sourceItem?.barcode || "", catalogue_item_id: sourceItem?._id || "", size, color, quantity: String(response.confirmed_qty || requested.requested_qty || 1), rate: String(response.confirmed_price || requested.requested_price || 0), remarks: [size && `Size: ${size}`, color && `Color: ${color}`, response.note].filter(Boolean).join(" · ") };
+      });
+      const uniqueLines = consolidatedLines.filter((line, index, all) => all.findIndex((other) => `${other.description}|${other.size}|${other.color}` === `${line.description}|${line.size}|${line.color}`) === index);
+      setOrderVendorName(chosenVendor);
+      setOrderItems(uniqueLines.length ? uniqueLines : [{ description: json.po_item_prefill.description, quantity: String(json.po_item_prefill.quantity), rate: String(json.po_item_prefill.rate), remarks: json.po_item_prefill.remarks || "" }]);
+      if (uniqueLines.length < selectedItems.length) setSubmitError("Only items with a response from this vendor were added. Wait for the remaining quotes or create a separate PO.");
       setStep(3);
     } catch (err) {
       setSubmitError(err.message);
@@ -398,6 +411,11 @@ export default function QuickOrderFromCatalogue() {
         vendor_type: "registered",
         items: validItems.map(it => ({
           description: it.description.trim(),
+          sku:         it.sku || "",
+          barcode:     it.barcode || "",
+          catalogue_item_id: it.catalogue_item_id || "",
+          size:        it.size || "",
+          color:       it.color || "",
           quantity:    Number(it.quantity) || 0,
           rate:        Number(it.rate) || 0,
           remarks:     it.remarks || "",
@@ -832,13 +850,15 @@ export default function QuickOrderFromCatalogue() {
 
                 <div>
                   <div className="flex items-center justify-between mb-2">
-                    <label className="text-xs font-bold text-slate-600">Items</label>
+                    <label className="text-xs font-bold text-slate-600">Items <span className="font-normal text-slate-400">— one row per product / size / colour</span></label>
                     <button onClick={addItem} className="text-xs font-bold text-indigo-600 flex items-center gap-1"><Plus className="w-3 h-3" /> Add item</button>
                   </div>
                   <div className="space-y-2">
                     {orderItems.map((it, idx) => (
-                      <div key={idx} className="grid grid-cols-[1fr_80px_90px_1fr_28px] gap-2 items-center">
+                      <div key={idx} className="grid grid-cols-1 gap-2 rounded-xl border border-slate-100 p-2 sm:grid-cols-[1.25fr_90px_90px_75px_75px_1fr_28px]">
                         <input placeholder="Description" value={it.description} onChange={e => updateItem(idx, "description", e.target.value)} className="h-9 px-2 border border-slate-200 rounded-lg text-xs" />
+                        <input placeholder="Size" value={it.size || ""} onChange={e => updateItem(idx, "size", e.target.value)} className="h-9 px-2 border border-slate-200 rounded-lg text-xs" />
+                        <input placeholder="Color" value={it.color || ""} onChange={e => updateItem(idx, "color", e.target.value)} className="h-9 px-2 border border-slate-200 rounded-lg text-xs" />
                         <input type="number" placeholder="Qty" value={it.quantity} onChange={e => updateItem(idx, "quantity", e.target.value)} className="h-9 px-2 border border-slate-200 rounded-lg text-xs" />
                         <input type="number" placeholder="Rate" value={it.rate} onChange={e => updateItem(idx, "rate", e.target.value)} className="h-9 px-2 border border-slate-200 rounded-lg text-xs" />
                         <input placeholder="Remarks" value={it.remarks} onChange={e => updateItem(idx, "remarks", e.target.value)} className="h-9 px-2 border border-slate-200 rounded-lg text-xs" />
