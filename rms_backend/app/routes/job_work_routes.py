@@ -346,6 +346,16 @@ async def create_order(payload: dict, ctx: dict = Depends(_require_job_work)):
     job_work_type = str(payload.get("job_work_type") or "").strip()
     finished_product = str(payload.get("finished_product") or "").strip()
     expected_quantity = _number(payload.get("expected_quantity"))
+    material_plan_id = str(payload.get("material_plan_id") or "").strip()
+    material_plan = None
+    if material_plan_id:
+        if not ObjectId.is_valid(material_plan_id):
+            raise HTTPException(status_code=400, detail="Invalid material plan.")
+        material_plan = await style_bom_plans_collection.find_one({"_id": ObjectId(material_plan_id), "tenant_id": ctx["tenant_id"]})
+        if not material_plan:
+            raise HTTPException(status_code=404, detail="Material plan not found.")
+        if not finished_product: finished_product = material_plan.get("style_name", "")
+        if expected_quantity <= 0: expected_quantity = _number(material_plan.get("planned_quantity"))
     vendor_link = None
     if registered_vendor_id:
         vendor, vendor_link = await _approved_vendor(ctx["tenant_id"], registered_vendor_id)
@@ -369,6 +379,9 @@ async def create_order(payload: dict, ctx: dict = Depends(_require_job_work)):
         "unit": str(payload.get("unit") or "pcs").strip() or "pcs",
         "due_date": str(payload.get("due_date") or "").strip(),
         "remarks": str(payload.get("remarks") or "").strip()[:1000],
+        "material_plan_id": str(material_plan["_id"]) if material_plan else None,
+        "material_plan_no": material_plan.get("plan_no") if material_plan else None,
+        "planned_materials": list(material_plan.get("materials") or []) if material_plan else [],
         "status": "DRAFT",
         "materials": [],
         "outputs": [],
