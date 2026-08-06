@@ -56,14 +56,14 @@ import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
 //   };
 
 //   return (
-//     <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md dark:border-slate-800 dark:bg-slate-900">
+//     <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md dark:!border-indigo-100 dark:!bg-white">
 //       <div className="flex items-start justify-between gap-3">
 //         <div>
-//           <p className="text-sm font-medium text-slate-500 dark:text-slate-400">
+//           <p className="text-sm font-medium text-slate-500 dark:!text-slate-500">
 //             {title}
 //           </p>
 
-//           <h3 className="mt-3 text-2xl font-bold text-slate-900 dark:text-white">
+//           <h3 className="mt-3 text-2xl font-bold text-slate-900 dark:!text-slate-900">
 //             {value}
 //           </h3>
 
@@ -425,10 +425,10 @@ import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
 //   }, [vendorOrders]);
 
 //   return (
-//     <div className="min-h-screen space-y-8 bg-slate-50 p-8 dark:bg-slate-950 sm:ml-auto">
+//     <div className="min-h-screen space-y-8 bg-[radial-gradient(circle_at_top_right,rgba(99,102,241,0.16),transparent_32%),linear-gradient(135deg,#f8fbff,#eef2ff_52%,#ecfeff)] p-8 dark:!bg-[radial-gradient(circle_at_top_right,rgba(99,102,241,0.16),transparent_32%),linear-gradient(135deg,#f8fbff,#eef2ff_52%,#ecfeff)] sm:ml-auto">
 //       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
 //         <div>
-//           <h1 className="text-3xl font-bold tracking-tight text-slate-900 dark:text-white">
+//           <h1 className="text-3xl font-bold tracking-tight text-slate-900 dark:!text-slate-900">
 //             Admin Dashboard
 //           </h1>
 //         </div>
@@ -443,7 +443,7 @@ import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
 //       </div>
 
 //       {loading ? (
-//         <div className="rounded-2xl border border-slate-200 bg-white p-10 text-center text-slate-500 shadow-sm dark:border-slate-800 dark:bg-slate-900 dark:text-slate-400">
+//         <div className="rounded-2xl border border-slate-200 bg-white p-10 text-center text-slate-500 shadow-sm dark:!border-indigo-100 dark:!bg-white dark:!text-slate-500">
 //           Loading dashboard...
 //         </div>
 //       ) : pageError ? (
@@ -467,17 +467,17 @@ import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
 //           </div>
 
 //           <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
-//             <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900 xl:col-span-2">
+//             <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:!border-indigo-100 dark:!bg-white xl:col-span-2">
 //               <div className="mb-5 flex items-center justify-between">
 //                 <div>
-//                   <h2 className="text-lg font-bold text-slate-900 dark:text-white">
+//                   <h2 className="text-lg font-bold text-slate-900 dark:!text-slate-900">
 //                     Recent Vendor Orders
 //                   </h2>
-//                   <p className="text-sm text-slate-500 dark:text-slate-400">
+//                   <p className="text-sm text-slate-500 dark:!text-slate-500">
 //                     Latest vendor order activity
 //                   </p>
 //                 </div>
-//                 <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200">
+//                 <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-slate-100 text-slate-700 dark:!bg-indigo-50 dark:text-slate-200">
 //                   <FaClipboardList />
 //                 </div>
 //               </div>
@@ -485,7 +485,7 @@ import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
 //               <div className="overflow-hidden">
 //                 <table className="min-w-full text-left">
 //                   <thead>
-//                     <tr className="border-b border-slate-200 text-sm text-slate-500 dark:border-slate-800 dark:text-slate-400">
+//                     <tr className="border-b border-slate-200 text-sm text-slate-500 dark:!border-indigo-100 dark:!text-slate-500">
 //                       <th className="px-4 py-4 font-semibold">Order ID</th>
 //                       <th className="px-4 py-4 font-semibold">Vendor</th>
 //                       <th className="px-4 py-4 font-semibold">Amount</th>
@@ -497,9 +497,9 @@ import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
 //                       recentVendorOrders.map((order) => (
 //                         <tr
 //                           key={order.id}
-//                           className="border-b border-slate-100 last:border-none dark:border-slate-800"
+//                           className="border-b border-slate-100 last:border-none dark:!border-indigo-100"
 //                         >
-//                           <td className="px-4 py-4 font-semibold text-slate-900 dark:text-white">
+//                           <td className="px-4 py-4 font-semibold text-slate-900 dark:!text-slate-900">
 //                             {order.id}
 //                           </td>
 //                           <td className="px-4 py-4 text-slate-600 dark:text-slate-300">
@@ -523,7 +523,7 @@ import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
 //                       <tr>
 //                         <td
 //                           colSpan="4"
-//                           className="px-4 py-10 text-center text-sm text-slate-500 dark:text-slate-400"
+//                           className="px-4 py-10 text-center text-sm text-slate-500 dark:!text-slate-500"
 //                         >
 //                           No recent vendor orders found.
 //                         </td>
@@ -534,13 +534,13 @@ import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
 //               </div>
 //             </div>
 
-//             <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+//             <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:!border-indigo-100 dark:!bg-white">
 //               <div className="mb-5 flex items-center justify-between">
 //                 <div>
-//                   <h2 className="text-lg font-bold text-slate-900 dark:text-white">
+//                   <h2 className="text-lg font-bold text-slate-900 dark:!text-slate-900">
 //                     Top Products
 //                   </h2>
-//                   <p className="text-sm text-slate-500 dark:text-slate-400">
+//                   <p className="text-sm text-slate-500 dark:!text-slate-500">
 //                     Best performing items
 //                   </p>
 //                 </div>
@@ -554,14 +554,14 @@ import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
 //                   topProducts.map((product, index) => (
 //                     <div
 //                       key={`${product.name}-${index}`}
-//                       className="rounded-xl border border-slate-200 p-4 dark:border-slate-800"
+//                       className="rounded-xl border border-slate-200 p-4 dark:!border-indigo-100"
 //                     >
 //                       <div className="flex items-start justify-between gap-3">
 //                         <div>
-//                           <p className="font-semibold text-slate-900 dark:text-white">
+//                           <p className="font-semibold text-slate-900 dark:!text-slate-900">
 //                             {index + 1}. {product.name}
 //                           </p>
-//                           <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+//                           <p className="mt-1 text-sm text-slate-500 dark:!text-slate-500">
 //                             Sales: {product.sales}
 //                           </p>
 //                         </div>
@@ -572,7 +572,7 @@ import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
 //                     </div>
 //                   ))
 //                 ) : (
-//                   <div className="rounded-xl border border-dashed border-slate-300 p-4 text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">
+//                   <div className="rounded-xl border border-dashed border-slate-300 p-4 text-sm text-slate-500 dark:border-slate-700 dark:!text-slate-500">
 //                     No top product data found.
 //                   </div>
 //                 )}
@@ -607,13 +607,13 @@ import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
 //           </div>
 
 //           <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
-//             <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+//             <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:!border-indigo-100 dark:!bg-white">
 //               <div className="mb-5 flex items-center justify-between">
 //                 <div>
-//                   <h2 className="text-lg font-bold text-slate-900 dark:text-white">
+//                   <h2 className="text-lg font-bold text-slate-900 dark:!text-slate-900">
 //                     User Breakdown
 //                   </h2>
-//                   <p className="text-sm text-slate-500 dark:text-slate-400">
+//                   <p className="text-sm text-slate-500 dark:!text-slate-500">
 //                     Role-wise user summary
 //                   </p>
 //                 </div>
@@ -631,12 +631,12 @@ import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
 //                 ].map((item) => (
 //                   <div
 //                     key={item.label}
-//                     className="flex items-center justify-between rounded-xl border border-slate-200 px-4 py-3 dark:border-slate-800"
+//                     className="flex items-center justify-between rounded-xl border border-slate-200 px-4 py-3 dark:!border-indigo-100"
 //                   >
 //                     <span className="text-sm font-medium text-slate-600 dark:text-slate-300">
 //                       {item.label}
 //                     </span>
-//                     <span className="text-base font-bold text-slate-900 dark:text-white">
+//                     <span className="text-base font-bold text-slate-900 dark:!text-slate-900">
 //                       {item.value}
 //                     </span>
 //                   </div>
@@ -644,13 +644,13 @@ import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
 //               </div>
 //             </div>
 
-//             <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+//             <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:!border-indigo-100 dark:!bg-white">
 //               <div className="mb-5 flex items-center justify-between">
 //                 <div>
-//                   <h2 className="text-lg font-bold text-slate-900 dark:text-white">
+//                   <h2 className="text-lg font-bold text-slate-900 dark:!text-slate-900">
 //                     Low Stock Alerts
 //                   </h2>
-//                   <p className="text-sm text-slate-500 dark:text-slate-400">
+//                   <p className="text-sm text-slate-500 dark:!text-slate-500">
 //                     Products that need attention
 //                   </p>
 //                 </div>
@@ -664,14 +664,14 @@ import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
 //                   lowStockProducts.map((item, index) => (
 //                     <div
 //                       key={`${item.sku}-${index}`}
-//                       className="rounded-xl border border-slate-200 p-4 dark:border-slate-800"
+//                       className="rounded-xl border border-slate-200 p-4 dark:!border-indigo-100"
 //                     >
 //                       <div className="flex items-start justify-between gap-3">
 //                         <div>
-//                           <p className="font-semibold text-slate-900 dark:text-white">
+//                           <p className="font-semibold text-slate-900 dark:!text-slate-900">
 //                             {item.name}
 //                           </p>
-//                           <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+//                           <p className="mt-1 text-xs text-slate-500 dark:!text-slate-500">
 //                             SKU: {item.sku}
 //                           </p>
 //                         </div>
@@ -682,20 +682,20 @@ import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
 //                     </div>
 //                   ))
 //                 ) : (
-//                   <div className="rounded-xl border border-dashed border-slate-300 p-4 text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">
+//                   <div className="rounded-xl border border-dashed border-slate-300 p-4 text-sm text-slate-500 dark:border-slate-700 dark:!text-slate-500">
 //                     No low stock products found.
 //                   </div>
 //                 )}
 //               </div>
 //             </div>
 
-//             <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+//             <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:!border-indigo-100 dark:!bg-white">
 //               <div className="mb-5 flex items-center justify-between">
 //                 <div>
-//                   <h2 className="text-lg font-bold text-slate-900 dark:text-white">
+//                   <h2 className="text-lg font-bold text-slate-900 dark:!text-slate-900">
 //                     Fulfillment Summary
 //                   </h2>
-//                   <p className="text-sm text-slate-500 dark:text-slate-400">
+//                   <p className="text-sm text-slate-500 dark:!text-slate-500">
 //                     Order health snapshot
 //                   </p>
 //                 </div>
@@ -705,29 +705,29 @@ import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
 //               </div>
 
 //               <div className="space-y-3">
-//                 <div className="rounded-xl border border-slate-200 px-4 py-3 dark:border-slate-800">
-//                   <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+//                 <div className="rounded-xl border border-slate-200 px-4 py-3 dark:!border-indigo-100">
+//                   <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:!text-slate-500">
 //                     Fulfillment Rate
 //                   </p>
-//                   <h3 className="mt-2 text-2xl font-bold text-slate-900 dark:text-white">
+//                   <h3 className="mt-2 text-2xl font-bold text-slate-900 dark:!text-slate-900">
 //                     {fulfillmentRate}
 //                   </h3>
 //                 </div>
 
-//                 <div className="rounded-xl border border-slate-200 px-4 py-3 dark:border-slate-800">
-//                   <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+//                 <div className="rounded-xl border border-slate-200 px-4 py-3 dark:!border-indigo-100">
+//                   <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:!text-slate-500">
 //                     Total Orders
 //                   </p>
-//                   <h3 className="mt-2 text-2xl font-bold text-slate-900 dark:text-white">
+//                   <h3 className="mt-2 text-2xl font-bold text-slate-900 dark:!text-slate-900">
 //                     {vendorOrders.length.toLocaleString("en-IN")}
 //                   </h3>
 //                 </div>
 
-//                 <div className="rounded-xl border border-slate-200 px-4 py-3 dark:border-slate-800">
-//                   <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+//                 <div className="rounded-xl border border-slate-200 px-4 py-3 dark:!border-indigo-100">
+//                   <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:!text-slate-500">
 //                     Revenue Snapshot
 //                   </p>
-//                   <h3 className="mt-2 text-2xl font-bold text-slate-900 dark:text-white">
+//                   <h3 className="mt-2 text-2xl font-bold text-slate-900 dark:!text-slate-900">
 //                     {statsData[3]?.value}
 //                   </h3>
 //                 </div>
@@ -830,11 +830,11 @@ function StatCard({ title, value, change, up, icon: Icon, accent = "blue" }) {
     rose:    "bg-rose-50 text-rose-600 dark:bg-rose-500/10 dark:text-rose-300",
   };
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md dark:border-slate-800 dark:bg-slate-900">
+    <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md dark:!border-indigo-100 dark:!bg-white">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <p className="text-sm font-medium text-slate-500 dark:text-slate-400">{title}</p>
-          <h3 className="mt-3 text-2xl font-bold text-slate-900 dark:text-white">{value}</h3>
+          <p className="text-sm font-medium text-slate-500 dark:!text-slate-500">{title}</p>
+          <h3 className="mt-3 text-2xl font-bold text-slate-900 dark:!text-slate-900">{value}</h3>
           <div className={`mt-3 inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold ${up ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300" : "bg-rose-100 text-rose-700 dark:bg-rose-500/10 dark:text-rose-300"}`}>
             {up ? <FaArrowUp size={10} /> : <FaArrowDown size={10} />}
             {change}
@@ -1042,11 +1042,11 @@ export default function AdminDashboardContent() {
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
-    <div className="min-h-screen space-y-8 bg-slate-50 p-8 dark:bg-slate-950 sm:ml-auto">
+    <div className="min-h-screen space-y-8 bg-[radial-gradient(circle_at_top_right,rgba(99,102,241,0.16),transparent_32%),linear-gradient(135deg,#f8fbff,#eef2ff_52%,#ecfeff)] p-8 dark:!bg-[radial-gradient(circle_at_top_right,rgba(99,102,241,0.16),transparent_32%),linear-gradient(135deg,#f8fbff,#eef2ff_52%,#ecfeff)] sm:ml-auto">
 
       {/* Header */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <h1 className="text-3xl font-bold tracking-tight text-slate-900 dark:text-white">
+        <h1 className="text-3xl font-bold tracking-tight text-slate-900 dark:!text-slate-900">
           Admin Dashboard
         </h1>
         <button
@@ -1065,7 +1065,7 @@ export default function AdminDashboardContent() {
       )}
 
       {loading ? (
-        <div className="rounded-2xl border border-slate-200 bg-white p-10 text-center text-slate-500 shadow-sm dark:border-slate-800 dark:bg-slate-900 dark:text-slate-400">
+        <div className="rounded-2xl border border-slate-200 bg-white p-10 text-center text-slate-500 shadow-sm dark:!border-indigo-100 dark:!bg-white dark:!text-slate-500">
           Loading dashboard…
         </div>
       ) : pageError ? (
@@ -1089,8 +1089,8 @@ export default function AdminDashboardContent() {
               { label: "Vendor Products", value: productCounts.vendor, color: "emerald" },
               { label: "GRN Products",    value: productCounts.grn,    color: "amber" },
             ].map(({ label, value, color }) => (
-              <div key={label} className="rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">{label}</p>
+              <div key={label} className="rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-sm dark:!border-indigo-100 dark:!bg-white">
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:!text-slate-500">{label}</p>
                 <p className={`mt-2 text-2xl font-bold text-${color}-600 dark:text-${color}-400`}>{value}</p>
               </div>
             ))}
@@ -1098,20 +1098,20 @@ export default function AdminDashboardContent() {
 
           {/* Recent orders + Top products */}
           <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
-            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900 xl:col-span-2">
+            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:!border-indigo-100 dark:!bg-white xl:col-span-2">
               <div className="mb-5 flex items-center justify-between">
                 <div>
-                  <h2 className="text-lg font-bold text-slate-900 dark:text-white">Recent Vendor Orders</h2>
-                  <p className="text-sm text-slate-500 dark:text-slate-400">Latest vendor order activity</p>
+                  <h2 className="text-lg font-bold text-slate-900 dark:!text-slate-900">Recent Vendor Orders</h2>
+                  <p className="text-sm text-slate-500 dark:!text-slate-500">Latest vendor order activity</p>
                 </div>
-                <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200">
+                <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-slate-100 text-slate-700 dark:!bg-indigo-50 dark:text-slate-200">
                   <FaClipboardList />
                 </div>
               </div>
               <div className="overflow-hidden">
                 <table className="min-w-full text-left">
                   <thead>
-                    <tr className="border-b border-slate-200 text-sm text-slate-500 dark:border-slate-800 dark:text-slate-400">
+                    <tr className="border-b border-slate-200 text-sm text-slate-500 dark:!border-indigo-100 dark:!text-slate-500">
                       {["Order ID", "Vendor", "Amount", "Status"].map(h => (
                         <th key={h} className="px-4 py-4 font-semibold">{h}</th>
                       ))}
@@ -1119,8 +1119,8 @@ export default function AdminDashboardContent() {
                   </thead>
                   <tbody>
                     {recentVendorOrders.length > 0 ? recentVendorOrders.map(order => (
-                      <tr key={order.id} className="border-b border-slate-100 last:border-none dark:border-slate-800">
-                        <td className="px-4 py-4 font-semibold text-slate-900 dark:text-white">{order.id}</td>
+                      <tr key={order.id} className="border-b border-slate-100 last:border-none dark:!border-indigo-100">
+                        <td className="px-4 py-4 font-semibold text-slate-900 dark:!text-slate-900">{order.id}</td>
                         <td className="px-4 py-4 text-slate-600 dark:text-slate-300">{order.vendor}</td>
                         <td className="px-4 py-4 text-slate-600 dark:text-slate-300">{order.amount}</td>
                         <td className="px-4 py-4">
@@ -1131,7 +1131,7 @@ export default function AdminDashboardContent() {
                       </tr>
                     )) : (
                       <tr>
-                        <td colSpan="4" className="px-4 py-10 text-center text-sm text-slate-500 dark:text-slate-400">
+                        <td colSpan="4" className="px-4 py-10 text-center text-sm text-slate-500 dark:!text-slate-500">
                           No vendor order data — <span className="opacity-60">/api/vendor-orders not found on server</span>
                         </td>
                       </tr>
@@ -1142,11 +1142,11 @@ export default function AdminDashboardContent() {
             </div>
 
             {/* Top products — from /api/products/ data */}
-            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:!border-indigo-100 dark:!bg-white">
               <div className="mb-5 flex items-center justify-between">
                 <div>
-                  <h2 className="text-lg font-bold text-slate-900 dark:text-white">Top Products</h2>
-                  <p className="text-sm text-slate-500 dark:text-slate-400">By stock level</p>
+                  <h2 className="text-lg font-bold text-slate-900 dark:!text-slate-900">Top Products</h2>
+                  <p className="text-sm text-slate-500 dark:!text-slate-500">By stock level</p>
                 </div>
                 <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-blue-50 text-blue-600 dark:bg-blue-500/10 dark:text-blue-300">
                   <FaBoxOpen />
@@ -1154,11 +1154,11 @@ export default function AdminDashboardContent() {
               </div>
               <div className="space-y-4">
                 {topProducts.length > 0 ? topProducts.map((product, index) => (
-                  <div key={`${product.sku}-${index}`} className="rounded-xl border border-slate-200 p-4 dark:border-slate-800">
+                  <div key={`${product.sku}-${index}`} className="rounded-xl border border-slate-200 p-4 dark:!border-indigo-100">
                     <div className="flex items-start justify-between gap-3">
                       <div>
-                        <p className="font-semibold text-slate-900 dark:text-white">{index + 1}. {product.name}</p>
-                        <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">SKU: {product.sku}</p>
+                        <p className="font-semibold text-slate-900 dark:!text-slate-900">{index + 1}. {product.name}</p>
+                        <p className="mt-1 text-xs text-slate-500 dark:!text-slate-500">SKU: {product.sku}</p>
                       </div>
                       <span className="rounded-lg bg-blue-50 px-2.5 py-1 text-xs font-semibold text-blue-700 dark:bg-blue-500/10 dark:text-blue-300">
                         Stock {product.stock}
@@ -1166,7 +1166,7 @@ export default function AdminDashboardContent() {
                     </div>
                   </div>
                 )) : (
-                  <div className="rounded-xl border border-dashed border-slate-300 p-4 text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">
+                  <div className="rounded-xl border border-dashed border-slate-300 p-4 text-sm text-slate-500 dark:border-slate-700 dark:!text-slate-500">
                     No products loaded — check auth token or /api/products/
                   </div>
                 )}
@@ -1185,11 +1185,11 @@ export default function AdminDashboardContent() {
           <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
 
             {/* User Breakdown */}
-            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:!border-indigo-100 dark:!bg-white">
               <div className="mb-5 flex items-center justify-between">
                 <div>
-                  <h2 className="text-lg font-bold text-slate-900 dark:text-white">User Breakdown</h2>
-                  <p className="text-sm text-slate-500 dark:text-slate-400">Role-wise user summary</p>
+                  <h2 className="text-lg font-bold text-slate-900 dark:!text-slate-900">User Breakdown</h2>
+                  <p className="text-sm text-slate-500 dark:!text-slate-500">Role-wise user summary</p>
                 </div>
                 <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-violet-50 text-violet-600 dark:bg-violet-500/10 dark:text-violet-300">
                   <FaUserShield />
@@ -1202,20 +1202,20 @@ export default function AdminDashboardContent() {
                   { label: "Managers", value: userBreakdown.manager },
                   { label: "Users",    value: userBreakdown.user },
                 ].map(item => (
-                  <div key={item.label} className="flex items-center justify-between rounded-xl border border-slate-200 px-4 py-3 dark:border-slate-800">
+                  <div key={item.label} className="flex items-center justify-between rounded-xl border border-slate-200 px-4 py-3 dark:!border-indigo-100">
                     <span className="text-sm font-medium text-slate-600 dark:text-slate-300">{item.label}</span>
-                    <span className="text-base font-bold text-slate-900 dark:text-white">{item.value}</span>
+                    <span className="text-base font-bold text-slate-900 dark:!text-slate-900">{item.value}</span>
                   </div>
                 ))}
               </div>
             </div>
 
             {/* Low Stock Alerts — from /api/products/ quantity field */}
-            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:!border-indigo-100 dark:!bg-white">
               <div className="mb-5 flex items-center justify-between">
                 <div>
-                  <h2 className="text-lg font-bold text-slate-900 dark:text-white">Low Stock Alerts</h2>
-                  <p className="text-sm text-slate-500 dark:text-slate-400">Products that need attention</p>
+                  <h2 className="text-lg font-bold text-slate-900 dark:!text-slate-900">Low Stock Alerts</h2>
+                  <p className="text-sm text-slate-500 dark:!text-slate-500">Products that need attention</p>
                 </div>
                 <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-rose-50 text-rose-600 dark:bg-rose-500/10 dark:text-rose-300">
                   <FaExclamationTriangle />
@@ -1223,11 +1223,11 @@ export default function AdminDashboardContent() {
               </div>
               <div className="space-y-3">
                 {lowStockProducts.length > 0 ? lowStockProducts.map((item, index) => (
-                  <div key={`${item.sku}-${index}`} className="rounded-xl border border-slate-200 p-4 dark:border-slate-800">
+                  <div key={`${item.sku}-${index}`} className="rounded-xl border border-slate-200 p-4 dark:!border-indigo-100">
                     <div className="flex items-start justify-between gap-3">
                       <div>
-                        <p className="font-semibold text-slate-900 dark:text-white">{item.name}</p>
-                        <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">SKU: {item.sku}</p>
+                        <p className="font-semibold text-slate-900 dark:!text-slate-900">{item.name}</p>
+                        <p className="mt-1 text-xs text-slate-500 dark:!text-slate-500">SKU: {item.sku}</p>
                       </div>
                       <span className="rounded-lg bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-700 dark:bg-amber-500/10 dark:text-amber-300">
                         Qty {item.qty}
@@ -1235,7 +1235,7 @@ export default function AdminDashboardContent() {
                     </div>
                   </div>
                 )) : (
-                  <div className="rounded-xl border border-dashed border-slate-300 p-4 text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">
+                  <div className="rounded-xl border border-dashed border-slate-300 p-4 text-sm text-slate-500 dark:border-slate-700 dark:!text-slate-500">
                     No low stock products found.
                   </div>
                 )}
@@ -1243,11 +1243,11 @@ export default function AdminDashboardContent() {
             </div>
 
             {/* Fulfillment Summary */}
-            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:!border-indigo-100 dark:!bg-white">
               <div className="mb-5 flex items-center justify-between">
                 <div>
-                  <h2 className="text-lg font-bold text-slate-900 dark:text-white">Fulfillment Summary</h2>
-                  <p className="text-sm text-slate-500 dark:text-slate-400">Order health snapshot</p>
+                  <h2 className="text-lg font-bold text-slate-900 dark:!text-slate-900">Fulfillment Summary</h2>
+                  <p className="text-sm text-slate-500 dark:!text-slate-500">Order health snapshot</p>
                 </div>
                 <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-emerald-50 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-300">
                   <FaCheckCircle />
@@ -1259,9 +1259,9 @@ export default function AdminDashboardContent() {
                   { label: "Total Orders",      value: vendorOrders.length.toLocaleString("en-IN") },
                   { label: "Revenue Snapshot",  value: statsData[3]?.value },
                 ].map(({ label, value }) => (
-                  <div key={label} className="rounded-xl border border-slate-200 px-4 py-3 dark:border-slate-800">
-                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">{label}</p>
-                    <h3 className="mt-2 text-2xl font-bold text-slate-900 dark:text-white">{value}</h3>
+                  <div key={label} className="rounded-xl border border-slate-200 px-4 py-3 dark:!border-indigo-100">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:!text-slate-500">{label}</p>
+                    <h3 className="mt-2 text-2xl font-bold text-slate-900 dark:!text-slate-900">{value}</h3>
                   </div>
                 ))}
               </div>
