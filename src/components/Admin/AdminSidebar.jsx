@@ -478,8 +478,8 @@ export default function AdminSidebar({
   return (
     <aside className={cn(
       isDrawer ? "h-[100dvh]" : "h-full",
-      "overflow-hidden rounded-2xl border border-slate-800",
-      "bg-slate-950 shadow-[0_20px_60px_rgba(15,23,42,0.20)]",
+      "overflow-hidden rounded-2xl border border-indigo-200/40",
+      "bg-gradient-to-b from-indigo-700 via-blue-700 to-teal-600 shadow-[0_20px_60px_rgba(30,64,175,0.30)]",
       "flex flex-col",
       isDrawer ? "w-full" : sidebarOpen ? "w-[280px] max-w-[86vw]" : "w-[80px]"
     )}>
