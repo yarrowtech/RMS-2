@@ -2,6 +2,7 @@
 // App.jsx
 import { useEffect } from "react";
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
+import { Toaster } from "react-hot-toast";
 import { initSessionTracking, trackPageView } from "./utils/analytics.js";
 import RoleSelector from "./components/select";
 import Cashier from "./components/Cashier/Cashier";
@@ -70,6 +71,13 @@ export default function App() {
   return (
     <BrowserRouter>
       <UsageTracker />
+      <Toaster
+        position="top-right"
+        toastOptions={{
+          duration: 4000,
+          style: { borderRadius: "14px", background: "#0f172a", color: "#fff", fontWeight: 600, fontSize: "13px" },
+        }}
+      />
       <Routes>
         {/* Main roles */}
         <Route path="/" element={<RoleSelector />} />

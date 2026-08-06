@@ -2,7 +2,7 @@ import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import axios from "axios";
-import toast, { Toaster } from "react-hot-toast";
+import toast from "react-hot-toast";
 
 const API_BASE_URL =
   APP_API_URL;
@@ -2463,33 +2463,6 @@ export default function GRC1() {
 
   return (
     <div className="relative h-full w-full overflow-hidden rounded-[26px]">
-      <Toaster
-        position="top-right"
-        reverseOrder={false}
-        toastOptions={{
-          duration: 3000,
-          style: {
-            borderRadius: "14px",
-            background: "#0f172a",
-            color: "#fff",
-            fontWeight: "600",
-            fontSize: "13px",
-          },
-          success: {
-            iconTheme: {
-              primary: "#10b981",
-              secondary: "#fff",
-            },
-          },
-          error: {
-            iconTheme: {
-              primary: "#ef4444",
-              secondary: "#fff",
-            },
-          },
-        }}
-      />
-
       <GRCListPage
         grcList={grcList}
         loading={loading}
