@@ -13,7 +13,7 @@ PLAN_ALIASES: Final[dict[str, str]] = {
 
 PAID_RETAILER_PLANS: Final[dict[str, dict]] = {
     "basic": {
-        "labetl": "Basic",
+        "label": "Basic",
         "stores": 1,
         "admins": 3,
         "price_inr": 50000,
