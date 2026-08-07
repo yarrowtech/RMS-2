@@ -5,7 +5,10 @@ from typing import Any, Dict, List, Literal, Optional
 from bson import ObjectId
 
 from ..routes.auth_routes import get_current_superadmin
-from ..db import admins_collection, stores_collection
+from ..db import (
+    admins_collection, retailer_seat_addon_payments_collection, retailer_store_addon_payments_collection,
+    stores_collection,
+)
 from ..auth import create_password_setup_token
 from ..email_utils import send_password_setup_email, send_tenant_status_email
 from ..activity_log import log_activity
@@ -384,6 +387,31 @@ async def get_tenant_summary(
             "active":    s.get("active", True),
         })
 
+    # Add-on billing history — both recurring/permanent add-on purchase
+    # collections live in separate files (retailer_seat_addon_routes.py,
+    # retailer_store_addon_routes.py); this is the only place Super Admin
+    # can currently see what a tenant has paid for either one.
+    addon_payments = []
+    async for p in retailer_seat_addon_payments_collection.find({"tenant_id": tenant_id, "status": "captured"}).sort("captured_at", -1):
+        addon_payments.append({
+            "id":          _str(p["_id"]),
+            "kind":        "admin_seats",
+            "quantity":    p.get("quantity"),
+            "amount_inr":  p.get("amount_inr"),
+            "captured_at": p["captured_at"].isoformat() if isinstance(p.get("captured_at"), datetime) else None,
+            "recurring":   False,
+        })
+    async for p in retailer_store_addon_payments_collection.find({"tenant_id": tenant_id, "status": "captured"}).sort("captured_at", -1):
+        addon_payments.append({
+            "id":          _str(p["_id"]),
+            "kind":        "store_slots",
+            "quantity":    p.get("quantity"),
+            "amount_inr":  p.get("amount_inr"),
+            "captured_at": p["captured_at"].isoformat() if isinstance(p.get("captured_at"), datetime) else None,
+            "recurring":   True,
+        })
+    addon_payments.sort(key=lambda p: p["captured_at"] or "", reverse=True)
+
     return {
         "tenant_id":    tenant_id,
         "company_name": tenant.get("company_name"),
@@ -391,4 +419,5 @@ async def get_tenant_summary(
         "status":       tenant.get("status"),
         "admins":       admins,
         "stores":       stores,
+        "addon_payments": addon_payments,
     }

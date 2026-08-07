@@ -41,6 +41,7 @@ from .routes.document_message_routes import router as document_message_router
 from .routes.support_routes import router as support_router
 from .routes.analytics_routes import router as analytics_router
 from .routes.retailer_seat_addon_routes import router as retailer_seat_addon_router
+from .routes.retailer_store_addon_routes import router as retailer_store_addon_router
    
 
 
@@ -135,6 +136,7 @@ app.include_router(document_message_router)
 app.include_router(support_router)
 app.include_router(analytics_router)
 app.include_router(retailer_seat_addon_router)
+app.include_router(retailer_store_addon_router)
 
 
 

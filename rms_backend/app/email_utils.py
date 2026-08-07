@@ -773,3 +773,103 @@ async def send_seat_addon_receipt_email(
         recipients=[email],
         html=_wrap(SUCCESS, "Payment Received", body, "© CitiMart RMS · Retailer Admin Seats"),
     )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 16. RETAILER — Extra store/branch add-on payment receipt (recurring)
+# ─────────────────────────────────────────────────────────────────────────────
+async def send_store_addon_receipt_email(
+    email: EmailStr, name: str, quantity: int, price_inr: int, total_addon_stores: int, expires_at,
+) -> bool:
+    """Sent right after an HQ Admin's Razorpay payment for extra store/branch
+    slots is captured — see retailer_store_addon_routes.py. Unlike the admin
+    seat add-on this is a RECURRING monthly charge, so the receipt is
+    explicit about the renewal date instead of implying a permanent unlock."""
+    stores_text = f"{quantity} extra store/branch slot{'s' if quantity != 1 else ''}"
+    expiry_text = expires_at.strftime("%d %b %Y") if hasattr(expires_at, "strftime") else str(expires_at)
+    body = f"""
+      <h2 style="color:#222;margin-bottom:8px;">Hi {name},</h2>
+      <p style="font-size:15px;color:#444;">
+        Your payment for <strong style="color:{SUCCESS};">{stores_text}</strong> was received and applied immediately.
+      </p>
+      <div style="margin:20px 0;padding:16px;border:1px solid #bbf7d0;background:#f0fdf4;border-radius:10px;">
+        <p style="margin:0;color:#166534;font-size:13px;font-weight:700;">Amount charged</p>
+        <p style="margin:6px 0 0;color:#052e16;font-size:20px;font-weight:800;">Rs. {price_inr:,.0f}</p>
+        <p style="margin:10px 0 0;color:#166534;font-size:13px;">Total add-on stores: {total_addon_stores}</p>
+        <p style="margin:2px 0 0;color:#166534;font-size:13px;">Renews on {expiry_text}</p>
+      </div>
+      <p style="font-size:13px;color:#666;margin-top:12px;">
+        This is a recurring monthly charge. If it isn't renewed by the date above, stores added under this
+        add-on will be deactivated automatically to bring you back within your plan's included store count.
+      </p>
+      {_divider()}
+      {_note("This is an automated payment receipt from CitiMart RMS.")}
+    """
+    return await _send(
+        subject=f"Payment received — {stores_text} added",
+        recipients=[email],
+        html=_wrap(SUCCESS, "Payment Received", body, "© CitiMart RMS · Retailer Store Add-ons"),
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 17. RETAILER — Store/branch add-on lapsed (auto-deactivation notice)
+# ─────────────────────────────────────────────────────────────────────────────
+async def send_store_addon_lapsed_email(email: EmailStr, name: str, deactivated_store_names: List[str]) -> bool:
+    """Sent when sweep_lapsed_store_addons() (retailer_store_addon_routes.py)
+    deactivates stores because a monthly store add-on wasn't renewed in time —
+    the in-app store list only reaches an HQ Admin actively logged in, so
+    this is what actually reaches someone who isn't."""
+    store_list = "".join(f"<li style='margin:2px 0;'>{n}</li>" for n in deactivated_store_names)
+    body = f"""
+      <h2 style="color:#222;margin-bottom:8px;">Hi {name},</h2>
+      <p style="font-size:15px;color:#444;">
+        Your extra store/branch add-on was not renewed in time, so the following
+        {'location has' if len(deactivated_store_names) == 1 else 'locations have'} been deactivated:
+      </p>
+      <ul style="margin:12px 0;padding-left:20px;color:#444;font-size:14px;">{store_list}</ul>
+      <p style="font-size:14px;color:#555;">
+        No data was deleted — sign in and purchase the add-on again to reactivate them.
+      </p>
+      {_divider()}
+      {_note("This is an automated notice from CitiMart RMS.")}
+    """
+    return await _send(
+        subject="Store add-on lapsed — locations deactivated",
+        recipients=[email],
+        html=_wrap(DANGER, "Store Add-on Lapsed", body, "© CitiMart RMS · Retailer Store Add-ons"),
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 18. RETAILER — Plan subscription expiring / lapsed reminder (single- and
+#     multi-store alike — see retailer_subscription_routes.py)
+# ─────────────────────────────────────────────────────────────────────────────
+async def send_retailer_subscription_expiring_email(
+    email: EmailStr, name: str, plan_label: str, days_until_expiry: int, lapsed: bool,
+) -> bool:
+    """Email counterpart to the in-app renewal banner — reaches an HQ/Store
+    Owner who isn't actively logged in when their RMS plan is about to lapse
+    or already has. Sent 14 days out (retailers get more runway than the
+    7-day vendor tier reminder, since losing RMS access is more disruptive
+    than losing catalogue visibility)."""
+    if lapsed:
+        headline = f"Your {plan_label} plan has lapsed"
+        detail = "Renew now to avoid losing access to your RMS dashboard."
+        color = DANGER
+    else:
+        headline = f"Your {plan_label} plan renews in {days_until_expiry} day{'s' if days_until_expiry != 1 else ''}"
+        detail = "Renew before it expires to keep your RMS dashboard running without interruption."
+        color = WARNING
+    body = f"""
+      <h2 style="color:#222;margin-bottom:8px;">Hi {name},</h2>
+      <p style="font-size:15px;color:#444;"><strong style="color:{color};">{headline}</strong></p>
+      <p style="font-size:14px;color:#555;margin-top:12px;">{detail}</p>
+      {_divider()}
+      {_note("This is an automated reminder from CitiMart RMS.")}
+    """
+    return await _send(
+        subject=headline,
+        recipients=[email],
+        html=_wrap(color, "Subscription Reminder", body, "© CitiMart RMS · Retailer Plans"),
+    )

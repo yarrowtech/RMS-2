@@ -5,7 +5,7 @@ import { createPortal } from "react-dom";
 import {
   Plus, Eye, Trash2, Lock, Unlock, Search,
   CheckCircle, XCircle, Clock, X, AlertCircle,
-  Users, Shield, UserPlus, Pencil, CreditCard
+  Users, Shield, UserPlus, Pencil, CreditCard, CalendarClock
 } from "lucide-react";
 import toast from "react-hot-toast";
 
@@ -588,6 +588,61 @@ function loadRazorpayCheckout() {
   });
 }
 
+// ══════════════════════════════════════════════════════════════════════════════
+// PLAN RENEWAL BANNER — was single-store-only (see StoreOwnerDashboard.jsx's
+// StorePlanStatus); /api/retailer-subscriptions/me now also covers
+// multi-store tenants on the self-serve paid billing path.
+// ══════════════════════════════════════════════════════════════════════════════
+function SubscriptionBanner() {
+  const [subscription, setSubscription] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [renewing, setRenewing] = useState(false);
+
+  useEffect(() => {
+    api("/api/retailer-subscriptions/me")
+      .then(setSubscription)
+      .catch(() => setSubscription(null))
+      .finally(() => setLoading(false));
+  }, []);
+
+  const renew = async () => {
+    setRenewing(true);
+    try {
+      const result = await api("/api/retailer-subscriptions/renew", { method: "POST" });
+      if (!result.payment_link) throw new Error("Razorpay did not return a secure payment link.");
+      window.location.assign(result.payment_link);
+    } catch (e) {
+      toast.error(e.message || "Could not start secure renewal.");
+      setRenewing(false);
+    }
+  };
+
+  if (loading || !subscription?.is_paid_plan) return null;
+  const dueDate = subscription.next_payment_due
+    ? new Date(subscription.next_payment_due).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })
+    : "Now";
+  const urgent = subscription.access_state !== "active" || Number(subscription.days_remaining) <= 7;
+  const statusText = subscription.access_state === "active"
+    ? `${subscription.days_remaining} day${Number(subscription.days_remaining) === 1 ? "" : "s"} left`
+    : subscription.access_state === "grace" ? "Grace period active" : "Renewal required";
+
+  return (
+    <section className={`flex flex-wrap items-center justify-between gap-4 rounded-2xl border p-4 shadow-sm ${urgent ? "border-amber-200 bg-amber-50" : "border-emerald-200 bg-emerald-50"}`}>
+      <div className="flex min-w-0 items-center gap-3">
+        <div className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl ${urgent ? "bg-amber-500 text-white" : "bg-emerald-600 text-white"}`}><CalendarClock className="h-5 w-5" /></div>
+        <div>
+          <p className="text-xs font-black uppercase tracking-[.12em] text-slate-500">RMS subscription</p>
+          <h2 className="text-sm font-black text-slate-950">{subscription.plan_label} Plan · {statusText}</h2>
+          <p className="text-xs text-slate-600">Next payment due {dueDate} · ₹{Number(subscription.amount_inr || 0).toLocaleString("en-IN")}/month</p>
+        </div>
+      </div>
+      <button type="button" onClick={renew} disabled={renewing} className={`inline-flex h-10 items-center justify-center gap-2 rounded-xl px-4 text-sm font-black text-white transition disabled:opacity-60 ${urgent ? "bg-amber-600 hover:bg-amber-700" : "bg-emerald-600 hover:bg-emerald-700"}`}>
+        <CreditCard className="h-4 w-4" /> {renewing ? "Opening secure payment…" : "Renew securely"}
+      </button>
+    </section>
+  );
+}
+
 function BuySeatsModal({ onClose, onPurchased }) {
   const [status, setStatus] = useState(null);
   const [quantity, setQuantity] = useState(1);
@@ -777,6 +832,8 @@ export default function HQAdminManagement() {
 
   return (
     <div className="min-h-full p-4 sm:p-6 space-y-5">
+
+      <SubscriptionBanner />
 
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
