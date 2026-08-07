@@ -1,32 +1,44 @@
-"""Single-store retailer subscription status and monthly renewal."""
+"""Retailer subscription status and monthly renewal — single-store and
+multi-store tenants alike, whenever their plan is on the self-serve paid
+billing path (has a real subscription_expires_at set)."""
 import asyncio
 import math
 from datetime import datetime, timedelta
+from typing import Optional
 
 from bson import ObjectId
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, status
 
 from ..config import settings
 from ..db import retailer_subscription_payments_collection, tenants_collection
+from ..email_utils import send_retailer_subscription_expiring_email
 from ..retailer_plans import is_paid_retailer_plan, normalize_retailer_plan, retailer_plan_config
+from .auth_routes import get_current_superadmin
 from .deps import get_tenant
 from .store_upgrade_routes import _razorpay_create_payment_link_sync, _razorpay_credentials
 
 router = APIRouter(prefix="/api/retailer-subscriptions", tags=["Retailer Subscriptions"])
 RENEWAL_LINK_VALIDITY_DAYS = 7
 GRACE_PERIOD_DAYS = 7
+EXPIRY_REMINDER_WINDOW_DAYS = 14  # retailers get more runway than the 7-day vendor tier reminder
 
 
 def _serialize_date(value):
     return value.isoformat() if isinstance(value, datetime) else None
 
 
-async def _single_store_tenant(ctx: dict) -> dict:
+async def _billed_tenant(ctx: dict) -> dict:
+    """Was single_store-only. Self-serve signup (retailer_signup_routes.py)
+    also creates department_retailer tenants on Professional/Enterprise with
+    a real subscription_expires_at ticking — they had no way to see or renew
+    it. Superadmin-created tenants (billing_mode="manual", either account
+    type) never get subscription_expires_at set at all, so they naturally
+    fall through to access_state="internal" / "renewal_required" in
+    _subscription_view() exactly as single_store ones already did — this
+    open-up changes nothing about that existing behavior, just who can see it."""
     tenant = await tenants_collection.find_one({"tenant_id": ctx["tenant_id"]})
     if not tenant:
         raise HTTPException(status_code=404, detail="Retailer account was not found.")
-    if tenant.get("account_type") != "single_store":
-        raise HTTPException(status_code=403, detail="This subscription view is for single-store accounts only.")
     return tenant
 
 
@@ -69,15 +81,16 @@ def _subscription_view(tenant: dict) -> dict:
 
 @router.get("/me")
 async def get_my_retailer_subscription(ctx: dict = Depends(get_tenant)):
-    """Show only the logged-in single-store tenant's billing countdown."""
-    tenant = await _single_store_tenant(ctx)
+    """Billing countdown for the logged-in tenant — single-store or
+    multi-store, whichever account type they are."""
+    tenant = await _billed_tenant(ctx)
     return _subscription_view(tenant)
 
 
 @router.post("/renew")
 async def create_retailer_renewal_link(ctx: dict = Depends(get_tenant)):
     """Create a short-lived Razorpay-hosted renewal link for the current plan."""
-    tenant = await _single_store_tenant(ctx)
+    tenant = await _billed_tenant(ctx)
     plan = normalize_retailer_plan(tenant.get("plan"))
     if not is_paid_retailer_plan(plan):
         raise HTTPException(status_code=409, detail="This internal plan does not need a subscription payment.")
@@ -203,3 +216,59 @@ async def process_retailer_renewal_payment_link_webhook(event: dict, event_id: s
         {"$set": {"subscription_status": "active", "subscription_renewed_at": now, "subscription_expires_at": next_due, "subscription_payment_id": payment_id, "updated_at": now}},
     )
     return {"status": "renewed", "tenant_id": tenant_id, "next_payment_due": next_due.isoformat()}
+
+
+async def _authorize_cron_or_superadmin(authorization: Optional[str], x_cron_secret: Optional[str]) -> None:
+    if settings.cron_secret and x_cron_secret == settings.cron_secret:
+        return
+    if authorization and authorization.startswith("Bearer "):
+        try:
+            await get_current_superadmin(token=authorization.split(" ", 1)[1])
+            return
+        except HTTPException:
+            pass
+    raise HTTPException(status_code=401, detail="Provide a valid X-Cron-Secret header, or a Super Admin bearer token.")
+
+
+@router.post("/send-expiry-reminders")
+async def send_retailer_expiry_reminders(
+    authorization: Optional[str] = Header(None),
+    x_cron_secret: Optional[str] = Header(None, alias="X-Cron-Secret"),
+):
+    """Email every retailer (single- or multi-store) whose paid plan is
+    lapsed or renews within 14 days — the in-app banner only reaches an
+    HQ/Store Owner actively logged in, so this reaches everyone else. Meant
+    to run once a day from the same external scheduler as
+    /api/subscriptions/send-expiry-reminders (this process has no
+    in-process cron of its own); auth via either a Super Admin JWT or
+    CRON_SECRET so a scheduler with no user login can call it."""
+    await _authorize_cron_or_superadmin(authorization, x_cron_secret)
+
+    now = datetime.utcnow()
+    reminder_window = now + timedelta(days=EXPIRY_REMINDER_WINDOW_DAYS)
+    sent, lapsed_sent = 0, 0
+    async for tenant in tenants_collection.find({
+        "subscription_status": {"$in": ["active", None]},
+        "subscription_expires_at": {"$lte": reminder_window, "$ne": None},
+    }):
+        plan = normalize_retailer_plan(tenant.get("plan"))
+        if not is_paid_retailer_plan(plan):
+            continue
+        email = tenant.get("hq_admin_email")
+        if not email:
+            continue
+        expires_at = tenant.get("subscription_expires_at")
+        lapsed = bool(expires_at and expires_at <= now)
+        days_left = max((expires_at - now).days, 0) if expires_at and not lapsed else 0
+        plan_label = retailer_plan_config(plan).get("label", plan.title())
+        try:
+            delivered = await send_retailer_subscription_expiring_email(
+                email, tenant.get("hq_admin_name") or "there", plan_label, days_left, lapsed,
+            )
+        except Exception:
+            delivered = False
+        if delivered:
+            sent += 1
+            if lapsed:
+                lapsed_sent += 1
+    return {"status": "success", "reminders_sent": sent, "lapsed_reminders_sent": lapsed_sent}

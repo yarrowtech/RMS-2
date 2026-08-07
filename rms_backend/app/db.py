@@ -83,6 +83,14 @@ retailer_signups_collection = db["retailer_signups"]
 # collection is the payment record for that; the actual bonus seat count
 # lives on tenants_collection.bonus_admin_seats, incremented on capture.
 retailer_seat_addon_payments_collection = db["retailer_seat_addon_payments"]
+# Same idea as the seat add-on above, but for extra store/branch slots —
+# except this one is a RECURRING monthly charge, not a permanent unlock,
+# since a store carries ongoing operational cost unlike an admin seat. One
+# active document per tenant (upserted, like vendor_subscriptions_collection)
+# tracking the current paid quantity + expiry; the payment collection below
+# is just the payment history/idempotency record.
+retailer_store_addons_collection = db["retailer_store_addons"]
+retailer_store_addon_payments_collection = db["retailer_store_addon_payments"]
 # Every email send failure lands here (SMTP not configured, send exception,
 # etc.) so production has something queryable when a user reports "I never
 # got the email" — print() output is easy to lose once stdout isn't a
@@ -184,6 +192,10 @@ async def ensure_procurement_indexes():
     await store_upgrade_payments_collection.create_index([("request_id", 1), ("created_at", -1)], name="store_upgrade_payment_request_created")
     await retailer_seat_addon_payments_collection.create_index("razorpay_order_id", unique=True, name="retailer_seat_addon_razorpay_order_unique")
     await retailer_seat_addon_payments_collection.create_index([("tenant_id", 1), ("created_at", -1)], name="retailer_seat_addon_tenant_created")
+    await retailer_store_addons_collection.create_index("tenant_id", unique=True, name="retailer_store_addon_tenant_unique")
+    await retailer_store_addons_collection.create_index([("status", 1), ("expires_at", 1)], name="retailer_store_addon_status_expiry")
+    await retailer_store_addon_payments_collection.create_index("razorpay_order_id", unique=True, name="retailer_store_addon_razorpay_order_unique")
+    await retailer_store_addon_payments_collection.create_index([("tenant_id", 1), ("created_at", -1)], name="retailer_store_addon_tenant_created")
     await retailer_signups_collection.create_index("razorpay_order_id", name="retailer_signup_razorpay_order")
     await retailer_signups_collection.create_index([("status", 1), ("created_at", -1)], name="retailer_signup_status_created")
     await retailer_subscription_payments_collection.create_index("razorpay_order_id", unique=True, name="retailer_subscription_razorpay_order_unique")

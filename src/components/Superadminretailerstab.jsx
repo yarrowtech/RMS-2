@@ -423,6 +423,26 @@ function RetailerDetail({ tenant, onClose }) {
               {!summary.stores?.length && <p className="text-xs text-slate-400">No stores yet</p>}
             </div>
           </div>
+          <div className="col-span-2">
+            <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2">
+              Add-on Billing ({summary.addon_payments?.length || 0})
+            </p>
+            <div className="space-y-1.5">
+              {(summary.addon_payments || []).map(p => (
+                <div key={p.id} className="flex items-center justify-between bg-white rounded-lg px-3 py-2 border border-slate-100 text-xs">
+                  <div>
+                    <span className="font-bold text-slate-800">
+                      {p.kind === "admin_seats" ? `${p.quantity} admin seat${p.quantity !== 1 ? "s" : ""}` : `${p.quantity} store slot${p.quantity !== 1 ? "s" : ""}`}
+                    </span>
+                    <span className="text-slate-400 ml-2">{p.captured_at ? new Date(p.captured_at).toLocaleDateString("en-IN") : ""}</span>
+                    {p.recurring && <span className="ml-2 px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-indigo-100 text-indigo-700">Monthly</span>}
+                  </div>
+                  <span className="font-bold text-emerald-700">₹{Number(p.amount_inr || 0).toLocaleString("en-IN")}</span>
+                </div>
+              ))}
+              {!summary.addon_payments?.length && <p className="text-xs text-slate-400">No add-on purchases yet</p>}
+            </div>
+          </div>
         </div>
       ) : <p className="text-xs text-slate-400">Failed to load details</p>}
     </div>

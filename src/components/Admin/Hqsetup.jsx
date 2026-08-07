@@ -940,10 +940,11 @@ import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
 // }
 
 import React, { useEffect, useState, useCallback } from "react";
+import { createPortal } from "react-dom";
 import {
   Store, GitBranch, Users, CheckCircle, Circle,
   Plus, Trash2, Edit, X, ChevronDown, ChevronRight,
-  Building2, AlertCircle
+  Building2, AlertCircle, CreditCard
 } from "lucide-react";
 import toast from "react-hot-toast";
 
@@ -967,6 +968,156 @@ const api = async (path, opts = {}) => {
   return data;
 };
 
+// ── Razorpay checkout script loader ─────────────────────────────────────────────
+function loadRazorpayCheckout() {
+  return new Promise((resolve, reject) => {
+    if (window.Razorpay) { resolve(); return; }
+    const existing = document.querySelector('script[data-rms-razorpay-checkout="true"]');
+    if (existing) { existing.addEventListener("load", resolve, { once: true }); return; }
+    const script = document.createElement("script");
+    script.src = "https://checkout.razorpay.com/v1/checkout.js";
+    script.async = true;
+    script.dataset.rmsRazorpayCheckout = "true";
+    script.onload = resolve;
+    script.onerror = () => reject(new Error("Could not load secure payment checkout."));
+    document.body.appendChild(script);
+  });
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// BUY EXTRA STORE/BRANCH SLOTS (recurring monthly add-on)
+// ══════════════════════════════════════════════════════════════════════════════
+function BuyStoresModal({ onClose, onPurchased }) {
+  const [status,  setStatus]  = useState(null);
+  const [quantity, setQuantity] = useState(1);
+  const [loading, setLoading] = useState(true);
+  const [paying,  setPaying]  = useState(false);
+  const [error,   setError]   = useState("");
+
+  useEffect(() => {
+    api("/api/retailer-store-addons/me")
+      .then(setStatus)
+      .catch((e) => setError(e.message || "Could not load store add-on info."))
+      .finally(() => setLoading(false));
+  }, []);
+
+  const pay = async () => {
+    setPaying(true); setError("");
+    try {
+      const checkout = await api("/api/retailer-store-addons/checkout", {
+        method: "POST",
+        body: JSON.stringify({ quantity }),
+      });
+      await loadRazorpayCheckout();
+      if (!window.Razorpay) throw new Error("Secure payment checkout is unavailable. Please try again.");
+      const razorpay = new window.Razorpay({
+        key: checkout.key_id,
+        amount: checkout.amount,
+        currency: checkout.currency,
+        name: "RMS Store Slots",
+        description: `${checkout.quantity} extra store/branch slot${checkout.quantity !== 1 ? "s" : ""} (monthly)`,
+        order_id: checkout.order_id,
+        theme: { color: "#4f46e5" },
+        handler: async (response) => {
+          try {
+            const result = await api("/api/retailer-store-addons/verify-payment", {
+              method: "POST",
+              body: JSON.stringify(response),
+            });
+            if (result.stores_added > 0) {
+              toast.success(result.message);
+              onPurchased();
+              onClose();
+            } else {
+              toast(result.message);
+              setPaying(false);
+            }
+          } catch (e) {
+            toast.error(e.message || "Could not verify payment.");
+            setPaying(false);
+          }
+        },
+        modal: { ondismiss: () => setPaying(false) },
+      });
+      razorpay.open();
+    } catch (e) {
+      setError(e.message || "Could not start checkout.");
+      setPaying(false);
+    }
+  };
+
+  const total = status ? status.price_per_store_inr_per_month * quantity : 0;
+
+  return createPortal(
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4" style={{ zIndex: 99999 }}>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
+        <div className="bg-gradient-to-r from-indigo-600 to-indigo-700 px-6 py-5 flex items-center justify-between">
+          <div>
+            <h2 className="text-lg font-bold text-white">Buy Extra Store/Branch Slots</h2>
+            <p className="text-indigo-100 text-xs mt-0.5">Billed monthly — no full plan upgrade needed</p>
+          </div>
+          <button onClick={onClose} className="text-white/80 hover:text-white"><X className="w-5 h-5" /></button>
+        </div>
+        <div className="p-6 space-y-4">
+          {error && <div className="bg-red-50 border border-red-200 text-red-600 text-sm rounded-md px-3 py-2">{error}</div>}
+          {loading ? (
+            <p className="text-sm text-slate-400 text-center py-6">Loading…</p>
+          ) : status ? (
+            <>
+              <div className="rounded-xl bg-slate-50 border border-slate-200 p-4 text-sm">
+                <p className="text-slate-600">
+                  {status.plan_label} plan · {status.used} / {status.unlimited ? "Unlimited" : status.effective_limit} stores used
+                </p>
+                {status.addon_stores > 0 && (
+                  <p className="text-xs text-indigo-600 mt-1 font-semibold">
+                    {status.addon_stores} add-on store{status.addon_stores !== 1 ? "s" : ""} active
+                    {status.expires_at ? ` · renews ${new Date(status.expires_at).toLocaleDateString("en-IN")}` : ""}
+                  </p>
+                )}
+                {status.lapsed && (
+                  <p className="text-xs text-rose-600 mt-1 font-semibold">
+                    Your previous store add-on lapsed — locations over your plan limit were deactivated.
+                  </p>
+                )}
+              </div>
+              {status.unlimited ? (
+                <p className="text-sm text-slate-500 text-center py-4">Your plan already has unlimited stores — no add-on needed.</p>
+              ) : (
+                <>
+                  <label className="block">
+                    <span className="text-sm font-bold text-slate-700">How many extra stores/branches?</span>
+                    <input
+                      type="number" min="1" max={status.max_stores_per_purchase} value={quantity}
+                      onChange={(e) => setQuantity(Math.max(1, Math.min(status.max_stores_per_purchase, Number(e.target.value) || 1)))}
+                      className="mt-1.5 w-full h-11 rounded-xl border border-slate-200 px-3 text-sm focus:ring-2 focus:ring-indigo-400 outline-none"
+                    />
+                  </label>
+                  <div className="flex items-center justify-between rounded-xl bg-indigo-50 border border-indigo-100 px-4 py-3">
+                    <span className="text-sm font-semibold text-indigo-800">
+                      ₹{status.price_per_store_inr_per_month.toLocaleString("en-IN")}/mo × {quantity} store{quantity !== 1 ? "s" : ""}
+                    </span>
+                    <span className="text-lg font-black text-indigo-900">₹{total.toLocaleString("en-IN")}</span>
+                  </div>
+                  <p className="text-[11px] text-slate-400">
+                    Recurring — renews every {status.period_days} days. If not renewed, the newest add-on stores are deactivated automatically.
+                  </p>
+                  <button
+                    onClick={pay} disabled={paying}
+                    className="w-full h-11 rounded-xl bg-gradient-to-r from-indigo-600 to-indigo-700 text-white text-sm font-bold hover:opacity-90 disabled:opacity-50 transition"
+                  >
+                    {paying ? "Opening secure payment…" : `Pay ₹${total.toLocaleString("en-IN")} & Add Stores`}
+                  </button>
+                </>
+              )}
+            </>
+          ) : null}
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
 // ══════════════════════════════════════════════════════════════════════════════
 // STORES & BRANCHES SECTION
 // ══════════════════════════════════════════════════════════════════════════════
@@ -975,6 +1126,7 @@ function StoresSection() {
   const [loading,   setLoading]   = useState(false);
   const [saving,    setSaving]    = useState(false);
   const [showForm,  setShowForm]  = useState(false);
+  const [showBuyStores, setShowBuyStores] = useState(false);
   const [expanded,  setExpanded]  = useState({});
   const [form,      setForm]      = useState({ name:"", code:"", type:"store", city:"", address:"", phone:"", parent_id:"" });
 
@@ -1035,11 +1187,21 @@ function StoresSection() {
           </h3>
           <p className="text-xs text-slate-500 mt-0.5">{stores.length} store{stores.length !== 1?"s":""} configured</p>
         </div>
-        <button onClick={() => setShowForm(s => !s)}
-          className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-bold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-xl transition">
-          <Plus className="w-3.5 h-3.5"/> Add Store / Branch
-        </button>
+        <div className="flex items-center gap-2">
+          <button onClick={() => setShowBuyStores(true)}
+            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-bold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-xl transition">
+            <CreditCard className="w-3.5 h-3.5"/> Buy Store Slots
+          </button>
+          <button onClick={() => setShowForm(s => !s)}
+            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-bold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-xl transition">
+            <Plus className="w-3.5 h-3.5"/> Add Store / Branch
+          </button>
+        </div>
       </div>
+
+      {showBuyStores && (
+        <BuyStoresModal onClose={() => setShowBuyStores(false)} onPurchased={fetchStores} />
+      )}
 
       {/* Add form */}
       {showForm && (

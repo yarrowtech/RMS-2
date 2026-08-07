@@ -18,7 +18,7 @@ from datetime import datetime
 from bson import ObjectId
 
 from .deps import get_hq_tenant
-from ..db import stores_collection, admins_collection, tenants_collection
+from ..db import stores_collection, admins_collection, tenants_collection, retailer_store_addons_collection
 from ..auth import create_password_setup_token
 from ..email_utils import send_password_setup_email
 from ..config import settings
@@ -31,6 +31,19 @@ TenantCtx = Dict[str, Any]
 
 # ── helpers ────────────────────────────────────────────────────────────────────
 def _str(v): return str(v) if v else ""
+
+
+async def _active_store_addon_quantity(tenant_id: str) -> int:
+    """Extra store slots purchased via retailer_store_addon_routes.py — 0
+    once the paid period has lapsed, even if the daily sweep hasn't caught
+    up yet, so this limit check is never more generous than /me shows."""
+    addon = await retailer_store_addons_collection.find_one({"tenant_id": tenant_id})
+    if not addon or addon.get("status") != "active":
+        return 0
+    expires_at = addon.get("expires_at")
+    if not expires_at or expires_at <= datetime.utcnow():
+        return 0
+    return int(addon.get("quantity") or 0)
 
 
 async def _single_store_owner_store_id(ctx: TenantCtx) -> Optional[str]:
@@ -132,12 +145,15 @@ async def create_store(
     """HQ Admin creates a store or branch under their tenant."""
     tenant = await tenants_collection.find_one({"tenant_id": ctx["tenant_id"]}, {"plan": 1})
     plan_cfg = retailer_plan_config((tenant or {}).get("plan", "basic"))
-    store_limit = plan_cfg.get("stores")
+    base_store_limit = plan_cfg.get("stores")
+    addon_stores = await _active_store_addon_quantity(ctx["tenant_id"])
+    store_limit = None if base_store_limit is None else base_store_limit + addon_stores
     current_store_count = await stores_collection.count_documents({"tenant_id": ctx["tenant_id"]})
     if store_limit is not None and current_store_count >= store_limit:
+        addon_note = f" ({addon_stores} purchased add-on store(s) included)" if addon_stores else ""
         raise HTTPException(
             status_code=403,
-            detail=f"Your {plan_cfg['label']} plan allows {store_limit} store(s)/branch(es). Upgrade the retailer plan to add more.",
+            detail=f"Your {plan_cfg['label']} plan allows {store_limit} store(s)/branch(es){addon_note}. Buy more store slots or upgrade the retailer plan to add more.",
         )
     existing = await stores_collection.find_one({
         "tenant_id": ctx["tenant_id"],
