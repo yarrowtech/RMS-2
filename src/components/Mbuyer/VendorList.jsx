@@ -53,6 +53,7 @@ const Vendors = ({ showQuestionnaires = true }) => {
 
   // Invitations tracker
   const [showInvitations, setShowInvitations] = useState(false);
+  const [showBulkImport, setShowBulkImport] = useState(false);
 
   // Add Vendor flow
   const [showAddVendor,  setShowAddVendor]  = useState(false);
@@ -357,6 +358,14 @@ const Vendors = ({ showQuestionnaires = true }) => {
             Invitations
           </button>
 
+          {/* 📥 Import CSV */}
+          <button
+            onClick={() => setShowBulkImport(true)}
+            className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 shadow-sm transition hover:border-violet-300 hover:text-violet-700"
+          >
+            <UserPlus size={18} className="text-gray-500" /> Import CSV
+          </button>
+
           {/* ➕ Add Vendor */}
           <button
             onClick={() => { setShowAddVendor(true); setAddStep("form"); }}
@@ -394,6 +403,7 @@ const Vendors = ({ showQuestionnaires = true }) => {
 
       {/* ── MODALS ── */}
       {showInvitations && <InvitationsModal onClose={() => setShowInvitations(false)} />}
+      {showBulkImport && <BulkImportModal onClose={() => setShowBulkImport(false)} onDone={fetchAll} />}
       {selectedVendor && (
         <VendorModal vendor={selectedVendor} onClose={() => setSelectedVendor(null)}
           onApprove={() => handleApproval(selectedVendor._id)}
@@ -916,6 +926,187 @@ const Modal = ({ children, onClose, maxWidth = "max-w-3xl" }) => createPortal(
   </div>,
   document.body
 );
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BULK IMPORT — CSV of vendors, one POST /invite/bulk instead of doing the
+// single-invite flow by hand N times. Each row still gets its own token,
+// invite doc and (if it has an email) invite email, same as a single invite.
+// ─────────────────────────────────────────────────────────────────────────────
+const CSV_COLUMN_ALIASES = {
+  company_name:   ["company_name", "company", "vendor_name", "companyname"],
+  mobile:         ["mobile", "phone", "contact_number", "mobile_number"],
+  email:          ["email", "email_address"],
+  contact_person: ["contact_person", "contact_name", "contactname", "contact"],
+  product_type:   ["product_type", "product_category", "category", "productcategory"],
+  address:        ["address"],
+  brand_name:     ["brand_name", "brand", "brandname"],
+};
+
+function splitCsvLine(line) {
+  const out = [];
+  let cur = "";
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"') { inQuotes = !inQuotes; continue; }
+    if (ch === "," && !inQuotes) { out.push(cur.trim()); cur = ""; continue; }
+    cur += ch;
+  }
+  out.push(cur.trim());
+  return out;
+}
+
+function parseCsv(text) {
+  const lines = text.split(/\r\n|\n|\r/).map((l) => l.trim()).filter(Boolean);
+  if (!lines.length) return [];
+  const headers = splitCsvLine(lines[0]).map((h) => h.toLowerCase().replace(/\s+/g, "_"));
+  return lines.slice(1).map((line) => {
+    const cells = splitCsvLine(line);
+    const raw = {};
+    headers.forEach((h, i) => { raw[h] = cells[i] || ""; });
+    const row = {};
+    for (const [key, aliases] of Object.entries(CSV_COLUMN_ALIASES)) {
+      for (const alias of aliases) {
+        if (raw[alias]) { row[key] = raw[alias]; break; }
+      }
+    }
+    return row;
+  }).filter((row) => row.company_name || row.mobile);
+}
+
+function BulkImportModal({ onClose, onDone }) {
+  const [rawText, setRawText] = useState("");
+  const [parsedRows, setParsedRows] = useState([]);
+  const [submitting, setSubmitting] = useState(false);
+  const [results, setResults] = useState(null);
+  const [error, setError] = useState("");
+
+  const handleText = (text) => {
+    setRawText(text);
+    setParsedRows(parseCsv(text));
+    setError("");
+  };
+
+  const handleFile = (file) => {
+    const reader = new FileReader();
+    reader.onload = () => handleText(String(reader.result || ""));
+    reader.readAsText(file);
+  };
+
+  const submit = async () => {
+    if (!parsedRows.length) { setError("No valid rows to import. Each row needs at least a company name and mobile number."); return; }
+    setSubmitting(true); setError("");
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/vendors/invite/bulk`, {
+        method: "POST",
+        headers: authHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({ rows: parsedRows }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.detail || "Bulk import failed.");
+      setResults(json);
+      onDone?.();
+    } catch (err) {
+      setError(err.message || "Bulk import failed.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <Modal onClose={onClose} maxWidth="max-w-4xl">
+      <div className="flex items-center gap-3 bg-gradient-to-r from-violet-600 to-indigo-700 px-6 py-5">
+        <UserPlus className="h-6 w-6 text-white" />
+        <div>
+          <h2 className="text-lg font-semibold text-white">Import Vendors from CSV</h2>
+          <p className="mt-0.5 text-xs text-indigo-200">Bulk-create invites — same links you'd generate one at a time</p>
+        </div>
+        <button onClick={onClose} className="ml-auto rounded-lg p-1.5 text-indigo-100 hover:bg-white/10"><X size={20} /></button>
+      </div>
+
+      <div className="space-y-4 p-6">
+        {!results ? (
+          <>
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-xs text-slate-600">
+              <p className="font-bold text-slate-700">Expected columns (header row required):</p>
+              <p className="mt-1 font-mono text-[11px] text-slate-500">company_name, mobile, email, contact_person, product_type, address, brand_name</p>
+              <p className="mt-2">Only <strong>company_name</strong> and <strong>mobile</strong> are required per row.</p>
+            </div>
+
+            <label className="block">
+              <span className="text-sm font-bold text-slate-700">Upload CSV file</span>
+              <input type="file" accept=".csv,text/csv" onChange={(e) => e.target.files[0] && handleFile(e.target.files[0])}
+                className="mt-1.5 block w-full text-sm text-slate-600 file:mr-3 file:rounded-lg file:border-0 file:bg-violet-50 file:px-3 file:py-2 file:text-xs file:font-bold file:text-violet-700 hover:file:bg-violet-100" />
+            </label>
+
+            <div className="text-center text-xs font-bold text-slate-400">— or paste CSV text —</div>
+
+            <textarea value={rawText} onChange={(e) => handleText(e.target.value)} rows={6}
+              placeholder="company_name,mobile,email,contact_person,product_type,address,brand_name"
+              className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-xs font-mono focus:border-violet-400 focus:outline-none focus:ring-2 focus:ring-violet-100" />
+
+            {error && <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600">⚠️ {error}</div>}
+
+            {parsedRows.length > 0 && (
+              <div className="max-h-64 overflow-y-auto rounded-xl border border-slate-200">
+                <table className="w-full text-xs">
+                  <thead className="sticky top-0 bg-slate-50 text-left font-bold uppercase text-slate-500">
+                    <tr>{["Company", "Mobile", "Email", "Contact", "Category"].map((h) => <th key={h} className="whitespace-nowrap px-3 py-2">{h}</th>)}</tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {parsedRows.map((r, i) => (
+                      <tr key={i} className={!r.company_name || !r.mobile ? "bg-red-50" : ""}>
+                        <td className="px-3 py-1.5">{r.company_name || "—"}</td>
+                        <td className="px-3 py-1.5">{r.mobile || "—"}</td>
+                        <td className="px-3 py-1.5">{r.email || "—"}</td>
+                        <td className="px-3 py-1.5">{r.contact_person || "—"}</td>
+                        <td className="px-3 py-1.5">{r.product_type || "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            <div className="flex justify-end gap-2">
+              <button onClick={onClose} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-bold text-slate-600 hover:bg-slate-50">Cancel</button>
+              <button onClick={submit} disabled={submitting || !parsedRows.length}
+                className="rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 px-5 py-2 text-sm font-bold text-white shadow-lg shadow-violet-600/15 transition hover:brightness-110 disabled:opacity-50">
+                {submitting ? "Importing…" : `Import ${parsedRows.length} vendor${parsedRows.length !== 1 ? "s" : ""}`}
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-700">{results.message}</div>
+            <div className="max-h-72 overflow-y-auto rounded-xl border border-slate-200">
+              <table className="w-full text-xs">
+                <thead className="sticky top-0 bg-slate-50 text-left font-bold uppercase text-slate-500">
+                  <tr>{["Company", "Status", "Emailed", "Reason"].map((h) => <th key={h} className="whitespace-nowrap px-3 py-2">{h}</th>)}</tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {results.results.map((r, i) => (
+                    <tr key={i}>
+                      <td className="px-3 py-1.5">{r.company_name}</td>
+                      <td className="px-3 py-1.5">
+                        <span className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${r.status === "created" ? "bg-emerald-100 text-emerald-700" : "bg-red-100 text-red-700"}`}>{r.status}</span>
+                      </td>
+                      <td className="px-3 py-1.5">{r.status === "created" ? (r.emailed ? "Yes" : "No email") : "—"}</td>
+                      <td className="px-3 py-1.5 text-slate-500">{r.reason || "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="flex justify-end">
+              <button onClick={onClose} className="rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 px-5 py-2 text-sm font-bold text-white shadow-lg shadow-violet-600/15 transition hover:brightness-110">Done</button>
+            </div>
+          </>
+        )}
+      </div>
+    </Modal>
+  );
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // INVITATIONS TRACKER — every invite this buyer has sent, and its status

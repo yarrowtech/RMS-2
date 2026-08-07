@@ -1392,6 +1392,79 @@ async def create_vendor_invite(request: Request, ctx: dict = Depends(get_hq_tena
     }
 
 
+MAX_BULK_INVITE_ROWS = 200
+
+
+@vendor_bp.post("/invite/bulk")
+async def create_vendor_invites_bulk(request: Request, ctx: dict = Depends(get_hq_tenant)):
+    """CSV-driven version of POST /invite — same invite doc, same unique
+    token per row, just looped. Unlike the single-invite flow (which lets
+    the frontend decide separately whether to also call /send-invite-email),
+    this sends the email immediately per row when one is provided, since
+    there's no per-row UI step to defer it to."""
+    import secrets as _secrets
+    body = await request.json()
+    rows = body.get("rows") or []
+    if not isinstance(rows, list) or not rows:
+        raise HTTPException(status_code=400, detail="No rows provided.")
+    if len(rows) > MAX_BULK_INVITE_ROWS:
+        raise HTTPException(status_code=400, detail=f"Bulk invite is limited to {MAX_BULK_INVITE_ROWS} rows at a time.")
+
+    now = datetime.utcnow()
+    results = []
+    for row in rows:
+        company_name = str(row.get("company_name") or row.get("companyName") or "").strip()
+        mobile       = str(row.get("mobile") or "").strip()
+        email        = str(row.get("email") or "").strip()
+        contact_name = str(row.get("contact_person") or row.get("contactName") or "").strip()
+        address      = str(row.get("address") or "").strip()
+        product_category = str(row.get("product_type") or row.get("productCategory") or "").strip()
+        brand_names  = _parse_brand_names(row.get("brand_names") or row.get("brandNames") or row.get("brand_name") or row.get("brandName"))
+
+        if not company_name or not mobile:
+            results.append({"company_name": company_name or "(blank)", "status": "error", "reason": "company_name and mobile are required."})
+            continue
+
+        raw_token = _secrets.token_urlsafe(24)
+        invite_doc = {
+            "token":           raw_token,
+            "companyName":     company_name,
+            "brandNames":      brand_names,
+            "brandName":       ", ".join(brand_names),
+            "contactName":     contact_name,
+            "mobile":          mobile,
+            "email":           email,
+            "address":         address,
+            "productCategory": product_category,
+            "status":          "Pending",
+            "created_by":      ctx.get("admin_id", "M-Buyer"),
+            "tenant_id":       ctx["tenant_id"],
+            "created_at":      now,
+            "expires_at":      now + timedelta(days=7),
+            "vendor_id":       None,
+            "source":          "bulk_import",
+        }
+        await vendor_invites_collection.insert_one(invite_doc)
+
+        emailed = False
+        if email:
+            invite_link = frontend_url(f"vendor/register?token={raw_token}")
+            try:
+                await send_vendor_invite_email(email, contact_name or company_name, company_name, invite_link)
+                emailed = True
+            except Exception:
+                pass
+
+        results.append({"company_name": company_name, "status": "created", "token": raw_token, "emailed": emailed})
+
+    created = sum(1 for r in results if r["status"] == "created")
+    return {
+        "message": f"{created} of {len(rows)} invite(s) created.",
+        "created_count": created,
+        "results": results,
+    }
+
+
 @vendor_bp.get("/register-by-token")
 async def get_invite_by_token(token: str):
     """Called by the vendor registration page on load. Public, unaffected by the identity/link split."""
