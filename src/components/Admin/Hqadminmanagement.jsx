@@ -5,7 +5,7 @@ import { createPortal } from "react-dom";
 import {
   Plus, Eye, Trash2, Lock, Unlock, Search,
   CheckCircle, XCircle, Clock, X, AlertCircle,
-  Users, Shield, UserPlus, Pencil
+  Users, Shield, UserPlus, Pencil, CreditCard
 } from "lucide-react";
 import toast from "react-hot-toast";
 
@@ -568,6 +568,149 @@ function ViewAdminModal({ admin, onClose }) {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
+// BUY EXTRA ADMIN SEATS — same in-app Orders-API + verify-payment pattern
+// already used by StoreOwnerDashboard.jsx's plan-upgrade checkout, just
+// scoped to seats instead of a whole tier. Synchronous confirmation via the
+// handler callback below, no webhook wiring needed.
+// ══════════════════════════════════════════════════════════════════════════════
+function loadRazorpayCheckout() {
+  if (window.Razorpay) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const existing = document.querySelector('script[data-rms-razorpay-checkout="true"]');
+    if (existing) { existing.addEventListener("load", resolve, { once: true }); return; }
+    const script = document.createElement("script");
+    script.src = "https://checkout.razorpay.com/v1/checkout.js";
+    script.async = true;
+    script.dataset.rmsRazorpayCheckout = "true";
+    script.onload = resolve;
+    script.onerror = () => reject(new Error("Could not load secure payment checkout."));
+    document.body.appendChild(script);
+  });
+}
+
+function BuySeatsModal({ onClose, onPurchased }) {
+  const [status, setStatus] = useState(null);
+  const [quantity, setQuantity] = useState(1);
+  const [loading, setLoading] = useState(true);
+  const [paying, setPaying] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    api("/api/retailer-seats/me")
+      .then(setStatus)
+      .catch((e) => setError(e.message || "Could not load seat info."))
+      .finally(() => setLoading(false));
+  }, []);
+
+  const pay = async () => {
+    setPaying(true); setError("");
+    try {
+      const checkout = await api("/api/retailer-seats/checkout", {
+        method: "POST",
+        body: JSON.stringify({ quantity }),
+      });
+      await loadRazorpayCheckout();
+      if (!window.Razorpay) throw new Error("Secure payment checkout is unavailable. Please try again.");
+      const razorpay = new window.Razorpay({
+        key: checkout.key_id,
+        amount: checkout.amount,
+        currency: checkout.currency,
+        name: "RMS Admin Seats",
+        description: `${checkout.quantity} extra admin seat${checkout.quantity !== 1 ? "s" : ""}`,
+        order_id: checkout.order_id,
+        theme: { color: "#4f46e5" },
+        handler: async (response) => {
+          try {
+            const result = await api("/api/retailer-seats/verify-payment", {
+              method: "POST",
+              body: JSON.stringify(response),
+            });
+            if (result.bonus_seats_added > 0) {
+              toast.success(result.message);
+              onPurchased();
+              onClose();
+            } else {
+              toast(result.message);
+              setPaying(false);
+            }
+          } catch (e) {
+            toast.error(e.message || "Could not verify payment.");
+            setPaying(false);
+          }
+        },
+        modal: { ondismiss: () => setPaying(false) },
+      });
+      razorpay.open();
+    } catch (e) {
+      setError(e.message || "Could not start checkout.");
+      setPaying(false);
+    }
+  };
+
+  const total = status ? status.price_per_seat_inr * quantity : 0;
+
+  return createPortal(
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4" style={{ zIndex: 99999 }}>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
+        <div className="bg-gradient-to-r from-indigo-600 to-indigo-700 px-6 py-5 flex items-center justify-between">
+          <div>
+            <h2 className="text-lg font-bold text-white">Buy Extra Admin Seats</h2>
+            <p className="text-indigo-100 text-xs mt-0.5">Add seats without upgrading your whole plan</p>
+          </div>
+          <button onClick={onClose} className="text-white/80 hover:text-white"><X className="w-5 h-5" /></button>
+        </div>
+        <div className="p-6 space-y-4">
+          {error && <div className="bg-red-50 border border-red-200 text-red-600 text-sm rounded-md px-3 py-2">{error}</div>}
+          {loading ? (
+            <p className="text-sm text-slate-400 text-center py-6">Loading…</p>
+          ) : status ? (
+            <>
+              <div className="rounded-xl bg-slate-50 border border-slate-200 p-4 text-sm">
+                <p className="text-slate-600">
+                  {status.plan_label} plan · {status.used} / {status.unlimited ? "Unlimited" : status.effective_limit} seats used
+                </p>
+                {status.bonus_seats > 0 && (
+                  <p className="text-xs text-indigo-600 mt-1 font-semibold">
+                    {status.bonus_seats} add-on seat{status.bonus_seats !== 1 ? "s" : ""} already purchased
+                  </p>
+                )}
+              </div>
+              {status.unlimited ? (
+                <p className="text-sm text-slate-500 text-center py-4">Your plan already has unlimited admin seats — no add-on needed.</p>
+              ) : (
+                <>
+                  <label className="block">
+                    <span className="text-sm font-bold text-slate-700">How many extra seats?</span>
+                    <input
+                      type="number" min="1" max={status.max_seats_per_purchase} value={quantity}
+                      onChange={(e) => setQuantity(Math.max(1, Math.min(status.max_seats_per_purchase, Number(e.target.value) || 1)))}
+                      className="mt-1.5 w-full h-11 rounded-xl border border-slate-200 px-3 text-sm focus:ring-2 focus:ring-indigo-400 outline-none"
+                    />
+                  </label>
+                  <div className="flex items-center justify-between rounded-xl bg-indigo-50 border border-indigo-100 px-4 py-3">
+                    <span className="text-sm font-semibold text-indigo-800">
+                      ₹{status.price_per_seat_inr.toLocaleString("en-IN")} × {quantity} seat{quantity !== 1 ? "s" : ""}
+                    </span>
+                    <span className="text-lg font-black text-indigo-900">₹{total.toLocaleString("en-IN")}</span>
+                  </div>
+                  <button
+                    onClick={pay} disabled={paying}
+                    className="w-full h-11 rounded-xl bg-gradient-to-r from-indigo-600 to-indigo-700 text-white text-sm font-bold hover:opacity-90 disabled:opacity-50 transition"
+                  >
+                    {paying ? "Opening secure payment…" : `Pay ₹${total.toLocaleString("en-IN")} & Add Seats`}
+                  </button>
+                </>
+              )}
+            </>
+          ) : null}
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
 // MAIN EXPORT
 // ══════════════════════════════════════════════════════════════════════════════
 export default function HQAdminManagement() {
@@ -578,6 +721,7 @@ export default function HQAdminManagement() {
   const [search,    setSearch]    = useState("");
   const [filterScope, setFilterScope] = useState("all");
   const [showAdd,   setShowAdd]   = useState(false);
+  const [showBuySeats, setShowBuySeats] = useState(false);
   const [viewAdmin, setViewAdmin] = useState(null);
   const [editAdmin, setEditAdmin] = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(null);
@@ -645,11 +789,21 @@ export default function HQAdminManagement() {
             <p className="text-xs text-slate-500 mt-0.5">{admins.length} admin{admins.length!==1?"s":""} · {hqCount} HQ · {storeCount} store</p>
           </div>
         </div>
-        <button onClick={() => setShowAdd(true)}
-          className="inline-flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-indigo-600 to-indigo-700 text-white rounded-xl text-sm font-bold hover:opacity-90 transition shadow-md">
-          <UserPlus className="w-4 h-4"/> Add Admin
-        </button>
+        <div className="flex items-center gap-2">
+          <button onClick={() => setShowBuySeats(true)}
+            className="inline-flex items-center gap-2 px-4 py-2 border border-indigo-200 bg-indigo-50 text-indigo-700 rounded-xl text-sm font-bold hover:bg-indigo-100 transition">
+            <CreditCard className="w-4 h-4"/> Buy Seats
+          </button>
+          <button onClick={() => setShowAdd(true)}
+            className="inline-flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-indigo-600 to-indigo-700 text-white rounded-xl text-sm font-bold hover:opacity-90 transition shadow-md">
+            <UserPlus className="w-4 h-4"/> Add Admin
+          </button>
+        </div>
       </div>
+
+      {showBuySeats && (
+        <BuySeatsModal onClose={() => setShowBuySeats(false)} onPurchased={fetchAll} />
+      )}
 
       {/* Stats */}
       <div className="grid grid-cols-3 gap-3">

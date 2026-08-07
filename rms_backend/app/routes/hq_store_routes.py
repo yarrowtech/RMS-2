@@ -316,16 +316,21 @@ async def create_store_admin(
             detail="Store not found or does not belong to your tenant."
         )
 
-    tenant = await tenants_collection.find_one({"tenant_id": ctx["tenant_id"]}, {"plan": 1})
+    tenant = await tenants_collection.find_one({"tenant_id": ctx["tenant_id"]}, {"plan": 1, "bonus_admin_seats": 1})
     plan_cfg = retailer_plan_config((tenant or {}).get("plan", "basic"))
-    admin_limit = plan_cfg.get("admins")
+    base_limit = plan_cfg.get("admins")
+    bonus_seats = int((tenant or {}).get("bonus_admin_seats") or 0)
+    # Enterprise's base_limit is already None (unlimited) — bonus seats
+    # never apply there, only on Basic/Professional.
+    admin_limit = None if base_limit is None else base_limit + bonus_seats
     current_admin_count = await admins_collection.count_documents({
         "tenant_id": ctx["tenant_id"], "department": {"$ne": "SUPERADMIN"},
     })
     if admin_limit is not None and current_admin_count >= admin_limit:
+        seat_note = f" ({bonus_seats} purchased add-on seat{'s' if bonus_seats != 1 else ''} included)" if bonus_seats else ""
         raise HTTPException(
             status_code=403,
-            detail=f"Your {plan_cfg['label']} plan allows {admin_limit} administrator account(s). Upgrade the retailer plan to add more.",
+            detail=f"Your {plan_cfg['label']} plan allows {admin_limit} administrator account(s){seat_note}. Buy more seats or upgrade the retailer plan to add more.",
         )
 
     existing = await admins_collection.find_one({"email": payload.email})
@@ -614,16 +619,21 @@ async def hq_create_admin(
     if "SUPERADMIN" in payload.managedDepartments:
         raise HTTPException(status_code=403, detail="Cannot create SUPERADMIN accounts.")
 
-    tenant = await tenants_collection.find_one({"tenant_id": ctx["tenant_id"]}, {"plan": 1})
+    tenant = await tenants_collection.find_one({"tenant_id": ctx["tenant_id"]}, {"plan": 1, "bonus_admin_seats": 1})
     plan_cfg = retailer_plan_config((tenant or {}).get("plan", "basic"))
-    admin_limit = plan_cfg.get("admins")
+    base_limit = plan_cfg.get("admins")
+    bonus_seats = int((tenant or {}).get("bonus_admin_seats") or 0)
+    # Enterprise's base_limit is already None (unlimited) — bonus seats
+    # never apply there, only on Basic/Professional.
+    admin_limit = None if base_limit is None else base_limit + bonus_seats
     current_admin_count = await admins_collection.count_documents({
         "tenant_id": ctx["tenant_id"], "department": {"$ne": "SUPERADMIN"},
     })
     if admin_limit is not None and current_admin_count >= admin_limit:
+        seat_note = f" ({bonus_seats} purchased add-on seat{'s' if bonus_seats != 1 else ''} included)" if bonus_seats else ""
         raise HTTPException(
             status_code=403,
-            detail=f"Your {plan_cfg['label']} plan allows {admin_limit} administrator account(s). Upgrade the retailer plan to add more.",
+            detail=f"Your {plan_cfg['label']} plan allows {admin_limit} administrator account(s){seat_note}. Buy more seats or upgrade the retailer plan to add more.",
         )
 
     invalid = [

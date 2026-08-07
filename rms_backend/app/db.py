@@ -77,6 +77,12 @@ onboarding_requests_collection = db["onboarding_requests"]
 store_upgrade_requests_collection = db["store_upgrade_requests"]
 store_upgrade_payments_collection = db["store_upgrade_payments"]
 retailer_signups_collection = db["retailer_signups"]
+# A retailer plan (retailer_plans.py) bundles a flat admin-seat count per
+# tier. Rather than forcing a full tier upgrade just to add one more admin
+# past that limit, a retailer can buy extra seats individually — this
+# collection is the payment record for that; the actual bonus seat count
+# lives on tenants_collection.bonus_admin_seats, incremented on capture.
+retailer_seat_addon_payments_collection = db["retailer_seat_addon_payments"]
 # Every email send failure lands here (SMTP not configured, send exception,
 # etc.) so production has something queryable when a user reports "I never
 # got the email" — print() output is easy to lose once stdout isn't a
@@ -176,6 +182,8 @@ async def ensure_procurement_indexes():
     await store_upgrade_requests_collection.create_index([("tenant_id", 1), ("status", 1), ("created_at", -1)], name="store_upgrade_tenant_status_created")
     await store_upgrade_payments_collection.create_index("razorpay_order_id", unique=True, name="store_upgrade_razorpay_order_unique")
     await store_upgrade_payments_collection.create_index([("request_id", 1), ("created_at", -1)], name="store_upgrade_payment_request_created")
+    await retailer_seat_addon_payments_collection.create_index("razorpay_order_id", unique=True, name="retailer_seat_addon_razorpay_order_unique")
+    await retailer_seat_addon_payments_collection.create_index([("tenant_id", 1), ("created_at", -1)], name="retailer_seat_addon_tenant_created")
     await retailer_signups_collection.create_index("razorpay_order_id", name="retailer_signup_razorpay_order")
     await retailer_signups_collection.create_index([("status", 1), ("created_at", -1)], name="retailer_signup_status_created")
     await retailer_subscription_payments_collection.create_index("razorpay_order_id", unique=True, name="retailer_subscription_razorpay_order_unique")
