@@ -16,6 +16,7 @@ from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
+from pymongo import ReturnDocument
 
 from .deps import get_hq_tenant
 from .store_upgrade_routes import (
@@ -24,6 +25,7 @@ from .store_upgrade_routes import (
 )
 from ..activity_log import log_activity
 from ..db import admins_collection, retailer_seat_addon_payments_collection, tenants_collection
+from ..email_utils import send_seat_addon_receipt_email
 from ..retailer_plans import retailer_plan_config
 
 router = APIRouter(prefix="/api/retailer-seats", tags=["Retailer Seat Add-ons"])
@@ -159,13 +161,26 @@ async def verify_seat_addon_payment(payload: dict, ctx: TenantCtx = Depends(get_
     if not claimed:
         return {"message": "This payment was already confirmed.", "payment_status": "captured", "bonus_seats_added": 0}
 
-    await tenants_collection.update_one(
+    updated_tenant = await tenants_collection.find_one_and_update(
         {"tenant_id": ctx["tenant_id"]},
         {"$inc": {"bonus_admin_seats": payment["quantity"]}, "$set": {"updated_at": now}},
+        return_document=ReturnDocument.AFTER,
     )
     await log_activity(
         ctx.get("admin_name", ""), f"Purchased {payment['quantity']} extra admin seat(s)", type="create",
     )
+
+    admin_email = ctx.get("admin_email")
+    if admin_email:
+        plan_cfg = retailer_plan_config((updated_tenant or {}).get("plan", "basic"))
+        new_total_seats = _effective_admin_limit(plan_cfg, int((updated_tenant or {}).get("bonus_admin_seats") or 0))
+        try:
+            await send_seat_addon_receipt_email(
+                admin_email, ctx.get("admin_name") or "there", payment["quantity"], payment["amount_inr"], new_total_seats,
+            )
+        except Exception:
+            pass
+
     return {
         "message": f"Payment captured — {payment['quantity']} admin seat(s) added.",
         "payment_status": "captured",

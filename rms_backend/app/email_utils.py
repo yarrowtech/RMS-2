@@ -741,3 +741,35 @@ async def send_support_ticket_reply_email(
         recipients=[email],
         html=_wrap(PRIMARY, "New Support Reply", body, "RMS Support"),
     )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 15. RETAILER — Admin seat add-on payment receipt
+# ─────────────────────────────────────────────────────────────────────────────
+async def send_seat_addon_receipt_email(
+    email: EmailStr, name: str, quantity: int, price_inr: int, new_total_seats,
+) -> bool:
+    """Sent right after an HQ Admin's Razorpay payment for extra admin seats
+    is captured — see retailer_seat_addon_routes.py. Confirms the charge and
+    the tenant's new effective seat count (or "Unlimited" for Enterprise,
+    where an add-on purchase can't actually happen, but kept generic)."""
+    seats_text = f"{quantity} extra admin seat{'s' if quantity != 1 else ''}"
+    total_text = "Unlimited" if new_total_seats is None else str(new_total_seats)
+    body = f"""
+      <h2 style="color:#222;margin-bottom:8px;">Hi {name},</h2>
+      <p style="font-size:15px;color:#444;">
+        Your payment for <strong style="color:{SUCCESS};">{seats_text}</strong> was received and applied immediately.
+      </p>
+      <div style="margin:20px 0;padding:16px;border:1px solid #bbf7d0;background:#f0fdf4;border-radius:10px;">
+        <p style="margin:0;color:#166534;font-size:13px;font-weight:700;">Amount charged</p>
+        <p style="margin:6px 0 0;color:#052e16;font-size:20px;font-weight:800;">Rs. {price_inr:,.0f}</p>
+        <p style="margin:10px 0 0;color:#166534;font-size:13px;">New total admin seats: {total_text}</p>
+      </div>
+      {_divider()}
+      {_note("This is an automated payment receipt from CitiMart RMS.")}
+    """
+    return await _send(
+        subject=f"Payment received — {seats_text} added",
+        recipients=[email],
+        html=_wrap(SUCCESS, "Payment Received", body, "© CitiMart RMS · Retailer Admin Seats"),
+    )
