@@ -5,6 +5,7 @@ import {
   Factory, Globe2, Handshake, Layers3, LockKeyhole, Mail, Menu, PackageCheck,
   ShieldCheck, ShoppingCart, Store, Truck, UserPlus, Users, Workflow,
   Zap, Crown, TrendingUp, Sparkles, Rocket, Bot, MessageCircle, X, ChevronRight,
+  GitBranch,
 } from "lucide-react";
 import { API_BASE_URL } from "../config/api.js";
 
@@ -60,6 +61,23 @@ const VENDOR_THEME = {
   standard: { icon: TrendingUp, accent: "from-indigo-500 to-violet-600", badge: "bg-indigo-50 text-indigo-700 ring-indigo-200" },
   premium:  { icon: Crown,      accent: "from-amber-400 to-orange-500",  badge: "bg-amber-50 text-amber-700 ring-amber-200" },
 };
+
+// Static — mirrors PRICE_PER_SEAT_INR (retailer_seat_addon_routes.py) and
+// PRICE_PER_STORE_INR_PER_MONTH (retailer_store_addon_routes.py). Both
+// routes are HQ-authenticated, so this public page can't fetch them live;
+// keep these two numbers in sync with the backend constants by hand.
+const RETAILER_ADDONS = [
+  {
+    key: "seats", icon: UserPlus, price: 5000, unit: "one-time / seat",
+    title: "Extra admin seats", accent: "from-indigo-500 to-violet-600",
+    description: "Past your plan's admin limit? Add seats one at a time instead of upgrading the whole plan. Permanent — never expires.",
+  },
+  {
+    key: "stores", icon: GitBranch, price: 15000, unit: "/month / store",
+    title: "Extra store/branch slots", accent: "from-violet-600 to-fuchsia-600",
+    description: "Need one more location than your plan includes? Add store slots on a recurring monthly basis, on Basic or Professional.",
+  },
+];
 
 const STORE_THEME = {
   basic:        { icon: Store,  accent: "from-slate-400 to-slate-600",    badge: "bg-slate-100 text-slate-600 ring-slate-200" },
@@ -316,6 +334,32 @@ export default function ProfessionalRoleSelector() {
                 }) : <p className="col-span-3 text-center text-sm text-slate-400">Loading plans…</p>}
               </div>
               <p className="mx-auto mt-5 max-w-xl text-center text-xs text-slate-400">Every plan is reviewed by RMS before activation. Basic keeps your current single-store workflow; Professional and Enterprise start you on the multi-store HQ workspace.</p>
+            </div>
+
+            <div className="mx-auto mt-14 max-w-5xl">
+              <h3 className="text-center text-sm font-extrabold uppercase tracking-[0.14em] text-slate-500">Need a little more room? Add-ons for Basic &amp; Professional</h3>
+              <div className="mt-6 grid gap-5 sm:grid-cols-2">
+                {RETAILER_ADDONS.map((addon) => {
+                  const Icon = addon.icon;
+                  return (
+                    <div key={addon.key} className="group relative overflow-hidden rounded-3xl border border-white bg-white p-6 shadow-[0_18px_50px_rgba(15,23,42,0.08)] ring-1 ring-slate-200/70 transition duration-300 hover:-translate-y-1 hover:shadow-[0_24px_65px_rgba(15,23,42,0.14)]">
+                      <span className={`absolute inset-x-0 top-0 h-1.5 bg-gradient-to-r ${addon.accent}`} />
+                      <div className="flex items-center gap-4">
+                        <span className={`grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-gradient-to-br ${addon.accent} text-white`}><Icon size={20} /></span>
+                        <div>
+                          <p className="text-sm font-extrabold text-slate-950">{addon.title}</p>
+                          <p className="flex items-baseline gap-1">
+                            <span className="text-2xl font-black tracking-tight text-slate-950">₹{addon.price.toLocaleString("en-IN")}</span>
+                            <span className="text-xs font-bold text-slate-400">{addon.unit}</span>
+                          </p>
+                        </div>
+                      </div>
+                      <p className="mt-4 text-xs leading-6 text-slate-600">{addon.description}</p>
+                    </div>
+                  );
+                })}
+              </div>
+              <p className="mx-auto mt-5 max-w-xl text-center text-xs text-slate-400">Purchased in-app by your HQ Admin after signup — no need to re-apply or wait for review.</p>
             </div>
           </div>
         </section>
