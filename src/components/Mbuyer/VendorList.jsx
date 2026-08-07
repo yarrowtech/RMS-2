@@ -118,13 +118,6 @@ const Vendors = ({ showQuestionnaires = true }) => {
     return `https://wa.me/${num}?text=${encodeURIComponent(msg)}`;
   }
 
-  function buildMailtoLink(email, contactName, companyName, regLink) {
-    if (!email) return null;
-    const subject = `CitiMart Vendor Registration Invite — ${companyName}`;
-    const body    = `Hi ${contactName},\n\nCitiMart is pleased to invite ${companyName} to join our vendor network.\n\nPlease complete your registration using the link below (valid for 7 days):\n\n${regLink}\n\nIf you have any questions, please reply to this email.\n\nRegards,\nCitiMart Merchandising Team`;
-    return `mailto:${email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-  }
-
   // ── Add Vendor: generate invite link ──────────────────────────────────────
   async function handleGenerateLink(formValues) {
     try {
@@ -276,7 +269,7 @@ const Vendors = ({ showQuestionnaires = true }) => {
       if (!res.ok) throw new Error("Rejection failed");
       alert("Vendor rejected successfully.");
       setSelectedVendor(null); fetchAll();
-    } catch (err) { alert("Error rejecting vendor"); }
+    } catch { alert("Error rejecting vendor"); }
   }
 
   async function handleDelete(id) {
@@ -287,7 +280,7 @@ const Vendors = ({ showQuestionnaires = true }) => {
       });
       if (!res.ok) throw new Error("Delete failed");
       alert("Vendor deleted successfully"); fetchAll();
-    } catch (err) { alert("Error deleting vendor"); }
+    } catch { alert("Error deleting vendor"); }
   }
 
   async function handleDeactivate(id) {
@@ -298,7 +291,7 @@ const Vendors = ({ showQuestionnaires = true }) => {
       });
       if (!res.ok) throw new Error("Deactivation failed");
       alert("Vendor deactivated successfully"); fetchAll();
-    } catch (err) { alert("Error deactivating vendor"); }
+    } catch { alert("Error deactivating vendor"); }
   }
 
   // ── Filter ─────────────────────────────────────────────────────────────────
@@ -956,6 +949,18 @@ function splitCsvLine(line) {
   return out;
 }
 
+// Shared by both CSV and Excel paths — `raw` is a plain object keyed by
+// lowercased/underscored header name, however it was produced.
+function normalizeRawRow(raw) {
+  const row = {};
+  for (const [key, aliases] of Object.entries(CSV_COLUMN_ALIASES)) {
+    for (const alias of aliases) {
+      if (raw[alias]) { row[key] = String(raw[alias]).trim(); break; }
+    }
+  }
+  return row;
+}
+
 function parseCsv(text) {
   const lines = text.split(/\r\n|\n|\r/).map((l) => l.trim()).filter(Boolean);
   if (!lines.length) return [];
@@ -964,13 +969,22 @@ function parseCsv(text) {
     const cells = splitCsvLine(line);
     const raw = {};
     headers.forEach((h, i) => { raw[h] = cells[i] || ""; });
-    const row = {};
-    for (const [key, aliases] of Object.entries(CSV_COLUMN_ALIASES)) {
-      for (const alias of aliases) {
-        if (raw[alias]) { row[key] = raw[alias]; break; }
-      }
-    }
-    return row;
+    return normalizeRawRow(raw);
+  }).filter((row) => row.company_name || row.mobile);
+}
+
+async function parseXlsx(file) {
+  const XLSX = await import("xlsx");
+  const buf = await file.arrayBuffer();
+  const workbook = XLSX.read(buf, { type: "array" });
+  const sheet = workbook.Sheets[workbook.SheetNames[0]];
+  const sheetRows = XLSX.utils.sheet_to_json(sheet, { defval: "" });
+  return sheetRows.map((sheetRow) => {
+    const raw = {};
+    Object.entries(sheetRow).forEach(([header, value]) => {
+      raw[String(header).toLowerCase().trim().replace(/\s+/g, "_")] = String(value ?? "").trim();
+    });
+    return normalizeRawRow(raw);
   }).filter((row) => row.company_name || row.mobile);
 }
 
@@ -987,7 +1001,18 @@ function BulkImportModal({ onClose, onDone }) {
     setError("");
   };
 
-  const handleFile = (file) => {
+  const handleFile = async (file) => {
+    setError("");
+    const isExcel = /\.xlsx?$/i.test(file.name) || file.type.includes("spreadsheet") || file.type.includes("excel");
+    if (isExcel) {
+      setRawText(""); // no meaningful raw text to show for a binary file — preview table covers it
+      try {
+        setParsedRows(await parseXlsx(file));
+      } catch {
+        setError("Could not read that Excel file. Make sure it's a valid .xlsx/.xls workbook.");
+      }
+      return;
+    }
     const reader = new FileReader();
     reader.onload = () => handleText(String(reader.result || ""));
     reader.readAsText(file);
@@ -1018,8 +1043,8 @@ function BulkImportModal({ onClose, onDone }) {
       <div className="flex items-center gap-3 bg-gradient-to-r from-violet-600 to-indigo-700 px-6 py-5">
         <UserPlus className="h-6 w-6 text-white" />
         <div>
-          <h2 className="text-lg font-semibold text-white">Import Vendors from CSV</h2>
-          <p className="mt-0.5 text-xs text-indigo-200">Bulk-create invites — same links you'd generate one at a time</p>
+          <h2 className="text-lg font-semibold text-white">Import Vendors</h2>
+          <p className="mt-0.5 text-xs text-indigo-200">CSV or Excel — bulk-create invites, same links you'd generate one at a time</p>
         </div>
         <button onClick={onClose} className="ml-auto rounded-lg p-1.5 text-indigo-100 hover:bg-white/10"><X size={20} /></button>
       </div>
@@ -1034,8 +1059,9 @@ function BulkImportModal({ onClose, onDone }) {
             </div>
 
             <label className="block">
-              <span className="text-sm font-bold text-slate-700">Upload CSV file</span>
-              <input type="file" accept=".csv,text/csv" onChange={(e) => e.target.files[0] && handleFile(e.target.files[0])}
+              <span className="text-sm font-bold text-slate-700">Upload CSV or Excel file</span>
+              <input type="file" accept=".csv,text/csv,.xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
+                onChange={(e) => e.target.files[0] && handleFile(e.target.files[0])}
                 className="mt-1.5 block w-full text-sm text-slate-600 file:mr-3 file:rounded-lg file:border-0 file:bg-violet-50 file:px-3 file:py-2 file:text-xs file:font-bold file:text-violet-700 hover:file:bg-violet-100" />
             </label>
 
