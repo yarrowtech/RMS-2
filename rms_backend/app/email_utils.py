@@ -873,3 +873,31 @@ async def send_retailer_subscription_expiring_email(
         recipients=[email],
         html=_wrap(color, "Subscription Reminder", body, "© CitiMart RMS · Retailer Plans"),
     )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 19. VENDOR — Subscription payment failed (Razorpay payment.failed webhook)
+# ─────────────────────────────────────────────────────────────────────────────
+async def send_payment_failed_email(email: EmailStr, name: str, tier_label: str, reason: str) -> bool:
+    """Sent from the razorpay_webhook payment.failed branch (subscription_routes.py)
+    — previously that event only updated the payment record silently, so a
+    vendor whose card was declined mid-checkout never found out unless they
+    happened to still be on the checkout page watching it fail live."""
+    body = f"""
+      <h2 style="color:#222;margin-bottom:8px;">Hi {name},</h2>
+      <p style="font-size:15px;color:#444;">
+        Your payment for the <strong style="color:{DANGER};">{tier_label}</strong> plan could not be completed.
+      </p>
+      <div style="margin:20px 0;padding:16px;border:1px solid #fecaca;background:#fef2f2;border-radius:10px;">
+        <p style="margin:0;color:#991b1b;font-size:13px;font-weight:700;">Reason</p>
+        <p style="margin:6px 0 0;color:#7f1d1d;font-size:14px;">{reason}</p>
+      </div>
+      <p style="font-size:14px;color:#555;margin-top:12px;">No charge was made. You can try again anytime from your subscription page.</p>
+      {_divider()}
+      {_note("This is an automated payment notice from CitiMart RMS.")}
+    """
+    return await _send(
+        subject=f"Payment failed — {tier_label} plan",
+        recipients=[email],
+        html=_wrap(DANGER, "Payment Failed", body, "© CitiMart RMS · Vendor Subscriptions"),
+    )

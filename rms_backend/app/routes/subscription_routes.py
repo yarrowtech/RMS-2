@@ -45,7 +45,7 @@ from urllib import request as urlrequest
 
 from ..db import vendor_subscriptions_collection, vendor_subscription_payments_collection, vendor_catalogue_collection, vendors_collection
 from ..config import settings
-from ..email_utils import send_subscription_receipt_email, send_subscription_expiring_email
+from ..email_utils import send_payment_failed_email, send_subscription_receipt_email, send_subscription_expiring_email
 from ..activity_log import log_activity
 from .vendor_routes import decode_token
 from .auth_routes import get_current_superadmin
@@ -713,11 +713,12 @@ async def razorpay_webhook(request: Request):
             return {"status": "activated", "catalogue_items_extended": extended_count}
         return {"status": "already_processed"}
     if event_name == "payment.failed":
+        failure_reason = str(payment_entity.get("error_description") or "Payment failed")
         await vendor_subscription_payments_collection.update_one(
             {"_id": payment["_id"]},
             {"$set": {
                 "status": "failed",
-                "failure_reason": str(payment_entity.get("error_description") or "Payment failed"),
+                "failure_reason": failure_reason,
                 "updated_at": datetime.utcnow(),
             }, "$addToSet": {"webhook_event_ids": event_id or f"{event_name}:{payment_id}"}},
         )
@@ -725,6 +726,16 @@ async def razorpay_webhook(request: Request):
             {"vendor_id": payment["vendor_id"], "pending_razorpay_order_id": order_id},
             {"$set": {"pending_payment_status": "failed", "updated_at": datetime.utcnow()}},
         )
+        vendor = await vendors_collection.find_one({"_id": payment["vendor_id"]})
+        if vendor and vendor.get("email"):
+            tier_label = TIER_CONFIG.get(payment.get("tier"), {}).get("label", str(payment.get("tier", "")).title())
+            try:
+                await send_payment_failed_email(
+                    vendor["email"], vendor.get("name") or vendor.get("vendor_name") or "there",
+                    tier_label, failure_reason,
+                )
+            except Exception:
+                pass
         return {"status": "payment_failed"}
 
     return {"status": "received", "event": event_name}
