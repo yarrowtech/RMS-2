@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { API_BASE_URL } from "../../config/api.js";
 import VendorB2BReturns from "./VendorB2BReturns.jsx";
+import TaxProfileBanner from "./TaxProfileBanner.jsx";
 import {
   BadgeIndianRupee, Check, CheckCircle2, ClipboardPlus, Download, FileText, Loader2,
   PackageCheck, RefreshCw, Send, ShoppingCart, Truck, UsersRound,
@@ -59,7 +60,7 @@ function QuoteForm({ onSubmit, saving }) {
   </form>;
 }
 
-export default function VendorB2BTrade() {
+export default function VendorB2BTrade({ onNavigate }) {
   const [tab, setTab] = useState("rfqs");
   const [partners, setPartners] = useState([]);
   const [rfqs, setRfqs] = useState([]);
@@ -154,6 +155,8 @@ export default function VendorB2BTrade() {
       </div>
       <p className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs leading-5 text-amber-800"><b>Important:</b> record a B2B receipt only after goods arrive. If a retailer has returned goods, use the separate Supplier Returns tab instead.</p>
     </section>
+
+    <TaxProfileBanner onNavigate={onNavigate} context="your B2B orders and invoices" />
 
     <div className="flex flex-wrap gap-2 rounded-2xl border border-slate-200 bg-white p-2 shadow-sm">{[["rfqs", ClipboardPlus, "RFQs & Quotations"], ["orders", PackageCheck, "Purchase & Sales Orders"], ["returns", Truck, "B2B Returns"], ["invoices", FileText, "B2B Invoices"]].map(([key, Icon, label]) => <button key={key} onClick={() => setTab(key)} className={`flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition ${tab === key ? "bg-teal-600 text-white shadow-sm" : "text-slate-500 hover:bg-slate-50 hover:text-slate-900"}`}><Icon className="h-4 w-4" />{label}</button>)}</div>
     {error && <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">{error}</div>}

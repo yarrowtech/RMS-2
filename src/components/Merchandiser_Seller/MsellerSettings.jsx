@@ -33,12 +33,44 @@ function Toggle({ checked, onChange, title, text, disabled = false }) {
   return <div className="flex items-start justify-between gap-4 rounded-2xl border border-slate-100 bg-slate-50/70 px-4 py-3.5"><div><p className="text-sm font-bold text-slate-800">{title}</p><p className="mt-1 text-xs leading-5 text-slate-500">{text}</p></div><button type="button" disabled={disabled} onClick={() => onChange(!checked)} aria-pressed={checked} className={`relative mt-0.5 h-6 w-11 shrink-0 rounded-full transition ${checked ? "bg-teal-600" : "bg-slate-300"} ${disabled ? "cursor-not-allowed opacity-50" : ""}`}><span className={`absolute top-1 h-4 w-4 rounded-full bg-white shadow-sm transition ${checked ? "left-6" : "left-1"}`} /></button></div>;
 }
 
+function TaxProfileGuide() {
+  const steps = [
+    ["1", "Why we ask", "PAN and GST identify your business on commercial documents — invoices and purchase orders — you exchange with retailers on RMS."],
+    ["2", "Where to find them", "Use your business's own PAN card and GST registration certificate — RMS doesn't generate or verify these for you."],
+    ["3", "Not required to sign up", "You could register and log in without them — they're only needed once you're ready to trade, not before."],
+    ["4", "Format", "PAN is 10 characters (e.g. ABCDE1234F). GSTIN is 15 characters and starts with your state code (e.g. 27 for Maharashtra)."],
+    ["5", "Who sees this", "Only retailers you're approved with — never shown publicly or to other vendors."],
+    ["6", "Why bother early", "Some retailers ask for these before approving larger purchase orders — adding them now avoids a delay later."],
+  ];
+  return (
+    <details className="overflow-hidden rounded-2xl border border-teal-100 bg-gradient-to-br from-white to-teal-50 shadow-sm">
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-4 px-5 py-4">
+        <div className="flex items-center gap-3">
+          <span className="grid h-9 w-9 place-items-center rounded-xl bg-teal-100 text-sm font-black text-teal-700">i</span>
+          <div><p className="text-sm font-black text-slate-900">Why add PAN &amp; GST?</p><p className="mt-0.5 text-xs text-slate-500">What these are for, and why they aren't asked at signup</p></div>
+        </div>
+        <span className="rounded-full border border-teal-200 bg-white px-3 py-1 text-[11px] font-bold text-teal-700">Show guide</span>
+      </summary>
+      <div className="border-t border-teal-100 px-5 pb-5 pt-4">
+        <div className="grid gap-2.5 sm:grid-cols-2 xl:grid-cols-3">
+          {steps.map(([number, title, text]) => (
+            <div key={number} className="flex gap-2.5 rounded-xl border border-teal-100 bg-white p-3">
+              <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-teal-600 text-[11px] font-black text-white">{number}</span>
+              <div><p className="text-xs font-black text-slate-900">{title}</p><p className="mt-1 text-[11px] leading-5 text-slate-500">{text}</p></div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </details>
+  );
+}
+
 function Card({ icon: Icon, title, subtitle, children, action }) {
   return <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-[0_14px_36px_rgba(15,23,42,0.06)]"><header className="flex items-start justify-between gap-4 border-b border-slate-100 px-5 py-4 sm:px-6"><div className="flex min-w-0 items-start gap-3"><span className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-teal-50 text-teal-700 ring-1 ring-teal-100"><Icon className="h-5 w-5" /></span><div><h2 className="text-base font-black text-slate-900">{title}</h2>{subtitle && <p className="mt-1 text-xs leading-5 text-slate-500">{subtitle}</p>}</div></div>{action}</header><div className="p-5 sm:p-6">{children}</div></section>;
 }
 
 export default function MsellerSettings({ onNavigate = () => {} }) {
-  const [profile, setProfile] = useState({ name: "", email: "", contactMobile: "", address: "", city: "", website: "" });
+  const [profile, setProfile] = useState({ name: "", email: "", contactMobile: "", address: "", city: "", website: "", pan: "", gstin: "", gstCategory: "", gstState: "" });
   const [notifications, setNotifications] = useState(DEFAULT_NOTIFICATIONS);
   const [orderPreferences, setOrderPreferences] = useState(DEFAULT_ORDER_PREFERENCES);
   const [subscription, setSubscription] = useState(null);
@@ -71,6 +103,10 @@ export default function MsellerSettings({ onNavigate = () => {} }) {
         address: account.address || "",
         city: account.city || "",
         website: account.website || "",
+        pan: account.pan || "",
+        gstin: account.gstin || "",
+        gstCategory: account.gstCategory || "",
+        gstState: account.gstState || "",
       });
       setNotifications({ ...DEFAULT_NOTIFICATIONS, ...(settings.notification_preferences || {}) });
       setOrderPreferences({ ...DEFAULT_ORDER_PREFERENCES, ...(settings.order_preferences || {}) });
@@ -118,6 +154,20 @@ export default function MsellerSettings({ onNavigate = () => {} }) {
       <div className="space-y-5"><Card icon={ShieldCheck} title="Account security" subtitle="Your vendor login is protected separately from retailer department access."><div className="space-y-3"><div className="flex items-center gap-3 rounded-2xl border border-emerald-100 bg-emerald-50 p-4"><ShieldCheck className="h-5 w-5 text-emerald-600" /><div><p className="text-sm font-bold text-emerald-900">Vendor-only access</p><p className="mt-0.5 text-xs leading-5 text-emerald-800">Your account cannot access a retailer's internal departments.</p></div></div><p className="text-xs leading-5 text-slate-500">For password recovery or an email-address change, contact RMS support from Help & Support.</p><button type="button" onClick={() => onNavigate("help-support")} className="inline-flex items-center gap-1.5 text-xs font-extrabold text-teal-700 hover:text-teal-900">Open Help & Support <ChevronRight className="h-3.5 w-3.5" /></button></div></Card>
       <Card icon={Globe2} title="Plan & visibility" subtitle="Your plan controls feature limits, not retailer department access."><div className="flex items-center justify-between rounded-2xl border border-indigo-100 bg-indigo-50 p-4"><div><p className="text-[10px] font-black uppercase tracking-[0.13em] text-indigo-500">{planStatus}</p><p className="mt-1 text-lg font-black text-indigo-950">{planLabel}</p></div><button type="button" onClick={() => onNavigate("subscription")} className="rounded-xl bg-white px-3 py-2 text-xs font-extrabold text-indigo-700 shadow-sm ring-1 ring-indigo-100">Manage plan</button></div></Card></div>
     </div>
+
+    <TaxProfileGuide />
+
+    <Card icon={ShieldCheck} title="Tax & registration" subtitle="Not collected at signup — add these once you're ready. Used on commercial documents with retailers." action={<button type="button" onClick={() => save("profile")} disabled={saving !== ""} className="inline-flex h-10 items-center gap-2 rounded-xl bg-teal-600 px-3.5 text-xs font-extrabold text-white transition hover:bg-teal-700 disabled:opacity-50">{saving === "profile" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}Save</button>}>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Field label="PAN" value={profile.pan} onChange={(value) => setProfile((p) => ({ ...p, pan: value.toUpperCase() }))} placeholder="ABCDE1234F" hint="Format: AAAAA9999A" />
+        <Field label="GSTIN" value={profile.gstin} onChange={(value) => setProfile((p) => ({ ...p, gstin: value.toUpperCase() }))} placeholder="22AAAAA0000A1Z5" />
+        <Field label="GST category" value={profile.gstCategory} onChange={(value) => setProfile((p) => ({ ...p, gstCategory: value }))} placeholder="Normal Registered / Composition / Unregistered" />
+        <Field label="GST state" value={profile.gstState} onChange={(value) => setProfile((p) => ({ ...p, gstState: value }))} placeholder="e.g. 27 - Maharashtra (MH)" />
+      </div>
+      {(!profile.pan || !profile.gstin) && (
+        <p className="mt-4 flex items-center gap-2 rounded-xl bg-amber-50 px-3 py-3 text-xs font-semibold text-amber-800">Retailers may ask for these before approving larger orders — worth completing early.</p>
+      )}
+    </Card>
 
     <div className="grid gap-5 xl:grid-cols-2">
       <Card icon={BellRing} title="Notification preferences" subtitle="Choose which business events RMS should highlight for this vendor account." action={<button type="button" onClick={() => save("preferences")} disabled={saving !== ""} className="inline-flex h-10 items-center gap-2 rounded-xl bg-teal-600 px-3.5 text-xs font-extrabold text-white transition hover:bg-teal-700 disabled:opacity-50">{saving === "preferences" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}Save</button>}><div className="space-y-2.5"><Toggle checked={notifications.purchase_orders} onChange={(value) => setNotifications((current) => ({ ...current, purchase_orders: value }))} title="Purchase orders" text="Notify when a retailer assigns a PO or its status changes." /><Toggle checked={notifications.rfqs_and_messages} onChange={(value) => setNotifications((current) => ({ ...current, rfqs_and_messages: value }))} title="RFQs and buyer messages" text="Highlight new RFQs, negotiation updates and document conversations." /><Toggle checked={notifications.supplier_returns} onChange={(value) => setNotifications((current) => ({ ...current, supplier_returns: value }))} title="Supplier returns" text="Highlight returns raised for rejected receipt quantities." /><Toggle checked={notifications.email_alerts} onChange={(value) => setNotifications((current) => ({ ...current, email_alerts: value }))} title="Email alerts" text="Use your registered business email for important account notices." /><Toggle checked={notifications.whatsapp_alerts} onChange={(value) => setNotifications((current) => ({ ...current, whatsapp_alerts: value }))} title="WhatsApp alerts" text="Preference saved for future Meta WhatsApp automation." /></div></Card>

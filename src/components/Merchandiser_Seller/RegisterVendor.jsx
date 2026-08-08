@@ -408,6 +408,12 @@ import React, { useState, useEffect } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Building, CheckCircle2, RotateCcw, Eye, EyeOff } from "lucide-react";
 
+// "Retailer / store owner" is deliberately not offered here — retailers
+// onboard through a completely separate flow (/onboarding), and offering
+// it in vendor registration confused vendors about which form they were
+// filling out. (The "retailer" business_type tag itself still exists
+// server-side for vendor-to-vendor B2B classification — see My Categories,
+// post-login — this list only controls what's selectable at signup.)
 const BUSINESS_TYPES = [
   ["general_vendor", "General vendor"],
   ["wholesaler", "Wholesaler"],
@@ -416,7 +422,6 @@ const BUSINESS_TYPES = [
   ["exporter", "Exporter"],
   ["fabric_supplier", "Fabric supplier"],
   ["job_worker", "Job-work partner"],
-  ["retailer", "Retailer / store owner"],
 ];
 
 const RegisterVendor = () => {
@@ -430,6 +435,7 @@ const RegisterVendor = () => {
 
   const [loading,      setLoading]      = useState(false);
   const [success,      setSuccess]      = useState(false);
+  const [approved,     setApproved]     = useState(false);
   const [error,        setError]        = useState("");
   const [tokenLoading, setTokenLoading] = useState(!!token);
   const [tokenError,   setTokenError]   = useState("");
@@ -482,7 +488,7 @@ const RegisterVendor = () => {
     businessType: "",
     productType: "", ownerName: "", contactName: "", contactMobile: "",
     email: "", website: "", address: "", cityName: "", state: "",
-    pincode: "", pan: "", gstCategory: "", gstin: "", gstState: "",
+    pincode: "",
     password: "", confirmPw: "",
   };
 
@@ -553,7 +559,7 @@ const RegisterVendor = () => {
     setError("");
 
     if (!vendorForm.name || !vendorForm.email || !vendorForm.contactMobile || !vendorForm.businessType ||
-        !vendorForm.productType || !vendorForm.pan) {
+        !vendorForm.productType) {
       setError("Please fill all required fields marked with *"); return;
     }
     if (!/\S+@\S+\.\S+/.test(vendorForm.email)) {
@@ -617,6 +623,7 @@ const RegisterVendor = () => {
         });
       }
 
+      setApproved(json.status === "Approved");
       setSuccess(true);
       setVendorForm(initialState);
     } catch (err) {
@@ -661,10 +668,10 @@ const RegisterVendor = () => {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-gradient-to-br from-[#1e293b] via-[#0f172a] to-[#1e293b] text-white text-center p-6">
         <CheckCircle2 className="h-16 w-16 text-green-400 mb-4" />
-        <h2 className="text-2xl font-bold mb-2">Registration Successful!</h2>
+        <h2 className="text-2xl font-bold mb-2">{approved ? "You're approved!" : "Registration Successful!"}</h2>
         <p className="text-gray-300 mb-6 max-w-sm text-sm">
-          {token
-            ? "Your details have been submitted. CitiMart will review and approve your profile shortly."
+          {approved
+            ? "CitiMart already invited you, so your account is active immediately — log in with the password you just set."
             : requestedPlan === "free"
               ? "Your vendor details have been submitted for review. You'll receive an approval email once verified by the admin."
               : `Your ${requestedPlanLabel} plan request has been submitted for review. Paid features activate only after approval and secure payment.`}
@@ -797,24 +804,6 @@ const RegisterVendor = () => {
               onChange={handleChange("ownerName")} placeholder="Owner / Director Name" />
           </div>
 
-          {/* Tax & Registration */}
-          <Section title="Tax & Registration Details" color="bg-indigo-500" />
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <InputField label="PAN*" value={vendorForm.pan}
-              onChange={e => setVendorForm(p => ({ ...p, pan: e.target.value.toUpperCase() }))}
-              placeholder="ABCDE1234F" />
-            <SelectField label="GST Category" value={vendorForm.gstCategory}
-              onChange={handleChange("gstCategory")}
-              options={["Normal Registered", "Composition", "Unregistered"]} />
-            <InputField label="GST Identification No." value={vendorForm.gstin}
-              onChange={e => setVendorForm(p => ({ ...p, gstin: e.target.value.toUpperCase() }))}
-              placeholder="22AAAAA0000A1Z5" />
-            <SelectField label="GST State" value={vendorForm.gstState}
-              onChange={handleChange("gstState")}
-              options={["19 - West Bengal (WB)", "27 - Maharashtra (MH)", "07 - Delhi (DL)",
-                        "33 - Tamil Nadu (TN)", "09 - Uttar Pradesh (UP)"]} />
-          </div>
-
           {/* Contact */}
           <Section title="Contact & Communication" color="bg-pink-500" />
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -887,6 +876,9 @@ const RegisterVendor = () => {
             </>
           )}
 
+          <p className="text-xs text-gray-400 -mt-4">
+            PAN and GST details aren't collected here — you'll add them from your dashboard once you're logged in.
+          </p>
         </div>
 
         {/* FOOTER */}
