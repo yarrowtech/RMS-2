@@ -2,6 +2,7 @@ import { API_BASE_URL as APP_API_URL } from "../config/api.js";
 
 import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { createPortal } from "react-dom";
+import TaxProfileBanner from "./Merchandiser_Seller/TaxProfileBanner.jsx";
 
 /* ═══════════════════════════════════════════════════════════════════
    API CONSTANTS
@@ -263,8 +264,8 @@ const GLOBAL_CSS = `
 /* ═══════════════════════════════════════════════════════════════════
    ROOT COMPONENT
 ═══════════════════════════════════════════════════════════════════ */
-export default function PurchaseInvoiceManager({ vendorMode = false }) {
-  return vendorMode ? <VendorPurchaseInvoiceView /> : <AdminPurchaseInvoiceManager />;
+export default function PurchaseInvoiceManager({ vendorMode = false, onNavigate }) {
+  return vendorMode ? <VendorPurchaseInvoiceView onNavigate={onNavigate} /> : <AdminPurchaseInvoiceManager />;
 }
 
 function AdminPurchaseInvoiceManager() {
@@ -2021,7 +2022,7 @@ function VendorInvoiceGuide() {
     </details>
   );
 }
-function VendorPurchaseInvoiceView() {
+function VendorPurchaseInvoiceView({ onNavigate }) {
   const [invoices, setInvoices] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -2072,6 +2073,7 @@ function VendorPurchaseInvoiceView() {
         </div>
 
         <VendorInvoiceGuide />
+        <TaxProfileBanner onNavigate={onNavigate} context="your invoices" />
 
         {error && <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">{error}</div>}
 

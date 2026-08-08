@@ -397,11 +397,11 @@ export default function MSeller() {
       case "supplier-returns": return <VendorSupplierReturns />;
       case "job-work":       return <VendorJobWork />;
       case "role-operations": return <VendorRoleOperations businessTypes={vendorProfile?.business_type || []} />;
-      case "b2b-trade": return <VendorB2BTrade />;
-      case "b2b-stock": return <VendorB2BStock />;
+      case "b2b-trade": return <VendorB2BTrade onNavigate={setActiveTab} />;
+      case "b2b-stock": return <VendorB2BStock onNavigate={setActiveTab} />;
       case "inventory": return <VendorInventory />;
-      case "purchase-invoice": return <PurchaseInvoice vendorMode />;
-      case "finance":        return <VendorAnalytics />;
+      case "purchase-invoice": return <PurchaseInvoice vendorMode onNavigate={setActiveTab} />;
+      case "finance":        return <VendorAnalytics onNavigate={setActiveTab} />;
       case "retailers":      return <VendorRetailersTab />;
       case "network":        return <BusinessNetwork />;
       case "catalogue":      return <VendorCatalogueTab />;

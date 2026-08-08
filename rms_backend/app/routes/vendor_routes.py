@@ -48,6 +48,7 @@ from jose import jwt
 from datetime import datetime, timedelta
 from io import BytesIO
 from html import escape
+import re
 from ..db import (
     vendors_collection,
     vendor_tenant_links_collection,
@@ -181,10 +182,18 @@ async def _merge_link_with_identity(link: dict, vendor: dict) -> dict:
 # ---------------- Vendor APIs ----------------
 
 @vendor_bp.post("/register")
-async def register_vendor(request: Request):
+async def register_vendor(request: Request, background_tasks: BackgroundTasks):
     """
     Register a new vendor — creates or reuses a vendor IDENTITY, and always
-    creates a new PENDING relationship LINK for the resolved tenant.
+    creates a new relationship LINK for the resolved tenant.
+
+    Invite-link registrations auto-approve immediately: the buyer already
+    vetted this specific vendor by sending the invite, so a second manual
+    "Approve" click after they fill the form is redundant friction — the
+    vendor already set their password in this same request, so they can go
+    straight to login. Self-registration (no invite, vendor picked a
+    retailer off the public list) still needs manual HQ review, since there
+    was no prior vetting.
 
     Public route — no HQ auth, since the vendor doesn't have an account yet.
     tenant_id CANNOT come from a JWT here. Two ways it can be resolved:
@@ -370,15 +379,30 @@ async def register_vendor(request: Request):
     link_result = await vendor_tenant_links_collection.insert_many(link_docs)
     link_ids = [str(link_id) for link_id in link_result.inserted_ids]
 
+    # Invite-link registrations auto-approve — see the docstring above.
+    # tenant_ids is always exactly one entry on this path (locked to the
+    # invitation's own tenant), so there's exactly one link to finalize.
+    approval = None
+    if source == "invite_link":
+        vendor = await vendors_collection.find_one({"_id": vendor_id})
+        link = await vendor_tenant_links_collection.find_one({"_id": link_result.inserted_ids[0]})
+        if vendor and link:
+            approval = await _finalize_vendor_approval(
+                link, vendor, tenant_id, body.get("product_type", ""),
+                approver_name="System", approver_role="Auto-Approval", approver_department="Invite",
+                background_tasks=background_tasks,
+            )
+
     return {
-        "message":    "Vendor registered successfully",
-        "status":     "Pending",
+        "message":    "Vendor registered and approved — you can log in now." if approval else "Vendor registered successfully",
+        "status":     "Approved" if approval else "Pending",
         "vendor_id":  str(vendor_id),
         "link_id":    link_ids[0],
         "link_ids":   link_ids,
         "tenant_ids": tenant_ids,
         "business_type": registration_business_types,
         "requested_plan": requested_plan,
+        "vendor_code": (approval or {}).get("vendor_code"),
     }
 
 
@@ -402,6 +426,85 @@ async def get_approved_vendors(ctx: dict = Depends(get_hq_tenant)):
         if vendor:
             rows.append(await _merge_link_with_identity(link, vendor))
     return rows
+
+
+async def _finalize_vendor_approval(
+    link: dict, vendor: dict, tenant_id: str, product_type: str,
+    approver_name: str, approver_role: str, approver_department: str,
+    background_tasks: BackgroundTasks,
+) -> dict:
+    """Shared by the manual HQ approve_vendor() below and register_vendor()'s
+    invite-link auto-approval — vendor code assignment, division/section/
+    department mapping, and the "you're in" email are identical either way,
+    only who/what triggered the approval differs."""
+    mapping = await product_mapping_collection.find_one(
+        {"tenant_id": tenant_id, "product_type": {"$regex": product_type or link.get("product_type", ""), "$options": "i"}}
+    )
+    if mapping:
+        division, section, department = mapping.get("division"), mapping.get("section"), mapping.get("department")
+    else:
+        division, section, department = "Uncategorized", "-", "-"
+
+    # Vendor code — scoped per tenant, so numbering is independent per retailer
+    last_link = await vendor_tenant_links_collection.find_one(
+        {"vendor_code": {"$exists": True}, "tenant_id": tenant_id},
+        sort=[("vendor_code", -1)]
+    )
+    if last_link and "vendor_code" in last_link:
+        try:
+            new_num = int(last_link["vendor_code"].split("-")[1]) + 1
+        except Exception:
+            new_num = 1
+    else:
+        new_num = 1
+    vendor_code = f"VEN-{new_num:05d}"
+
+    await vendor_tenant_links_collection.update_one(
+        {"_id": link["_id"]},
+        {
+            "$set": {
+                "status":      "Approved",
+                "division":    division,
+                "section":     section,
+                "department":  department,
+                "vendor_code": vendor_code,
+                "approved_at": datetime.utcnow(),
+            },
+            "$push": {
+                "approvals": {
+                    "role": approver_role, "approved_by": approver_name,
+                    "department": approver_department, "time": datetime.utcnow(),
+                }
+            },
+        }
+    )
+
+    # Password-setup email only needed if this identity has no password yet.
+    # An invite-link registrant already set one during registration itself,
+    # so this branch only ever fires for the manual-approval path (a
+    # self-registered or pre-password-era vendor).
+    if not vendor.get("password_set"):
+        setup_token = create_token(
+            {"vendor_id": str(vendor["_id"]), "email": vendor["email"]},
+            expires_in=604800,
+        )
+        setup_link = frontend_url(f'merchandiser-seller/setup-password?token={setup_token}')
+        background_tasks.add_task(
+            send_vendor_confirmation_email,
+            vendor["email"], vendor.get("name", ""), vendor.get("brandName", "Your Brand"), setup_link,
+        )
+        email_note = "Confirmation email sent (valid 7 days) — please set your password to log in."
+    else:
+        email_note = f"{vendor.get('name','This vendor')} already has login access; this retailer relationship is now live on their next login."
+
+    await log_activity(
+        approver_name, f"Approved vendor {vendor.get('name', vendor_code)} ({vendor_code})", type="create",
+    )
+
+    return {
+        "vendor_code": vendor_code, "division": division, "section": section,
+        "department": department, "email_note": email_note,
+    }
 
 
 @vendor_bp.post("/approve/{link_id}")
@@ -452,74 +555,15 @@ async def approve_vendor(
             approver_department = approver.get("department", approver_department)
             approver_role = approver.get("department", approver_role)
 
-    mapping = await product_mapping_collection.find_one(
-        {"tenant_id": ctx["tenant_id"], "product_type": {"$regex": product_type or link.get("product_type", ""), "$options": "i"}}
-    )
-    if mapping:
-        division, section, department = mapping.get("division"), mapping.get("section"), mapping.get("department")
-    else:
-        division, section, department = "Uncategorized", "-", "-"
-
-    # Vendor code — scoped per tenant, so numbering is independent per retailer
-    last_link = await vendor_tenant_links_collection.find_one(
-        {"vendor_code": {"$exists": True}, "tenant_id": ctx["tenant_id"]},
-        sort=[("vendor_code", -1)]
-    )
-    if last_link and "vendor_code" in last_link:
-        try:
-            new_num = int(last_link["vendor_code"].split("-")[1]) + 1
-        except Exception:
-            new_num = 1
-    else:
-        new_num = 1
-    vendor_code = f"VEN-{new_num:05d}"
-
-    await vendor_tenant_links_collection.update_one(
-        {"_id": link["_id"]},
-        {
-            "$set": {
-                "status":      "Approved",
-                "division":    division,
-                "section":     section,
-                "department":  department,
-                "vendor_code": vendor_code,
-                "approved_at": datetime.utcnow(),
-            },
-            "$push": {
-                "approvals": {
-                    "role": approver_role, "approved_by": approver_name,
-                    "department": approver_department, "time": datetime.utcnow(),
-                }
-            },
-        }
-    )
-
-    # Password-setup email only needed the FIRST time this identity is
-    # approved anywhere — if they already set a password (approved
-    # previously at another tenant), they already have login access and
-    # just gained a second retailer relationship; no new setup link needed.
-    if not vendor.get("password_set"):
-        setup_token = create_token(
-            {"vendor_id": str(vendor["_id"]), "email": vendor["email"]},
-            expires_in=604800,
-        )
-        setup_link = frontend_url(f'merchandiser-seller/setup-password?token={setup_token}')
-        background_tasks.add_task(
-            send_vendor_confirmation_email,
-            vendor["email"], vendor.get("name", ""), vendor.get("brandName", "Your Brand"), setup_link,
-        )
-        email_note = "Confirmation email sent (valid 7 days) — please set your password to log in."
-    else:
-        email_note = f"{vendor.get('name','This vendor')} already has login access; this retailer relationship is now live on their next login."
-
-    await log_activity(
-        approver_name, f"Approved vendor {vendor.get('name', vendor_code)} ({vendor_code})", type="create",
+    result = await _finalize_vendor_approval(
+        link, vendor, ctx["tenant_id"], product_type,
+        approver_name, approver_role, approver_department, background_tasks,
     )
 
     return {
-        "message": f"✅ Vendor {vendor_code} approved by {approver_name} ({approver_role}, {approver_department}). {email_note}",
-        "vendor_code": vendor_code,
-        "division": division, "section": section, "department": department,
+        "message": f"✅ Vendor {result['vendor_code']} approved by {approver_name} ({approver_role}, {approver_department}). {result['email_note']}",
+        "vendor_code": result["vendor_code"],
+        "division": result["division"], "section": result["section"], "department": result["department"],
         "approved_by": approver_name, "approved_role": approver_role, "approved_department": approver_department,
     }
 
@@ -697,15 +741,27 @@ async def update_vendor_settings(request: Request, vendor: dict = Depends(requir
         "address": 500,
         "city": 120,
         "website": 255,
+        # Tax/registration details — deliberately NOT collected on the public
+        # registration form (a brand-new vendor won't hand PAN/GST to a site
+        # they've never heard of before they've even logged in). Completed
+        # here instead, once they're inside their own dashboard.
+        "pan": 10,
+        "gstin": 15,
+        "gstCategory": 40,
+        "gstState": 60,
     }
     for field, maximum in profile_limits.items():
         if field not in profile:
             continue
-        value = str(profile.get(field) or "").strip()
+        value = str(profile.get(field) or "").strip().upper() if field in ("pan", "gstin") else str(profile.get(field) or "").strip()
         if len(value) > maximum:
             raise HTTPException(status_code=400, detail=f"{field} must be {maximum} characters or fewer.")
         if field == "name" and not value:
             raise HTTPException(status_code=400, detail="Business name cannot be empty.")
+        if field == "pan" and value and not re.fullmatch(r"[A-Z]{5}[0-9]{4}[A-Z]", value):
+            raise HTTPException(status_code=400, detail="PAN must be in the format AAAAA9999A.")
+        if field == "gstin" and value and not re.fullmatch(r"\d{2}[A-Z]{5}\d{4}[A-Z][A-Z\d]Z[A-Z\d]", value):
+            raise HTTPException(status_code=400, detail="GSTIN must be a valid 15-character GST number.")
         updates[field] = value
 
     current_settings = vendor.get("settings") if isinstance(vendor.get("settings"), dict) else {}
@@ -765,6 +821,10 @@ async def update_vendor_settings(request: Request, vendor: dict = Depends(requir
             "address": updated.get("address", ""),
             "city": updated.get("city", ""),
             "website": updated.get("website", ""),
+            "pan": updated.get("pan", ""),
+            "gstin": updated.get("gstin", ""),
+            "gstCategory": updated.get("gstCategory", ""),
+            "gstState": updated.get("gstState", ""),
             "settings": {
                 "notification_preferences": notifications,
                 "order_preferences": order_defaults,

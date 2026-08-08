@@ -1,8 +1,10 @@
 import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
 import React, { useState, useEffect, useCallback } from "react";
+import { createPortal } from "react-dom";
 import {
   Crown, Zap, TrendingUp, Image as ImageIcon, MessageSquare, Users, ShoppingBag,
-  ArrowUpRight, Clock, CheckCircle2, AlertTriangle, RefreshCw, ChevronRight, ListChecks, Circle, PackagePlus, MessageCircle, Store,
+  ArrowUpRight, Clock, CheckCircle2, AlertTriangle, RefreshCw, ChevronRight, ListChecks, Circle, PackagePlus, MessageCircle, Store, ShieldCheck,
+  X, Save, Loader2,
 } from "lucide-react";
 
 /**
@@ -77,12 +79,13 @@ function KpiCard({ icon: Icon, label, value, accent, onClick }) {
   );
 }
 
-function VendorGetStarted({ businessTypes, catalogueCount, activeRetailers, hasWhatsApp, hasOrders, onNavigate }) {
+function VendorGetStarted({ businessTypes, catalogueCount, activeRetailers, hasWhatsApp, hasOrders, hasTaxProfile, onNavigate }) {
   const typeLabel = businessTypes.length
     ? businessTypes.map((type) => String(type).replace(/_/g, " ")).join(", ")
     : "vendor";
   const steps = [
     { label: "Confirm your business type", detail: "Set the products and operations your business provides.", tab: "categories", done: businessTypes.length > 0, icon: ListChecks },
+    { label: "Complete your business profile", detail: "Add your PAN and GST details — not collected at signup.", tab: "settings", done: hasTaxProfile, icon: ShieldCheck },
     { label: "Add your catalogue", detail: "Add products, variants, images and your selling price.", tab: "catalogue", done: catalogueCount > 0, icon: PackagePlus },
     { label: "Connect WhatsApp", detail: "Use your business number for catalogues and buyer conversations.", tab: "whatsapp", done: hasWhatsApp, icon: MessageCircle },
     { label: "Connect with retailers", detail: "Review your retailer connections and make your catalogue discoverable.", tab: "retailers", done: activeRetailers > 0, icon: Store },
@@ -103,7 +106,7 @@ function VendorGetStarted({ businessTypes, catalogueCount, activeRetailers, hasW
           <p className="text-lg font-black text-teal-700">{completed} / {steps.length}</p>
         </div>
       </div>
-      <div className="grid divide-y divide-slate-100 md:grid-cols-5 md:divide-x md:divide-y-0">
+      <div className="grid divide-y divide-slate-100 md:grid-cols-3 lg:grid-cols-6 md:divide-x md:divide-y-0">
         {steps.map((step, index) => {
           const Icon = step.icon;
           return (
@@ -120,10 +123,79 @@ function VendorGetStarted({ businessTypes, catalogueCount, activeRetailers, hasW
     </section>
   );
 }
+// One-time welcome prompt — shown once per vendor on first dashboard load
+// while PAN/GST is missing. "Skip for now" dismisses it permanently for
+// that vendor (localStorage-scoped by vendor id); the Get Started checklist
+// step and the banners on Finance/Invoices stay as the lighter, persistent
+// reminder after that, so it never nags on every login.
+function TaxProfileWelcomeModal({ onSaved, onSkip }) {
+  const [pan, setPan] = useState("");
+  const [gstin, setGstin] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  const save = async () => {
+    setSaving(true); setError("");
+    try {
+      const response = await vendorFetch("/api/vendors/me/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ profile: { pan, gstin }, preferences: {} }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.detail || "Could not save your business profile.");
+      onSaved();
+    } catch (err) {
+      setError(err.message || "Could not save your business profile.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return createPortal(
+    <div className="fixed inset-0 z-[99999] flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-sm">
+      <div className="w-full max-w-md overflow-hidden rounded-2xl bg-white shadow-2xl">
+        <div className="flex items-center justify-between gap-3 bg-gradient-to-r from-teal-700 to-emerald-700 px-6 py-5">
+          <div className="flex items-center gap-3">
+            <span className="grid h-10 w-10 place-items-center rounded-2xl bg-white/10 ring-1 ring-white/15"><ShieldCheck className="h-5 w-5 text-white" /></span>
+            <div><h2 className="text-lg font-bold text-white">Welcome — add your PAN &amp; GST</h2><p className="mt-0.5 text-xs text-emerald-100">Not required to log in, but needed for real business with retailers</p></div>
+          </div>
+          <button type="button" onClick={onSkip} className="text-white/80 hover:text-white"><X className="h-5 w-5" /></button>
+        </div>
+        <div className="space-y-4 p-6">
+          {error && <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">{error}</div>}
+          <label className="block">
+            <span className="mb-1.5 block text-xs font-extrabold uppercase tracking-[0.12em] text-slate-500">PAN</span>
+            <input value={pan} onChange={(event) => setPan(event.target.value.toUpperCase())} placeholder="ABCDE1234F"
+              className="h-11 w-full rounded-xl border border-slate-200 px-3 text-sm outline-none focus:border-teal-500 focus:ring-4 focus:ring-teal-100" />
+          </label>
+          <label className="block">
+            <span className="mb-1.5 block text-xs font-extrabold uppercase tracking-[0.12em] text-slate-500">GSTIN</span>
+            <input value={gstin} onChange={(event) => setGstin(event.target.value.toUpperCase())} placeholder="22AAAAA0000A1Z5"
+              className="h-11 w-full rounded-xl border border-slate-200 px-3 text-sm outline-none focus:border-teal-500 focus:ring-4 focus:ring-teal-100" />
+          </label>
+          <p className="text-[11px] leading-5 text-slate-400">Used on invoices and purchase orders with retailers you're approved with — never shown publicly.</p>
+          <div className="flex items-center justify-end gap-2 pt-1">
+            <button type="button" onClick={onSkip} className="rounded-xl px-4 py-2.5 text-sm font-bold text-slate-500 transition hover:bg-slate-100">Skip for now</button>
+            <button type="button" onClick={save} disabled={saving || !pan || !gstin}
+              className="inline-flex items-center gap-2 rounded-xl bg-teal-600 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-teal-700 disabled:opacity-50">
+              {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}Save
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
 export default function MSellerDashboard({ onNavigate = () => {}, planTier = "free" }) {
   const [vendorName, setVendorName] = useState("");
   const [businessTypes, setBusinessTypes] = useState([]);
   const [hasWhatsApp, setHasWhatsApp] = useState(false);
+  const [hasTaxProfile, setHasTaxProfile] = useState(false);
+  const [vendorId, setVendorId] = useState("");
+  const [showTaxModal, setShowTaxModal] = useState(false);
   const [sub, setSub] = useState(null);
   const [catalogueCount, setCatalogueCount] = useState(0);
   const [inquiries, setInquiries] = useState([]);
@@ -150,6 +222,12 @@ export default function MSellerDashboard({ onNavigate = () => {}, planTier = "fr
         setVendorName(me.name || me.vendor_name || "there");
         setBusinessTypes(Array.isArray(me.business_type) ? me.business_type : []);
         setHasWhatsApp(Boolean(me.whatsapp_connected || me.whatsapp_number || me.whatsapp_phone || me.whatsapp));
+        const taxComplete = Boolean(me.pan && me.gstin);
+        setHasTaxProfile(taxComplete);
+        setVendorId(me._id || "");
+        if (!taxComplete && me._id && localStorage.getItem(`vendor_tax_modal_dismissed_${me._id}`) !== "true") {
+          setShowTaxModal(true);
+        }
       }
 
       if (subRes.ok) setSub((await subRes.json()).data);
@@ -202,6 +280,7 @@ export default function MSellerDashboard({ onNavigate = () => {}, planTier = "fr
   }[activeTier] || "bg-[#F6F7FB]";
 
   return (
+    <>
     <div className={`min-h-full ${dashboardBackground} p-4 sm:p-6`}>
       <div className="max-w-6xl mx-auto space-y-6">
 
@@ -259,6 +338,7 @@ export default function MSellerDashboard({ onNavigate = () => {}, planTier = "fr
           activeRetailers={activeRetailers}
           hasWhatsApp={hasWhatsApp}
           hasOrders={orders.length > 0}
+          hasTaxProfile={hasTaxProfile}
           onNavigate={onNavigate}
         />
 
@@ -375,5 +455,15 @@ export default function MSellerDashboard({ onNavigate = () => {}, planTier = "fr
         </div>
       </div>
     </div>
+    {showTaxModal && (
+      <TaxProfileWelcomeModal
+        onSaved={() => { setShowTaxModal(false); setHasTaxProfile(true); }}
+        onSkip={() => {
+          if (vendorId) localStorage.setItem(`vendor_tax_modal_dismissed_${vendorId}`, "true");
+          setShowTaxModal(false);
+        }}
+      />
+    )}
+    </>
   );
 }
