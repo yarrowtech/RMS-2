@@ -793,10 +793,12 @@ const RegisterVendor = () => {
             <InputField label="Brand Name(s)" value={vendorForm.brandName}
               onChange={handleChange("brandName")} placeholder="e.g. Nike, Adidas (comma-separated if multiple)"
               prefilled={!!inviteInfo?.brand_name} />
-            <InputField label="Company Type" value={vendorForm.companyType}
-              onChange={handleChange("companyType")} placeholder="Pvt. Ltd / LLP / Proprietorship" />
-            <InputField label="Industry Type" value={vendorForm.industryType}
-              onChange={handleChange("industryType")} placeholder="Retail / Manufacturing / Services" />
+            <SelectOrOtherField label="Company Type" value={vendorForm.companyType}
+              onChange={handleChange("companyType")} otherPlaceholder="e.g. Trust, Cooperative Society"
+              options={["Private Limited", "Public Limited", "LLP", "Partnership", "Proprietorship", "One Person Company (OPC)"]} />
+            <SelectOrOtherField label="Industry Type" value={vendorForm.industryType}
+              onChange={handleChange("industryType")} otherPlaceholder="e.g. Home Decor, Footwear"
+              options={["Retail", "Manufacturing", "Wholesale / Distribution", "Textile & Apparel", "FMCG", "Electronics", "Import / Export", "Services"]} />
             <InputField label="Product Type*" value={vendorForm.productType}
               onChange={handleChange("productType")} placeholder="Apparel / Electronics / FMCG etc."
               prefilled={!!inviteInfo?.product_type} />
@@ -925,6 +927,45 @@ const SelectField = ({ label, value, onChange, options = [] }) => (
     </select>
   </div>
 );
+
+/* Dropdown of common presets + a free-text "Other" fallback for whatever
+   doesn't fit the list — used by Company Type and Industry Type below. */
+const SelectOrOtherField = ({ label, value, onChange, options, otherPlaceholder = "Please specify" }) => {
+  const [showOther, setShowOther] = useState(value !== "" && !options.includes(value));
+
+  const handleSelect = (e) => {
+    if (e.target.value === "__other__") {
+      setShowOther(true);
+      onChange({ target: { value: "" } });
+    } else {
+      setShowOther(false);
+      onChange(e);
+    }
+  };
+
+  return (
+    <div className="flex flex-col gap-1">
+      <label className="text-sm font-medium text-gray-700">{label}</label>
+      {showOther ? (
+        <div className="flex gap-2">
+          <input value={value} onChange={onChange} placeholder={otherPlaceholder} autoFocus
+            className="w-full border border-gray-300 rounded-md px-3 py-2 text-[13px] bg-white focus:outline-none focus:ring-2 focus:ring-purple-400" />
+          <button type="button" onClick={() => { setShowOther(false); onChange({ target: { value: "" } }); }}
+            className="shrink-0 text-xs font-semibold text-purple-600 hover:text-purple-800 whitespace-nowrap px-1">
+            Choose from list
+          </button>
+        </div>
+      ) : (
+        <select value={value} onChange={handleSelect}
+          className="w-full border border-gray-300 rounded-md px-3 py-2 text-[13px] bg-white focus:outline-none focus:ring-2 focus:ring-purple-400">
+          <option value="">Select</option>
+          {options.map((opt) => <option key={opt} value={opt}>{opt}</option>)}
+          <option value="__other__">Other (please specify)</option>
+        </select>
+      )}
+    </div>
+  );
+};
 
 const InputTextArea = ({ label, value, onChange, placeholder, prefilled }) => (
   <div className="flex flex-col gap-1">
