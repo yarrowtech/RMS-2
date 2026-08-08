@@ -407,6 +407,7 @@ import { trackFeature } from "../../utils/analytics.js";
 import React, { useState, useEffect } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Building, CheckCircle2, RotateCcw, Eye, EyeOff } from "lucide-react";
+import toast from "react-hot-toast";
 
 // "Retailer / store owner" is deliberately not offered here — retailers
 // onboard through a completely separate flow (/onboarding), and offering
@@ -424,6 +425,16 @@ const BUSINESS_TYPES = [
   ["job_worker", "Job-work partner"],
 ];
 
+// [vendorForm field, human label shown in the "missing field" toast] —
+// keep in sync with which InputFields actually carry a `*` in the form.
+const REQUIRED_FIELDS = [
+  ["name", "Vendor Name"],
+  ["email", "Email"],
+  ["contactMobile", "Contact Number"],
+  ["businessType", "Primary Business Type"],
+  ["productType", "Product Type"],
+];
+
 const RegisterVendor = () => {
   const API_BASE_URL = `${APP_API_URL}`;
 
@@ -436,7 +447,6 @@ const RegisterVendor = () => {
   const [loading,      setLoading]      = useState(false);
   const [success,      setSuccess]      = useState(false);
   const [approved,     setApproved]     = useState(false);
-  const [error,        setError]        = useState("");
   const [tokenLoading, setTokenLoading] = useState(!!token);
   const [tokenError,   setTokenError]   = useState("");
   const [inviteInfo,   setInviteInfo]   = useState(null);
@@ -551,36 +561,35 @@ const RegisterVendor = () => {
       productType:   inviteInfo?.product_type   || "",
       website:       inviteInfo?.website        || "",
     });
-    setError("");
   };
 
   async function handleSubmit(e) {
     e.preventDefault();
-    setError("");
 
-    if (!vendorForm.name || !vendorForm.email || !vendorForm.contactMobile || !vendorForm.businessType ||
-        !vendorForm.productType) {
-      setError("Please fill all required fields marked with *"); return;
+    const missing = REQUIRED_FIELDS.filter(([field]) => !vendorForm[field]).map(([, label]) => label);
+    if (missing.length) {
+      toast.error(`Missing required field${missing.length > 1 ? "s" : ""}: ${missing.join(", ")}`);
+      return;
     }
     if (!/\S+@\S+\.\S+/.test(vendorForm.email)) {
-      setError("Please enter a valid email address"); return;
+      toast.error("Please enter a valid email address"); return;
     }
     if (!/^\d{10}$/.test(vendorForm.contactMobile)) {
-      setError("Please enter a valid 10-digit contact number"); return;
+      toast.error("Please enter a valid 10-digit contact number"); return;
     }
     // Self-registration (no invite): a retailer must be explicitly chosen —
     // there is no other way for the backend to know which tenant this
     // vendor belongs to.
     if (!token && selectedTenantIds.length === 0) {
-      setError("Please select at least one retailer you're registering with."); return;
+      toast.error("Please select at least one retailer you're registering with."); return;
     }
     // Password required only for invite-link flow
     if (token) {
       if (vendorForm.password.length < 8) {
-        setError("Password must be at least 8 characters"); return;
+        toast.error("Password must be at least 8 characters"); return;
       }
       if (vendorForm.password !== vendorForm.confirmPw) {
-        setError("Passwords do not match"); return;
+        toast.error("Passwords do not match"); return;
       }
     }
 
@@ -627,7 +636,7 @@ const RegisterVendor = () => {
       setSuccess(true);
       setVendorForm(initialState);
     } catch (err) {
-      setError(err.message || "Server error");
+      toast.error(err.message || "Server error");
     } finally {
       setLoading(false);
     }
@@ -702,13 +711,6 @@ const RegisterVendor = () => {
             )}
           </div>
         </div>
-
-        {/* ERROR MESSAGE */}
-        {error && (
-          <div className="bg-red-100 text-red-600 text-center py-2 font-medium text-sm">
-            ⚠️ {error}
-          </div>
-        )}
 
         {!token && (
           <div className="px-8 pt-8">
