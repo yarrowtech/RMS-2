@@ -406,6 +406,7 @@ import SalesReport from "./Salesreport.jsx";
 import AdminStoreWiseInventory from "./AdminStoreWiseInventory.jsx";
 import HQSetup from "./Hqsetup.jsx";
 import HQAdminManagement from "./Hqadminmanagement.jsx";
+import HqVendorOverview from "./HqVendorOverview.jsx";
 
 // ─── Store context from localStorage ─────────────────────────────────────────
 // Read INSIDE each component that needs it, never at module top-level.
@@ -436,6 +437,7 @@ function labelFromKey(key) {
     "productMapping":        "Product Mapping",
     "storeInventory":        "Store-wise Inventory",
     "reports":               "Sales Reports",
+    "vendorOverview":         "Vendor Overview",
     // Store
     "storeStock":            "Store Stock",
     "storeSales":            "Sales Report",
@@ -524,6 +526,9 @@ export default function AdminModule() {
       switch (active) {
         case "dashboard":
           return <AdminDashboard />;
+
+        case "vendorOverview":
+          return <HqVendorOverview />;
 
         case "setup":
           return <HQSetup />;
