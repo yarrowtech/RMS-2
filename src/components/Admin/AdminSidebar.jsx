@@ -6,6 +6,7 @@
 //   FaBoxes,
 //   FaSignOutAlt,
 //   FaUsers,
+//   FaUsers,
 //   FaUserTie,
 //   FaUserShield,
 //   FaUserCog,
@@ -313,6 +314,7 @@ import {
   FaChartPie,
   FaBoxes,
   FaSignOutAlt,
+  FaUsers,
   FaCashRegister,
   FaTruck,
   FaFileAlt,
@@ -441,13 +443,13 @@ export default function AdminSidebar({
 
   const headerTiltRef = useTilt({ disabled: true });
 
-  const ACTIVE_GRAD = "bg-white/20 shadow-sm shadow-indigo-950/20";
+  const ACTIVE_GRAD = "bg-gradient-to-r from-teal-500 to-cyan-500 shadow-lg shadow-teal-950/35";
   const ACTIVE_TXT  = "text-white";
-  const ACTIVE_BR   = "border-white/30";
+  const ACTIVE_BR   = "border-teal-200/70";
 
   const topBtnBase =
     "group relative flex w-full items-center gap-3 rounded-xl border text-[13px] font-semibold transition-colors " +
-    "border-transparent bg-transparent hover:border-white/15 hover:bg-white/[0.10]";
+    "border-transparent bg-transparent hover:border-teal-200/20 hover:bg-teal-300/[0.10]";
 
   const topBtnPad  = sidebarOpen ? "px-3 py-2.5" : "px-3 py-2.5 justify-center";
 
@@ -460,7 +462,7 @@ export default function AdminSidebar({
   const topBtn = (key, icon, label) => (
     <button key={key} type="button" onClick={() => onSelect(key)}
       className={cn(topBtnBase, topBtnPad,
-        active === key ? cn(ACTIVE_GRAD, ACTIVE_TXT, ACTIVE_BR) : "text-indigo-100 hover:text-white"
+        active === key ? cn(ACTIVE_GRAD, ACTIVE_TXT, ACTIVE_BR) : "text-cyan-50/85 hover:text-white"
       )}
       title={label} aria-label={label}>
       <span className="text-lg">{icon}</span>
@@ -470,7 +472,7 @@ export default function AdminSidebar({
 
   // ── Section label ─────────────────────────────────────────────────────────
   const sectionLabel = (label) => showText && (
-    <p className="px-2 pb-1 pt-4 text-[9px] font-bold uppercase tracking-[0.18em] text-indigo-100/70">
+    <p className="px-2 pb-1 pt-4 text-[9px] font-bold uppercase tracking-[0.18em] text-teal-100/70">
       {label}
     </p>
   );
@@ -478,8 +480,8 @@ export default function AdminSidebar({
   return (
     <aside className={cn(
       isDrawer ? "h-[100dvh]" : "h-full",
-      "overflow-hidden rounded-2xl border border-indigo-200/40",
-      "bg-gradient-to-b from-indigo-700 via-blue-700 to-teal-600 shadow-[0_20px_60px_rgba(30,64,175,0.30)]",
+      "overflow-hidden rounded-2xl border border-teal-300/25",
+      "bg-gradient-to-b from-[#082f49] via-[#0f4c5c] to-[#0f766e] shadow-[0_20px_60px_rgba(8,47,73,0.32)]",
       "flex flex-col",
       isDrawer ? "w-full" : sidebarOpen ? "w-[280px] max-w-[86vw]" : "w-[80px]"
     )}>
@@ -493,12 +495,12 @@ export default function AdminSidebar({
             {sidebarOpen && (
               <div className="min-w-0">
                 <h2 className="text-sm font-bold text-white truncate">{title}</h2>
-                <p className="text-[11px] font-medium text-indigo-100/80 truncate">{subtitle}</p>
+                <p className="text-[11px] font-medium text-cyan-50/80 truncate">{subtitle}</p>
               </div>
             )}
             <button type="button"
               onClick={() => { if (isDrawer) return setSidebarOpen?.(false); setSidebarOpen?.(s => !s); }}
-              className={cn("ml-auto grid h-8 w-8 place-items-center rounded-lg border border-white/20 bg-white/10 text-indigo-100 transition hover:bg-white/20 hover:text-white", !sidebarOpen && "ml-0")}
+              className={cn("ml-auto grid h-8 w-8 place-items-center rounded-lg border border-white/20 bg-teal-300/10 text-cyan-50 transition hover:bg-teal-300/20 hover:text-white", !sidebarOpen && "ml-0")}
               aria-label={isDrawer ? "Close sidebar" : "Toggle sidebar"}>
               {isDrawer ? <span className="font-black text-slate-300">×</span>
                 : sidebarOpen ? <PanelLeft size={18} className="text-slate-300" />
@@ -546,6 +548,7 @@ export default function AdminSidebar({
 
             {sectionLabel("Overview")}
             {topBtn("dashboard",      <FaChartPie />,  "Dashboard")}
+            {topBtn("vendorOverview", <FaUsers />,      "Vendor Overview")}
 
             {sectionLabel("Inventory")}
             {topBtn("products",       <FaBoxes />,     "Products")}
@@ -560,7 +563,7 @@ export default function AdminSidebar({
                 without that department (bounced straight back to /admin). */}
             {managedDepartments.includes("Inventory") && (
               <button type="button" onClick={() => navigate("/grn")}
-                className={cn(topBtnBase, topBtnPad, "text-indigo-100 hover:text-white")}
+                className={cn(topBtnBase, topBtnPad, "text-cyan-50/85 hover:text-white")}
                 title="GRN / Receiving" aria-label="GRN / Receiving">
                 <PackageCheck size={14} />
                 {showText && <span className="flex-1 text-left">GRN / Receiving</span>}
@@ -572,7 +575,7 @@ export default function AdminSidebar({
                 {sectionLabel("Departments")}
                 {departmentWorkspaces.map(({ department, path, icon: Icon, label }) => (
                   <button key={department} type="button" onClick={() => navigate(path)}
-                    className={cn(topBtnBase, topBtnPad, "text-indigo-100 hover:text-white")}
+                    className={cn(topBtnBase, topBtnPad, "text-cyan-50/85 hover:text-white")}
                     title={label} aria-label={label}>
                     <Icon size={16} />
                     {showText && <span className="flex-1 text-left">{label}</span>}
@@ -590,7 +593,7 @@ export default function AdminSidebar({
       </nav>
 
       {/* ── Logout ──────────────────────────────────────────────────────────── */}
-      <div className="sticky bottom-0 z-20 shrink-0 border-t border-white/15 bg-indigo-950/20 p-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))]">
+      <div className="sticky bottom-0 z-20 shrink-0 border-t border-teal-200/20 bg-[#062b3c]/35 p-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))]">
         <button type="button" onClick={onLogout}
           className="flex w-full items-center justify-center gap-2 rounded-xl border border-rose-200/30 bg-rose-500/15 py-2.5 text-[13px] font-semibold text-rose-100 transition hover:bg-rose-500/25 hover:text-white">
           <FaSignOutAlt className="text-base" />
