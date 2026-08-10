@@ -158,6 +158,30 @@ async def resolve_po(po_no: str, tenant_id: str) -> dict:
     return po
 
 
+async def enforce_po_receipt_tolerance(grc_dict: dict, tenant_id: str) -> None:
+    """Block cumulative PO receipts above the agreed over-delivery limit."""
+    po_no = (grc_dict.get("poNo") or "").strip()
+    if not po_no:
+        return
+    po = await resolve_po(po_no, tenant_id)
+    po_by_barcode = {(line.get("barcode") or "").strip(): line for line in po.get("items", [])}
+    for item in grc_dict.get("items", []):
+        barcode = (item.get("poBarcode") or item.get("barcode") or "").strip()
+        po_item = po_by_barcode.get(barcode)
+        if not po_item:
+            continue
+        ordered = float(po_item.get("buyerApprovedQty") or po_item.get("buyerRequestedQty") or po_item.get("quantity") or po_item.get("originalQty") or 0)
+        tolerance = max(0.0, float(po_item.get("tolerancePct", 0) or 0))
+        maximum = round(ordered * (1 + tolerance / 100), 4)
+        previous = max(0.0, float(po_item.get("receivedQty", 0) or 0))
+        receiving = max(0.0, float(item.get("receivedQty", 0) or 0))
+        item["toleranceMinQty"] = round(ordered * (1 - tolerance / 100), 4)
+        item["toleranceMaxQty"] = maximum
+        item["toleranceStatus"] = "Within tolerance"
+        if maximum > 0 and previous + receiving > maximum + 0.000001:
+            raise HTTPException(status_code=400, detail=(f"Item '{item.get('description') or barcode}' exceeds PO tolerance: approved {previous:g}, this receipt {receiving:g}, maximum {maximum:g}."))
+
+
 # ─────────────────────────────────────────────
 # Barcode resolution helper
 #
@@ -441,6 +465,9 @@ async def update_grc(grc_id: str, grc: GRCModel, ctx: dict = Depends(get_receivi
         item["barcode"] = await resolve_real_barcode_for_grc(item, ctx["tenant_id"])
         if not item["barcode"] or item["barcode"].startswith("ITEM/"):
             item["barcode"] = await generate_rms_barcode(ctx["tenant_id"])
+
+    if is_po_linked:
+        await enforce_po_receipt_tolerance(grc_dict, ctx["tenant_id"])
 
     # Filter ghost items only for PO-linked GRCs
     if is_po_linked:

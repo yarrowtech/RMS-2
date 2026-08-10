@@ -457,7 +457,7 @@ async def _extend_existing_catalogue_items(vendor_id: str, visibility_days: int,
         revivable_slots = image_limit - active_count
         if revivable_slots > 0:
             expired_docs = await vendor_catalogue_collection.find(
-                {"vendor_id": vendor_oid, "active": False, "expired_reason": "tier_visibility_window"},
+                {"vendor_id": vendor_oid, "active": False, "expired_reason": "tier_visibility_window", "images": {"$exists": True, "$ne": []}},
                 {"_id": 1},
             ).sort("expired_at", -1).to_list(revivable_slots)
             if expired_docs:

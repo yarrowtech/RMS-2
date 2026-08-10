@@ -79,13 +79,14 @@ function KpiCard({ icon: Icon, label, value, accent, onClick }) {
   );
 }
 
-function VendorGetStarted({ businessTypes, catalogueCount, activeRetailers, hasWhatsApp, hasOrders, hasTaxProfile, onNavigate }) {
+function VendorGetStarted({ businessTypes, catalogueCount, activeRetailers, hasWhatsApp, hasOrders, hasTaxProfile, hasKyb, kybStatus, onNavigate }) {
   const typeLabel = businessTypes.length
     ? businessTypes.map((type) => String(type).replace(/_/g, " ")).join(", ")
     : "vendor";
   const steps = [
     { label: "Confirm your business type", detail: "Set the products and operations your business provides.", tab: "categories", done: businessTypes.length > 0, icon: ListChecks },
     { label: "Complete your business profile", detail: "Add your PAN and GST details — not collected at signup.", tab: "settings", done: hasTaxProfile, icon: ShieldCheck },
+    { label: "Complete vendor verification (KYB)", detail: hasTaxProfile ? `Add payout and document details, then wait for retailer verification (${kybStatus}).` : "Save PAN and GST first, then add your payout and document details.", tab: "settings", done: hasKyb, icon: ShieldCheck },
     { label: "Add your catalogue", detail: "Add products, variants, images and your selling price.", tab: "catalogue", done: catalogueCount > 0, icon: PackagePlus },
     { label: "Connect WhatsApp", detail: "Use your business number for catalogues and buyer conversations.", tab: "whatsapp", done: hasWhatsApp, icon: MessageCircle },
     { label: "Connect with retailers", detail: "Review your retailer connections and make your catalogue discoverable.", tab: "retailers", done: activeRetailers > 0, icon: Store },
@@ -106,7 +107,7 @@ function VendorGetStarted({ businessTypes, catalogueCount, activeRetailers, hasW
           <p className="text-lg font-black text-teal-700">{completed} / {steps.length}</p>
         </div>
       </div>
-      <div className="grid divide-y divide-slate-100 md:grid-cols-3 lg:grid-cols-6 md:divide-x md:divide-y-0">
+      <div className="grid divide-y divide-slate-100 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7 md:divide-x md:divide-y-0">
         {steps.map((step, index) => {
           const Icon = step.icon;
           return (
@@ -194,6 +195,8 @@ export default function MSellerDashboard({ onNavigate = () => {}, planTier = "fr
   const [businessTypes, setBusinessTypes] = useState([]);
   const [hasWhatsApp, setHasWhatsApp] = useState(false);
   const [hasTaxProfile, setHasTaxProfile] = useState(false);
+  const [kybStatus, setKybStatus] = useState("Not started");
+  const [hasKyb, setHasKyb] = useState(false);
   const [vendorId, setVendorId] = useState("");
   const [showTaxModal, setShowTaxModal] = useState(false);
   const [sub, setSub] = useState(null);
@@ -208,13 +211,14 @@ export default function MSellerDashboard({ onNavigate = () => {}, planTier = "fr
     setLoading(true);
     setError(null);
     try {
-      const [meRes, subRes, catRes, inqRes, tenantRes, poRes] = await Promise.all([
+      const [meRes, subRes, catRes, inqRes, tenantRes, poRes, kybRes] = await Promise.all([
         vendorFetch("/api/vendors/me"),
         vendorFetch("/api/subscriptions/me"),
         vendorFetch("/api/catalogue/my-catalogue"),
         vendorFetch("/api/catalogue/my-inquiries"),
         vendorFetch("/api/vendors/my-tenant"),
         vendorFetch("/api/vendors/my-purchaseorders"),
+        vendorFetch("/api/vendors/me/kyb"),
       ]);
 
       const me = await meRes.json();
@@ -242,6 +246,15 @@ export default function MSellerDashboard({ onNavigate = () => {}, planTier = "fr
       if (tenantRes.ok) setRetailers((await tenantRes.json()).data || []);
 
       if (poRes.ok) setOrders(await poRes.json() || []);
+
+      if (kybRes.ok) {
+        const kyb = await kybRes.json();
+        const relationships = (kyb?.data?.relationships || []).filter((relationship) => relationship.relationship_status === "Approved");
+        const allVerified = relationships.length > 0 && relationships.every((relationship) => relationship.status === "Verified");
+        const status = allVerified ? "Verified" : relationships.some((relationship) => relationship.status === "Needs changes") ? "Needs changes" : relationships.some((relationship) => relationship.status === "Submitted") ? "Submitted" : "Not started";
+        setKybStatus(status);
+        setHasKyb(allVerified);
+      }
     } catch {
       setError("Could not load your dashboard. Try refreshing.");
     } finally {
@@ -332,6 +345,21 @@ export default function MSellerDashboard({ onNavigate = () => {}, planTier = "fr
           </div>
         )}
 
+        {!hasKyb && (
+          <section className="flex flex-col gap-4 rounded-2xl border border-amber-200 bg-gradient-to-r from-amber-50 via-white to-teal-50 p-5 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-start gap-3">
+              <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-amber-100 text-amber-700"><ShieldCheck className="h-5 w-5" /></span>
+              <div>
+                <p className="text-sm font-black text-slate-900">Complete vendor verification to receive retailer orders</p>
+                <p className="mt-1 text-xs leading-5 text-slate-600">{hasTaxProfile ? `Your KYB is ${kybStatus.toLowerCase()}. Add or update payout and document details in Settings.` : "First add your PAN and GST, then submit payout and document details in Settings."}</p>
+              </div>
+            </div>
+            <button type="button" onClick={() => onNavigate("settings")} className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-teal-700 px-4 py-2.5 text-sm font-bold text-white shadow-sm transition hover:bg-teal-800">
+              Complete now <ChevronRight className="h-4 w-4" />
+            </button>
+          </section>
+        )}
+
         <VendorGetStarted
           businessTypes={businessTypes}
           catalogueCount={catalogueCount}
@@ -339,6 +367,8 @@ export default function MSellerDashboard({ onNavigate = () => {}, planTier = "fr
           hasWhatsApp={hasWhatsApp}
           hasOrders={orders.length > 0}
           hasTaxProfile={hasTaxProfile}
+          hasKyb={hasKyb}
+          kybStatus={kybStatus}
           onNavigate={onNavigate}
         />
 
