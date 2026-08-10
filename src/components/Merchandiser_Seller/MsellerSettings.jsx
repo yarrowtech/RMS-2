@@ -3,7 +3,7 @@ import { API_BASE_URL } from "../../config/api.js";
 import {
   BellRing, Building2, CheckCircle2, ChevronRight, Globe2, Loader2,
   MapPin, MessageCircle, PackageCheck, RefreshCw, Save, Settings2,
-  ShieldCheck, ShoppingCart, Smartphone, Truck,
+  ShieldCheck, ShoppingCart, Smartphone, Truck, Upload, ExternalLink, X,
 } from "lucide-react";
 
 const DEFAULT_NOTIFICATIONS = {
@@ -29,6 +29,9 @@ function Field({ label, value, onChange, placeholder = "", type = "text", hint, 
   return <label className="block"><span className="mb-1.5 block text-xs font-extrabold uppercase tracking-[0.12em] text-slate-500">{label}</span><input type={type} value={value ?? ""} readOnly={readOnly} onChange={(event) => onChange?.(event.target.value)} placeholder={placeholder} className={`h-11 w-full rounded-xl border px-3 text-sm outline-none transition ${readOnly ? "cursor-not-allowed border-slate-200 bg-slate-100 text-slate-500" : "border-slate-200 bg-white text-slate-800 focus:border-teal-500 focus:ring-4 focus:ring-teal-100"}`} />{hint && <span className="mt-1.5 block text-[11px] leading-4 text-slate-400">{hint}</span>}</label>;
 }
 
+function KybDocumentField({ label, documentType, url, uploading, onUpload, onClear }) {
+  return <div className="rounded-2xl border border-dashed border-teal-200 bg-teal-50/40 p-3.5"><p className="text-xs font-extrabold uppercase tracking-[0.12em] text-slate-500">{label}</p><p className="mt-1 text-[11px] leading-4 text-slate-500">Upload JPG, PNG, WEBP or PDF up to 10 MB.</p><div className="mt-3 flex flex-wrap items-center gap-2"><label className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-teal-200 bg-white px-3 py-2 text-xs font-extrabold text-teal-700 transition hover:bg-teal-50"><Upload className="h-3.5 w-3.5" />{uploading ? "Uploading…" : url ? "Replace file" : "Upload file"}<input type="file" accept="image/jpeg,image/png,image/webp,application/pdf" className="hidden" disabled={uploading} onChange={(event) => { const file = event.target.files?.[0]; if (file) onUpload(documentType, file); event.target.value = ""; }} /></label>{url && <><a href={url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 rounded-xl px-2.5 py-2 text-xs font-bold text-teal-700 hover:bg-teal-100"><ExternalLink className="h-3.5 w-3.5" /> Preview</a><button type="button" onClick={onClear} className="rounded-xl p-2 text-slate-400 hover:bg-rose-50 hover:text-rose-600" aria-label={`Remove ${label}`}><X className="h-4 w-4" /></button></>}</div></div>;
+}
 function Toggle({ checked, onChange, title, text, disabled = false }) {
   return <div className="flex items-start justify-between gap-4 rounded-2xl border border-slate-100 bg-slate-50/70 px-4 py-3.5"><div><p className="text-sm font-bold text-slate-800">{title}</p><p className="mt-1 text-xs leading-5 text-slate-500">{text}</p></div><button type="button" disabled={disabled} onClick={() => onChange(!checked)} aria-pressed={checked} className={`relative mt-0.5 h-6 w-11 shrink-0 rounded-full transition ${checked ? "bg-teal-600" : "bg-slate-300"} ${disabled ? "cursor-not-allowed opacity-50" : ""}`}><span className={`absolute top-1 h-4 w-4 rounded-full bg-white shadow-sm transition ${checked ? "left-6" : "left-1"}`} /></button></div>;
 }
@@ -79,6 +82,7 @@ export default function MsellerSettings({ onNavigate = () => {} }) {
   const [whatsApp, setWhatsApp] = useState({ loading: true, connected: false, available: true });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState("");
+  const [uploadingDocument, setUploadingDocument] = useState("");
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
 
@@ -142,6 +146,22 @@ export default function MsellerSettings({ onNavigate = () => {} }) {
     finally { setSaving(""); }
   };
 
+  const uploadKybDocument = async (documentType, file) => {
+    const fieldByType = { gst_certificate: "gst_certificate_url", pan_document: "pan_document_url", cancelled_cheque: "cancelled_cheque_url" };
+    const allowedTypes = ["image/jpeg", "image/png", "image/webp", "application/pdf"];
+    if (!allowedTypes.includes(file.type)) { setError("Upload JPG, PNG, WEBP or PDF only."); return; }
+    if (file.size > 10 * 1024 * 1024) { setError("KYB documents must be 10 MB or smaller."); return; }
+    setUploadingDocument(documentType); setError(""); setNotice("");
+    try {
+      const body = new FormData(); body.append("file", file);
+      const response = await fetch(`${API_BASE_URL}/api/vendors/me/kyb/documents/${documentType}`, { method: "POST", headers: { Authorization: `Bearer ${vendorToken()}` }, body });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(typeof result.detail === "string" ? result.detail : "Could not upload the document.");
+      setKyb((current) => ({ ...current, [fieldByType[documentType]]: result.url }));
+      setNotice(`${file.name} uploaded. Submit KYB for retailer review when all details are ready.`);
+    } catch (err) { setError(err.message || "Could not upload the document."); }
+    finally { setUploadingDocument(""); }
+  };
   const saveKyb = async () => {
     setSaving("kyb"); setError(""); setNotice("");
     try {
@@ -186,8 +206,8 @@ export default function MsellerSettings({ onNavigate = () => {} }) {
     </Card>
 
     <Card icon={ShieldCheck} title="Vendor verification (KYB)" subtitle="Submit your business and payout details once. Every connected retailer verifies your KYB separately." action={<button type="button" onClick={saveKyb} disabled={saving !== ""} className="inline-flex h-10 items-center gap-2 rounded-xl bg-teal-600 px-3.5 text-xs font-extrabold text-white transition hover:bg-teal-700 disabled:opacity-50">{saving === "kyb" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}Submit for review</button>}>
-      <div className="mb-5 rounded-2xl border border-indigo-100 bg-indigo-50 p-4 text-xs leading-5 text-indigo-900"><b>Safe bank handling:</b> RMS stores only the last four digits after submission. Use the secure document links below for your GST certificate, PAN proof and cancelled cheque; full account numbers are never shown back in the portal.</div>
-      <div className="grid gap-4 sm:grid-cols-2"><Field label="Legal business name *" value={kyb.legal_name} onChange={(value) => setKyb((current) => ({ ...current, legal_name: value }))} placeholder="Name on GST registration" /><Field label="Registered business address *" value={kyb.business_address} onChange={(value) => setKyb((current) => ({ ...current, business_address: value }))} placeholder="Address on business documents" /><Field label="Account holder name *" value={kyb.bank_account_holder} onChange={(value) => setKyb((current) => ({ ...current, bank_account_holder: value }))} placeholder="Name on bank account" /><Field label="Bank name *" value={kyb.bank_name} onChange={(value) => setKyb((current) => ({ ...current, bank_name: value }))} placeholder="Your bank" /><Field label="IFSC *" value={kyb.ifsc} onChange={(value) => setKyb((current) => ({ ...current, ifsc: value.toUpperCase() }))} placeholder="ABCD0123456" /><Field label="Bank account number *" type="password" value={kyb.account_number} onChange={(value) => setKyb((current) => ({ ...current, account_number: value }))} placeholder={kyb.account_last4 ? `Saved ending ${kyb.account_last4} — re-enter to update` : "Enter account number"} hint="Used only to record the masked payout account." /><Field label="GST certificate secure link" value={kyb.gst_certificate_url} onChange={(value) => setKyb((current) => ({ ...current, gst_certificate_url: value }))} placeholder="https://…" /><Field label="PAN document secure link" value={kyb.pan_document_url} onChange={(value) => setKyb((current) => ({ ...current, pan_document_url: value }))} placeholder="https://…" /><Field label="Cancelled cheque secure link" value={kyb.cancelled_cheque_url} onChange={(value) => setKyb((current) => ({ ...current, cancelled_cheque_url: value }))} placeholder="https://…" /></div>
+      <div className="mb-5 rounded-2xl border border-indigo-100 bg-indigo-50 p-4 text-xs leading-5 text-indigo-900"><b>Safe bank handling:</b> RMS stores only the last four digits after submission. Upload your GST certificate, PAN proof and cancelled cheque below; full account numbers are never shown back in the portal.</div>
+      <div className="grid gap-4 sm:grid-cols-2"><Field label="Legal business name *" value={kyb.legal_name} onChange={(value) => setKyb((current) => ({ ...current, legal_name: value }))} placeholder="Name on GST registration" /><Field label="Registered business address *" value={kyb.business_address} onChange={(value) => setKyb((current) => ({ ...current, business_address: value }))} placeholder="Address on business documents" /><Field label="Account holder name *" value={kyb.bank_account_holder} onChange={(value) => setKyb((current) => ({ ...current, bank_account_holder: value }))} placeholder="Name on bank account" /><Field label="Bank name *" value={kyb.bank_name} onChange={(value) => setKyb((current) => ({ ...current, bank_name: value }))} placeholder="Your bank" /><Field label="IFSC *" value={kyb.ifsc} onChange={(value) => setKyb((current) => ({ ...current, ifsc: value.toUpperCase() }))} placeholder="ABCD0123456" /><Field label="Bank account number *" type="password" value={kyb.account_number} onChange={(value) => setKyb((current) => ({ ...current, account_number: value }))} placeholder={kyb.account_last4 ? `Saved ending ${kyb.account_last4} — re-enter to update` : "Enter account number"} hint="Used only to record the masked payout account." /><KybDocumentField label="GST certificate" documentType="gst_certificate" url={kyb.gst_certificate_url} uploading={uploadingDocument === "gst_certificate"} onUpload={uploadKybDocument} onClear={() => setKyb((current) => ({ ...current, gst_certificate_url: "" }))} /> <KybDocumentField label="PAN document" documentType="pan_document" url={kyb.pan_document_url} uploading={uploadingDocument === "pan_document"} onUpload={uploadKybDocument} onClear={() => setKyb((current) => ({ ...current, pan_document_url: "" }))} /> <KybDocumentField label="Cancelled cheque" documentType="cancelled_cheque" url={kyb.cancelled_cheque_url} uploading={uploadingDocument === "cancelled_cheque"} onUpload={uploadKybDocument} onClear={() => setKyb((current) => ({ ...current, cancelled_cheque_url: "" }))} /></div>
       <div className="mt-5 grid gap-3 md:grid-cols-2">{kybRelationships.length ? kybRelationships.map((relationship) => <div key={relationship.tenant_id} className="rounded-xl border border-slate-200 bg-slate-50 p-3"><p className="text-xs font-black text-slate-800">{relationship.tenant_id}</p><p className={`mt-1 text-xs font-bold ${relationship.status === "Verified" ? "text-emerald-700" : relationship.status === "Needs changes" ? "text-rose-700" : "text-amber-700"}`}>{relationship.status}</p>{relationship.note && <p className="mt-1 text-[11px] leading-4 text-slate-500">{relationship.note}</p>}</div>) : <p className="text-xs text-slate-500">Submit once your PAN and GSTIN are saved to begin verification.</p>}</div>
     </Card>
 
