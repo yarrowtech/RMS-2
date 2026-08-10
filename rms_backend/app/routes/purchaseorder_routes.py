@@ -3,7 +3,7 @@ from fastapi import APIRouter, HTTPException, status, Depends, Header
 from jose import jwt, JWTError
 from ..config import settings, frontend_url
 from pydantic import BaseModel, Field
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 from datetime import datetime, timedelta
 from bson import ObjectId
 import uuid
@@ -97,7 +97,7 @@ class ItemModel(BaseModel):
     vendorConfirmationNote: Optional[str] = ""
     buyerApprovedQty: Optional[float] = None
     buyerApprovedAt: Optional[str] = None
-    quantityHistory: List[Dict[str, Any]] = []
+    quantityHistory: List[Dict[str, Any]] = Field(default_factory=list)
     quantity: float = 0
     amendedQty: float = 0
     receivedQty: float = 0
