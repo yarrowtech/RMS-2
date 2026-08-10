@@ -1,4 +1,4 @@
-﻿import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
+import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
 
 
 import React, { useMemo, useState, useEffect, useRef, useCallback } from "react";
@@ -51,14 +51,14 @@ const money = (v) =>
 const EMPTY_ITEM = () => ({
   barcode: "",
   description: "",
-  originalQty: "",
-  quantity: "",
-  amendedQty: "",
-  receivedQty: "",
-  cancelledQty: "",
-  pendingQty: 0,
-  rate: "",
-  tolerancePct: "",
+  originalQty: "0",
+  quantity: "0",
+  amendedQty: "0",
+  receivedQty: "0",
+  cancelledQty: "0",
+  pendingQty: "0",
+  rate: "0",
+  tolerancePct: "0",
   dueDate: "",
   remarks: "",
   removed: false,
@@ -560,12 +560,14 @@ function ReviewModal({ order, onClose, onApprove, onReject }) {
     const rows = items.map((it) => {
       const buyerRate   = clamp0(it.buyerRate  || it.rate);
       const vendorRate  = clamp0(it.vendorRate || it.rate);
-      const vendorQty   = clamp0(it.amendedQty) > 0 ? clamp0(it.amendedQty) : clamp0(it.quantity);
+      const vendorQty   = clamp0(it.vendorConfirmedQty ?? it.amendedQty) > 0 ? clamp0(it.vendorConfirmedQty ?? it.amendedQty) : clamp0(it.quantity);
+      const buyerRequestedQty = clamp0(it.buyerRequestedQty ?? it.originalQty ?? it.quantity);
+      const isAdHoc = it.lineSource === "vendor_ad_hoc";
       const varPct      = buyerRate > 0 ? ((vendorRate - buyerRate) / buyerRate) * 100 : 0;
       const varAmt      = (vendorRate - buyerRate) * vendorQty;
       const rateChanged = Math.abs(varPct) > 0.01;
       if (Math.abs(varPct) > 10) anyHigh = true;
-      return { ...it, buyerRate, vendorRate, vendorQty, varPct, varAmt, rateChanged };
+      return { ...it, buyerRate, vendorRate, vendorQty, buyerRequestedQty, isAdHoc, varPct, varAmt, rateChanged };
     });
     setHasHighVariance(anyHigh);
     return rows;
@@ -575,6 +577,7 @@ function ReviewModal({ order, onClose, onApprove, onReject }) {
   const totalVal         = enrichedItems.reduce((s, i) => s + i.vendorQty * i.vendorRate, 0);
   const totalVarAmt      = enrichedItems.reduce((s, i) => s + i.varAmt, 0);
   const itemsWithVariance= enrichedItems.filter((i) => i.rateChanged).length;
+  const adHocItems        = enrichedItems.filter((i) => i.isAdHoc);
 
   const handleApprove = () => {
     if (hasHighVariance) {
@@ -628,6 +631,7 @@ function ReviewModal({ order, onClose, onApprove, onReject }) {
           <KpiPill label="Vendor Qty"    value={totalQty.toLocaleString("en-IN")} color="#0284c7" />
           <KpiPill label="Total Value"   value={`₹${money(totalVal)}`}            color="#059669" />
           <KpiPill label="Price Changes" value={String(itemsWithVariance)}        color={itemsWithVariance > 0 ? "#d97706" : "#6b7280"} />
+          {adHocItems.length > 0 && <KpiPill label="Vendor-added" value={String(adHocItems.length)} color="#7c3aed" />}
           {totalVarAmt !== 0 && (
             <KpiPill label="Price Impact"
               value={`${totalVarAmt > 0 ? "+" : ""}₹${money(Math.abs(totalVarAmt))}`}
@@ -646,6 +650,12 @@ function ReviewModal({ order, onClose, onApprove, onReject }) {
               <p className="text-sm font-medium text-slate-500">No items found in this submission.</p>
             </div>
           ) : (
+            <>
+            {adHocItems.length > 0 && (
+              <div className="mb-3 rounded-xl border border-violet-200 bg-violet-50 px-3 py-2.5 text-xs text-violet-900">
+                <span className="font-bold">Vendor-added items need your approval.</span> These were not in the original PO; their requested quantity is 0 and their stock is not committed until you approve this submission.
+              </div>
+            )}
             <div className="rounded-xl border border-slate-200 overflow-hidden">
               <table className="w-full text-xs border-collapse">
                 <thead>
@@ -653,7 +663,7 @@ function ReviewModal({ order, onClose, onApprove, onReject }) {
                     <th className="px-3 py-2.5 text-left text-[11px] font-semibold text-slate-500 uppercase tracking-wide w-8">#</th>
                     <th className="px-3 py-2.5 text-left text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Barcode</th>
                     <th className="px-3 py-2.5 text-left text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Description</th>
-                    <th className="px-3 py-2.5 text-right text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Order Qty</th>
+                    <th className="px-3 py-2.5 text-right text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Buyer Requested</th>
                     <th className="px-3 py-2.5 text-right text-[11px] font-semibold text-sky-600 uppercase tracking-wide">Vendor Qty</th>
                     <th className="px-3 py-2.5 text-right text-[11px] font-semibold text-slate-500 uppercase tracking-wide">PO Rate</th>
                     <th className="px-3 py-2.5 text-right text-[11px] font-semibold text-sky-600 uppercase tracking-wide">Vendor Rate</th>
@@ -676,8 +686,10 @@ function ReviewModal({ order, onClose, onApprove, onReject }) {
                       <tr key={i} className={`${rowBg} hover:bg-slate-100/60 transition-colors`}>
                         <td className="px-3 py-2.5 text-slate-400 font-medium">{i + 1}</td>
                         <td className="px-3 py-2.5 font-mono text-slate-600 text-[11px]">{it.barcode || "—"}</td>
-                        <td className="px-3 py-2.5 font-semibold text-slate-800 max-w-[180px] truncate" title={it.description}>{it.description || "—"}</td>
-                        <td className="px-3 py-2.5 text-right tabular-nums font-bold text-slate-700">{clamp0(it.quantity)}</td>
+                        <td className="px-3 py-2.5 font-semibold text-slate-800 max-w-[180px] truncate" title={it.description}>
+                          <span>{it.description || "—"}</span>{it.isAdHoc && <span className="ml-1.5 inline-flex rounded-full border border-violet-200 bg-violet-50 px-1.5 py-0.5 text-[9px] font-bold text-violet-700">VENDOR-ADDED</span>}
+                        </td>
+                        <td className="px-3 py-2.5 text-right tabular-nums font-bold text-slate-700">{it.buyerRequestedQty}</td>
                         <td className="px-3 py-2.5 text-right tabular-nums font-bold text-sky-700">
                           {it.vendorQty}
                           {clamp0(it.amendedQty) > 0 && clamp0(it.amendedQty) !== clamp0(it.quantity) && (
@@ -708,7 +720,7 @@ function ReviewModal({ order, onClose, onApprove, onReject }) {
                 <tfoot>
                   <tr className="border-t-2 border-slate-300 bg-slate-100">
                     <td colSpan={3} className="px-3 py-3 text-right text-xs font-bold text-slate-600 uppercase tracking-wide">Totals</td>
-                    <td className="px-3 py-3 text-right font-bold tabular-nums text-slate-700">{enrichedItems.reduce((s, i) => s + clamp0(i.quantity), 0).toLocaleString("en-IN")}</td>
+                    <td className="px-3 py-3 text-right font-bold tabular-nums text-slate-700">{enrichedItems.reduce((s, i) => s + i.buyerRequestedQty, 0).toLocaleString("en-IN")}</td>
                     <td className="px-3 py-3 text-right font-bold tabular-nums text-sky-700">{totalQty.toLocaleString("en-IN")}</td>
                     <td colSpan={2} />
                     <td className="px-3 py-3 text-right text-[11px] font-bold tabular-nums"
@@ -721,6 +733,7 @@ function ReviewModal({ order, onClose, onApprove, onReject }) {
                 </tfoot>
               </table>
             </div>
+            </>
           )}
 
           {itemsWithVariance > 0 && (
@@ -1045,6 +1058,7 @@ function PurchaseOrderForm({ onClose, onSave, initialOrder }) {
     setItems((prev) => {
       const copy = [...prev];
       const row  = { ...copy[idx], [k]: v };
+      if (k === "quantity") row.originalQty = String(clamp0(v));
       const q = clamp0(row.quantity), r = clamp0(row.receivedQty), c = clamp0(row.cancelledQty);
       row.pendingQty = clamp0(q - r - c);
       copy[idx] = row;
@@ -1058,7 +1072,7 @@ function PurchaseOrderForm({ onClose, onSave, initialOrder }) {
       const row  = { ...copy[idx] };
       row.description = product.product_name;
       row.barcode     = product.barcode     || "";
-      row.originalQty = String(product.originalQty ?? "");
+      // Product stock is only a reference; the buyer requested quantity is set from Order Qty.
       row.rate        = String(product.rate        ?? "");
       const q = clamp0(row.quantity), r = clamp0(row.receivedQty), c = clamp0(row.cancelledQty);
       row.pendingQty = clamp0(q - r - c);
@@ -1106,8 +1120,10 @@ function PurchaseOrderForm({ onClose, onSave, initialOrder }) {
       }
     }
     if (activeTab === "Items") {
-      if (items.filter((i) => !i.removed).length === 0) {
-        alert("Please add at least 1 item."); return false;
+      const activeItems = items.filter((i) => !i.removed);
+      if (activeItems.length === 0) { alert("Please add at least 1 item."); return false; }
+      if (activeItems.some((item) => !item.description.trim() || clamp0(item.quantity) <= 0)) {
+        alert("Every PO item needs a description and Order Qty greater than 0."); return false;
       }
     }
     return true;
@@ -1150,7 +1166,10 @@ function PurchaseOrderForm({ onClose, onSave, initialOrder }) {
       purchaseType:       general.purchaseType,
       notes:              others?.remarks   || "",
       otherTerms:         others?.terms     || "",
-      items:              activeItems,
+      items:              activeItems.map((item) => ({ ...item, originalQty: clamp0(item.quantity), buyerRequestedQty: clamp0(item.quantity), buyerRequestedRate: clamp0(item.rate), amendedQty: initialOrder ? clamp0(item.amendedQty) : 0, receivedQty: initialOrder ? clamp0(item.receivedQty) : 0, cancelledQty: initialOrder ? clamp0(item.cancelledQty) : 0, pendingQty: clamp0(item.quantity) })),
+      freightCharges:     totals.freight,
+      overallDiscount:    totals.discount,
+      overallTaxPct:      totals.taxPct,
       vendor_type:        general.vendorType,
       walkin_vendor:      general.vendorType === "walkin" ? general.walkinVendor : undefined,
     };
@@ -1504,11 +1523,11 @@ function PurchaseOrderForm({ onClose, onSave, initialOrder }) {
                       </div>
 
                       <div className="px-3 py-3 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5">
-                        <QtyField label="Original Qty"  value={it.originalQty}  disabled={isRemoved} onChange={(e) => updateItem(idx, "originalQty",  String(clamp0(e.target.value)))} />
-                        <QtyField label="Order Qty"     value={it.quantity}     disabled={isRemoved} highlight onChange={(e) => updateItem(idx, "quantity",     String(clamp0(e.target.value)))} />
-                        <QtyField label="Amended Qty"   value={it.amendedQty}   disabled={isRemoved} onChange={(e) => updateItem(idx, "amendedQty",   String(clamp0(e.target.value)))} />
-                        <QtyField label="Received Qty"  value={it.receivedQty}  disabled={isRemoved} onChange={(e) => updateItem(idx, "receivedQty",  String(clamp0(e.target.value)))} />
-                        <QtyField label="Cancelled Qty" value={it.cancelledQty} disabled={isRemoved} onChange={(e) => updateItem(idx, "cancelledQty", String(clamp0(e.target.value)))} />
+                        <QtyField label="Buyer Requested" value={it.originalQty} disabled readOnly customStyle={{ background: "#f8fafc", color: "#64748b" }} />
+                        <QtyField label="Order Qty *" value={it.quantity} disabled={isRemoved} highlight onChange={(e) => updateItem(idx, "quantity", String(clamp0(e.target.value)))} />
+                        <QtyField label="Vendor Confirmed" value={it.amendedQty} disabled readOnly customStyle={{ background: "#f8fafc", color: "#64748b" }} />
+                        <QtyField label="Received Qty" value={it.receivedQty} disabled readOnly customStyle={{ background: "#f8fafc", color: "#64748b" }} />
+                        <QtyField label="Cancelled Qty" value={it.cancelledQty} disabled readOnly customStyle={{ background: "#f8fafc", color: "#64748b" }} />
                         <QtyField label="Pending Qty"   value={it.pendingQty}   disabled readOnly customStyle={{ background: "#f0fdf4", borderColor: "#bbf7d0", color: "#16a34a" }} />
                       </div>
 

@@ -290,7 +290,7 @@ export default function VendorSubscriptionTab() {
             <UsageBar used={mySub.images_used} limit={mySub.image_limit} label="Catalogue images" />
             <UsageBar used={mySub.business_types_used} limit={mySub.business_type_limit} label="Business type tags" />
             <p className="text-xs text-slate-400">
-              Images stay visible for {mySub.visibility_days} days after upload, then auto-hide until renewed or replaced.
+              Images stay visible for {mySub.visibility_days} days after upload, then auto-hide. If they remain expired for 30 days, the media is permanently deleted; product and order records stay safe.
             </p>
           </div>
         )}

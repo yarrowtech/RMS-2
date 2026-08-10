@@ -12,7 +12,11 @@ from fastapi import APIRouter, Depends, Header, HTTPException
 
 from ..db import (
     grc_collection,
+    grn_collection,
+    inventory_collection,
     purchaseorders_collection,
+    product_collection,
+    store_stock_collection,
     supplier_returns_collection,
     tenants_collection,
     vendors_collection,
@@ -119,6 +123,56 @@ async def _returnable_lines(grc: dict, tenant_id: str) -> list[dict]:
     return lines
 
 
+async def _received_grn_returnable_lines(grn: dict, tenant_id: str) -> list[dict]:
+    """Posted GRN lines which remain physically available for return."""
+    prior_notes = await supplier_returns_collection.find(
+        {"tenant_id": tenant_id, "source_type": "received_grn", "grn_id": str(grn["_id"]), "status": {"$ne": "Cancelled"}},
+        {"lines": 1},
+    ).to_list(500)
+    already_returned: dict[int, float] = {}
+    for note in prior_notes:
+        for line in note.get("lines", []):
+            index = int(line.get("grn_item_index", -1))
+            already_returned[index] = already_returned.get(index, 0) + float(line.get("quantity", 0) or 0)
+
+    lines = []
+    is_store_receipt = bool(grn.get("receiving_store_id"))
+    for index, item in enumerate(grn.get("items", [])):
+        received = max(0.0, float(item.get("inwardQty", 0) or 0))
+        if received <= 0:
+            continue
+        raw_barcode = (item.get("barcode") or "").strip()
+        barcode = raw_barcode if raw_barcode and not raw_barcode.startswith("ITEM/") else f"WALKIN/{grn.get('grnNo', '')}/{index + 1}"
+        query = {"barcode": barcode, "tenant_id": tenant_id}
+        if is_store_receipt:
+            query["store_id"] = str(grn["receiving_store_id"])
+            stock_doc = await store_stock_collection.find_one(query, {"stockQty": 1})
+        else:
+            stock_doc = await inventory_collection.find_one(query, {"stockQty": 1})
+        current_stock = float((stock_doc or {}).get("stockQty", 0) or 0)
+        returnable = round(min(max(0.0, received - already_returned.get(index, 0)), current_stock), 4)
+        if returnable <= 0:
+            continue
+        lines.append({"grn_item_index": index, "barcode": barcode, "vendor_barcode": item.get("vendorBarcode", ""), "description": item.get("description", ""), "received_quantity": received, "already_returned_quantity": round(already_returned.get(index, 0), 4), "available_stock_quantity": round(current_stock, 4), "returnable_quantity": returnable, "rate": float(item.get("rate", 0) or 0)})
+    return lines
+
+
+async def _decrement_product_stock(barcode: str, tenant_id: str, quantity: float) -> None:
+    product = await product_collection.find_one({"barcode": barcode, "tenant_id": tenant_id}, {"_id": 1, "quantity": 1})
+    if product:
+        result = await product_collection.update_one({"_id": product["_id"], "quantity": {"$gte": quantity}}, {"$inc": {"quantity": -quantity}, "$set": {"updatedAt": datetime.utcnow()}})
+        if not result.modified_count:
+            raise HTTPException(status_code=409, detail="Product stock changed before this return could be saved. Refresh and try again.")
+        return
+    parent = await product_collection.find_one({"variants.barcode": barcode, "tenant_id": tenant_id}, {"_id": 1, "variants": 1})
+    if parent:
+        for index, variant in enumerate(parent.get("variants", [])):
+            if (variant.get("barcode") or "").strip() == barcode:
+                if float(variant.get("stock", 0) or 0) + 0.000001 < quantity:
+                    raise HTTPException(status_code=409, detail="Variant stock changed before this return could be saved. Refresh and try again.")
+                await product_collection.update_one({"_id": parent["_id"]}, {"$inc": {f"variants.{index}.stock": -quantity}, "$set": {"updatedAt": datetime.utcnow()}})
+                return
+
 @router.get("/eligible-grcs")
 async def eligible_grcs(ctx: dict = Depends(get_receiving_tenant)):
     """Rejected GRC lines that are still available for a supplier return note."""
@@ -139,6 +193,57 @@ async def eligible_grcs(ctx: dict = Depends(get_receiving_tenant)):
         })
     return {"data": records, "count": len(records)}
 
+
+@router.get("/eligible-grns")
+async def eligible_grns(ctx: dict = Depends(get_receiving_tenant)):
+    records = []
+    async for grn in grn_collection.find({"tenant_id": ctx["tenant_id"], "status": "Posted"}).sort("postedAt", -1):
+        lines = await _received_grn_returnable_lines(grn, ctx["tenant_id"])
+        if not lines:
+            continue
+        vendor_id, vendor_name = await _resolve_purchase_vendor({"po_id": grn.get("po_id"), "poNo": grn.get("poNo"), "vendorName": grn.get("vendorName")}, ctx["tenant_id"])
+        records.append({"grn_id": str(grn["_id"]), "grn_no": grn.get("grnNo", ""), "grn_date": grn.get("grnDate", ""), "po_no": grn.get("poNo", ""), "vendor_name": vendor_name, "registered_vendor": bool(vendor_id), "stock_location": grn.get("receiving_store_name") or "Central inventory", "lines": lines})
+    return {"data": records, "count": len(records)}
+
+
+@router.post("/from-grn", status_code=201)
+async def create_post_grn_return(payload: dict, ctx: dict = Depends(get_receiving_tenant)):
+    grn_id = str(payload.get("grn_id") or "")
+    if not ObjectId.is_valid(grn_id):
+        raise HTTPException(status_code=400, detail="Select a valid posted GRN.")
+    grn = await grn_collection.find_one({"_id": ObjectId(grn_id), "tenant_id": ctx["tenant_id"], "status": "Posted"})
+    if not grn:
+        raise HTTPException(status_code=404, detail="Posted GRN not found.")
+    available = {line["grn_item_index"]: line for line in await _received_grn_returnable_lines(grn, ctx["tenant_id"])}
+    requested = payload.get("lines") or []
+    if not isinstance(requested, list) or not requested:
+        raise HTTPException(status_code=400, detail="Select at least one received item to return.")
+    lines, selected = [], set()
+    for request_line in requested:
+        try: index = int(request_line.get("grn_item_index"))
+        except (TypeError, ValueError): raise HTTPException(status_code=400, detail="Invalid GRN item.")
+        if index in selected or index not in available:
+            raise HTTPException(status_code=400, detail="One or more items are no longer available for return. Refresh and try again.")
+        selected.add(index); source = available[index]
+        quantity = _number(request_line.get("quantity"), "Return quantity", minimum=0.0001)
+        if quantity > source["returnable_quantity"] + 0.000001:
+            raise HTTPException(status_code=400, detail=f"Return quantity exceeds available stock for '{source['description']}'.")
+        lines.append({**source, "quantity": round(quantity, 4), "reason": _text(request_line.get("reason"), "Return reason", required=True), "line_value": round(quantity * source["rate"], 2)})
+    for line in lines:
+        query = {"barcode": line["barcode"], "tenant_id": ctx["tenant_id"], "stockQty": {"$gte": line["quantity"]}}
+        collection = inventory_collection
+        if grn.get("receiving_store_id"):
+            query["store_id"] = str(grn["receiving_store_id"]); collection = store_stock_collection
+        result = await collection.update_one(query, {"$inc": {"stockQty": -line["quantity"]}, "$set": {"updatedAt": datetime.utcnow(), "last_return_grn": grn.get("grnNo", "")}})
+        if not result.modified_count:
+            raise HTTPException(status_code=409, detail="Stock changed before this return could be saved. Refresh and try again.")
+        if collection is inventory_collection:
+            await _decrement_product_stock(line["barcode"], ctx["tenant_id"], line["quantity"])
+    vendor_id, vendor_name = await _resolve_purchase_vendor({"po_id": grn.get("po_id"), "poNo": grn.get("poNo"), "vendorName": grn.get("vendorName")}, ctx["tenant_id"])
+    tenant = await tenants_collection.find_one({"tenant_id": ctx["tenant_id"]}, {"company_name": 1}); now = datetime.utcnow()
+    document = {"srn_no": await _next_srn_number(ctx["tenant_id"]), "tenant_id": ctx["tenant_id"], "retailer_name": (tenant or {}).get("company_name") or ctx["tenant_id"], "source_type": "received_grn", "grn_id": str(grn["_id"]), "grn_no": grn.get("grnNo", ""), "grc_no": grn.get("grcNo", ""), "po_no": grn.get("poNo", ""), "stock_location": grn.get("receiving_store_name") or "Central inventory", "vendor_id": vendor_id, "vendor_name": vendor_name, "lines": lines, "total_value": round(sum(line["line_value"] for line in lines), 2), "note": _text(payload.get("note"), "Note", maximum=1000), "status": "Open", "dispatch_status": "PendingDispatch", "stock_adjusted": True, "vendor_response_status": "AwaitingResponse" if vendor_id else "ExternalVendor", "created_by": ctx.get("admin_name") or "Inventory", "created_at": now, "updated_at": now}
+    result = await supplier_returns_collection.insert_one(document); document["_id"] = result.inserted_id
+    return {"message": "Return to Vendor Note created and stock reduced. Dispatch it to the vendor, then settle by replacement, credit note or refund.", "data": _serialise(document)}
 
 @router.get("/")
 async def list_supplier_returns(ctx: dict = Depends(get_receiving_tenant)):

@@ -719,7 +719,7 @@ function POCard({
                   <thead>
                     <tr>
                       <Th>#</Th><Th>Barcode</Th><Th>Description</Th>
-                      <Th align="center">Ordered Qty</Th><Th align="center">Amended Qty</Th>
+                      <Th align="center">Buyer Requested</Th><Th align="center">You Confirmed</Th>
                       <Th align="right">Buyer Rate</Th><Th align="right">Your Rate</Th>
                       <Th align="right">Total</Th>
                     </tr>
@@ -727,7 +727,8 @@ function POCard({
                   <tbody>
                     {po.items.map((it, i) => {
                       const vendorRate  = it.vendorRate || it.rate || 0;
-                      const displayQty  = it.amendedQty || it.quantity || 0;
+                      const requestedQty = it.buyerRequestedQty ?? it.originalQty ?? it.quantity ?? 0;
+                      const displayQty  = it.vendorConfirmedQty ?? it.amendedQty ?? it.quantity ?? 0;
                       const total       = displayQty * vendorRate;
                       const hasVariance = it.variancePct && Math.abs(it.variancePct) > 0;
                       const varianceColor =
@@ -774,7 +775,7 @@ function POCard({
                               <div style={{ fontSize: 10, color: T.sky, marginTop: 2 }}>Due: {it.dueDate}</div>
                             )}
                           </Td>
-                          <Td align="center">{it.quantity || 0}</Td>
+                          <Td align="center">{requestedQty}</Td>
                           <Td align="center">
                             {it.amendedQty != null
                               ? <span style={{ fontWeight: 700, color: T.violet }}>{it.amendedQty}</span>
@@ -875,7 +876,8 @@ function POCard({
                           <Th>Your Product / Variant</Th>
                           <Th>Barcode</Th>
                           <Th>Buyer Requested</Th>
-                          <Th align="center">Qty</Th>
+                          <Th align="center">You confirm qty</Th>
+                          <Th>Confirmation note</Th>
                           <Th align="right">Your Rate (₹)</Th>
                         </tr>
                       </thead>
@@ -942,6 +944,7 @@ function POCard({
                                         Buyer wants
                                       </div>
                                       <DescriptionCell text={buyerRef} />
+                                      <div style={{ marginTop: 3, fontSize: 10, fontWeight: 700, color: "#92400E" }}>Qty requested: {item.buyerRequestedQty ?? 0}</div>
                                     </div>
 
                                     {selectedProduct && (
@@ -974,6 +977,11 @@ function POCard({
                                   type="number" value={item.quantity ?? ""}
                                   onChange={(e) => onItemChange(idx, "quantity", parseFloat(e.target.value) || 0)}
                                 />
+                              </td>
+
+                              {/* Vendor confirmation note */}
+                              <td style={{ padding: "8px 10px", borderBottom: `1px solid ${T.border}`, minWidth: 150 }}>
+                                <SmartInput value={item.vendorConfirmationNote ?? ""} onChange={(e) => onItemChange(idx, "vendorConfirmationNote", e.target.value)} placeholder="Optional reason" />
                               </td>
 
                               {/* Rate */}
@@ -1121,7 +1129,7 @@ export default function VendorPurchaseOrders({ vendorName }) {
     setItemsDraft(prev => ({
       ...prev,
       [poId]: [...(prev[poId] || []),
-        { product_sku: "", barcode: "", description: "", buyer_description: "", quantity: 0, rate: 0 }],
+        { product_sku: "", barcode: "", description: "", buyer_description: "", buyerRequestedQty: 0, quantity: 0, rate: 0, vendorConfirmationNote: "" }],
     }));
   };
 
@@ -1133,8 +1141,10 @@ export default function VendorPurchaseOrders({ vendorName }) {
         barcode:           "",
         description:       it.description || "",
         buyer_description: it.description || "",
-        quantity:          it.amendedQty || it.quantity || 0,
-        rate:              it.rate || 0,
+        buyerRequestedQty: it.buyerRequestedQty ?? it.originalQty ?? it.quantity ?? 0,
+        quantity:          it.vendorConfirmedQty ?? it.amendedQty ?? it.quantity ?? 0,
+        rate:              it.vendorConfirmedRate ?? it.vendorRate ?? it.rate ?? 0,
+        vendorConfirmationNote: it.vendorConfirmationNote || "",
       }));
     if (rows.length > 0)
       setItemsDraft(prev => ({ ...prev, [poId]: rows }));
@@ -1214,7 +1224,7 @@ export default function VendorPurchaseOrders({ vendorName }) {
   // now start at 0, exactly like a product an admin adds manually with
   // no stock yet — consistent with the existing-product path, which
   // never touches "current stock" at PO-creation time either.
-  const createProductForRow = async (row) => {
+  const createProductForRow = async (row, poId) => {
     const token = getToken();
     const fd = new FormData();
     fd.append("product_name", row.new_product_name.trim());
@@ -1252,7 +1262,7 @@ export default function VendorPurchaseOrders({ vendorName }) {
       const resolvedItems = [];
       for (const it of items) {
         if (it.is_new_product) {
-          const created = await createProductForRow(it);
+          const created = await createProductForRow(it, poId);
           resolvedItems.push({
             product_sku: created.sku || "",
             barcode:     created.barcode || "",
@@ -1260,6 +1270,12 @@ export default function VendorPurchaseOrders({ vendorName }) {
             description: it.description || it.new_product_name,
             quantity:    Number(it.quantity) || 0,
             rate:        Number(it.rate) || 0,
+            vendorConfirmationNote: it.vendorConfirmationNote || "",
+            lineSource: "vendor_ad_hoc",
+            requiresBuyerApproval: true,
+            createdFromPOId: poId,
+            createdProductSku: created.sku || "",
+            createdProductBarcode: created.barcode || "",
           });
         } else {
           resolvedItems.push({
@@ -1269,6 +1285,12 @@ export default function VendorPurchaseOrders({ vendorName }) {
             description: it.description || "",
             quantity:    Number(it.quantity) || 0,
             rate:        Number(it.rate)     || 0,
+            vendorConfirmationNote: it.vendorConfirmationNote || "",
+            lineSource: "vendor_ad_hoc",
+            requiresBuyerApproval: true,
+            createdFromPOId: poId,
+            createdProductSku: created.sku || "",
+            createdProductBarcode: created.barcode || "",
           });
         }
       }

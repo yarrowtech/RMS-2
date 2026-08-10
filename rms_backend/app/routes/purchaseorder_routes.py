@@ -25,9 +25,57 @@ def objid(v):
     return str(v) if isinstance(v, ObjectId) else v
 
 
+async def require_vendor_kyb_for_new_po(link: dict) -> None:
+    if link.get("kyb_status") == "Verified":
+        return
+    required_after = link.get("kyb_required_after")
+    if not required_after:
+        required_after = datetime.utcnow() + timedelta(days=30)
+        await vendor_tenant_links_collection.update_one({"_id": link["_id"]}, {"$set": {"kyb_status": "Not started", "kyb_required_after": required_after}})
+        return
+    if datetime.utcnow() >= required_after:
+        raise HTTPException(status_code=403, detail="This vendor's KYB must be verified before a new purchase order can be assigned.")
+
+
 # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # MODELS
 # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+
+
+
+def _requested_quantity(item: dict) -> float:
+    """Return the immutable quantity the buyer originally requested."""
+    value = item.get("buyerRequestedQty")
+    if value is None:
+        value = item.get("originalQty") or item.get("quantity") or 0
+    return max(0.0, float(value or 0))
+
+
+def _ensure_buyer_line_snapshot(item: dict, recorded_at: Optional[datetime] = None) -> dict:
+    """Backwards-compatible buyer request snapshot for every PO line."""
+    recorded_at = recorded_at or datetime.utcnow()
+    requested_qty = _requested_quantity(item)
+    if not item.get("buyerLineId"):
+        item["buyerLineId"] = uuid.uuid4().hex
+    if item.get("buyerRequestedQty") is None:
+        item["buyerRequestedQty"] = requested_qty
+    if item.get("buyerRequestedRate") is None:
+        item["buyerRequestedRate"] = float(item.get("rate") or 0)
+    if not item.get("buyerRequestedAt"):
+        item["buyerRequestedAt"] = recorded_at.isoformat()
+    if not item.get("originalQty"):
+        item["originalQty"] = requested_qty
+    history = list(item.get("quantityHistory") or [])
+    if not any(entry.get("event") == "buyer_requested" for entry in history):
+        history.append({"event": "buyer_requested", "quantity": requested_qty, "rate": float(item.get("buyerRequestedRate") or 0), "at": item["buyerRequestedAt"]})
+    item["quantityHistory"] = history
+    return item
+
+
+def _record_line_event(item: dict, event: str, quantity: float, rate: float, note: str = "") -> None:
+    history = list(item.get("quantityHistory") or [])
+    history.append({"event": event, "quantity": max(0.0, float(quantity or 0)), "rate": max(0.0, float(rate or 0)), "note": str(note or "")[:500], "at": datetime.utcnow().isoformat()})
+    item["quantityHistory"] = history
 
 class ItemModel(BaseModel):
     sku: Optional[str] = None
@@ -39,6 +87,17 @@ class ItemModel(BaseModel):
     barcode: str = ""
     description: str = ""
     originalQty: float = 0
+    buyerLineId: Optional[str] = None
+    buyerRequestedQty: Optional[float] = None
+    buyerRequestedRate: Optional[float] = None
+    buyerRequestedAt: Optional[str] = None
+    vendorConfirmedQty: Optional[float] = None
+    vendorConfirmedRate: Optional[float] = None
+    vendorConfirmedAt: Optional[str] = None
+    vendorConfirmationNote: Optional[str] = ""
+    buyerApprovedQty: Optional[float] = None
+    buyerApprovedAt: Optional[str] = None
+    quantityHistory: List[Dict[str, Any]] = []
     quantity: float = 0
     amendedQty: float = 0
     receivedQty: float = 0
@@ -103,6 +162,7 @@ class PurchaseOrderModel(BaseModel):
 
     freightCharges: Optional[float] = 0
     overallDiscount: Optional[float] = 0
+    overallTaxPct: Optional[float] = 0
     basicValue: Optional[float] = 0
     taxAmount: Optional[float] = 0
     grossAmount: Optional[float] = 0
@@ -229,14 +289,19 @@ def calculate_po_totals(po_dict: dict):
         if original > 0 and tolerance >= 0:
             min_qty = original * (1 - tolerance / 100)
             max_qty = original * (1 + tolerance / 100)
-            if not (min_qty <= qty <= max_qty):
-                item["toleranceFlag"] = f"Out of tolerance ({min_qty:.2f}-{max_qty:.2f})"
-            else:
-                item["toleranceFlag"] = ""
-    freight          = float(po_dict.get("freightCharges", 0))
-    overall_discount = float(po_dict.get("overallDiscount", 0))
-    gross_amount     = total_basic - total_discount + total_tax
-    net_amount       = gross_amount + freight - overall_discount
+            item["toleranceMinQty"] = round(min_qty, 4)
+            item["toleranceMaxQty"] = round(max_qty, 4)
+            # A tolerance is an allowed receipt range, never an additional charge.
+            item["toleranceFlag"] = ""
+    freight          = float(po_dict.get("freightCharges", 0) or 0)
+    overall_discount = float(po_dict.get("overallDiscount", 0) or 0)
+    overall_tax_pct  = max(0.0, float(po_dict.get("overallTaxPct", 0) or 0))
+    gross_before_tax = max(0.0, total_basic - total_discount + freight - overall_discount)
+    # Order-level tax comes from the buyer form. It is never combined with legacy item taxes.
+    if overall_tax_pct > 0:
+        total_tax = gross_before_tax * (overall_tax_pct / 100)
+    gross_amount = gross_before_tax
+    net_amount   = gross_amount + total_tax
     po_dict["basicValue"]  = round(total_basic, 2)
     po_dict["taxAmount"]   = round(total_tax, 2)
     po_dict["grossAmount"] = round(gross_amount, 2)
@@ -359,6 +424,7 @@ async def create_po(po: PurchaseOrderModel, ctx: dict = Depends(get_hq_tenant)):
 
     for item in po_dict.get("items", []):
         item["barcode"] = await resolve_real_barcode(item)
+        _ensure_buyer_line_snapshot(item)
 
     # â”€â”€ Vendor resolution â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     if po_dict.get("vendor_type") == "walkin":
@@ -400,6 +466,7 @@ async def create_po(po: PurchaseOrderModel, ctx: dict = Depends(get_hq_tenant)):
                     detail=f"Vendor '{vendor_name}' does not have an approved relationship "
                            f"with your retailer. For unregistered vendors set vendor_type to 'walkin'."
                 )
+            await require_vendor_kyb_for_new_po(approved_link)
             po_dict["vendor_id"] = vendor["_id"]
         share_link = None
 
@@ -451,6 +518,7 @@ async def create_po(po: PurchaseOrderModel, ctx: dict = Depends(get_hq_tenant)):
 
     for item in po_dict.get("items", []):
         item["barcode"] = await resolve_real_barcode(item)
+        _ensure_buyer_line_snapshot(item)
 
     # â”€â”€ Vendor resolution â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     if po_dict.get("vendor_type") == "walkin":
@@ -492,6 +560,7 @@ async def create_po(po: PurchaseOrderModel, ctx: dict = Depends(get_hq_tenant)):
                     detail=f"Vendor '{vendor_name}' does not have an approved relationship "
                            f"with your retailer. For unregistered vendors set vendor_type to 'walkin'."
                 )
+            await require_vendor_kyb_for_new_po(approved_link)
             po_dict["vendor_id"] = vendor["_id"]
         share_link = None
 
@@ -623,6 +692,7 @@ async def update_purchase_order(po_id: str, po: PurchaseOrderModel, ctx: dict = 
 
     for item in po_dict.get("items", []):
         item["barcode"] = await resolve_real_barcode(item)
+        _ensure_buyer_line_snapshot(item)
 
     calculate_po_totals(po_dict)
 
@@ -678,6 +748,7 @@ async def update_purchase_order(po_id: str, po: PurchaseOrderModel, ctx: dict = 
 
     for item in po_dict.get("items", []):
         item["barcode"] = await resolve_real_barcode(item)
+        _ensure_buyer_line_snapshot(item)
 
     calculate_po_totals(po_dict)
 
@@ -734,10 +805,12 @@ async def approve_vendor_submission(po_id: str, ctx: dict = Depends(get_hq_tenan
 
     updated_items = []
     total_basic = 0.0
+    approved_at = datetime.utcnow().isoformat()
     for item in po.get("items", []):
         item = dict(item)
-        vendor_rate = float(item.get("vendorRate") or item.get("rate") or 0)
-        amended_qty = float(item.get("amendedQty") or item.get("quantity") or 0)
+        _ensure_buyer_line_snapshot(item)
+        vendor_rate = float(item.get("vendorRate") or item.get("vendorConfirmedRate") or item.get("rate") or 0)
+        amended_qty = float(item.get("amendedQty") or item.get("vendorConfirmedQty") or item.get("quantity") or 0)
         tax_pct     = float(item.get("taxPct", 0) or 0)
         disc_pct    = float(item.get("discountPct", 0) or 0)
         basic        = amended_qty * vendor_rate
@@ -752,9 +825,18 @@ async def approve_vendor_submission(po_id: str, ctx: dict = Depends(get_hq_tenan
         item["discountAmount"] = discount_amt
         item["pendingQty"]     = max(0.0, amended_qty - float(item.get("receivedQty", 0) or 0))
         item["agreedRate"]     = vendor_rate
-        item["approvedAt"]     = datetime.utcnow().isoformat()
+        item["buyerApprovedQty"] = amended_qty
+        item["buyerApprovedAt"] = approved_at
+        item["approvedAt"]     = approved_at
+        _record_line_event(item, "buyer_approved", amended_qty, vendor_rate)
         updated_items.append(item)
         total_basic += basic
+
+    # Vendor-added lines remain proposals until the buyer approves this PO.
+    vendor_id = str("vendor_id") or ""
+    ad_hoc_items = [item for item in updated_items if item.get("lineSource") == "vendor_ad_hoc"]
+    if vendor_id and ad_hoc_items:
+        await adjust_vendor_stock(ad_hoc_items, vendor_id, reverse=False)
 
     freight          = float(po.get("freightCharges", 0) or 0)
     overall_discount = float(po.get("overallDiscount", 0) or 0)
@@ -808,7 +890,7 @@ async def reject_po(po_id: str, payload: dict = {}, ctx: dict = Depends(get_hq_t
         raise HTTPException(status_code=400, detail=f"Only VendorSubmitted POs can be rejected.")
     vendor_id = str(po.get("vendor_id") or "")
     if vendor_id:
-        await adjust_vendor_stock(po.get("items", []), vendor_id, reverse=True)
+        await adjust_vendor_stock(po.get("items", []) if po.get("status") != "VendorSubmitted" else [item for item in po.get("items", []) if item.get("lineSource") != "vendor_ad_hoc"], vendor_id, reverse=True)
     await purchaseorders_collection.update_one(
         {"_id": ObjectId(po_id), "tenant_id": ctx["tenant_id"]},
         {"$set": {"status": "Rejected", "rejectionReason": reason, "updatedAt": datetime.utcnow()}}
@@ -836,7 +918,7 @@ async def cancel_po(po_id: str, payload: dict = {}, ctx: dict = Depends(get_hq_t
     if po.get("status") in ("VendorSubmitted", "Approved", "PartiallyReceived", "FullyReceived"):
         vendor_id = str(po.get("vendor_id") or "")
         if vendor_id:
-            await adjust_vendor_stock(po.get("items", []), vendor_id, reverse=True)
+            await adjust_vendor_stock(po.get("items", []) if po.get("status") != "VendorSubmitted" else [item for item in po.get("items", []) if item.get("lineSource") != "vendor_ad_hoc"], vendor_id, reverse=True)
             stock_action = "restored"
     await purchaseorders_collection.update_one(
         {"_id": ObjectId(po_id), "tenant_id": ctx["tenant_id"]},
@@ -860,7 +942,7 @@ async def delete_purchase_order(po_id: str, ctx: dict = Depends(get_hq_tenant)):
     if po.get("status") in ("VendorSubmitted", "Approved", "PartiallyReceived", "FullyReceived"):
         vendor_id = str(po.get("vendor_id") or "")
         if vendor_id:
-            await adjust_vendor_stock(po.get("items", []), vendor_id, reverse=True)
+            await adjust_vendor_stock(po.get("items", []) if po.get("status") != "VendorSubmitted" else [item for item in po.get("items", []) if item.get("lineSource") != "vendor_ad_hoc"], vendor_id, reverse=True)
             stock_action = "restored"
     await purchaseorders_collection.delete_one({"_id": ObjectId(po_id), "tenant_id": ctx["tenant_id"]})
     return {"message": f"Purchase order '{po.get('orderNo')}' deleted successfully", "stock_action": stock_action}
@@ -931,6 +1013,9 @@ async def vendor_add_items(po_id: str, payload: dict, authorization: str = Heade
     new_items = payload.get("items", [])
     for item in new_items:
         item["barcode"] = await resolve_real_barcode(item)
+        item["vendorConfirmedQty"] = max(0.0, float(item.get("quantity") or 0))
+        item["vendorConfirmedRate"] = max(0.0, float(item.get("rate") or 0))
+        item["vendorConfirmationNote"] = str(item.get("vendorConfirmationNote") or item.get("confirmationNote") or "").strip()[:500]
 
     existing_items = list(po.get("vendor_response", {}).get("items", []))
 
@@ -998,8 +1083,13 @@ async def vendor_submit_po(po_id: str, authorization: str = Header(None)):
         raise HTTPException(status_code=400, detail="Vendor has not added any items yet")
     for item in vendor_items:
         item["barcode"] = await resolve_real_barcode(item)
+        item["vendorConfirmedQty"] = max(0.0, float(item.get("vendorConfirmedQty", item.get("quantity")) or 0))
+        item["vendorConfirmedRate"] = max(0.0, float(item.get("vendorConfirmedRate", item.get("rate")) or 0))
+        item["vendorConfirmationNote"] = str(item.get("vendorConfirmationNote") or item.get("confirmationNote") or "").strip()[:500]
 
     merged_items = [dict(it) for it in po.get("items", [])]
+    for existing_item in merged_items:
+        _ensure_buyer_line_snapshot(existing_item)
 
     # Barcode index â€” for exact barcode match (registered vendor flow)
     bc_index: dict = {}
@@ -1035,6 +1125,9 @@ async def vendor_submit_po(po_id: str, authorization: str = Header(None)):
                 **merged_items[idx],
                 "barcode":        bc,           # real barcode replaces ITEM/
                 "amendedQty":     qty,
+                "vendorConfirmedQty": qty,
+                "vendorConfirmedRate": vendor_rate,
+                "vendorConfirmationNote": item.get("vendorConfirmationNote", ""),
                 "remarks":        item.get("remarks", merged_items[idx].get("remarks", "")),
                 "buyerRate":      buyer_rate,
                 "vendorRate":     vendor_rate,
@@ -1074,6 +1167,9 @@ async def vendor_submit_po(po_id: str, authorization: str = Header(None)):
             merged_items[idx] = {
                 **merged_items[idx],
                 "amendedQty":     qty,
+                "vendorConfirmedQty": qty,
+                "vendorConfirmedRate": vendor_rate,
+                "vendorConfirmationNote": item.get("vendorConfirmationNote", ""),
                 "remarks":        item.get("remarks", merged_items[idx].get("remarks", "")),
                 "buyerRate":      buyer_rate,
                 "vendorRate":     vendor_rate,
@@ -1083,7 +1179,9 @@ async def vendor_submit_po(po_id: str, authorization: str = Header(None)):
             }
         elif bc:
             vendor_rate = float(item.get("rate") or 0)
-            merged_items.append({**item, "buyerRate": None, "vendorRate": vendor_rate, "variancePct": 0.0, "varianceAmt": 0.0, "varianceStatus": "new_item"})
+            new_line = {**item, "buyerLineId": uuid.uuid4().hex, "buyerRequestedQty": 0.0, "buyerRequestedRate": 0.0, "originalQty": 0.0, "buyerRate": None, "vendorRate": vendor_rate, "variancePct": 0.0, "varianceAmt": 0.0, "varianceStatus": "new_item", "lineSource": "vendor_ad_hoc", "requiresBuyerApproval": True}
+            _ensure_buyer_line_snapshot(new_line)
+            merged_items.append(new_line)
             bc_index[bc] = len(merged_items) - 1
         else:
             merged_items.append(item)
@@ -1107,8 +1205,15 @@ async def vendor_submit_po(po_id: str, authorization: str = Header(None)):
         )
     ]
 
-    vendor_total = sum(
-        float(it.get("amendedQty") or it.get("quantity") or 0) *
+    for merged_item in merged_items:
+        _ensure_buyer_line_snapshot(merged_item)
+        if merged_item.get("vendorConfirmedQty") is not None:
+            confirmed_qty = float(merged_item.get("vendorConfirmedQty") or 0)
+            confirmed_rate = float(merged_item.get("vendorConfirmedRate") or merged_item.get("vendorRate") or merged_item.get("rate") or 0)
+            merged_item["vendorConfirmedAt"] = datetime.utcnow().isoformat()
+            _record_line_event(merged_item, "vendor_confirmed", confirmed_qty, confirmed_rate, merged_item.get("vendorConfirmationNote", ""))
+
+    vendor_total = sum(        float(it.get("amendedQty") or it.get("quantity") or 0) *
         float(it.get("vendorRate") or it.get("rate") or 0)
         for it in merged_items
     )
@@ -1118,7 +1223,7 @@ async def vendor_submit_po(po_id: str, authorization: str = Header(None)):
     # Only deduct stock on first submission â€” prevent double deduction on resubmit
     was_already_submitted = po.get("status") == "VendorSubmitted"
     if vendor_id and not was_already_submitted:
-        await adjust_vendor_stock(vendor_items, vendor_id, reverse=False)
+        await adjust_vendor_stock([item for item in merged_items if item.get("lineSource") != "vendor_ad_hoc"], vendor_id, reverse=False)
         stock_action = "deducted"
     elif vendor_id and was_already_submitted:
         stock_action = "skipped_resubmission"

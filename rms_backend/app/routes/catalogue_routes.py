@@ -51,6 +51,7 @@ import uuid
 import json
 import os
 from urllib import error as urlerror, request as urlrequest
+from urllib.parse import unquote, urlparse
 import cloudinary
 import cloudinary.uploader
 
@@ -69,6 +70,31 @@ from .subscription_routes import get_vendor_tier  # single source of truth for t
 from .procurement_notification_routes import notify_buyer, notify_vendor
 
 router = APIRouter(prefix="/api/catalogue", tags=["Vendor Catalogue"])
+
+# Expired items are hidden first. Their catalogue media is removed only after
+# this recovery period, so a vendor can still renew and restore listings.
+CATALOGUE_MEDIA_RETENTION_DAYS = 30
+
+
+def _vendor_catalogue_public_id(image_url: str) -> Optional[str]:
+    """Return a Cloudinary public ID only for RMS vendor catalogue media."""
+    try:
+        parsed = urlparse(image_url)
+        if "res.cloudinary.com" not in parsed.netloc:
+            return None
+        path = unquote(parsed.path or "")
+        if "/upload/" not in path:
+            return None
+        remainder = path.split("/upload/", 1)[1].lstrip("/")
+        parts = remainder.split("/")
+        if parts and parts[0].startswith("v") and parts[0][1:].isdigit():
+            parts = parts[1:]
+        public_path = "/".join(parts)
+        if not public_path.startswith("vendor_catalogue/"):
+            return None
+        return os.path.splitext(public_path)[0]
+    except Exception:
+        return None
 
 # ── Export dependencies ──────────────────────────────────────────────────────
 # NEW: requires two additional pip packages not otherwise used elsewhere in
@@ -396,6 +422,8 @@ async def update_catalogue_item(item_id: str, payload: dict, authorization: str 
     # visible again once it lapses.
     update_ops = {"$set": patch}
     if patch.get("active") is True and not item.get("active", False):
+        if not item.get("images"):
+            raise HTTPException(status_code=400, detail="This listing's expired images were deleted after the 30-day recovery period. Add new images before reactivating it.")
         tier = await get_vendor_tier(vendor_id)
         active_count = await vendor_catalogue_collection.count_documents({
             "vendor_id": ObjectId(vendor_id), "active": True,
@@ -1287,6 +1315,62 @@ async def convert_inquiry(inquiry_id: str, ctx: dict = Depends(get_hq_tenant)):
 # CATALOGUE EXPIRY SWEEP — the mechanism behind "images visible for 45/90 days"
 # ═══════════════════════════════════════════════════════════════════════════
 
+async def purge_expired_catalogue_media(now: Optional[datetime] = None) -> dict:
+    """Permanently remove only Cloudinary media for listings hidden 30+ days.
+
+    Catalogue items, variants, inquiry history, orders and invoices remain.
+    A vendor can add fresh images and reactivate the same item later. If a
+    Cloudinary deletion fails, the item is retained for a safe retry.
+    """
+    now = now or datetime.utcnow()
+    cutoff = now - timedelta(days=CATALOGUE_MEDIA_RETENTION_DAYS)
+    candidates = await vendor_catalogue_collection.find({
+        "active": False,
+        "expired_reason": "tier_visibility_window",
+        "expired_at": {"$lte": cutoff},
+        "media_purged_at": {"$exists": False},
+    }).to_list(length=None)
+    purged_items = 0
+    purged_images = 0
+    failed_items = 0
+    for item in candidates:
+        image_urls = list(item.get("images") or [])
+        delete_failed = False
+        for image_url in image_urls:
+            public_id = _vendor_catalogue_public_id(str(image_url))
+            if not public_id:
+                continue
+            try:
+                result = cloudinary.uploader.destroy(public_id, resource_type="image", invalidate=True)
+                if result.get("result") not in {"ok", "not found"}:
+                    delete_failed = True
+                    break
+            except Exception as exc:
+                print(f"Catalogue media cleanup failed for {public_id}: {exc}")
+                delete_failed = True
+                break
+        if delete_failed:
+            failed_items += 1
+            continue
+        result = await vendor_catalogue_collection.update_one(
+            {
+                "_id": item["_id"], "active": False,
+                "expired_reason": "tier_visibility_window",
+                "expired_at": {"$lte": cutoff},
+                "media_purged_at": {"$exists": False},
+            },
+            {"$set": {
+                "images": [], "media_purged_at": now,
+                "media_purge_reason": "retention_period_elapsed",
+                "purged_image_count": len(image_urls), "updated_at": now,
+            }},
+        )
+        if result.modified_count:
+            purged_items += 1
+            purged_images += len(image_urls)
+    return {"media_purged_items": purged_items, "media_purged_images": purged_images, "media_cleanup_failed_items": failed_items}
+
+
 async def expire_stale_catalogue_items() -> dict:
     """
     Soft-hides (active=False) every catalogue item whose expires_at has
@@ -1312,7 +1396,8 @@ async def expire_stale_catalogue_items() -> dict:
         {"active": True, "expires_at": {"$lt": now}},
         {"$set": {"active": False, "expired_at": now, "expired_reason": "tier_visibility_window"}}
     )
-    return {"expired_count": result.modified_count, "swept_at": now.isoformat()}
+    media_cleanup = await purge_expired_catalogue_media(now)
+    return {"expired_count": result.modified_count, "swept_at": now.isoformat(), **media_cleanup}
 
 
 @router.post("/expire-sweep")

@@ -215,6 +215,7 @@ export default function QuickOrderFromCatalogue() {
   const [orderVendorName, setOrderVendorName] = useState("");
   const [orderDate, setOrderDate] = useState(today());
   const [orderItems, setOrderItems] = useState([EMPTY_ITEM()]);
+  const [commercial, setCommercial] = useState({ gstPct: "0", freight: "0", discount: "0", tolerancePct: "0", dueDate: "", paymentTerms: "" });
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState(null);
   const [submittedOrderNo, setSubmittedOrderNo] = useState(null);
@@ -409,6 +410,10 @@ export default function QuickOrderFromCatalogue() {
         orderDate:  orderDate,
         vendorName: orderVendorName.trim(),
         vendor_type: "registered",
+        freightCharges: Number(commercial.freight) || 0,
+        overallDiscount: Number(commercial.discount) || 0,
+        overallTaxPct: Number(commercial.gstPct) || 0,
+        otherTerms: commercial.paymentTerms || "",
         items: validItems.map(it => ({
           description: it.description.trim(),
           sku:         it.sku || "",
@@ -419,6 +424,11 @@ export default function QuickOrderFromCatalogue() {
           quantity:    Number(it.quantity) || 0,
           rate:        Number(it.rate) || 0,
           remarks:     it.remarks || "",
+          originalQty: Number(it.quantity) || 0,
+          buyerRequestedQty: Number(it.quantity) || 0,
+          buyerRequestedRate: Number(it.rate) || 0,
+          tolerancePct: Number(commercial.tolerancePct) || 0,
+          dueDate: commercial.dueDate || null,
         })),
       };
       const res = await authFetch(`${API_BASE}/purchaseorders/`, {
@@ -439,7 +449,7 @@ export default function QuickOrderFromCatalogue() {
   const resetAll = () => {
     setStep(0); setCategory(""); setBusinessType(""); setResults([]); setSearched(false);
     setSelectedMap(new Map()); setItemRequests({}); setGroupId(null); setSingleInquiryId(null); setRows([]);
-    setOrderVendorName(""); setOrderItems([EMPTY_ITEM()]); setSubmittedOrderNo(null); setSubmitError(null);
+    setOrderVendorName(""); setOrderItems([EMPTY_ITEM()]); setCommercial({ gstPct: "0", freight: "0", discount: "0", tolerancePct: "0", dueDate: "", paymentTerms: "" }); setSubmittedOrderNo(null); setSubmitError(null);
   };
 
   const statusStyle = {
@@ -678,6 +688,7 @@ export default function QuickOrderFromCatalogue() {
                   </div>
                 )}
 
+                
                 <div className="flex justify-end pt-2 border-t border-slate-100">
                   <button onClick={() => setStep(1)} disabled={selectedItems.length < 1}
                     className="h-9 px-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold disabled:opacity-40">
@@ -762,6 +773,7 @@ export default function QuickOrderFromCatalogue() {
                     );
                   })}
                 </div>
+                
                 <div className="flex justify-end pt-2 border-t border-slate-100">
                   <button onClick={sendRequest} disabled={sending}
                     className="h-9 px-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 disabled:opacity-60">
@@ -871,6 +883,18 @@ export default function QuickOrderFromCatalogue() {
                   </div>
                 </div>
 
+                <details className="rounded-xl border border-indigo-100 bg-indigo-50/60 p-3">
+                  <summary className="cursor-pointer text-sm font-black text-indigo-950">Commercial details <span className="ml-1 text-xs font-semibold text-indigo-600">optional — defaults to 0</span></summary>
+                  <p className="mt-2 text-xs leading-5 text-slate-600">Add these only when they differ from the vendor agreement. GST is calculated on item value + freight − discount; tolerance is an allowed delivery quantity range, not a charge.</p>
+                  <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                    <input type="number" min="0" placeholder="GST / Tax %" value={commercial.gstPct} onChange={e => setCommercial(current => ({ ...current, gstPct: e.target.value }))} className="h-9 rounded-lg border border-slate-200 bg-white px-2 text-xs" />
+                    <input type="number" min="0" placeholder="Freight charge" value={commercial.freight} onChange={e => setCommercial(current => ({ ...current, freight: e.target.value }))} className="h-9 rounded-lg border border-slate-200 bg-white px-2 text-xs" />
+                    <input type="number" min="0" placeholder="Discount" value={commercial.discount} onChange={e => setCommercial(current => ({ ...current, discount: e.target.value }))} className="h-9 rounded-lg border border-slate-200 bg-white px-2 text-xs" />
+                    <input type="number" min="0" placeholder="Qty tolerance %" value={commercial.tolerancePct} onChange={e => setCommercial(current => ({ ...current, tolerancePct: e.target.value }))} className="h-9 rounded-lg border border-slate-200 bg-white px-2 text-xs" />
+                    <input type="date" value={commercial.dueDate} onChange={e => setCommercial(current => ({ ...current, dueDate: e.target.value }))} className="h-9 rounded-lg border border-slate-200 bg-white px-2 text-xs" />
+                    <input placeholder="Payment terms (optional)" value={commercial.paymentTerms} onChange={e => setCommercial(current => ({ ...current, paymentTerms: e.target.value }))} className="h-9 rounded-lg border border-slate-200 bg-white px-2 text-xs" />
+                  </div>
+                </details>
                 <div className="flex justify-end pt-2 border-t border-slate-100">
                   <button onClick={submitOrder} disabled={submitting}
                     className="h-10 px-6 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-bold disabled:opacity-60">

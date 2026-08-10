@@ -100,6 +100,24 @@ def _parse_brand_names(raw) -> List[str]:
     return []
 
 
+async def _require_active_vendor_invite(token: str) -> dict:
+    """Return a usable invite; never trust client-side invite validation."""
+    invite = await vendor_invites_collection.find_one({"token": token})
+    if not invite:
+        raise HTTPException(status_code=404, detail="Invite link is invalid.")
+
+    expires_at = invite.get("expires_at")
+    if invite.get("status") != "Pending":
+        message = "This invite link has already been used." if invite.get("status") == "Registered" else "This invite link is no longer active."
+        raise HTTPException(status_code=400, detail=message)
+    if not expires_at or datetime.utcnow() > expires_at:
+        await vendor_invites_collection.update_one(
+            {"_id": invite["_id"], "status": "Pending"},
+            {"$set": {"status": "Expired", "expired_at": datetime.utcnow()}},
+        )
+        raise HTTPException(status_code=400, detail="This invite link has expired.")
+    return invite
+
 def create_token(data: dict, expires_in: int = 3600):
     to_encode = data.copy()
     expire = datetime.utcnow() + timedelta(seconds=expires_in)
@@ -231,11 +249,12 @@ async def register_vendor(request: Request, background_tasks: BackgroundTasks):
     source    = "self_registration"
 
     if token:
-        invite = await vendor_invites_collection.find_one({"token": token})
-        if invite:
-            tenant_id = invite.get("tenant_id")
-            source    = "invite_link"
-
+        invite = await _require_active_vendor_invite(token)
+        invited_email = str(invite.get("email") or "").strip().lower()
+        if invited_email and invited_email != email:
+            raise HTTPException(status_code=400, detail="Use the email address that received this vendor invitation.")
+        tenant_id = invite.get("tenant_id")
+        source = "invite_link"
     if not tenant_id and selected_tenant_id:
         tenant = await tenants_collection.find_one({"tenant_id": selected_tenant_id})
         if not tenant:
@@ -469,6 +488,8 @@ async def _finalize_vendor_approval(
                 "department":  department,
                 "vendor_code": vendor_code,
                 "approved_at": datetime.utcnow(),
+                "kyb_status": "Not started",
+                "kyb_required_after": datetime.utcnow(),
             },
             "$push": {
                 "approvals": {
@@ -831,6 +852,92 @@ async def update_vendor_settings(request: Request, vendor: dict = Depends(requir
             },
         },
     }
+
+@vendor_bp.get("/me/kyb")
+async def get_vendor_kyb(vendor: dict = Depends(require_vendor_identity)):
+    """Vendor-facing KYB record. Bank account numbers are never returned."""
+    kyb = dict(vendor.get("kyb") or {})
+    kyb.pop("account_number", None)
+    links = await vendor_tenant_links_collection.find(
+        {"vendor_id": vendor["_id"]}, {"tenant_id": 1, "status": 1, "kyb_status": 1, "kyb_note": 1, "kyb_reviewed_at": 1}
+    ).to_list(length=None)
+    return {"data": {
+        "legal_name": kyb.get("legal_name", ""), "business_address": kyb.get("business_address", ""),
+        "bank_account_holder": kyb.get("bank_account_holder", ""), "bank_name": kyb.get("bank_name", ""),
+        "ifsc": kyb.get("ifsc", ""), "account_last4": kyb.get("account_last4", ""),
+        "gst_certificate_url": kyb.get("gst_certificate_url", ""), "pan_document_url": kyb.get("pan_document_url", ""),
+        "cancelled_cheque_url": kyb.get("cancelled_cheque_url", ""), "submitted_at": kyb.get("submitted_at"),
+        "relationships": [{"tenant_id": row.get("tenant_id"), "relationship_status": row.get("status", "Pending"), "status": row.get("kyb_status", "Not started"), "note": row.get("kyb_note", ""), "reviewed_at": row.get("kyb_reviewed_at")} for row in links],
+    }}
+
+
+@vendor_bp.patch("/me/kyb")
+async def submit_vendor_kyb(request: Request, vendor: dict = Depends(require_vendor_identity)):
+    """Store the vendor's KYB submission; raw account numbers are discarded after masking."""
+    body = await request.json()
+    required = ("legal_name", "business_address", "bank_account_holder", "bank_name", "ifsc", "account_number")
+    values = {key: str(body.get(key) or "").strip() for key in required}
+    missing = [key.replace("_", " ") for key, value in values.items() if not value]
+    if missing:
+        raise HTTPException(status_code=400, detail=f"Complete: {', '.join(missing)}.")
+    if not vendor.get("pan") or not vendor.get("gstin"):
+        raise HTTPException(status_code=400, detail="Save valid PAN and GSTIN in Tax & registration before submitting KYB.")
+    account_number = re.sub(r"[\s-]", "", values["account_number"])
+    if not re.fullmatch(r"\d{9,18}", account_number):
+        raise HTTPException(status_code=400, detail="Bank account number must contain 9 to 18 digits.")
+    ifsc = values["ifsc"].upper()
+    if not re.fullmatch(r"[A-Z]{4}0[A-Z0-9]{6}", ifsc):
+        raise HTTPException(status_code=400, detail="IFSC must be in the format AAAA0AAAAAA.")
+    urls = {}
+    for key in ("gst_certificate_url", "pan_document_url", "cancelled_cheque_url"):
+        value = str(body.get(key) or "").strip()
+        if value and not re.match(r"^https://", value, re.I):
+            raise HTTPException(status_code=400, detail=f"{key.replace('_', ' ')} must be a secure https link.")
+        urls[key] = value
+    kyb = {
+        "legal_name": values["legal_name"][:200], "business_address": values["business_address"][:600],
+        "bank_account_holder": values["bank_account_holder"][:160], "bank_name": values["bank_name"][:160],
+        "ifsc": ifsc, "account_last4": account_number[-4:], **urls,
+        "submitted_at": datetime.utcnow(), "updated_at": datetime.utcnow(),
+    }
+    await vendors_collection.update_one({"_id": vendor["_id"]}, {"$set": {"kyb": kyb}})
+    await vendor_tenant_links_collection.update_many(
+        {"vendor_id": vendor["_id"], "status": "Approved", "kyb_status": {"$ne": "Verified"}},
+        {"$set": {"kyb_status": "Submitted", "kyb_submitted_at": datetime.utcnow(), "kyb_note": "Awaiting retailer finance verification."}},
+    )
+    return {"message": "KYB submitted. Each connected retailer can now review it.", "account_last4": account_number[-4:]}
+
+
+@vendor_bp.get("/kyb/{link_id}")
+async def get_vendor_kyb_for_review(link_id: str, ctx: dict = Depends(get_hq_tenant)):
+    if not ObjectId.is_valid(link_id):
+        raise HTTPException(status_code=400, detail="Invalid vendor relationship.")
+    link = await vendor_tenant_links_collection.find_one({"_id": ObjectId(link_id), "tenant_id": ctx["tenant_id"]})
+    if not link:
+        raise HTTPException(status_code=404, detail="Vendor relationship not found.")
+    vendor = await vendors_collection.find_one({"_id": link["vendor_id"]}, {"password": 0})
+    if not vendor:
+        raise HTTPException(status_code=404, detail="Vendor identity not found.")
+    kyb = dict(vendor.get("kyb") or {})
+    kyb.pop("account_number", None)
+    return {"data": {"vendor": {"name": vendor.get("name") or vendor.get("vendor_name"), "email": vendor.get("email"), "pan": vendor.get("pan"), "gstin": vendor.get("gstin")}, "kyb": kyb, "status": link.get("kyb_status", "Not started"), "note": link.get("kyb_note", "")}}
+
+
+@vendor_bp.patch("/kyb/{link_id}/review")
+async def review_vendor_kyb(link_id: str, request: Request, ctx: dict = Depends(get_hq_tenant)):
+    if not ObjectId.is_valid(link_id):
+        raise HTTPException(status_code=400, detail="Invalid vendor relationship.")
+    body = await request.json()
+    status = str(body.get("status") or "").strip()
+    note = str(body.get("note") or "").strip()[:1000]
+    if status not in {"Verified", "Needs changes"}:
+        raise HTTPException(status_code=400, detail="Choose Verified or Needs changes.")
+    link = await vendor_tenant_links_collection.find_one({"_id": ObjectId(link_id), "tenant_id": ctx["tenant_id"]})
+    if not link:
+        raise HTTPException(status_code=404, detail="Vendor relationship not found.")
+    await vendor_tenant_links_collection.update_one({"_id": link["_id"]}, {"$set": {"kyb_status": status, "kyb_note": note, "kyb_reviewed_at": datetime.utcnow(), "kyb_reviewed_by": ctx.get("admin_id")}})
+    await log_activity(ctx.get("admin_name", "HQ Admin"), f"{status} vendor KYB", type="info", tenant_id=ctx["tenant_id"], actor_role="HQ Admin")
+    return {"message": f"Vendor KYB marked {status}."}
 
 VALID_BUSINESS_TYPES = {
     "general_vendor", "wholesaler", "manufacturer", "retailer",
@@ -1569,18 +1676,28 @@ async def complete_invite_registration(request: Request):
     if not token or not vendor_id:
         raise HTTPException(status_code=400, detail="token and vendor_id are required.")
 
-    invite = await vendor_invites_collection.find_one({"token": token})
-    if not invite:
-        raise HTTPException(status_code=404, detail="Invite not found.")
+    invite = await _require_active_vendor_invite(token)
+    if not ObjectId.is_valid(vendor_id):
+        raise HTTPException(status_code=400, detail="Invalid vendor registration.")
 
-    await vendor_invites_collection.update_one(
-        {"token": token},
+    vendor_oid = ObjectId(vendor_id)
+    link = await vendor_tenant_links_collection.find_one({
+        "vendor_id": vendor_oid,
+        "tenant_id": invite.get("tenant_id"),
+        "source": "invite_link",
+    })
+    if not link:
+        raise HTTPException(status_code=403, detail="This vendor registration does not belong to the invitation.")
+
+    claim = await vendor_invites_collection.update_one(
+        {"_id": invite["_id"], "status": "Pending", "expires_at": {"$gt": datetime.utcnow()}},
         {"$set": {
-            "status":      "Registered",
-            "vendor_id":   vendor_id,
+            "status": "Registered", "vendor_id": vendor_id,
             "registered_at": datetime.utcnow(),
-        }}
+        }},
     )
+    if claim.modified_count != 1:
+        raise HTTPException(status_code=400, detail="This invite link has already been used or expired.")
 
     return {"message": "Invite marked as registered."}
 

@@ -74,6 +74,8 @@ export default function MsellerSettings({ onNavigate = () => {} }) {
   const [notifications, setNotifications] = useState(DEFAULT_NOTIFICATIONS);
   const [orderPreferences, setOrderPreferences] = useState(DEFAULT_ORDER_PREFERENCES);
   const [subscription, setSubscription] = useState(null);
+  const [kyb, setKyb] = useState({ legal_name: "", business_address: "", bank_account_holder: "", bank_name: "", ifsc: "", account_number: "", account_last4: "", gst_certificate_url: "", pan_document_url: "", cancelled_cheque_url: "" });
+  const [kybRelationships, setKybRelationships] = useState([]);
   const [whatsApp, setWhatsApp] = useState({ loading: true, connected: false, available: true });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState("");
@@ -110,6 +112,9 @@ export default function MsellerSettings({ onNavigate = () => {} }) {
       });
       setNotifications({ ...DEFAULT_NOTIFICATIONS, ...(settings.notification_preferences || {}) });
       setOrderPreferences({ ...DEFAULT_ORDER_PREFERENCES, ...(settings.order_preferences || {}) });
+      const kybData = await request("/api/vendors/me/kyb");
+      setKyb((current) => ({ ...current, ...(kybData.data || {}), account_number: "" }));
+      setKybRelationships(kybData.data?.relationships || []);
       try {
         const currentSubscription = await request("/api/subscriptions/me");
         setSubscription(currentSubscription);
@@ -137,6 +142,17 @@ export default function MsellerSettings({ onNavigate = () => {} }) {
     finally { setSaving(""); }
   };
 
+  const saveKyb = async () => {
+    setSaving("kyb"); setError(""); setNotice("");
+    try {
+      const result = await request("/api/vendors/me/kyb", { method: "PATCH", body: JSON.stringify(kyb) });
+      setKyb((current) => ({ ...current, account_number: "", account_last4: result.account_last4 || current.account_last4 }));
+      const refreshed = await request("/api/vendors/me/kyb");
+      setKybRelationships(refreshed.data?.relationships || []);
+      setNotice("KYB submitted for retailer finance review.");
+    } catch (err) { setError(err.message || "Could not submit KYB."); }
+    finally { setSaving(""); }
+  };
   if (loading) return <div className="grid min-h-80 place-items-center"><Loader2 className="h-8 w-8 animate-spin text-teal-600" /></div>;
 
   const planLabel = subscription?.tier?.label || subscription?.label || subscription?.plan?.label || "Current plan";
@@ -167,6 +183,12 @@ export default function MsellerSettings({ onNavigate = () => {} }) {
       {(!profile.pan || !profile.gstin) && (
         <p className="mt-4 flex items-center gap-2 rounded-xl bg-amber-50 px-3 py-3 text-xs font-semibold text-amber-800">Retailers may ask for these before approving larger orders — worth completing early.</p>
       )}
+    </Card>
+
+    <Card icon={ShieldCheck} title="Vendor verification (KYB)" subtitle="Submit your business and payout details once. Every connected retailer verifies your KYB separately." action={<button type="button" onClick={saveKyb} disabled={saving !== ""} className="inline-flex h-10 items-center gap-2 rounded-xl bg-teal-600 px-3.5 text-xs font-extrabold text-white transition hover:bg-teal-700 disabled:opacity-50">{saving === "kyb" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}Submit for review</button>}>
+      <div className="mb-5 rounded-2xl border border-indigo-100 bg-indigo-50 p-4 text-xs leading-5 text-indigo-900"><b>Safe bank handling:</b> RMS stores only the last four digits after submission. Use the secure document links below for your GST certificate, PAN proof and cancelled cheque; full account numbers are never shown back in the portal.</div>
+      <div className="grid gap-4 sm:grid-cols-2"><Field label="Legal business name *" value={kyb.legal_name} onChange={(value) => setKyb((current) => ({ ...current, legal_name: value }))} placeholder="Name on GST registration" /><Field label="Registered business address *" value={kyb.business_address} onChange={(value) => setKyb((current) => ({ ...current, business_address: value }))} placeholder="Address on business documents" /><Field label="Account holder name *" value={kyb.bank_account_holder} onChange={(value) => setKyb((current) => ({ ...current, bank_account_holder: value }))} placeholder="Name on bank account" /><Field label="Bank name *" value={kyb.bank_name} onChange={(value) => setKyb((current) => ({ ...current, bank_name: value }))} placeholder="Your bank" /><Field label="IFSC *" value={kyb.ifsc} onChange={(value) => setKyb((current) => ({ ...current, ifsc: value.toUpperCase() }))} placeholder="ABCD0123456" /><Field label="Bank account number *" type="password" value={kyb.account_number} onChange={(value) => setKyb((current) => ({ ...current, account_number: value }))} placeholder={kyb.account_last4 ? `Saved ending ${kyb.account_last4} — re-enter to update` : "Enter account number"} hint="Used only to record the masked payout account." /><Field label="GST certificate secure link" value={kyb.gst_certificate_url} onChange={(value) => setKyb((current) => ({ ...current, gst_certificate_url: value }))} placeholder="https://…" /><Field label="PAN document secure link" value={kyb.pan_document_url} onChange={(value) => setKyb((current) => ({ ...current, pan_document_url: value }))} placeholder="https://…" /><Field label="Cancelled cheque secure link" value={kyb.cancelled_cheque_url} onChange={(value) => setKyb((current) => ({ ...current, cancelled_cheque_url: value }))} placeholder="https://…" /></div>
+      <div className="mt-5 grid gap-3 md:grid-cols-2">{kybRelationships.length ? kybRelationships.map((relationship) => <div key={relationship.tenant_id} className="rounded-xl border border-slate-200 bg-slate-50 p-3"><p className="text-xs font-black text-slate-800">{relationship.tenant_id}</p><p className={`mt-1 text-xs font-bold ${relationship.status === "Verified" ? "text-emerald-700" : relationship.status === "Needs changes" ? "text-rose-700" : "text-amber-700"}`}>{relationship.status}</p>{relationship.note && <p className="mt-1 text-[11px] leading-4 text-slate-500">{relationship.note}</p>}</div>) : <p className="text-xs text-slate-500">Submit once your PAN and GSTIN are saved to begin verification.</p>}</div>
     </Card>
 
     <div className="grid gap-5 xl:grid-cols-2">

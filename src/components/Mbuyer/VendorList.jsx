@@ -47,10 +47,17 @@ const Vendors = ({ showQuestionnaires = true }) => {
   const [approvedVendors,  setApprovedVendors]  = useState([]);
   const [selectedVendor,   setSelectedVendor]   = useState(null);
   const [editVendor,       setEditVendor]        = useState(null);
+  const [kybReview,        setKybReview]         = useState(null);
   const [loading,          setLoading]           = useState(false);
   const [searchPending,    setSearchPending]     = useState("");
   const [searchApproved,   setSearchApproved]    = useState("");
 
+  async function openKybReview(vendor) {
+    try { const res = await fetch(`${API_BASE_URL}/api/vendors/kyb/${vendor._id}`, { headers: authHeaders() }); const data = await res.json(); if (!res.ok) throw new Error(data.detail || "Could not load vendor KYB."); setKybReview({ linkId: vendor._id, ...data.data }); } catch (err) { alert(err.message || "Could not load vendor KYB."); }
+  }
+  async function submitKybReview(status, note) {
+    try { const res = await fetch(`${API_BASE_URL}/api/vendors/kyb/${kybReview.linkId}/review`, { method: "PATCH", headers: authHeaders({ "Content-Type": "application/json" }), body: JSON.stringify({ status, note }) }); const data = await res.json(); if (!res.ok) throw new Error(data.detail || "Could not save KYB review."); alert(data.message); setKybReview(null); fetchAll(); } catch (err) { alert(err.message || "Could not save KYB review."); }
+  }
   // Invitations tracker
   const [showInvitations, setShowInvitations] = useState(false);
   const [showBulkImport, setShowBulkImport] = useState(false);
@@ -390,7 +397,7 @@ const Vendors = ({ showQuestionnaires = true }) => {
         <div className="overflow-hidden bg-white">
           <SearchBar value={searchApproved} onChange={setSearchApproved} placeholder="Search approved vendors..." />
           <ApprovedTable data={filteredApproved} loading={loading} emptyText="No approved vendors found."
-            onEdit={setEditVendor} onDeactivate={handleDeactivate} />
+            onEdit={setEditVendor} onDeactivate={handleDeactivate} onKyb={openKybReview} />
         </div>
       </div>
 
@@ -778,6 +785,7 @@ const VendorModal = ({ vendor, onClose, onApprove, onReject }) => (
   </Modal>
 );
 
+const KybReviewModal = ({ review, onClose, onSave }) => { const [note, setNote] = useState(review.note || ""); const kyb = review.kyb || {}; return <Modal onClose={onClose} maxWidth="max-w-2xl"><div className="p-6"><div className="flex items-start justify-between gap-4"><div><p className="text-xs font-black uppercase tracking-widest text-emerald-600">Finance verification</p><h2 className="mt-1 text-xl font-black text-slate-900">Vendor KYB review</h2><p className="mt-1 text-sm text-slate-500">{review.vendor?.name || "Vendor"} · {review.vendor?.email || ""}</p></div><button onClick={onClose} className="text-xl text-slate-400">×</button></div><div className="mt-5 grid gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm sm:grid-cols-2"><div><b>Legal name</b><p>{kyb.legal_name || "Not submitted"}</p></div><div><b>PAN / GSTIN</b><p>{review.vendor?.pan || "—"} · {review.vendor?.gstin || "—"}</p></div><div><b>Bank</b><p>{kyb.bank_name || "—"} · {kyb.ifsc || "—"}</p></div><div><b>Payout account</b><p>{kyb.account_last4 ? `Ending ${kyb.account_last4}` : "Not submitted"}</p></div>{[["GST certificate", kyb.gst_certificate_url], ["PAN proof", kyb.pan_document_url], ["Cancelled cheque", kyb.cancelled_cheque_url]].map(([label, url]) => <div key={label}><b>{label}</b><p>{url ? <a className="text-indigo-700 underline" href={url} target="_blank" rel="noreferrer">Open document</a> : "Not provided"}</p></div>)}</div><label className="mt-5 block text-sm font-bold text-slate-700">Review note<textarea value={note} onChange={(e) => setNote(e.target.value)} rows="3" placeholder="Required changes or verification reference" className="mt-2 w-full rounded-xl border border-slate-200 p-3 text-sm" /></label><div className="mt-6 flex justify-end gap-3"><button onClick={() => onSave("Needs changes", note)} className="rounded-xl border border-rose-200 px-4 py-2.5 text-sm font-bold text-rose-700">Needs changes</button><button onClick={() => onSave("Verified", note)} className="rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-bold text-white">Verify KYB</button></div></div></Modal>; };
 const EditVendorModal = ({ vendor, onClose, onSave }) => {
   const [form, setForm] = useState(vendor);
   const handleChange = (field, value) => setForm(prev => ({ ...prev, [field]: value }));
@@ -863,7 +871,7 @@ const VendorTable = ({ data, loading, emptyText, onView, onDelete }) => (
   </div>
 );
 
-const ApprovedTable = ({ data, loading, emptyText, onEdit, onDeactivate }) => (
+const ApprovedTable = ({ data, loading, emptyText, onEdit, onDeactivate, onKyb }) => (
   <div className="overflow-x-auto">
     <table className="min-w-full text-sm">
       <thead className="border-b border-slate-200 bg-slate-50">
@@ -890,7 +898,7 @@ const ApprovedTable = ({ data, loading, emptyText, onEdit, onDeactivate }) => (
             <td className="px-4 py-2">{v.email || "—"}</td>
             <td className="px-5 py-3 text-center text-[10px] font-extrabold uppercase tracking-[0.12em] text-slate-500">
               <div className="flex justify-center gap-3">
-                <button onClick={() => onEdit(v)} className="flex items-center gap-1 text-indigo-600 hover:text-indigo-800">
+                <button onClick={() => onKyb(v)} className="flex items-center gap-1 text-emerald-700 hover:text-emerald-900">KYB</button><button onClick={() => onEdit(v)} className="flex items-center gap-1 text-indigo-600 hover:text-indigo-800">
                   <Edit size={16} /> Edit
                 </button>
                 <button onClick={() => onDeactivate(v._id)} className="flex items-center gap-1 text-red-600 hover:text-red-800">
