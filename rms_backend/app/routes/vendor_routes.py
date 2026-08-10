@@ -79,6 +79,13 @@ vendor_bp = APIRouter(prefix="/api/vendors", tags=["Vendors"])
 SECRET_KEY = settings.secret_key
 ALGORITHM = "HS256"
 
+cloudinary.config(
+    cloud_name=settings.cloudinary_cloud_name,
+    api_key=settings.cloudinary_api_key,
+    api_secret=settings.cloudinary_api_secret,
+    secure=True,
+)
+
 
 def serialize_doc(doc):
     doc = dict(doc)
@@ -852,6 +859,48 @@ async def update_vendor_settings(request: Request, vendor: dict = Depends(requir
             },
         },
     }
+
+@vendor_bp.post("/me/kyb/documents/{document_type}")
+async def upload_vendor_kyb_document(
+    document_type: str,
+    file: UploadFile = File(...),
+    vendor: dict = Depends(require_vendor_identity),
+):
+    """Upload a vendor KYB image/PDF and return its HTTPS storage URL."""
+    field_by_type = {
+        "gst_certificate": "gst_certificate_url",
+        "pan_document": "pan_document_url",
+        "cancelled_cheque": "cancelled_cheque_url",
+    }
+    if document_type not in field_by_type:
+        raise HTTPException(status_code=400, detail="Choose a valid KYB document type.")
+    allowed_types = {"image/jpeg", "image/png", "image/webp", "application/pdf"}
+    if file.content_type not in allowed_types:
+        raise HTTPException(status_code=400, detail="Upload JPG, PNG, WEBP or PDF only.")
+    raw = await file.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail="The selected file is empty.")
+    if len(raw) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="KYB documents must be 10 MB or smaller.")
+    try:
+        result = cloudinary.uploader.upload(
+            raw,
+            folder=f"rms/vendor-kyb/{vendor['_id']}",
+            resource_type="auto",
+            public_id=f"{document_type}_{datetime.utcnow().strftime('%Y%m%d%H%M%S')}",
+            use_filename=True,
+            unique_filename=True,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="Could not upload the document. Please try again.") from exc
+    url = result.get("secure_url")
+    if not url:
+        raise HTTPException(status_code=502, detail="Document storage did not return a secure URL.")
+    await vendors_collection.update_one(
+        {"_id": vendor["_id"]},
+        {"$set": {f"kyb.{field_by_type[document_type]}": url, "kyb.updated_at": datetime.utcnow()}},
+    )
+    return {"url": url, "name": file.filename, "content_type": file.content_type}
 
 @vendor_bp.get("/me/kyb")
 async def get_vendor_kyb(vendor: dict = Depends(require_vendor_identity)):
