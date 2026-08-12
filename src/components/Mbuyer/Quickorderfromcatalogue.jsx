@@ -2,7 +2,7 @@ import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
 
 
 import React, { useState, useCallback, useEffect } from "react";
-import { Search, Send, RefreshCw, CheckCircle2, Trophy, ArrowLeft, Plus, Trash2, ShoppingBag, MessageSquare, FileQuestion, Users } from "lucide-react";
+import { Search, Send, RefreshCw, CheckCircle2, Trophy, ArrowLeft, Plus, Trash2, ShoppingBag, MessageSquare, FileQuestion, Users, Link2, Store, Phone, Mail, Globe, MapPin, ExternalLink, PackageCheck } from "lucide-react";
 import MyInquiriesPage from "./Myinquiriespage.jsx";
 /* The import above intentionally matches the lowercase filename on disk;
    this is required on case-sensitive filesystems such as Linux. */
@@ -125,27 +125,75 @@ function QuickOrderTabs({ activeView, onChange }) {
 
   return (
     <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-slate-200 bg-white p-1.5 shadow-sm">
+      <button type="button" onClick={() => onChange("storefront")} className={tabClass("storefront")}><Store className="h-4 w-4" /> Vendor Storefronts</button>
       <button type="button" onClick={() => onChange("order")} className={tabClass("order")}>
         <ShoppingBag className="h-4 w-4" /> Create Quick Order
       </button>
-      <button type="button" onClick={() => onChange("rfq")} className={tabClass("rfq")}><FileQuestion className="h-4 w-4" /> Create Open RFQ</button>
+      <button type="button" onClick={() => onChange("rfq")} className={tabClass("rfq")}><FileQuestion className="h-4 w-4" /> Create Open RFQ (Request for Quotation)</button>
       <button type="button" onClick={() => onChange("inquiries")} className={tabClass("inquiries")}>
         <MessageSquare className="h-4 w-4" /> My Inquiries
       </button>
     </div>
   );
 }
+function VendorStorefronts({ onChooseForQuote, onDirectOrder }) {
+  const [vendors, setVendors] = useState([]);
+  const [selected, setSelected] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => { let cancelled = false; (async () => {
+    try {
+      const response = await authFetch(`${API_BASE}/api/catalogue/approved-vendors`);
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.detail || "Could not load approved vendors.");
+      if (!cancelled) setVendors(body.data || []);
+    } catch (err) { if (!cancelled) setError(err.message || "Could not load vendors."); }
+    finally { if (!cancelled) setLoading(false); }
+  })(); return () => { cancelled = true; }; }, []);
+
+  const openVendor = async (vendorId) => {
+    setDetailLoading(true); setError("");
+    try {
+      const response = await authFetch(`${API_BASE}/api/catalogue/vendor/${vendorId}/storefront`);
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.detail || "Could not open vendor storefront.");
+      setSelected(body.data);
+    } catch (err) { setError(err.message || "Could not open vendor storefront."); }
+    finally { setDetailLoading(false); }
+  };
+  const openLink = (url) => { if (url) window.open(url, "_blank", "noopener,noreferrer"); };
+  const cleanPhone = (phone) => String(phone || "").replace(/[^0-9+]/g, "");
+
+  if (selected) {
+    const vendor = selected.vendor || {};
+    return <div className="space-y-4">
+      <button type="button" onClick={() => setSelected(null)} className="inline-flex items-center gap-1 text-xs font-bold text-indigo-700"><ArrowLeft className="h-3.5 w-3.5" /> All approved vendors</button>
+      <section className="overflow-hidden rounded-3xl border border-indigo-100 bg-gradient-to-br from-indigo-700 via-violet-700 to-cyan-700 p-5 text-white shadow-lg sm:p-7">
+        <div className="flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between"><div className="flex min-w-0 gap-4"><div className="grid h-16 w-16 shrink-0 place-items-center rounded-2xl bg-white/15 text-2xl font-black ring-1 ring-white/30">{vendor.name?.slice(0, 1)?.toUpperCase() || "V"}</div><div><div className="flex flex-wrap items-center gap-2"><h2 className="text-xl font-black">{vendor.name}</h2>{vendor.verified && <span className="rounded-full bg-emerald-400/20 px-2 py-1 text-[10px] font-black text-emerald-50 ring-1 ring-emerald-200/50">Verified vendor</span>}</div><p className="mt-1 text-sm text-indigo-100">{vendor.contact_name || "Vendor partner"}{vendor.business_type?.length ? ` · ${vendor.business_type.join(", ")}` : ""}</p>{vendor.location && <p className="mt-2 flex items-center gap-1 text-xs text-indigo-100"><MapPin className="h-3.5 w-3.5" />{vendor.location}</p>}</div></div><span className="w-fit rounded-full bg-white/15 px-3 py-1.5 text-xs font-bold">{selected.items?.length || 0} products</span></div>
+        <div className="mt-6 grid grid-cols-2 gap-2 sm:grid-cols-4">{[
+          [Phone, "Call", vendor.phone && `tel:${cleanPhone(vendor.phone)}`], [MessageSquare, "WhatsApp", vendor.phone && `https://wa.me/${cleanPhone(vendor.phone).replace(/^\+/, "")}`], [Mail, "Email", vendor.email && `mailto:${vendor.email}`], [Globe, "Website", vendor.website],
+        ].map(([Icon, label, url]) => <button type="button" key={label} disabled={!url} onClick={() => openLink(url)} className="flex min-h-16 flex-col items-center justify-center gap-1 rounded-2xl bg-slate-950/20 px-2 text-xs font-bold ring-1 ring-white/15 transition hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-40"><Icon className="h-5 w-5" />{label}</button>)}</div>
+      </section>
+      <section><div className="mb-3 flex items-end justify-between gap-3"><div><h3 className="text-lg font-black text-slate-900">Product gallery</h3><p className="text-xs text-slate-500">Select an image to purchase at a fixed price or request a quotation.</p></div></div>{selected.items?.length ? <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">{selected.items.map((item) => <article key={item._id} className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm"><div className="aspect-[4/3] bg-slate-100">{item.images?.[0] ? <img src={item.images[0]} alt={item.item_name} className="h-full w-full object-cover" /> : <div className="grid h-full place-items-center text-slate-300"><PackageCheck className="h-10 w-10" /></div>}</div><div className="p-4"><div className="flex items-start justify-between gap-2"><h4 className="text-sm font-black text-slate-900">{item.item_name}</h4>{item.direct_purchase_enabled && <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-1 text-[9px] font-black text-emerald-700">Fixed price</span>}</div><p className="mt-1 text-xs text-slate-500">MOQ {item.moq || 1}{item.available_sizes?.length ? ` · ${item.available_sizes.join(", ")}` : ""}</p><p className="mt-3 text-base font-black text-slate-900">{item.direct_purchase_enabled ? `₹${Number(item.price || 0).toLocaleString("en-IN")}` : "Quotation required"}</p><div className="mt-3 grid grid-cols-2 gap-2">{item.direct_purchase_enabled ? <button type="button" onClick={() => onDirectOrder({...item, vendor_name: vendor.name})} className="rounded-xl bg-emerald-600 px-3 py-2.5 text-xs font-black text-white hover:bg-emerald-700">Buy product</button> : <button type="button" onClick={() => onChooseForQuote({...item, vendor_name: vendor.name})} className="rounded-xl bg-indigo-600 px-3 py-2.5 text-xs font-black text-white hover:bg-indigo-700">Request RFQ</button>}<button type="button" onClick={() => onChooseForQuote({...item, vendor_name: vendor.name})} className="rounded-xl border border-slate-200 px-3 py-2.5 text-xs font-bold text-slate-600 hover:bg-slate-50">View options</button></div></div></article>)}</div> : <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-10 text-center text-sm text-slate-500">This approved vendor has not published products yet.</div>}</section>
+    </div>;
+  }
+  return <div className="space-y-4"><section className="rounded-3xl border border-indigo-100 bg-gradient-to-r from-indigo-50 via-white to-cyan-50 p-5 sm:p-7"><p className="text-xs font-black uppercase tracking-[0.18em] text-indigo-600">Approved partner network</p><h2 className="mt-2 text-xl font-black text-slate-900">Choose a vendor storefront</h2><p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">Open only vendors approved for your retailer. Browse their products, then buy fixed-price listings or request a quote.</p></section>{error && <p className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs font-bold text-rose-700">{error}</p>}{loading || detailLoading ? <div className="flex justify-center py-12"><RefreshCw className="h-6 w-6 animate-spin text-indigo-500" /></div> : vendors.length ? <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{vendors.map((vendor) => <button key={vendor._id} type="button" onClick={() => openVendor(vendor._id)} className="group rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-indigo-300 hover:shadow-md"><div className="flex items-start gap-3"><span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-indigo-100 text-lg font-black text-indigo-700">{vendor.vendor_name?.slice(0,1)?.toUpperCase() || "V"}</span><span className="min-w-0 flex-1"><span className="flex items-center justify-between gap-2"><span className="truncate text-sm font-black text-slate-900">{vendor.vendor_name}</span><ExternalLink className="h-4 w-4 shrink-0 text-indigo-400 group-hover:text-indigo-600" /></span><span className="mt-1 block truncate text-xs text-slate-500">{vendor.business_type?.join(", ") || "Approved vendor"}</span>{vendor.city && <span className="mt-2 flex items-center gap-1 text-[11px] text-slate-500"><MapPin className="h-3 w-3" />{vendor.city}</span>}</span></div></button>)}</div> : <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-10 text-center text-sm text-slate-500">No approved vendors yet. Invite and approve a vendor first.</div>}</div>;
+}
 function QuickOrderGuide({ activeView }) {
-  const details = activeView === "order"
+  const details = activeView === "storefront"
+    ? [["Choose an approved vendor", "Only vendors approved for this retailer appear here."], ["Browse product gallery", "Open product images and details before selecting an order path."], ["Buy or request RFQ", "Fixed-price products create a PO draft; other products start a quotation request."]]
+    : activeView === "order"
     ? [
         ["1. Search catalogue", "Use this when you know the product and want to compare approved vendors."],
         ["2. Request and compare", "Send the same requirement, review prices and select one winning vendor."],
         ["3. Review before PO", "A PO is created only after final review. For colour/size items, keep each SKU or variant as a separate order line."],
       ]
     : activeView === "rfq"
-      ? [["Use Open RFQ", "Use this when the product is not available in the catalogue or you need fresh quotes."], ["Give complete requirements", "Add material, quantity, colour, size, target price and delivery date so vendors can quote correctly."], ["Choose later", "Nothing is ordered here. Monitor responses in My Inquiries, then select a vendor before creating the PO."]]
+      ? [["Use Open RFQ (Request for Quotation)", "Use this when the product is not available in the catalogue or you need fresh quotes."], ["Give complete requirements", "Add material, quantity, colour, size, target price and delivery date so vendors can quote correctly."], ["Choose later", "Nothing is ordered here. Monitor responses in My Inquiries, then select a vendor before creating the PO."]]
       : [["Monitor all requests", "See quotations, vendor responses and the current status of every sourcing request."], ["Choose one supplier", "Compare a response and create one PO for one vendor—do not mix vendors on the same PO."], ["After PO", "Vendor confirms, dispatches, and the receiving team completes GRC/GRN and the purchase invoice."]];
-  return <details className="rounded-2xl border border-indigo-100 bg-indigo-50/70 p-4 text-sm text-slate-700"><summary className="cursor-pointer list-none font-black text-indigo-950">How to use this tab <span className="ml-2 text-xs font-semibold text-indigo-600">Open guide</span></summary><div className="mt-4 grid gap-3 md:grid-cols-3">{details.map(([title, copy]) => <div key={title} className="rounded-xl border border-white bg-white/80 p-3"><p className="font-black text-slate-900">{title}</p><p className="mt-1 text-xs leading-5 text-slate-600">{copy}</p></div>)}</div><p className="mt-3 border-t border-indigo-100 pt-3 text-xs font-semibold text-indigo-800">Tip: use Create Quick Order for catalogue items, Create Open RFQ for new sourcing, and My Inquiries to continue work later.</p></details>;
+  return <details className="rounded-2xl border border-indigo-100 bg-indigo-50/70 p-4 text-sm text-slate-700"><summary className="cursor-pointer list-none font-black text-indigo-950">How to use this tab <span className="ml-2 text-xs font-semibold text-indigo-600">Open guide</span></summary><div className="mt-4 grid gap-3 md:grid-cols-3">{details.map(([title, copy]) => <div key={title} className="rounded-xl border border-white bg-white/80 p-3"><p className="font-black text-slate-900">{title}</p><p className="mt-1 text-xs leading-5 text-slate-600">{copy}</p></div>)}</div><p className="mt-3 border-t border-indigo-100 pt-3 text-xs font-semibold text-indigo-800">Tip: use Create Quick Order for catalogue items, Create Open RFQ (Request for Quotation) for new sourcing, and My Inquiries to continue work later.</p></details>;
 }
 function OpenRfqPanel({ onOpenInquiries }) {
   const empty = { item_name:"", category:"", material:"", audience:"", requested_qty:1, requested_size:"", requested_color:"", target_price:"", price_range_min:"", price_range_max:"", delivery_date:"", reference_image_url:"", buyer_note:"", response_deadline:"", allow_alternatives:true };
@@ -154,10 +202,10 @@ function OpenRfqPanel({ onOpenInquiries }) {
   useEffect(()=>{ let dead=false; authFetch(`${API_BASE}/api/catalogue/approved-vendors`).then(async r=>{const j=await r.json();if(!r.ok)throw new Error(j.detail||"Could not load vendors");if(!dead)setVendors(j.data||[])}).catch(e=>!dead&&setError(e.message));return()=>{dead=true}},[]);
   const change=(key,value)=>setForm(f=>({...f,[key]:value}));
   const toggle=id=>setSelected(old=>{const n=new Set(old);n.has(id)?n.delete(id):n.add(id);return n});
-  const send=async()=>{setError("");setSuccess("");if(!form.item_name.trim())return setError("Enter what you want to source.");if(Number(form.requested_qty)<=0)return setError("Quantity must be greater than zero.");if(!selected.size)return setError("Select at least one approved vendor.");setLoading(true);try{const r=await authFetch(`${API_BASE}/api/catalogue/inquiries/open-rfq`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({...form,vendor_ids:[...selected]})});const j=await r.json();if(!r.ok)throw new Error(j.detail||"Failed to send RFQ");setSuccess(j.message);setSelected(new Set())}catch(e){setError(e.message)}finally{setLoading(false)}};
+  const send=async()=>{setError("");setSuccess("");if(!form.item_name.trim())return setError("Enter what you want to source.");if(Number(form.requested_qty)<=0)return setError("Quantity must be greater than zero.");if(!selected.size)return setError("Select at least one approved vendor.");setLoading(true);try{const r=await authFetch(`${API_BASE}/api/catalogue/inquiries/open-rfq`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({...form,vendor_ids:[...selected]})});const j=await r.json();if(!r.ok)throw new Error(j.detail||"Failed to send RFQ (Request for Quotation)");setSuccess(j.message);setSelected(new Set())}catch(e){setError(e.message)}finally{setLoading(false)}};
   const input="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm";
   return <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-    <div className="mb-5 flex gap-3"><div className="flex h-10 w-10 items-center justify-center rounded-xl bg-violet-600"><FileQuestion className="h-5 w-5 text-white"/></div><div><h1 className="text-xl font-black text-slate-900">Open sourcing RFQ</h1><p className="text-xs text-slate-500">Tell approved vendors what you need, even when it is not in their catalogue.</p></div></div>
+    <div className="mb-5 flex gap-3"><div className="flex h-10 w-10 items-center justify-center rounded-xl bg-violet-600"><FileQuestion className="h-5 w-5 text-white"/></div><div><h1 className="text-xl font-black text-slate-900">Open sourcing RFQ (Request for Quotation)</h1><p className="text-xs text-slate-500">Tell approved vendors what you need, even when it is not in their catalogue.</p></div></div>
     {error&&<p className="mb-3 rounded-lg border border-rose-200 bg-rose-50 p-2 text-xs font-bold text-rose-600">{error}</p>}{success&&<div className="mb-3 flex items-center justify-between rounded-lg border border-emerald-200 bg-emerald-50 p-2 text-xs font-bold text-emerald-700"><span>{success}</span><button onClick={onOpenInquiries} className="underline">View inquiries</button></div>}
     <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
       <label className="lg:col-span-2"><span className="mb-1 block text-[11px] font-bold">Product / requirement *</span><input className={input} value={form.item_name} onChange={e=>change("item_name",e.target.value)} placeholder="e.g. Men's cotton casual shirts"/></label>
@@ -201,6 +249,7 @@ export default function QuickOrderFromCatalogue() {
   const [searched, setSearched] = useState(false);
   const [selectedMap, setSelectedMap] = useState(new Map());
   const [showDropdown, setShowDropdown] = useState(false);
+  const [sharedItems, setSharedItems] = useState([]);
 
   const [reqForm, setReqForm] = useState({ requested_size: "", requested_color: "", requested_qty: 1, requested_price: "", buyer_note: "", response_deadline: "" });
   const [itemRequests, setItemRequests] = useState({});
@@ -215,12 +264,54 @@ export default function QuickOrderFromCatalogue() {
   const [orderVendorName, setOrderVendorName] = useState("");
   const [orderDate, setOrderDate] = useState(today());
   const [orderItems, setOrderItems] = useState([EMPTY_ITEM()]);
+  const [directOrderMode, setDirectOrderMode] = useState(false);
   const [commercial, setCommercial] = useState({ gstPct: "0", freight: "0", discount: "0", tolerancePct: "0", dueDate: "", paymentTerms: "" });
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState(null);
   const [submittedOrderNo, setSubmittedOrderNo] = useState(null);
 
   const selectedItems = Array.from(selectedMap.values());
+  useEffect(() => { let cancelled = false; (async () => {
+    try {
+      const notifications = await authFetch(`${API_BASE}/api/procurement-notifications/buyer`);
+      const data = await notifications.json();
+      if (!notifications.ok) return;
+      const shares = (data.data || []).filter((notice) => notice.event_type === "catalogue_item_shared" && notice.metadata?.catalogue_item_id);
+      const items = await Promise.all(shares.slice(0, 8).map(async (notice) => {
+        const response = await authFetch(`${API_BASE}/api/catalogue/shared-item/${notice.metadata.catalogue_item_id}`);
+        const body = await response.json(); return response.ok ? { ...body.data, shared_by: notice.metadata?.shared_by } : null;
+      }));
+      if (!cancelled) setSharedItems(items.filter(Boolean));
+    } catch { /* Shared items remain available on next refresh. */ }
+  })(); return () => { cancelled = true; }; }, []);
+
+  const openSharedItem = (item) => {
+    setSelectedMap(new Map([[item._id, item]]));
+    setResults([item]); setSearched(true); setStep(0); setSubmitError(null);
+    setReqForm((current) => ({ ...current, requested_qty: Math.max(1, Number(item.moq) || 1) }));
+  };
+
+  // Skips search → inquiry → wait-for-quote → convert entirely for items
+  // the vendor flagged direct_purchase_enabled with a firm price — jumps
+  // straight to the same PO review step (3) that pickWinner() below uses,
+  // so it reuses the exact same, already-tested submitOrder() call.
+  const directOrder = (item) => {
+    setSubmitError(null);
+    setDirectOrderMode(true);
+    setOrderVendorName(item.vendor_name || "");
+    setOrderItems([{
+      description: item.item_name,
+      sku: item.sku || "",
+      barcode: item.barcode || "",
+      catalogue_item_id: item._id,
+      size: "", color: "",
+      quantity: String(Math.max(1, Number(item.moq) || 1)),
+      rate: String(item.price || 0),
+      remarks: "Direct order — fixed listed price, no negotiation.",
+    }]);
+    setStep(3);
+  };
+
 
   const runSearch = async () => {
     setSearchLoading(true);
@@ -367,6 +458,7 @@ export default function QuickOrderFromCatalogue() {
   const pickWinner = async (row) => {
     setConverting(true);
     setSubmitError(null);
+    setDirectOrderMode(false);
     try {
       const res = await authFetch(`${API_BASE}/api/catalogue/inquiries/${row._id}/convert`, { method: "POST" });
       const json = await res.json();
@@ -410,6 +502,7 @@ export default function QuickOrderFromCatalogue() {
         orderDate:  orderDate,
         vendorName: orderVendorName.trim(),
         vendor_type: "registered",
+        direct_purchase: directOrderMode,
         freightCharges: Number(commercial.freight) || 0,
         overallDiscount: Number(commercial.discount) || 0,
         overallTaxPct: Number(commercial.gstPct) || 0,
@@ -449,7 +542,7 @@ export default function QuickOrderFromCatalogue() {
   const resetAll = () => {
     setStep(0); setCategory(""); setBusinessType(""); setResults([]); setSearched(false);
     setSelectedMap(new Map()); setItemRequests({}); setGroupId(null); setSingleInquiryId(null); setRows([]);
-    setOrderVendorName(""); setOrderItems([EMPTY_ITEM()]); setCommercial({ gstPct: "0", freight: "0", discount: "0", tolerancePct: "0", dueDate: "", paymentTerms: "" }); setSubmittedOrderNo(null); setSubmitError(null);
+    setOrderVendorName(""); setOrderItems([EMPTY_ITEM()]); setCommercial({ gstPct: "0", freight: "0", discount: "0", tolerancePct: "0", dueDate: "", paymentTerms: "" }); setSubmittedOrderNo(null); setSubmitError(null); setDirectOrderMode(false);
   };
 
   const statusStyle = {
@@ -481,6 +574,10 @@ export default function QuickOrderFromCatalogue() {
     g.cheapestId = cheapest?._id;
   }
 
+  if (activeView === "storefront") {
+    return <div className="min-h-full bg-[#F6F7FB] p-4 sm:p-6"><div className="mx-auto max-w-6xl space-y-5"><QuickOrderTabs activeView={activeView} onChange={setActiveView}/><VendorStorefronts onChooseForQuote={(item) => { openSharedItem(item); setActiveView("order"); }} onDirectOrder={(item) => { directOrder(item); setActiveView("order"); }} /></div></div>;
+  }
+
   if (activeView === "rfq") {
     return <div className="min-h-full bg-[#F6F7FB] p-4 sm:p-6"><div className="mx-auto max-w-5xl space-y-5"><QuickOrderTabs activeView={activeView} onChange={setActiveView}/><QuickOrderGuide activeView={activeView}/><OpenRfqPanel onOpenInquiries={()=>setActiveView("inquiries")}/></div></div>;
   }
@@ -510,6 +607,7 @@ export default function QuickOrderFromCatalogue() {
           </div>
         </div>
 
+        {step === 0 && sharedItems.length > 0 && <section className="rounded-2xl border border-violet-200 bg-violet-50/60 p-4"><div className="flex items-start gap-3"><span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-violet-600 text-white"><Link2 className="h-4 w-4" /></span><div><p className="text-sm font-black text-violet-950">Shared with your retailer</p><p className="mt-1 text-xs text-violet-700">Vendor-shared products ready to add to a quote request.</p></div></div><div className="mt-3 flex flex-wrap gap-2">{sharedItems.map((item) => <button type="button" key={item._id} onClick={() => openSharedItem(item)} className="rounded-xl border border-violet-200 bg-white px-3 py-2 text-left text-xs font-bold text-violet-800 transition hover:bg-violet-100">{item.item_name}<span className="ml-1 font-normal text-violet-500">· {item.shared_by || item.vendor_name || "Vendor"}</span></button>)}</div></section>}
         {submittedOrderNo ? (
           <div className="bg-white rounded-2xl border border-emerald-200 p-8 text-center space-y-3">
             <CheckCircle2 className="w-12 h-12 text-emerald-500 mx-auto" />
@@ -643,11 +741,15 @@ export default function QuickOrderFromCatalogue() {
                       const selected = selectedMap.has(item._id);
                       const highlights = supplierHighlights(item);
                       return (
-                        <button key={item._id} onClick={() => toggleItem(item)}
-                          className={`text-left rounded-xl border overflow-hidden transition ${selected ? "border-indigo-500 ring-2 ring-indigo-100" : "border-slate-200"}`}>
+                        <div key={item._id} role="button" tabIndex={0} onClick={() => toggleItem(item)}
+                          onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") toggleItem(item); }}
+                          className={`text-left rounded-xl border overflow-hidden transition cursor-pointer ${selected ? "border-indigo-500 ring-2 ring-indigo-100" : "border-slate-200"}`}>
                           <div className="aspect-video bg-slate-100 relative">
                             {item.images?.[0] && <img src={item.images[0]} className="w-full h-full object-cover" />}
                             {selected && <div className="absolute top-2 right-2 bg-indigo-600 rounded-full p-1"><CheckCircle2 className="w-3.5 h-3.5 text-white" /></div>}
+                            {item.direct_purchase_enabled && (
+                              <span className="absolute top-2 left-2 rounded-full bg-emerald-600 px-2 py-0.5 text-[9px] font-bold text-white">Direct Order</span>
+                            )}
                           </div>
                           <div className="p-2.5">
                             <p className="text-xs font-bold text-slate-900 truncate">{item.item_name}</p>
@@ -657,7 +759,9 @@ export default function QuickOrderFromCatalogue() {
                                 <span className="inline-flex items-center px-1.5 py-0.5 bg-amber-100 text-amber-700 rounded-full text-[9px] font-bold">✓ Verified</span>
                               )}
                             </p>
-                            {(item.price_range_min || item.price_range_max) && (
+                            {item.direct_purchase_enabled ? (
+                              <p className="text-[10px] font-bold text-emerald-600 mt-0.5">₹{item.price} · fixed price</p>
+                            ) : (item.price_range_min || item.price_range_max) && (
                               <p className="text-[10px] font-bold text-emerald-600 mt-0.5">
                                 ₹{item.price_range_min}–₹{item.price_range_max}
                               </p>
@@ -681,8 +785,14 @@ export default function QuickOrderFromCatalogue() {
                                 ))}
                               </div>
                             )}
+                            {item.direct_purchase_enabled && (
+                              <button type="button" onClick={(e) => { e.stopPropagation(); directOrder(item); }}
+                                className="mt-2 w-full h-7 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-bold">
+                                Direct Order — Skip Inquiry
+                              </button>
+                            )}
                           </div>
-                        </button>
+                        </div>
                       );
                     })}
                   </div>
@@ -842,9 +952,11 @@ export default function QuickOrderFromCatalogue() {
 
             {step === 3 && (
               <div className="space-y-4">
-                <button onClick={() => setStep(2)} className="text-xs font-bold text-slate-500 flex items-center gap-1"><ArrowLeft className="w-3 h-3" /> Back to comparison</button>
+                <button onClick={() => setStep(directOrderMode ? 0 : 2)} className="text-xs font-bold text-slate-500 flex items-center gap-1"><ArrowLeft className="w-3 h-3" /> {directOrderMode ? "Back to search" : "Back to comparison"}</button>
                 <div className="bg-indigo-50 border border-indigo-200 rounded-lg px-3 py-2 text-xs text-indigo-700 font-semibold">
-                  This step creates a real purchase order. Everything before this was non-binding negotiation.
+                  {directOrderMode
+                    ? "This is a direct order at the vendor's fixed listed price — no negotiation. Review before submitting."
+                    : "This step creates a real purchase order. Everything before this was non-binding negotiation."}
                 </div>
 
                 <div className="grid grid-cols-2 gap-3">

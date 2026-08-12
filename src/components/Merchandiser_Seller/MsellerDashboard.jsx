@@ -288,8 +288,8 @@ export default function MSellerDashboard({ onNavigate = () => {}, planTier = "fr
   const activeTier = sub?.tier || planTier;
   const dashboardBackground = {
     free: "bg-[#F6F7FB]",
-    standard: "bg-gradient-to-b from-indigo-50/70 via-sky-50/40 to-transparent",
-    premium: "bg-[radial-gradient(circle_at_top_right,rgba(251,191,36,0.18),transparent_28rem),linear-gradient(135deg,rgba(255,247,237,0.9),rgba(255,255,255,0.7),rgba(248,250,252,0.7))]",
+    standard: "bg-[#F6F7FB]",
+    premium: "bg-[#F6F7FB]",
   }[activeTier] || "bg-[#F6F7FB]";
 
   return (

@@ -41,15 +41,17 @@ buyer picks and haggles" workflow that's currently happening over WhatsApp,
 not a replacement for the formal registered-product PO flow.
 """
 
-from fastapi import APIRouter, HTTPException, Depends, Header, Form, File, UploadFile
+from fastapi import APIRouter, HTTPException, Depends, Header, Form, File, UploadFile, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from datetime import datetime, timedelta
-from typing import Optional, List
+from typing import Optional, List, Dict
 from bson import ObjectId
 from io import BytesIO
+import re
 import uuid
 import json
 import os
+import zipfile
 from urllib import error as urlerror, request as urlrequest
 from urllib.parse import unquote, urlparse
 import cloudinary
@@ -287,6 +289,8 @@ async def add_catalogue_item(
     description:         str            = Form(""),
     price_range_min:      float          = Form(0),
     price_range_max:      float          = Form(0),
+    price:                float          = Form(0),        # firm, non-negotiated price — required for direct_purchase_enabled
+    direct_purchase_enabled: bool        = Form(False),     # buyer can order this item instantly, skipping the inquiry/negotiation flow
     available_sizes:      str            = Form(""),   # comma-separated, e.g. "S,M,L,XL"
     available_colors:     str            = Form(""),   # comma-separated
     moq:                  int            = Form(0),
@@ -309,6 +313,8 @@ async def add_catalogue_item(
 
     if not item_name.strip():
         raise HTTPException(status_code=400, detail="item_name is required.")
+    if direct_purchase_enabled and price <= 0:
+        raise HTTPException(status_code=400, detail="A firm price is required to enable direct purchase on this item.")
 
     # ── Tier check BEFORE any Cloudinary upload — no point burning upload
     # calls on a request that's going to be rejected anyway.
@@ -370,6 +376,8 @@ async def add_catalogue_item(
         "images":            image_urls,
         "price_range_min":   max(0.0, price_range_min),
         "price_range_max":   max(0.0, price_range_max),
+        "price":                  max(0.0, price),
+        "direct_purchase_enabled": bool(direct_purchase_enabled),
         "available_sizes":   [s.strip() for s in available_sizes.split(",") if s.strip()],
         "available_colors":  [c.strip() for c in available_colors.split(",") if c.strip()],
         "moq":               max(0, moq),
@@ -395,6 +403,279 @@ async def add_catalogue_item(
     }
 
 
+MAX_BULK_CATALOGUE_ROWS = 100
+MAX_BULK_IMAGE_FILES = 200
+MAX_BULK_IMAGE_BYTES = 10 * 1024 * 1024
+MAX_BULK_IMAGE_TOTAL_BYTES = 100 * 1024 * 1024
+
+
+def _catalogue_image_key(value: str) -> str:
+    """Stable filename-to-row matching key for bulk catalogue media."""
+    return re.sub(r"[^a-z0-9]+", "", str(value or "").lower())
+
+
+def _is_catalogue_image(filename: str) -> bool:
+    return os.path.splitext(str(filename or "").lower())[1] in {".jpg", ".jpeg", ".png", ".webp"}
+
+
+def _bulk_row_image_keys(row: dict) -> list:
+    return [
+        _catalogue_image_key(row.get("image_key")),
+        _catalogue_image_key(row.get("sku")),
+        _catalogue_image_key(row.get("item_name")),
+    ]
+
+
+async def _collect_bulk_image_uploads(images: List[UploadFile], archive: Optional[UploadFile]) -> list:
+    """Read a bounded set of image files, optionally from one ZIP archive."""
+    uploads = []
+    total_bytes = 0
+    for image in [image for image in images if image and image.filename]:
+        if not _is_catalogue_image(image.filename):
+            continue
+        raw = await image.read()
+        if not raw or len(raw) > MAX_BULK_IMAGE_BYTES or total_bytes + len(raw) > MAX_BULK_IMAGE_TOTAL_BYTES:
+            continue
+        total_bytes += len(raw)
+        uploads.append((os.path.basename(image.filename), raw))
+
+    if archive and archive.filename:
+        if not archive.filename.lower().endswith(".zip"):
+            raise HTTPException(status_code=400, detail="The image archive must be a .zip file.")
+        archive_bytes = await archive.read()
+        if len(archive_bytes) > 50 * 1024 * 1024:
+            raise HTTPException(status_code=400, detail="The image ZIP must be 50 MB or smaller.")
+        try:
+            with zipfile.ZipFile(BytesIO(archive_bytes)) as package:
+                for entry in package.infolist():
+                    if entry.is_dir() or not _is_catalogue_image(entry.filename) or entry.file_size > MAX_BULK_IMAGE_BYTES:
+                        continue
+                    raw = package.read(entry)
+                    if total_bytes + len(raw) > MAX_BULK_IMAGE_TOTAL_BYTES:
+                        break
+                    total_bytes += len(raw)
+                    uploads.append((os.path.basename(entry.filename), raw))
+                    if len(uploads) >= MAX_BULK_IMAGE_FILES:
+                        break
+        except zipfile.BadZipFile as exc:
+            raise HTTPException(status_code=400, detail="The image ZIP could not be read.") from exc
+
+    if len(uploads) > MAX_BULK_IMAGE_FILES:
+        raise HTTPException(status_code=400, detail=f"Upload at most {MAX_BULK_IMAGE_FILES} product images at a time.")
+    return uploads
+
+def _match_bulk_images_to_row(row: dict, uploads: list) -> list:
+    """Match SKU/image_key/product-name to exact or numbered image filenames."""
+    keys = [key for key in _bulk_row_image_keys(row) if key]
+    matched = []
+    for filename, raw in uploads:
+        stem = _catalogue_image_key(os.path.splitext(filename)[0])
+        if any(stem == key or stem.startswith(f"{key}image") or stem.startswith(f"{key}photo") or stem.startswith(f"{key}img") or (stem.startswith(key) and stem[len(key):].isdigit()) for key in keys):
+            matched.append((filename, raw))
+    return matched
+
+
+@router.post("/my-catalogue/bulk")
+async def add_catalogue_items_bulk(request: Request, authorization: str = Header(None)):
+    """
+    Link-based bulk version of POST /my-catalogue — for a vendor who
+    already has product photos hosted somewhere (their own site, Google
+    Drive, etc.) instead of uploading each item's images one at a time
+    through this form. Each row always becomes direct_purchase_enabled
+    with a firm price — a price RANGE (like the single-item form allows)
+    doesn't make sense for something a buyer can order with one click, see
+    the module docstring for why direct purchase needs a firm price.
+
+    Images are stored as the external URL(s) as-is — NOT downloaded and
+    re-uploaded to Cloudinary. Broken or expired links are the vendor's
+    responsibility; RMS doesn't validate or mirror them.
+    """
+    vendor_id = _decode_vendor(authorization)
+    body = await request.json()
+    rows = body.get("rows") or []
+    if not isinstance(rows, list) or not rows:
+        raise HTTPException(status_code=400, detail="No rows provided.")
+    if len(rows) > MAX_BULK_CATALOGUE_ROWS:
+        raise HTTPException(status_code=400, detail=f"Bulk import is limited to {MAX_BULK_CATALOGUE_ROWS} rows at a time.")
+
+    tier = await get_vendor_tier(vendor_id)
+    current_count = await vendor_catalogue_collection.count_documents({
+        "vendor_id": ObjectId(vendor_id), "active": True,
+    })
+    photo_limit = tier["photos_per_item"]
+
+    now = datetime.utcnow()
+    results = []
+    for row in rows:
+        item_name = str(row.get("item_name") or "").strip()
+        image_field = str(row.get("image_url") or row.get("image_urls") or "").strip()
+        image_urls = [u.strip() for u in re.split(r"[;,]", image_field) if u.strip()]
+
+        if not item_name or not image_urls:
+            results.append({"item_name": item_name or "(blank)", "status": "error", "reason": "item_name and at least one image_url are required."})
+            continue
+        try:
+            price = float(row.get("price") or 0)
+        except (TypeError, ValueError):
+            price = 0
+        if price <= 0:
+            results.append({"item_name": item_name, "status": "error", "reason": "A firm price is required for direct purchase."})
+            continue
+        if current_count >= tier["image_limit"]:
+            results.append({"item_name": item_name, "status": "error", "reason": f"Your {tier['label']} plan allows {tier['image_limit']} active catalogue items — limit reached."})
+            continue
+        if photo_limit is not None and len(image_urls) > photo_limit:
+            image_urls = image_urls[:photo_limit]
+
+        moq_raw = str(row.get("moq") or "").strip()
+        doc = {
+            "vendor_id":               ObjectId(vendor_id),
+            "item_name":               item_name,
+            "category":                str(row.get("category") or "").strip(),
+            "description":             str(row.get("description") or "").strip(),
+            "images":                  image_urls,
+            "price_range_min":         price,
+            "price_range_max":         price,
+            "price":                   price,
+            "direct_purchase_enabled": True,
+            "available_sizes":         [s.strip() for s in str(row.get("available_sizes") or "").split(",") if s.strip()],
+            "available_colors":        [c.strip() for c in str(row.get("available_colors") or "").split(",") if c.strip()],
+            "moq":                     int(moq_raw) if moq_raw.isdigit() else 0,
+            "variants":                [],
+            "active":                  True,
+            "tier_at_upload":          tier["tier"],
+            "source":                  "bulk_import",
+            "created_at":              now,
+            "updated_at":              now,
+            "expires_at":              now + timedelta(days=tier["visibility_days"]),
+        }
+        await vendor_catalogue_collection.insert_one(doc)
+        current_count += 1
+        results.append({"item_name": item_name, "status": "created"})
+
+    created = sum(1 for r in results if r["status"] == "created")
+    return {
+        "status": "success",
+        "message": f"{created} of {len(rows)} catalogue item(s) created.",
+        "created_count": created,
+        "results": results,
+    }
+
+
+
+
+@router.post("/my-catalogue/bulk-upload")
+async def add_catalogue_items_bulk_with_images(
+    rows_json: str = Form(...),
+    authorization: str = Header(None),
+    images: List[UploadFile] = File([]),
+    archive: Optional[UploadFile] = File(None),
+):
+    """Create many direct-purchase listings from a sheet and local product images.
+
+    Image filenames match the sheet's image_key, SKU, or item_name. For example,
+    SKU-RED-01.jpg and SKU-RED-01-2.jpg attach to the SKU-RED-01 row.
+    """
+    vendor_id = _decode_vendor(authorization)
+    try:
+        rows = json.loads(rows_json)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail="Product rows could not be read.") from exc
+    if not isinstance(rows, list) or not rows:
+        raise HTTPException(status_code=400, detail="Provide at least one product row.")
+    if len(rows) > MAX_BULK_CATALOGUE_ROWS:
+        raise HTTPException(status_code=400, detail=f"Bulk import is limited to {MAX_BULK_CATALOGUE_ROWS} rows at a time.")
+
+    uploads = await _collect_bulk_image_uploads(images, archive)
+    if not uploads:
+        raise HTTPException(status_code=400, detail="Upload at least one JPG, PNG or WEBP product image, or a ZIP containing images.")
+
+    tier = await get_vendor_tier(vendor_id)
+    current_count = await vendor_catalogue_collection.count_documents({"vendor_id": ObjectId(vendor_id), "active": True})
+    photo_limit = tier["photos_per_item"]
+    now = datetime.utcnow()
+    results = []
+
+    for row in rows:
+        if not isinstance(row, dict):
+            results.append({"item_name": "(invalid row)", "status": "error", "reason": "Each product row must be an object."})
+            continue
+        item_name = str(row.get("item_name") or "").strip()
+        if not item_name:
+            results.append({"item_name": "(blank)", "status": "error", "reason": "item_name is required."})
+            continue
+        try:
+            price = float(row.get("price") or 0)
+        except (TypeError, ValueError):
+            price = 0
+        if price <= 0:
+            results.append({"item_name": item_name, "status": "error", "reason": "A firm price is required for direct purchase."})
+            continue
+        if current_count >= tier["image_limit"]:
+            results.append({"item_name": item_name, "status": "error", "reason": f"Your {tier['label']} plan allows {tier['image_limit']} active catalogue items — limit reached."})
+            continue
+
+        matched = _match_bulk_images_to_row(row, uploads)
+        if photo_limit is not None:
+            matched = matched[:photo_limit]
+        if not matched:
+            expected_key = str(row.get("image_key") or row.get("sku") or item_name)
+            results.append({"item_name": item_name, "status": "error", "reason": f"No uploaded image matched '{expected_key}'. Rename images to the SKU, image_key or product name."})
+            continue
+
+        image_urls = []
+        for filename, raw in matched:
+            try:
+                result = cloudinary.uploader.upload(
+                    raw,
+                    folder="vendor_catalogue",
+                    resource_type="image",
+                    public_id=f"{vendor_id}_bulk_{uuid.uuid4().hex[:12]}_{filename}".replace(" ", "_"),
+                    overwrite=False,
+                )
+                image_urls.append(result["secure_url"])
+            except Exception as exc:
+                print(f"Bulk catalogue upload failed for {filename}: {exc}")
+        if not image_urls:
+            results.append({"item_name": item_name, "status": "error", "reason": "Images could not be uploaded. Please try again."})
+            continue
+
+        moq_raw = str(row.get("moq") or "").strip()
+        vendor_catalogue = {
+            "vendor_id": ObjectId(vendor_id),
+            "item_name": item_name,
+            "sku": str(row.get("sku") or "").strip()[:100],
+            "image_key": str(row.get("image_key") or "").strip()[:120],
+            "category": str(row.get("category") or "").strip(),
+            "description": str(row.get("description") or "").strip(),
+            "images": image_urls,
+            "price_range_min": price,
+            "price_range_max": price,
+            "price": price,
+            "direct_purchase_enabled": True,
+            "available_sizes": [value.strip() for value in str(row.get("available_sizes") or "").split(",") if value.strip()],
+            "available_colors": [value.strip() for value in str(row.get("available_colors") or "").split(",") if value.strip()],
+            "moq": int(moq_raw) if moq_raw.isdigit() else 0,
+            "variants": _normalise_catalogue_variants(row.get("variants") or []),
+            "active": True,
+            "tier_at_upload": tier["tier"],
+            "source": "bulk_image_upload",
+            "created_at": now,
+            "updated_at": now,
+            "expires_at": now + timedelta(days=tier["visibility_days"]),
+        }
+        await vendor_catalogue_collection.insert_one(vendor_catalogue)
+        current_count += 1
+        results.append({"item_name": item_name, "status": "created", "matched_images": len(image_urls)})
+
+    created = sum(1 for result in results if result["status"] == "created")
+    return {
+        "status": "success",
+        "message": f"{created} of {len(rows)} product(s) created using your {tier['label']} plan limits.",
+        "tier": {"label": tier["label"], "item_limit": tier["image_limit"], "photos_per_item": tier["photos_per_item"]},
+        "created_count": created,
+        "results": results,
+    }
 
 @router.patch("/my-catalogue/{item_id}")
 async def update_catalogue_item(item_id: str, payload: dict, authorization: str = Header(None)):
@@ -408,8 +689,11 @@ async def update_catalogue_item(item_id: str, payload: dict, authorization: str 
         raise HTTPException(status_code=404, detail="Catalogue item not found.")
 
     allowed = {"item_name", "category", "description", "price_range_min", "price_range_max",
+               "price", "direct_purchase_enabled",
                "available_sizes", "available_colors", "moq", "variants", "active"}
     patch = {k: v for k, v in payload.items() if k in allowed}
+    if patch.get("direct_purchase_enabled") and float(patch.get("price", item.get("price", 0)) or 0) <= 0:
+        raise HTTPException(status_code=400, detail="A firm price is required to enable direct purchase on this item.")
     if "variants" in patch:
         patch["variants"] = _normalise_catalogue_variants(patch["variants"])
     patch["updated_at"] = datetime.utcnow()
@@ -557,6 +841,41 @@ async def delete_catalogue_item(item_id: str, authorization: str = Header(None))
 # ═══════════════════════════════════════════════════════════════════════════
 # BUYER (HQ) SIDE — browse a specific vendor's catalogue
 # ═══════════════════════════════════════════════════════════════════════════
+
+@router.get("/vendor/{vendor_id}/storefront")
+async def get_vendor_storefront(vendor_id: str, ctx: dict = Depends(get_hq_tenant)):
+    """Buyer-safe vendor storefront, visible only to an approved retailer relationship."""
+    if not ObjectId.is_valid(vendor_id):
+        raise HTTPException(status_code=400, detail="Invalid vendor ID.")
+    vendor_oid = ObjectId(vendor_id)
+    link = await vendor_tenant_links_collection.find_one({"vendor_id": vendor_oid, "tenant_id": ctx["tenant_id"], "status": "Approved"})
+    if not link:
+        raise HTTPException(status_code=404, detail="Vendor not found or not approved for this retailer.")
+    vendor = await vendors_collection.find_one({"_id": vendor_oid})
+    if not vendor:
+        raise HTTPException(status_code=404, detail="Vendor not found.")
+    address = vendor.get("address")
+    location = address if isinstance(address, str) else ", ".join(str(address.get(key) or "").strip() for key in ("city", "state", "country") if address.get(key)) if isinstance(address, dict) else ""
+    items = []
+    async for item in vendor_catalogue_collection.find({"vendor_id": vendor_oid, "active": True}).sort("created_at", -1):
+        items.append(_serialize_item(item))
+    tier = await get_vendor_tier(vendor_id)
+    return {"status": "success", "data": {
+        "vendor": {
+            "_id": str(vendor_oid),
+            "name": vendor.get("brandName") or vendor.get("name") or vendor.get("vendor_name") or "Vendor",
+            "contact_name": vendor.get("contact_person") or vendor.get("owner_name") or "",
+            "phone": str(vendor.get("phone") or vendor.get("mobile") or ""),
+            "email": vendor.get("email") or "",
+            "website": vendor.get("website") or vendor.get("website_url") or "",
+            "instagram": vendor.get("instagram") or vendor.get("instagram_url") or "",
+            "location": location or vendor.get("city") or "",
+            "business_type": vendor.get("business_type") or [],
+            "verified": link.get("kyb_status") == "Verified",
+            "tier": tier["label"],
+        },
+        "items": items,
+    }}
 
 @router.get("/vendor/{vendor_id}")
 async def get_vendor_catalogue(vendor_id: str, ctx: dict = Depends(get_hq_tenant)):
@@ -741,9 +1060,52 @@ async def search_vendor_catalogues(
     return {"status": "success", "count": len(results), "data": results}
 
 
+@router.post("/my-catalogue/{item_id}/share")
+async def share_catalogue_item_with_retailers(item_id: str, payload: dict, authorization: str = Header(None)):
+    """Notify selected approved retailer relationships about one active catalogue item."""
+    vendor_id = _decode_vendor(authorization)
+    if not ObjectId.is_valid(item_id):
+        raise HTTPException(status_code=400, detail="Invalid catalogue item ID.")
+    item = await vendor_catalogue_collection.find_one({"_id": ObjectId(item_id), "vendor_id": ObjectId(vendor_id), "active": True})
+    if not item:
+        raise HTTPException(status_code=404, detail="Only an active item in your catalogue can be shared.")
+    requested_tenants = list(dict.fromkeys(str(value).strip() for value in (payload.get("tenant_ids") or []) if str(value).strip()))
+    if not requested_tenants:
+        raise HTTPException(status_code=400, detail="Select at least one approved retailer.")
+    approved_links = await vendor_tenant_links_collection.find({
+        "vendor_id": ObjectId(vendor_id), "tenant_id": {"$in": requested_tenants}, "status": "Approved",
+    }).to_list(length=None)
+    approved_tenants = {link.get("tenant_id") for link in approved_links}
+    if not approved_tenants:
+        raise HTTPException(status_code=403, detail="You can share only with retailers that have approved your vendor account.")
+    vendor = await vendors_collection.find_one({"_id": ObjectId(vendor_id)}, {"name": 1, "vendor_name": 1, "brandName": 1})
+    vendor_name = (vendor or {}).get("brandName") or (vendor or {}).get("name") or (vendor or {}).get("vendor_name") or "A vendor"
+    item_name = item.get("item_name") or "a catalogue item"
+    for tenant_id in approved_tenants:
+        await notify_buyer(
+            tenant_id, "catalogue_item_shared", "New vendor catalogue item shared",
+            f"{vendor_name} shared {item_name}. Open Quick Order to select variants and request a quote.",
+            vendor_id=ObjectId(vendor_id),
+            metadata={"catalogue_item_id": str(item["_id"]), "vendor_id": str(vendor_id), "item_name": item_name, "shared_by": vendor_name},
+        )
+    return {"status": "success", "message": f"Shared with {len(approved_tenants)} retailer(s).", "shared_tenant_ids": sorted(approved_tenants)}
+
 # ═══════════════════════════════════════════════════════════════════════════
 # INQUIRIES — the buyer-vendor negotiation loop
 # ═══════════════════════════════════════════════════════════════════════════
+
+@router.get("/shared-item/{item_id}")
+async def get_shared_catalogue_item(item_id: str, ctx: dict = Depends(get_hq_tenant)):
+    """Return one shareable listing only when this retailer has approved the vendor."""
+    if not ObjectId.is_valid(item_id):
+        raise HTTPException(status_code=400, detail="Invalid catalogue item ID.")
+    item = await vendor_catalogue_collection.find_one({"_id": ObjectId(item_id), "active": True})
+    if not item:
+        raise HTTPException(status_code=404, detail="Shared catalogue item is unavailable.")
+    link = await vendor_tenant_links_collection.find_one({"vendor_id": item["vendor_id"], "tenant_id": ctx["tenant_id"], "status": "Approved"})
+    if not link:
+        raise HTTPException(status_code=403, detail="This retailer is not approved to view this vendor item.")
+    return {"status": "success", "data": _serialize_item(item)}
 
 @router.post("/inquiries", status_code=201)
 async def create_inquiry(payload: dict, ctx: dict = Depends(get_hq_tenant)):
