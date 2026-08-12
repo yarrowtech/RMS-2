@@ -1092,6 +1092,8 @@ function EditDetailsModal({ item, onClose, onSaved }) {
     description:      item.description || "",
     price_range_min:  item.price_range_min || "",
     price_range_max:  item.price_range_max || "",
+    price:            item.price || "",
+    direct_purchase_enabled: Boolean(item.direct_purchase_enabled),
     available_sizes:  (item.available_sizes || []).join(", "),
     available_colors: (item.available_colors || []).join(", "),
     moq:              item.moq || "",
@@ -1102,6 +1104,7 @@ function EditDetailsModal({ item, onClose, onSaved }) {
 
   const handleSave = async () => {
     if (!form.item_name.trim()) { setError("Item name is required."); return; }
+    if (form.direct_purchase_enabled && !(Number(form.price) > 0)) { setError("A firm price is required to enable direct purchase."); return; }
     setSaving(true);
     setError(null);
     try {
@@ -1114,6 +1117,8 @@ function EditDetailsModal({ item, onClose, onSaved }) {
           description:      form.description.trim(),
           price_range_min:  Number(form.price_range_min) || 0,
           price_range_max:  Number(form.price_range_max) || 0,
+          price:            Number(form.price) || 0,
+          direct_purchase_enabled: form.direct_purchase_enabled,
           available_sizes:  form.available_sizes.split(",").map(s => s.trim()).filter(Boolean),
           available_colors: form.available_colors.split(",").map(c => c.trim()).filter(Boolean),
           moq:              Number(form.moq) || 0,
@@ -1163,6 +1168,22 @@ function EditDetailsModal({ item, onClose, onSaved }) {
               <input type="number" value={form.price_range_max} onChange={e => setForm(f => ({ ...f, price_range_max: e.target.value }))}
                 className="w-full h-9 px-3 border border-slate-200 rounded-lg text-sm" />
             </div>
+          </div>
+          <div className="rounded-xl border border-emerald-100 bg-emerald-50/70 p-3">
+            <label className="flex items-start gap-2 text-xs font-bold text-emerald-950">
+              <input type="checkbox" checked={form.direct_purchase_enabled}
+                onChange={e => setForm(f => ({ ...f, direct_purchase_enabled: e.target.checked }))}
+                className="mt-0.5 h-4 w-4 rounded border-emerald-300 text-emerald-600 focus:ring-emerald-400" />
+              <span>Enable Direct Purchase <span className="font-normal text-emerald-700">— buyers can order this instantly, skipping inquiry/negotiation</span></span>
+            </label>
+            {form.direct_purchase_enabled && (
+              <div className="mt-2.5">
+                <label className="text-xs font-bold text-slate-600 uppercase tracking-wide block mb-1">Firm Price (₹) *</label>
+                <input type="number" min="0" value={form.price} onChange={e => setForm(f => ({ ...f, price: e.target.value }))}
+                  className="w-full h-9 px-3 border border-slate-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-emerald-400"
+                  placeholder="Fixed price buyers pay, no negotiation" />
+              </div>
+            )}
           </div>
           <div>
             <label className="text-xs font-bold text-slate-600 block mb-1">Sizes (comma separated)</label>
