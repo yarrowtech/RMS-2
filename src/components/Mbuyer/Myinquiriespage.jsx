@@ -471,7 +471,7 @@ export default function MyInquiriesPage() {
         )}
       </div>
 
-      {conversationInquiry && <DocumentConversation documentType="rfq" documentId={conversationInquiry._id} actor="admin" title={conversationInquiry.item_name || "RFQ conversation"} onClose={() => setConversationInquiry(null)} />}
+      {conversationInquiry && <DocumentConversation documentType="rfq" documentId={conversationInquiry._id} actor="admin" title={conversationInquiry.item_name || "RFQ (Request for Quotation) conversation"} onClose={() => setConversationInquiry(null)} />}
 
       {/* Order-creation drawer Ã¢â‚¬â€ appears once a Responded inquiry is converted */}
       {orderDraft && (

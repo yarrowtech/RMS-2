@@ -64,13 +64,13 @@ const TIER_COLOR = {
 // card so paying for an upgrade visibly feels like one.
 const PAGE_BACKGROUND = {
   free: "bg-[#F6F7FB]",
-  standard: "bg-gradient-to-b from-indigo-50 via-white to-white",
-  premium: "bg-gradient-to-b from-amber-50 via-white to-white",
+  standard: "bg-[#F6F7FB]",
+  premium: "bg-[#F6F7FB]",
 };
 const CURRENT_PLAN_CARD = {
   free: "bg-white rounded-2xl border border-slate-200 p-5 space-y-4",
-  standard: "bg-white rounded-2xl border border-indigo-200 ring-1 ring-indigo-100 shadow-lg shadow-indigo-100/60 p-5 space-y-4",
-  premium: "bg-gradient-to-br from-amber-50 to-white rounded-2xl border border-amber-200 ring-1 ring-amber-100 shadow-lg shadow-amber-100/60 p-5 space-y-4",
+  standard: "bg-white rounded-2xl border border-indigo-200 p-5 space-y-4",
+  premium: "bg-white rounded-2xl border border-amber-200 p-5 space-y-4",
 };
 
 function UsageBar({ used, limit, label }) {

@@ -3,7 +3,7 @@ import DocumentConversation from "../DocumentConversation.jsx";
 
 
 // import React, { useState, useEffect, useCallback } from "react";
-// import { Image as ImageIcon, Plus, X, Trash2, MessageSquare, RefreshCw, Tag, Images } from "lucide-react";
+// import { Image as ImageIcon, Plus, X, Trash2, MessageSquare, RefreshCw, Tag, Images, Send } from "lucide-react";
 // import VendorSubscriptionTab from "./VendorSubscriptionTab";
 
 // const API_BASE = APP_API_URL;
@@ -497,6 +497,7 @@ import DocumentConversation from "../DocumentConversation.jsx";
 //                     className="flex-1 h-7 text-[10px] font-bold rounded border border-slate-200 hover:bg-slate-50 text-slate-600 flex items-center justify-center gap-1">
 //                     <Tag className="w-3 h-3" /> Edit
 //                   </button>
+//                   <button onClick={() => setShareItem(item)} disabled={!item.active} title={item.active ? "Share with approved retailers" : "Reactivate this listing before sharing"} className="flex-1 h-7 text-[10px] font-bold rounded border border-violet-200 bg-violet-50 hover:bg-violet-100 text-violet-700 flex items-center justify-center gap-1 disabled:cursor-not-allowed disabled:opacity-50"><Send className="w-3 h-3" /> Share</button>
 //                   <button onClick={() => setManageItem(item)}
 //                     className="flex-1 h-7 text-[10px] font-bold rounded border border-indigo-200 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 flex items-center justify-center gap-1">
 //                     <Images className="w-3 h-3" /> Images
@@ -516,6 +517,7 @@ import DocumentConversation from "../DocumentConversation.jsx";
 //         </div>
 //       )}
 
+//       {shareItem && <ShareCatalogueItemModal item={shareItem} onClose={() => setShareItem(null)} />}
 //       {showAdd && <AddItemModal onClose={() => setShowAdd(false)} onAdded={fetchItems} />}
 //       {manageItem && (
 //         <ManageImagesModal
@@ -719,7 +721,7 @@ import DocumentConversation from "../DocumentConversation.jsx";
 // }
 
 import React, { useState, useEffect, useCallback } from "react";
-import { CheckCircle2, CircleHelp, Image as ImageIcon, Plus, Sparkles, X, Trash2, MessageSquare, RefreshCw, Tag, Images } from "lucide-react";
+import { CheckCircle2, CircleHelp, Image as ImageIcon, Plus, Sparkles, X, Trash2, MessageSquare, RefreshCw, Tag, Images, Send } from "lucide-react";
 import VendorSubscriptionTab from "./Vendorsubscriptiontab.jsx";
 
 const API_BASE = APP_API_URL;
@@ -781,6 +783,7 @@ function VariantMatrix({ variants = [], onChange }) {
 const EMPTY_ITEM_FORM = {
   item_name: "", category: "", description: "",
   price_range_min: "", price_range_max: "",
+  price: "", direct_purchase_enabled: false,
   available_sizes: "", available_colors: "", moq: "",
   variants: [], images: [],
 };
@@ -832,6 +835,7 @@ const askCatalogueAssistant = async () => {
   const handleSubmit = async () => {
     if (!form.item_name.trim()) { setError("Item name is required."); return; }
     if (form.images.length === 0) { setError("At least one image is required."); return; }
+    if (form.direct_purchase_enabled && !(Number(form.price) > 0)) { setError("A firm price is required to enable direct purchase."); return; }
     setSaving(true);
     setError(null);
     try {
@@ -841,6 +845,8 @@ const askCatalogueAssistant = async () => {
       fd.append("description", form.description);
       fd.append("price_range_min", form.price_range_min || 0);
       fd.append("price_range_max", form.price_range_max || 0);
+      fd.append("price", form.price || 0);
+      fd.append("direct_purchase_enabled", form.direct_purchase_enabled);
       fd.append("available_sizes", form.available_sizes);
       fd.append("available_colors", form.available_colors);
       fd.append("moq", form.moq || 0);
@@ -914,6 +920,23 @@ const askCatalogueAssistant = async () => {
               <input type="number" min="0" value={form.price_range_max} onChange={e => setForm(f => ({ ...f, price_range_max: e.target.value }))}
                 className="w-full h-10 px-3 border border-slate-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-indigo-400" />
             </div>
+          </div>
+
+          <div className="rounded-xl border border-emerald-100 bg-emerald-50/70 p-3">
+            <label className="flex items-start gap-2 text-xs font-bold text-emerald-950">
+              <input type="checkbox" checked={form.direct_purchase_enabled}
+                onChange={e => setForm(f => ({ ...f, direct_purchase_enabled: e.target.checked }))}
+                className="mt-0.5 h-4 w-4 rounded border-emerald-300 text-emerald-600 focus:ring-emerald-400" />
+              <span>Enable Direct Purchase <span className="font-normal text-emerald-700">— buyers can order this instantly, skipping inquiry/negotiation</span></span>
+            </label>
+            {form.direct_purchase_enabled && (
+              <div className="mt-2.5">
+                <label className="text-xs font-bold text-slate-600 uppercase tracking-wide block mb-1">Firm Price (₹) *</label>
+                <input type="number" min="0" value={form.price} onChange={e => setForm(f => ({ ...f, price: e.target.value }))}
+                  className="w-full h-10 px-3 border border-slate-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-emerald-400"
+                  placeholder="Fixed price buyers pay, no negotiation" />
+              </div>
+            )}
           </div>
 
           <div>
@@ -1176,6 +1199,39 @@ function EditDetailsModal({ item, onClose, onSaved }) {
   );
 }
 
+function ShareCatalogueItemModal({ item, onClose }) {
+  const [retailers, setRetailers] = useState([]);
+  const [selected, setSelected] = useState(new Set());
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
+
+  useEffect(() => { let cancelled = false; (async () => {
+    try {
+      const response = await vendorFetch("/api/vendors/my-tenant");
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || "Could not load retailers.");
+      const approved = (data.data || []).filter((retailer) => retailer.status === "Approved");
+      if (!cancelled) setRetailers(approved);
+    } catch (err) { if (!cancelled) setError(err.message || "Could not load retailers."); }
+    finally { if (!cancelled) setLoading(false); }
+  })(); return () => { cancelled = true; }; }, []);
+
+  const toggle = (tenantId) => setSelected((current) => { const next = new Set(current); next.has(tenantId) ? next.delete(tenantId) : next.add(tenantId); return next; });
+  const share = async () => {
+    if (!selected.size) { setError("Select at least one approved retailer."); return; }
+    setSaving(true); setError("");
+    try {
+      const response = await vendorFetch(`/api/catalogue/my-catalogue/${item._id}/share`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ tenant_ids: [...selected] }) });
+      const data = await response.json(); if (!response.ok) throw new Error(data.detail || "Could not share this item.");
+      setSuccess(data.message || "Item shared with selected retailers.");
+    } catch (err) { setError(err.message || "Could not share this item."); }
+    finally { setSaving(false); }
+  };
+
+  return <div className="fixed inset-0 z-[1200] flex items-end bg-slate-950/45 sm:items-center sm:justify-center sm:p-5"><div className="w-full max-w-lg rounded-t-3xl bg-white shadow-2xl sm:rounded-3xl"><div className="flex items-start justify-between border-b border-slate-100 p-5"><div><p className="text-xs font-black uppercase tracking-wider text-indigo-600">Share catalogue item</p><h2 className="mt-1 text-lg font-black text-slate-900">{item.item_name}</h2><p className="mt-1 text-xs leading-5 text-slate-500">Only selected retailers that already approved your account will receive it.</p></div><button type="button" onClick={onClose} className="rounded-xl p-2 text-slate-500 hover:bg-slate-100"><X className="h-5 w-5" /></button></div><div className="p-5">{error && <p className="mb-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-bold text-rose-700">{error}</p>}{success ? <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4"><p className="text-sm font-black text-emerald-800">{success}</p><p className="mt-1 text-xs leading-5 text-emerald-700">Buyers can open Quick Order, choose variants and quantity, then request your confirmed quote.</p><button type="button" onClick={onClose} className="mt-3 rounded-xl bg-emerald-600 px-4 py-2 text-xs font-black text-white">Done</button></div> : loading ? <div className="py-10 text-center"><RefreshCw className="mx-auto h-5 w-5 animate-spin text-indigo-500" /><p className="mt-2 text-xs text-slate-500">Loading approved retailers…</p></div> : retailers.length === 0 ? <div className="rounded-2xl bg-amber-50 p-4 text-sm text-amber-800">You do not have an approved retailer yet. A retailer must approve your vendor account before you can share catalogue items.</div> : <><div className="max-h-64 space-y-2 overflow-y-auto">{retailers.map((retailer) => <label key={retailer.tenant_id} className="flex cursor-pointer items-center gap-3 rounded-xl border border-slate-200 p-3 hover:border-indigo-200 hover:bg-indigo-50/40"><input type="checkbox" checked={selected.has(retailer.tenant_id)} onChange={() => toggle(retailer.tenant_id)} className="h-4 w-4 accent-indigo-600" /><span className="min-w-0"><span className="block text-sm font-bold text-slate-800">{retailer.company_name}</span><span className="text-[11px] text-slate-500">Approved vendor relationship</span></span></label>)}</div><div className="mt-4 flex justify-end gap-2"><button type="button" onClick={onClose} className="rounded-xl border border-slate-200 px-4 py-2.5 text-xs font-bold text-slate-600">Cancel</button><button type="button" disabled={saving || !selected.size} onClick={share} className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-xs font-black text-white disabled:opacity-50"><Send className="h-3.5 w-3.5" />{saving ? "Sharing…" : `Share with ${selected.size || "…"}`}</button></div></>}</div></div></div>;
+}
 function CataloguePanel() {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -1184,6 +1240,7 @@ function CataloguePanel() {
   const [manageItem, setManageItem] = useState(null);
   const [editItem, setEditItem] = useState(null);
   const [error, setError] = useState(null);
+  const [shareItem, setShareItem] = useState(null);
 
   const fetchItems = useCallback(async () => {
     setLoading(true);
@@ -1337,6 +1394,7 @@ function CataloguePanel() {
                     className="flex-1 h-7 text-[10px] font-bold rounded border border-slate-200 hover:bg-slate-50 text-slate-600 flex items-center justify-center gap-1">
                     <Tag className="w-3 h-3" /> Edit
                   </button>
+                  <button onClick={() => setShareItem(item)} disabled={!item.active} title={item.active ? "Share with approved retailers" : "Reactivate this listing before sharing"} className="flex-1 h-7 text-[10px] font-bold rounded border border-violet-200 bg-violet-50 hover:bg-violet-100 text-violet-700 flex items-center justify-center gap-1 disabled:cursor-not-allowed disabled:opacity-50"><Send className="w-3 h-3" /> Share</button>
                   <button onClick={() => setManageItem(item)}
                     className="flex-1 h-7 text-[10px] font-bold rounded border border-indigo-200 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 flex items-center justify-center gap-1">
                     <Images className="w-3 h-3" /> Images
@@ -1356,6 +1414,7 @@ function CataloguePanel() {
         </div>
       )}
 
+      {shareItem && <ShareCatalogueItemModal item={shareItem} onClose={() => setShareItem(null)} />}
       {showAdd && <AddItemModal onClose={() => setShowAdd(false)} onAdded={fetchItems} />}
       {manageItem && (
         <ManageImagesModal
@@ -1584,7 +1643,234 @@ function InquiriesPanel() {
           )}
         </div>
       ))}
-      {conversationInquiry && <DocumentConversation documentType="rfq" documentId={conversationInquiry._id} actor="vendor" title={conversationInquiry.item_name || "RFQ conversation"} onClose={() => setConversationInquiry(null)} />}
+      {conversationInquiry && <DocumentConversation documentType="rfq" documentId={conversationInquiry._id} actor="vendor" title={conversationInquiry.item_name || "RFQ (Request for Quotation) conversation"} onClose={() => setConversationInquiry(null)} />}
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// BULK IMPORT — CSV/Excel of products with hosted image links, so a vendor
+// with an existing photo library elsewhere doesn't have to upload items one
+// at a time. Every row becomes direct_purchase_enabled with a firm price
+// (see POST /my-catalogue/bulk docstring for why) — this is specifically
+// the path that lets buyers order instantly instead of negotiating first.
+// ══════════════════════════════════════════════════════════════════════════
+const CATALOGUE_CSV_ALIASES = {
+  item_name:   ["item_name", "name", "product_name", "title"],
+  sku:         ["sku", "product_sku", "style_code"],
+  image_key:   ["image_key", "image_filename", "photo_key"],
+  category:    ["category"],
+  description: ["description", "desc"],
+  price:       ["price", "firm_price", "amount"],
+  moq:         ["moq", "minimum_order_quantity", "min_qty"],
+  image_url:   ["image_url", "image_urls", "image", "images", "photo_url", "link"],
+  available_sizes:  ["available_sizes", "sizes"],
+  available_colors: ["available_colors", "colors", "colours"],
+};
+
+function splitCatalogueCsvLine(line) {
+  const out = [];
+  let cur = "";
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"') { inQuotes = !inQuotes; continue; }
+    if (ch === "," && !inQuotes) { out.push(cur.trim()); cur = ""; continue; }
+    cur += ch;
+  }
+  out.push(cur.trim());
+  return out;
+}
+
+function normalizeCatalogueRow(raw) {
+  const row = {};
+  for (const [key, aliases] of Object.entries(CATALOGUE_CSV_ALIASES)) {
+    for (const alias of aliases) {
+      if (raw[alias]) { row[key] = String(raw[alias]).trim(); break; }
+    }
+  }
+  return row;
+}
+
+function parseCatalogueCsv(text) {
+  const lines = text.split(/\r\n|\n|\r/).map((l) => l.trim()).filter(Boolean);
+  if (!lines.length) return [];
+  const headers = splitCatalogueCsvLine(lines[0]).map((h) => h.toLowerCase().replace(/\s+/g, "_"));
+  return lines.slice(1).map((line) => {
+    const cells = splitCatalogueCsvLine(line);
+    const raw = {};
+    headers.forEach((h, i) => { raw[h] = cells[i] || ""; });
+    return normalizeCatalogueRow(raw);
+  }).filter((row) => row.item_name || row.image_url);
+}
+
+async function parseCatalogueXlsx(file) {
+  const XLSX = await import("xlsx");
+  const buf = await file.arrayBuffer();
+  const workbook = XLSX.read(buf, { type: "array" });
+  const sheet = workbook.Sheets[workbook.SheetNames[0]];
+  const sheetRows = XLSX.utils.sheet_to_json(sheet, { defval: "" });
+  return sheetRows.map((sheetRow) => {
+    const raw = {};
+    Object.entries(sheetRow).forEach(([header, value]) => {
+      raw[String(header).toLowerCase().trim().replace(/\s+/g, "_")] = String(value ?? "").trim();
+    });
+    return normalizeCatalogueRow(raw);
+  }).filter((row) => row.item_name || row.image_url);
+}
+
+function BulkImportPanel() {
+  const [rawText, setRawText] = useState("");
+  const [parsedRows, setParsedRows] = useState([]);
+  const [imageFiles, setImageFiles] = useState([]);
+  const [imageArchive, setImageArchive] = useState(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [results, setResults] = useState(null);
+  const [error, setError] = useState("");
+
+  const handleText = (text) => {
+    setRawText(text);
+    setParsedRows(parseCatalogueCsv(text));
+    setError("");
+  };
+
+  const handleFile = async (file) => {
+    setError("");
+    const isExcel = /\.xlsx?$/i.test(file.name) || file.type.includes("spreadsheet") || file.type.includes("excel");
+    if (isExcel) {
+      setRawText("");
+      try {
+        setParsedRows(await parseCatalogueXlsx(file));
+      } catch {
+        setError("Could not read that Excel file. Make sure it's a valid .xlsx/.xls workbook.");
+      }
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => handleText(String(reader.result || ""));
+    reader.readAsText(file);
+  };
+
+  const submit = async () => {
+    if (!parsedRows.length) { setError("No valid rows to import. Each row needs at least an item name and price."); return; }
+    setSubmitting(true); setError("");
+    try {
+      const hasLocalMedia = imageFiles.length > 0 || Boolean(imageArchive);
+      const requestOptions = hasLocalMedia
+        ? (() => {
+            const body = new FormData();
+            body.append("rows_json", JSON.stringify(parsedRows));
+            imageFiles.forEach((file) => body.append("images", file));
+            if (imageArchive) body.append("archive", imageArchive);
+            return { method: "POST", body };
+          })()
+        : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ rows: parsedRows }) };
+      const res = await vendorFetch(hasLocalMedia ? "/api/catalogue/my-catalogue/bulk-upload" : "/api/catalogue/my-catalogue/bulk", requestOptions);
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.detail || "Bulk import failed.");
+      setResults(json);
+    } catch (err) {
+      setError(err.message || "Bulk import failed.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const startOver = () => { setResults(null); setRawText(""); setParsedRows([]); setImageFiles([]); setImageArchive(null); setError(""); };
+
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm space-y-4">
+      <div>
+        <h2 className="text-sm font-black text-slate-900">Bulk Import Products</h2>
+        <p className="mt-1 text-xs text-slate-500">Add many products at once using hosted image links instead of uploading files one at a time. Every item created here lets buyers order it instantly — no inquiry needed.</p>
+      </div>
+
+      {!results ? (
+        <>
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-xs text-slate-600">
+            <p className="font-bold text-slate-700">Expected columns (header row required):</p>
+            <p className="mt-1 font-mono text-[11px] text-slate-500">item_name, sku or image_key, price, image_url (optional), category, moq, description, available_sizes, available_colors</p>
+            <p className="mt-2"><strong>item_name</strong> and <strong>price</strong> are required. Use <strong>image_url</strong>, or upload local images named as the row SKU/image_key (for example <code>SKU-001.jpg</code>).</p>
+          </div>
+
+          <label className="block">
+            <span className="text-sm font-bold text-slate-700">Upload CSV or Excel file</span>
+            <input type="file" accept=".csv,text/csv,.xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
+              onChange={(e) => e.target.files[0] && handleFile(e.target.files[0])}
+              className="mt-1.5 block w-full text-sm text-slate-600 file:mr-3 file:rounded-lg file:border-0 file:bg-indigo-50 file:px-3 file:py-2 file:text-xs file:font-bold file:text-indigo-700 hover:file:bg-indigo-100" />
+          </label>
+
+          <div className="rounded-xl border border-emerald-100 bg-emerald-50/70 p-4">
+            <p className="text-sm font-black text-emerald-950">Add local product images <span className="font-normal text-emerald-700">(optional instead of image_url)</span></p>
+            <p className="mt-1 text-[11px] leading-5 text-emerald-800">Choose images from a folder or one ZIP. RMS matches filenames to <strong>image_key</strong>, <strong>SKU</strong>, or product name: <code>SKU-001.jpg</code>, <code>SKU-001-2.jpg</code>.</p>
+            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+              <label className="block"><span className="text-xs font-bold text-slate-700">Images / image folder</span><input type="file" accept="image/jpeg,image/png,image/webp" multiple webkitdirectory="" directory="" onChange={(event) => setImageFiles(Array.from(event.target.files || []))} className="mt-1.5 block w-full text-xs text-slate-600 file:mr-2 file:rounded-lg file:border-0 file:bg-emerald-100 file:px-3 file:py-2 file:text-xs file:font-bold file:text-emerald-800" />{imageFiles.length > 0 && <p className="mt-1 text-[11px] font-bold text-emerald-700">{imageFiles.length} image(s) selected</p>}</label>
+              <label className="block"><span className="text-xs font-bold text-slate-700">Or one image ZIP</span><input type="file" accept=".zip,application/zip" onChange={(event) => setImageArchive(event.target.files?.[0] || null)} className="mt-1.5 block w-full text-xs text-slate-600 file:mr-2 file:rounded-lg file:border-0 file:bg-emerald-100 file:px-3 file:py-2 file:text-xs file:font-bold file:text-emerald-800" />{imageArchive && <p className="mt-1 truncate text-[11px] font-bold text-emerald-700">{imageArchive.name}</p>}</label>
+            </div>
+            <p className="mt-2 text-[10px] text-emerald-700">Your plan limit is checked before saving: Free 5 products / 1 photo each; Standard 10 / 3; Premium 25 / unlimited.</p>
+          </div>
+          <div className="text-center text-xs font-bold text-slate-400">— or paste CSV text —</div>
+
+          <textarea value={rawText} onChange={(e) => handleText(e.target.value)} rows={5}
+            placeholder="item_name,price,image_url,category,moq"
+            className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-xs font-mono focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100" />
+
+          {error && <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600">⚠️ {error}</div>}
+
+          {parsedRows.length > 0 && (
+            <div className="max-h-64 overflow-y-auto rounded-xl border border-slate-200">
+              <table className="w-full text-xs">
+                <thead className="sticky top-0 bg-slate-50 text-left font-bold uppercase text-slate-500">
+                  <tr>{["Item", "Price", "Image URL(s)", "Category", "MOQ"].map((h) => <th key={h} className="whitespace-nowrap px-3 py-2">{h}</th>)}</tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {parsedRows.map((r, i) => (
+                    <tr key={i} className={!r.item_name || !r.price ? "bg-red-50" : ""}>
+                      <td className="px-3 py-1.5">{r.item_name || "—"}</td>
+                      <td className="px-3 py-1.5">{r.price || "—"}</td>
+                      <td className="max-w-[220px] truncate px-3 py-1.5">{r.image_url || "—"}</td>
+                      <td className="px-3 py-1.5">{r.category || "—"}</td>
+                      <td className="px-3 py-1.5">{r.moq || "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          <div className="flex justify-end gap-2">
+            <button onClick={submit} disabled={submitting || !parsedRows.length}
+              className="rounded-xl bg-indigo-600 px-5 py-2 text-sm font-bold text-white shadow-lg shadow-indigo-600/15 transition hover:bg-indigo-700 disabled:opacity-50">
+              {submitting ? "Importing…" : `Import ${parsedRows.length} product${parsedRows.length !== 1 ? "s" : ""}`}
+            </button>
+          </div>
+        </>
+      ) : (
+        <>
+          <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-700">{results.message}</div>
+          <div className="max-h-72 overflow-y-auto rounded-xl border border-slate-200">
+            <table className="w-full text-xs">
+              <thead className="sticky top-0 bg-slate-50 text-left font-bold uppercase text-slate-500">
+                <tr>{["Item", "Status", "Reason"].map((h) => <th key={h} className="whitespace-nowrap px-3 py-2">{h}</th>)}</tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {results.results.map((r, i) => (
+                  <tr key={i}>
+                    <td className="px-3 py-1.5">{r.item_name}</td>
+                    <td className="px-3 py-1.5">
+                      <span className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${r.status === "created" ? "bg-emerald-100 text-emerald-700" : "bg-red-100 text-red-700"}`}>{r.status}</span>
+                    </td>
+                    <td className="px-3 py-1.5 text-slate-500">{r.reason || "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="flex justify-end">
+            <button onClick={startOver} className="rounded-xl bg-indigo-600 px-5 py-2 text-sm font-bold text-white shadow-lg shadow-indigo-600/15 transition hover:bg-indigo-700">Import more</button>
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -1606,7 +1892,7 @@ export default function VendorCatalogueTab() {
         </div>
 
         <div className="flex gap-2 bg-white p-1 rounded-xl border border-slate-200 w-fit">
-          {[["catalogue", "Catalogue"], ["inquiries", "Inquiries"], ["subscription", "Subscription"]].map(([id, label]) => (
+          {[["catalogue", "Catalogue"], ["bulk", "Bulk Import"], ["inquiries", "Inquiries"], ["subscription", "Subscription"]].map(([id, label]) => (
             <button key={id} onClick={() => setTab(id)}
               className={`px-4 py-2 rounded-lg text-xs font-bold transition ${tab === id ? "bg-indigo-600 text-white" : "text-slate-500 hover:bg-slate-50"}`}>
               {label}
@@ -1614,7 +1900,7 @@ export default function VendorCatalogueTab() {
           ))}
         </div>
 
-        {tab === "catalogue" ? <CataloguePanel /> : tab === "inquiries" ? <InquiriesPanel /> : <VendorSubscriptionTab />}
+        {tab === "catalogue" ? <CataloguePanel /> : tab === "bulk" ? <BulkImportPanel /> : tab === "inquiries" ? <InquiriesPanel /> : <VendorSubscriptionTab />}
       </div>
     </div>
   );

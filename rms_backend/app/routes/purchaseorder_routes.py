@@ -9,7 +9,7 @@ from bson import ObjectId
 import uuid
 import re
 
-from app.db import purchaseorders_collection, vendors_collection, product_collection, vendor_tenant_links_collection
+from app.db import purchaseorders_collection, vendors_collection, product_collection, vendor_tenant_links_collection, vendor_catalogue_collection
 from .deps import get_hq_tenant
 
 router = APIRouter(prefix="/purchaseorders", tags=["Purchase Orders"])
@@ -176,6 +176,7 @@ class PurchaseOrderModel(BaseModel):
 
     # â”€â”€ Walk-in vendor fields â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     vendor_type:   Optional[str]               = "registered"
+    direct_purchase: Optional[bool]            = False
     walkin_vendor: Optional[WalkinVendorModel] = None
 
 
@@ -422,10 +423,6 @@ async def create_po(po: PurchaseOrderModel, ctx: dict = Depends(get_hq_tenant)):
     if not po_dict.get("orderNo"):
         po_dict["orderNo"] = await generate_po_number(ctx["tenant_id"])
 
-    for item in po_dict.get("items", []):
-        item["barcode"] = await resolve_real_barcode(item)
-        _ensure_buyer_line_snapshot(item)
-
     # â”€â”€ Vendor resolution â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     if po_dict.get("vendor_type") == "walkin":
         po_dict["vendor_id"] = None
@@ -515,10 +512,6 @@ async def create_po(po: PurchaseOrderModel, ctx: dict = Depends(get_hq_tenant)):
     po_dict["raised_by_department"] = ctx.get("department") or ""
     if not po_dict.get("orderNo"):
         po_dict["orderNo"] = await generate_po_number(ctx["tenant_id"])
-
-    for item in po_dict.get("items", []):
-        item["barcode"] = await resolve_real_barcode(item)
-        _ensure_buyer_line_snapshot(item)
 
     # â”€â”€ Vendor resolution â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     if po_dict.get("vendor_type") == "walkin":
@@ -690,10 +683,6 @@ async def update_purchase_order(po_id: str, po: PurchaseOrderModel, ctx: dict = 
             )
         po_dict["vendor_id"] = vendor["_id"]
 
-    for item in po_dict.get("items", []):
-        item["barcode"] = await resolve_real_barcode(item)
-        _ensure_buyer_line_snapshot(item)
-
     calculate_po_totals(po_dict)
 
     try:
@@ -746,10 +735,33 @@ async def update_purchase_order(po_id: str, po: PurchaseOrderModel, ctx: dict = 
             )
         po_dict["vendor_id"] = vendor["_id"]
 
+    if po_dict.get("direct_purchase"):
+        if po_dict.get("vendor_type") == "walkin" or not po_dict.get("vendor_id"):
+            raise HTTPException(status_code=400, detail="Direct catalogue orders require an approved registered vendor.")
+        if not po_dict.get("items"):
+            raise HTTPException(status_code=400, detail="A direct catalogue order needs at least one item.")
+        for item in po_dict["items"]:
+            catalogue_item_id = str(item.get("catalogue_item_id") or "")
+            if not ObjectId.is_valid(catalogue_item_id):
+                raise HTTPException(status_code=400, detail="Every direct-order line must come from a catalogue listing.")
+            listing = await vendor_catalogue_collection.find_one({"_id": ObjectId(catalogue_item_id), "vendor_id": po_dict["vendor_id"], "active": True, "direct_purchase_enabled": True})
+            if not listing:
+                raise HTTPException(status_code=409, detail="A direct-order listing is no longer available from this vendor.")
+            quantity = max(0.0, float(item.get("quantity") or 0))
+            moq = max(0.0, float(listing.get("moq") or 0))
+            if quantity < max(1.0, moq):
+                raise HTTPException(status_code=400, detail=f"{listing.get('item_name', 'This item')} requires a minimum order quantity of {int(moq) if moq.is_integer() else moq}.")
+            if item.get("size") and listing.get("available_sizes") and item["size"] not in listing["available_sizes"]:
+                raise HTTPException(status_code=400, detail="Choose an available size from the catalogue listing.")
+            if item.get("color") and listing.get("available_colors") and item["color"] not in listing["available_colors"]:
+                raise HTTPException(status_code=400, detail="Choose an available colour from the catalogue listing.")
+            item["description"] = listing.get("item_name") or item.get("description")
+            item["rate"] = float(listing.get("price") or 0)
+            item["direct_offer_snapshot"] = {"catalogue_item_id": catalogue_item_id, "price": item["rate"], "moq": moq, "validated_at": datetime.utcnow().isoformat()}
+
     for item in po_dict.get("items", []):
         item["barcode"] = await resolve_real_barcode(item)
         _ensure_buyer_line_snapshot(item)
-
     calculate_po_totals(po_dict)
 
     try:

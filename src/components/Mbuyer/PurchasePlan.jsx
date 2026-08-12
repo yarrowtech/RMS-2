@@ -147,7 +147,7 @@ export default function PurchasePlan({ onNavigate }) {
             </div>
             <div className="flex flex-wrap gap-2">
               <button type="button" onClick={() => onNavigate?.("quick-order")} className="inline-flex h-10 items-center gap-2 rounded-xl border border-white/20 bg-white/10 px-4 text-sm font-bold text-white transition hover:bg-white/15">
-                <ShoppingCart className="h-4 w-4" /> Open RFQ
+                <ShoppingCart className="h-4 w-4" /> Open RFQ (Request for Quotation)
               </button>
               <button type="button" onClick={() => onNavigate?.("order-details")} className="inline-flex h-10 items-center gap-2 rounded-xl bg-cyan-300 px-4 text-sm font-black text-slate-950 transition hover:bg-cyan-200">
                 <ClipboardList className="h-4 w-4" /> Create PO
@@ -239,7 +239,7 @@ export default function PurchasePlan({ onNavigate }) {
                       </td>
                       <td className="px-4 py-4">
                         <div className="font-black text-slate-900">{row.suggestedVendor || "No matched vendor"}</div>
-                        <div className="text-xs text-slate-500">{row.vendorOptions?.length ? `${row.vendorOptions.length} option(s) from PO history` : "Use RFQ to discover vendors"}</div>
+                        <div className="text-xs text-slate-500">{row.vendorOptions?.length ? `${row.vendorOptions.length} option(s) from PO history` : "Use RFQ (Request for Quotation) to discover vendors"}</div>
                       </td>
                       <td className="px-4 py-4">
                         <div className="font-black text-slate-900">{money(row.expectedValue)}</div>
@@ -248,7 +248,7 @@ export default function PurchasePlan({ onNavigate }) {
                       <td className="px-4 py-4">
                         <div className="flex flex-wrap gap-2">
                           <button type="button" onClick={() => onNavigate?.("quick-order")} className="inline-flex items-center gap-1 rounded-lg border border-cyan-200 bg-cyan-50 px-3 py-2 text-xs font-black text-cyan-700 transition hover:bg-cyan-100">
-                            <BarChart3 className="h-3.5 w-3.5" /> RFQ
+                            <BarChart3 className="h-3.5 w-3.5" /> RFQ (Request for Quotation)
                           </button>
                           <button type="button" onClick={() => onNavigate?.("order-details")} className="inline-flex items-center gap-1 rounded-lg bg-indigo-600 px-3 py-2 text-xs font-black text-white transition hover:bg-indigo-700">
                             <ClipboardList className="h-3.5 w-3.5" /> PO
