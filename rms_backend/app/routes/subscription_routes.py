@@ -343,6 +343,7 @@ async def get_my_subscription(authorization: str = Header(None)):
             "renewal_due_soon":      renewal_due_soon,
             "image_limit":           tier["image_limit"],
             "images_used":           image_count,
+            "photos_per_item":       tier["photos_per_item"],
             "visibility_days":       tier["visibility_days"],
             "business_type_limit":   tier["business_type_limit"],
             "business_types_used":   business_type_count,

@@ -783,7 +783,7 @@ function VariantMatrix({ variants = [], onChange }) {
 const EMPTY_ITEM_FORM = {
   item_name: "", category: "", description: "",
   price_range_min: "", price_range_max: "",
-  price: "", direct_purchase_enabled: false,
+  price: "", direct_purchase_enabled: false, stock: "",
   available_sizes: "", available_colors: "", moq: "",
   variants: [], images: [],
 };
@@ -836,6 +836,7 @@ const askCatalogueAssistant = async () => {
     if (!form.item_name.trim()) { setError("Item name is required."); return; }
     if (form.images.length === 0) { setError("At least one image is required."); return; }
     if (form.direct_purchase_enabled && !(Number(form.price) > 0)) { setError("A firm price is required to enable direct purchase."); return; }
+    if (form.direct_purchase_enabled && !(Number(form.stock) > 0)) { setError("Available stock is required to enable direct purchase."); return; }
     setSaving(true);
     setError(null);
     try {
@@ -847,6 +848,7 @@ const askCatalogueAssistant = async () => {
       fd.append("price_range_max", form.price_range_max || 0);
       fd.append("price", form.price || 0);
       fd.append("direct_purchase_enabled", form.direct_purchase_enabled);
+      fd.append("stock", form.stock || 0);
       fd.append("available_sizes", form.available_sizes);
       fd.append("available_colors", form.available_colors);
       fd.append("moq", form.moq || 0);
@@ -930,11 +932,19 @@ const askCatalogueAssistant = async () => {
               <span>Enable Direct Purchase <span className="font-normal text-emerald-700">— buyers can order this instantly, skipping inquiry/negotiation</span></span>
             </label>
             {form.direct_purchase_enabled && (
-              <div className="mt-2.5">
-                <label className="text-xs font-bold text-slate-600 uppercase tracking-wide block mb-1">Firm Price (₹) *</label>
-                <input type="number" min="0" value={form.price} onChange={e => setForm(f => ({ ...f, price: e.target.value }))}
-                  className="w-full h-10 px-3 border border-slate-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-emerald-400"
-                  placeholder="Fixed price buyers pay, no negotiation" />
+              <div className="mt-2.5 grid grid-cols-2 gap-2.5">
+                <div>
+                  <label className="text-xs font-bold text-slate-600 uppercase tracking-wide block mb-1">Firm Price (₹) *</label>
+                  <input type="number" min="0" value={form.price} onChange={e => setForm(f => ({ ...f, price: e.target.value }))}
+                    className="w-full h-10 px-3 border border-slate-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-emerald-400"
+                    placeholder="Fixed price, no negotiation" />
+                </div>
+                <div>
+                  <label className="text-xs font-bold text-slate-600 uppercase tracking-wide block mb-1">Available Stock *</label>
+                  <input type="number" min="0" value={form.stock} onChange={e => setForm(f => ({ ...f, stock: e.target.value }))}
+                    className="w-full h-10 px-3 border border-slate-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-emerald-400"
+                    placeholder="Units you can fulfil now" />
+                </div>
               </div>
             )}
           </div>
@@ -1094,6 +1104,7 @@ function EditDetailsModal({ item, onClose, onSaved }) {
     price_range_max:  item.price_range_max || "",
     price:            item.price || "",
     direct_purchase_enabled: Boolean(item.direct_purchase_enabled),
+    stock:            item.stock || "",
     available_sizes:  (item.available_sizes || []).join(", "),
     available_colors: (item.available_colors || []).join(", "),
     moq:              item.moq || "",
@@ -1105,6 +1116,7 @@ function EditDetailsModal({ item, onClose, onSaved }) {
   const handleSave = async () => {
     if (!form.item_name.trim()) { setError("Item name is required."); return; }
     if (form.direct_purchase_enabled && !(Number(form.price) > 0)) { setError("A firm price is required to enable direct purchase."); return; }
+    if (form.direct_purchase_enabled && !(Number(form.stock) > 0)) { setError("Available stock is required to enable direct purchase."); return; }
     setSaving(true);
     setError(null);
     try {
@@ -1119,6 +1131,7 @@ function EditDetailsModal({ item, onClose, onSaved }) {
           price_range_max:  Number(form.price_range_max) || 0,
           price:            Number(form.price) || 0,
           direct_purchase_enabled: form.direct_purchase_enabled,
+          stock:            Number(form.stock) || 0,
           available_sizes:  form.available_sizes.split(",").map(s => s.trim()).filter(Boolean),
           available_colors: form.available_colors.split(",").map(c => c.trim()).filter(Boolean),
           moq:              Number(form.moq) || 0,
@@ -1177,11 +1190,19 @@ function EditDetailsModal({ item, onClose, onSaved }) {
               <span>Enable Direct Purchase <span className="font-normal text-emerald-700">— buyers can order this instantly, skipping inquiry/negotiation</span></span>
             </label>
             {form.direct_purchase_enabled && (
-              <div className="mt-2.5">
-                <label className="text-xs font-bold text-slate-600 uppercase tracking-wide block mb-1">Firm Price (₹) *</label>
-                <input type="number" min="0" value={form.price} onChange={e => setForm(f => ({ ...f, price: e.target.value }))}
-                  className="w-full h-9 px-3 border border-slate-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-emerald-400"
-                  placeholder="Fixed price buyers pay, no negotiation" />
+              <div className="mt-2.5 grid grid-cols-2 gap-2.5">
+                <div>
+                  <label className="text-xs font-bold text-slate-600 uppercase tracking-wide block mb-1">Firm Price (₹) *</label>
+                  <input type="number" min="0" value={form.price} onChange={e => setForm(f => ({ ...f, price: e.target.value }))}
+                    className="w-full h-9 px-3 border border-slate-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-emerald-400"
+                    placeholder="Fixed price, no negotiation" />
+                </div>
+                <div>
+                  <label className="text-xs font-bold text-slate-600 uppercase tracking-wide block mb-1">Available Stock *</label>
+                  <input type="number" min="0" value={form.stock} onChange={e => setForm(f => ({ ...f, stock: e.target.value }))}
+                    className="w-full h-9 px-3 border border-slate-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-emerald-400"
+                    placeholder="Units you can fulfil now" />
+                </div>
               </div>
             )}
           </div>
@@ -1683,6 +1704,8 @@ const CATALOGUE_CSV_ALIASES = {
   category:    ["category"],
   description: ["description", "desc"],
   price:       ["price", "firm_price", "amount"],
+  stock:       ["stock", "available_stock", "qty", "quantity"],
+  stock_by_size: ["stock_by_size", "size_stock", "sizes_stock"],
   moq:         ["moq", "minimum_order_quantity", "min_qty"],
   image_url:   ["image_url", "image_urls", "image", "images", "photo_url", "link"],
   available_sizes:  ["available_sizes", "sizes"],
@@ -1740,7 +1763,302 @@ async function parseCatalogueXlsx(file) {
   }).filter((row) => row.item_name || row.image_url);
 }
 
-function BulkImportPanel() {
+function _stripFileExt(filename) {
+  return String(filename || "").replace(/\.[^./\\]+$/, "");
+}
+
+function _friendlyNameFromFile(filename) {
+  return _stripFileExt(filename).replace(/[-_]+/g, " ").trim();
+}
+
+function _rowSizeList(row) {
+  return String(row.sizes || "").split(",").map((s) => s.trim()).filter(Boolean);
+}
+
+function _rowStock(row) {
+  const sizes = _rowSizeList(row);
+  if (!sizes.length) return Number(row.stock) || 0;
+  return sizes.reduce((sum, size) => sum + (Number(row.sizeStocks[size]) || 0), 0);
+}
+
+// "M:10;L:5,XL:0" -> one variant per size sharing the row's flat price,
+// plus a summed total that becomes the row's aggregate `stock`.
+function _expandStockBySize(row) {
+  if (!row.stock_by_size) return row;
+  const variants = String(row.stock_by_size).split(/[;,]/).map((chunk) => chunk.trim()).filter(Boolean)
+    .map((chunk) => {
+      const [label, qty] = chunk.split(":").map((s) => (s || "").trim());
+      return { label, sku: "", price: Number(row.price) || 0, moq: 0, stock: Number(qty) || 0 };
+    })
+    .filter((v) => v.label);
+  if (!variants.length) return row;
+  const stockSum = variants.reduce((sum, v) => sum + v.stock, 0);
+  return { ...row, variants, stock: String(stockSum), available_sizes: row.available_sizes || variants.map((v) => v.label).join(",") };
+}
+
+function BulkImportResults({ results, onReset }) {
+  return (
+    <>
+      <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-700">{results.message}</div>
+      <div className="max-h-72 overflow-y-auto rounded-xl border border-slate-200">
+        <table className="w-full text-xs">
+          <thead className="sticky top-0 bg-slate-50 text-left font-bold uppercase text-slate-500">
+            <tr>{["Item", "Status", "Reason"].map((h) => <th key={h} className="whitespace-nowrap px-3 py-2">{h}</th>)}</tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {results.results.map((r, i) => (
+              <tr key={i}>
+                <td className="px-3 py-1.5">{r.item_name}</td>
+                <td className="px-3 py-1.5">
+                  <span className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${r.status === "created" ? "bg-emerald-100 text-emerald-700" : "bg-red-100 text-red-700"}`}>{r.status}</span>
+                </td>
+                <td className="px-3 py-1.5 text-slate-500">{r.reason || "—"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className="flex justify-end">
+        <button onClick={onReset} className="rounded-xl bg-indigo-600 px-5 py-2 text-sm font-bold text-white shadow-lg shadow-indigo-600/15 transition hover:bg-indigo-700">Import more</button>
+      </div>
+    </>
+  );
+}
+
+function _renameFileForGroup(file, base, index) {
+  const extMatch = file.name.match(/\.[^./\\]+$/);
+  const ext = extMatch ? extMatch[0] : "";
+  const name = index === 0 ? `${base}${ext}` : `${base}-${index + 1}${ext}`;
+  return new File([file], name, { type: file.type });
+}
+
+function QuickPhotoUploadPanel({ tier, remainingSlots }) {
+  const [rows, setRows] = useState([]);
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState(new Set());
+  const [submitting, setSubmitting] = useState(false);
+  const [results, setResults] = useState(null);
+  const [error, setError] = useState("");
+
+  const handlePick = (fileList) => {
+    const files = Array.from(fileList || []).filter((file) => file.type.startsWith("image/"));
+    if (!files.length) return;
+    setError("");
+    setRows((prev) => [
+      ...prev,
+      ...files.map((file) => ({
+        id: `${file.name}-${file.lastModified}-${Math.random().toString(36).slice(2, 8)}`,
+        files: [file],
+        previewUrls: [URL.createObjectURL(file)],
+        name: _friendlyNameFromFile(file.name),
+        price: "",
+        stock: "",
+        sizes: "",
+        sizeStocks: {},
+      })),
+    ]);
+  };
+
+  const updateRow = (id, patch) => setRows((prev) => prev.map((row) => (row.id === id ? { ...row, ...patch } : row)));
+  const updateSizeStock = (id, size, value) => setRows((prev) => prev.map((row) => (row.id === id ? { ...row, sizeStocks: { ...row.sizeStocks, [size]: value } } : row)));
+  const removeRow = (id) => setRows((prev) => {
+    const target = prev.find((row) => row.id === id);
+    if (target) target.previewUrls.forEach((url) => URL.revokeObjectURL(url));
+    return prev.filter((row) => row.id !== id);
+  });
+  const removeImageFromRow = (id, index) => setRows((prev) => prev.flatMap((row) => {
+    if (row.id !== id) return [row];
+    if (row.files.length <= 1) { URL.revokeObjectURL(row.previewUrls[0]); return []; }
+    URL.revokeObjectURL(row.previewUrls[index]);
+    return [{ ...row, files: row.files.filter((_, i) => i !== index), previewUrls: row.previewUrls.filter((_, i) => i !== index) }];
+  }));
+
+  const toggleSelect = (id) => setSelectedIds((prev) => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+
+  // Premium's unlimited-photos-per-item benefit is useless if every photo
+  // always becomes its own product — this merges several picked photos
+  // (e.g. front/back/side of the same shirt) into one listing sharing one
+  // name/price/stock, instead of re-entering that data for each photo.
+  const groupSelected = () => {
+    const chosen = rows.filter((row) => selectedIds.has(row.id));
+    if (chosen.length < 2) return;
+    const merged = { ...chosen[0], files: chosen.flatMap((row) => row.files), previewUrls: chosen.flatMap((row) => row.previewUrls) };
+    setRows((prev) => {
+      const keepIds = new Set(chosen.map((row) => row.id));
+      const anchor = prev.findIndex((row) => row.id === chosen[0].id);
+      const rest = prev.filter((row) => !keepIds.has(row.id));
+      rest.splice(Math.min(anchor, rest.length), 0, merged);
+      return rest;
+    });
+    setSelectedIds(new Set());
+    setSelectMode(false);
+  };
+
+  const readyRows = rows.filter((row) => row.name.trim() && Number(row.price) > 0 && _rowStock(row) > 0);
+  const missingCount = rows.length - readyRows.length;
+  const overSlotLimit = remainingSlots !== null && rows.length > remainingSlots;
+
+  const submit = async () => {
+    if (!rows.length) { setError("Add at least one product photo."); return; }
+    if (!readyRows.length) { setError("Every photo needs a name, price above ₹0, and stock above 0 before you can import."); return; }
+    setSubmitting(true); setError("");
+    try {
+      const body = new FormData();
+      body.append("rows_json", JSON.stringify(readyRows.map((row) => {
+        const sizes = _rowSizeList(row);
+        return {
+          item_name: row.name.trim(),
+          image_key: _stripFileExt(row.files[0].name),
+          price: row.price,
+          stock: _rowStock(row),
+          available_sizes: sizes.join(","),
+          variants: sizes.map((size) => ({ label: size, sku: "", price: Number(row.price) || 0, moq: 0, stock: Number(row.sizeStocks[size]) || 0 })),
+        };
+      })));
+      readyRows.forEach((row) => {
+        const base = _stripFileExt(row.files[0].name);
+        row.files.forEach((file, i) => body.append("images", _renameFileForGroup(file, base, i)));
+      });
+      const res = await vendorFetch("/api/catalogue/my-catalogue/bulk-upload", { method: "POST", body });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.detail || "Import failed.");
+      setResults(json);
+    } catch (err) {
+      setError(err.message || "Import failed.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const startOver = () => {
+    rows.forEach((row) => row.previewUrls.forEach((url) => URL.revokeObjectURL(url)));
+    setResults(null); setRows([]); setSelectedIds(new Set()); setSelectMode(false); setError("");
+  };
+
+  if (results) return <BulkImportResults results={results} onReset={startOver} />;
+
+  return (
+    <>
+      <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-xs text-slate-600">
+        Pick your product photos — no spreadsheet needed. Each photo becomes one product; just type a name and price under it. Got several photos of the same product? Select them and group them into one listing.
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2">
+        <label className="inline-block cursor-pointer rounded-xl bg-indigo-600 px-5 py-2.5 text-sm font-bold text-white shadow-lg shadow-indigo-600/15 transition hover:bg-indigo-700">
+          Choose Photos
+          <input type="file" accept="image/jpeg,image/png,image/webp,image/gif,image/bmp,image/tiff,image/heic,image/heif,image/avif" multiple
+            onChange={(e) => { handlePick(e.target.files); e.target.value = ""; }}
+            className="hidden" />
+        </label>
+        {rows.length > 1 && (
+          <button type="button" onClick={() => { setSelectMode((m) => !m); setSelectedIds(new Set()); }}
+            className={`rounded-xl border px-4 py-2.5 text-sm font-bold transition ${selectMode ? "border-indigo-300 bg-indigo-50 text-indigo-700" : "border-slate-200 text-slate-600 hover:bg-slate-50"}`}>
+            {selectMode ? "Cancel selecting" : "Select photos to group"}
+          </button>
+        )}
+        {selectMode && (
+          <button type="button" onClick={groupSelected} disabled={selectedIds.size < 2}
+            className="rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-emerald-700 disabled:opacity-40">
+            Group {selectedIds.size || ""} as one product
+          </button>
+        )}
+      </div>
+
+      {error && <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600">⚠️ {error}</div>}
+
+      {overSlotLimit && (
+        <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-800">
+          ⚠️ You have {remainingSlots} slot{remainingSlots === 1 ? "" : "s"} left on your {tier.label} plan but added {rows.length} photos — only the first {remainingSlots} will be created, the rest will fail. Delete some catalogue items or upgrade your plan to import all of them.
+        </div>
+      )}
+
+      {rows.length > 0 && (
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+          {rows.map((row) => {
+            const sizes = _rowSizeList(row);
+            const usingSizes = sizes.length > 0;
+            const stockTotal = _rowStock(row);
+            const complete = row.name.trim() && Number(row.price) > 0 && stockTotal > 0;
+            const isSelected = selectedIds.has(row.id);
+            return (
+              <div key={row.id} className={`relative rounded-xl border p-2.5 ${isSelected ? "border-indigo-400 ring-2 ring-indigo-200" : complete ? "border-slate-200" : "border-amber-300 bg-amber-50/40"}`}>
+                {selectMode ? (
+                  <button type="button" onClick={() => toggleSelect(row.id)}
+                    className={`absolute right-1.5 top-1.5 flex h-5 w-5 items-center justify-center rounded-full border-2 text-[10px] font-black shadow ${isSelected ? "border-indigo-600 bg-indigo-600 text-white" : "border-slate-300 bg-white text-transparent"}`}>
+                    ✓
+                  </button>
+                ) : (
+                  <button type="button" onClick={() => removeRow(row.id)}
+                    className="absolute right-1.5 top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-white/90 text-slate-500 shadow hover:text-red-600">
+                    <X className="h-3 w-3" />
+                  </button>
+                )}
+                {row.previewUrls.length > 1 ? (
+                  <div className="grid grid-cols-3 gap-1">
+                    {row.previewUrls.map((url, i) => (
+                      <div key={url} className="relative">
+                        <img src={url} alt="" className="h-11 w-full rounded object-cover" />
+                        {!selectMode && (
+                          <button type="button" onClick={() => removeImageFromRow(row.id, i)}
+                            className="absolute -right-1 -top-1 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-white text-[8px] text-slate-500 shadow hover:text-red-600">
+                            <X className="h-2 w-2" />
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <img src={row.previewUrls[0]} alt="" className="h-24 w-full rounded-lg object-cover" />
+                )}
+                {row.previewUrls.length > 1 && <p className="mt-1 text-[10px] font-bold text-indigo-600">{row.previewUrls.length} photos, one product</p>}
+                <input type="text" value={row.name} onChange={(e) => updateRow(row.id, { name: e.target.value })}
+                  placeholder="Product name" className="mt-2 w-full rounded-lg border border-slate-200 px-2 py-1 text-xs font-semibold focus:border-indigo-400 focus:outline-none" />
+                <div className="mt-1.5 grid grid-cols-2 gap-1.5">
+                  <input type="number" min="0" value={row.price} onChange={(e) => updateRow(row.id, { price: e.target.value })}
+                    placeholder="Price (₹)" className="w-full rounded-lg border border-slate-200 px-2 py-1 text-xs font-semibold focus:border-indigo-400 focus:outline-none" />
+                  {usingSizes ? (
+                    <div className="flex h-full items-center rounded-lg border border-slate-100 bg-slate-50 px-2 text-[11px] font-bold text-slate-500">Total: {stockTotal}</div>
+                  ) : (
+                    <input type="number" min="0" value={row.stock} onChange={(e) => updateRow(row.id, { stock: e.target.value })}
+                      placeholder="Stock" className="w-full rounded-lg border border-slate-200 px-2 py-1 text-xs font-semibold focus:border-indigo-400 focus:outline-none" />
+                  )}
+                </div>
+                <input type="text" value={row.sizes} onChange={(e) => updateRow(row.id, { sizes: e.target.value })}
+                  placeholder="Sizes (optional, e.g. S,M,L)" className="mt-1.5 w-full rounded-lg border border-slate-200 px-2 py-1 text-xs font-semibold focus:border-indigo-400 focus:outline-none" />
+                {usingSizes && (
+                  <div className="mt-1.5 grid grid-cols-2 gap-1">
+                    {sizes.map((size) => (
+                      <div key={size} className="flex items-center gap-1">
+                        <span className="w-8 shrink-0 truncate text-[10px] font-bold text-slate-500">{size}</span>
+                        <input type="number" min="0" value={row.sizeStocks[size] || ""} onChange={(e) => updateSizeStock(row.id, size, e.target.value)}
+                          placeholder="Qty" className="w-full rounded-lg border border-slate-200 px-1.5 py-1 text-[11px] font-semibold focus:border-indigo-400 focus:outline-none" />
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {missingCount > 0 && <p className="text-[11px] font-bold text-amber-700">{missingCount} photo{missingCount === 1 ? "" : "s"} still need a name, price, and stock (highlighted above) — they'll be skipped until filled in.</p>}
+
+      <div className="flex justify-end">
+        <button onClick={submit} disabled={submitting || !rows.length}
+          className="rounded-xl bg-indigo-600 px-5 py-2 text-sm font-bold text-white shadow-lg shadow-indigo-600/15 transition hover:bg-indigo-700 disabled:opacity-50">
+          {submitting ? "Importing…" : `Import ${readyRows.length || rows.length} product${(readyRows.length || rows.length) !== 1 ? "s" : ""}`}
+        </button>
+      </div>
+    </>
+  );
+}
+
+function CsvBulkImportPanel({ tier, remainingSlots }) {
   const [rawText, setRawText] = useState("");
   const [parsedRows, setParsedRows] = useState([]);
   const [imageFiles, setImageFiles] = useState([]);
@@ -1748,6 +2066,10 @@ function BulkImportPanel() {
   const [submitting, setSubmitting] = useState(false);
   const [results, setResults] = useState(null);
   const [error, setError] = useState("");
+
+  const hasLocalMediaSelected = imageFiles.length > 0 || Boolean(imageArchive);
+  const mediaWithoutRows = hasLocalMediaSelected && parsedRows.length === 0;
+  const overSlotLimit = remainingSlots !== null && parsedRows.length > remainingSlots;
 
   const handleText = (text) => {
     setRawText(text);
@@ -1773,19 +2095,25 @@ function BulkImportPanel() {
   };
 
   const submit = async () => {
-    if (!parsedRows.length) { setError("No valid rows to import. Each row needs at least an item name and price."); return; }
+    if (!parsedRows.length) {
+      setError(hasLocalMediaSelected
+        ? "Add your product rows first (paste CSV/Excel above) — images and ZIPs only attach to matching rows, they can't be imported by themselves."
+        : "No valid rows to import. Each row needs at least an item name and price.");
+      return;
+    }
     setSubmitting(true); setError("");
     try {
+      const expandedRows = parsedRows.map(_expandStockBySize);
       const hasLocalMedia = imageFiles.length > 0 || Boolean(imageArchive);
       const requestOptions = hasLocalMedia
         ? (() => {
             const body = new FormData();
-            body.append("rows_json", JSON.stringify(parsedRows));
+            body.append("rows_json", JSON.stringify(expandedRows));
             imageFiles.forEach((file) => body.append("images", file));
             if (imageArchive) body.append("archive", imageArchive);
             return { method: "POST", body };
           })()
-        : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ rows: parsedRows }) };
+        : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ rows: expandedRows }) };
       const res = await vendorFetch(hasLocalMedia ? "/api/catalogue/my-catalogue/bulk-upload" : "/api/catalogue/my-catalogue/bulk", requestOptions);
       const json = await res.json();
       if (!res.ok) throw new Error(json.detail || "Bulk import failed.");
@@ -1799,99 +2127,123 @@ function BulkImportPanel() {
 
   const startOver = () => { setResults(null); setRawText(""); setParsedRows([]); setImageFiles([]); setImageArchive(null); setError(""); };
 
+  if (results) return <BulkImportResults results={results} onReset={startOver} />;
+
+  return (
+    <>
+      <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-xs text-slate-600">
+        <p className="font-bold text-slate-700">Expected columns (header row required):</p>
+        <p className="mt-1 font-mono text-[11px] text-slate-500">item_name, sku or image_key, price, stock, image_url (optional), category, moq, description, available_sizes, available_colors</p>
+        <p className="mt-2"><strong>item_name</strong>, <strong>price</strong>, and <strong>stock</strong> are required. Use <strong>image_url</strong>, or upload local images named as the row SKU/image_key (for example <code>SKU-001.jpg</code>).</p>
+        <p className="mt-2">Same price, different stock per size? Skip <strong>stock</strong> and use <strong>stock_by_size</strong> instead — one cell like <code>S:5;M:10;L:0</code> (semicolons, not commas). Buyers then get blocked per size once that size sells out.</p>
+      </div>
+
+      <label className="block">
+        <span className="text-sm font-bold text-slate-700">Upload CSV or Excel file</span>
+        <input type="file" accept=".csv,text/csv,.xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
+          onChange={(e) => e.target.files[0] && handleFile(e.target.files[0])}
+          className="mt-1.5 block w-full text-sm text-slate-600 file:mr-3 file:rounded-lg file:border-0 file:bg-indigo-50 file:px-3 file:py-2 file:text-xs file:font-bold file:text-indigo-700 hover:file:bg-indigo-100" />
+      </label>
+
+      <div className="rounded-xl border border-emerald-100 bg-emerald-50/70 p-4">
+        <p className="text-sm font-black text-emerald-950">Add local product images <span className="font-normal text-emerald-700">(optional instead of image_url)</span></p>
+        <p className="mt-1 text-[11px] leading-5 text-emerald-800">Choose images from a folder or one ZIP. RMS matches filenames to <strong>image_key</strong>, <strong>SKU</strong>, or product name: <code>SKU-001.jpg</code>, <code>SKU-001-2.jpg</code>.</p>
+        <div className="mt-3 grid gap-3 sm:grid-cols-2">
+          <label className="block"><span className="text-xs font-bold text-slate-700">Images / image folder</span><input type="file" accept="image/jpeg,image/png,image/webp,image/gif,image/bmp,image/tiff,image/heic,image/heif,image/avif" multiple webkitdirectory="" directory="" onChange={(event) => setImageFiles(Array.from(event.target.files || []))} className="mt-1.5 block w-full text-xs text-slate-600 file:mr-2 file:rounded-lg file:border-0 file:bg-emerald-100 file:px-3 file:py-2 file:text-xs file:font-bold file:text-emerald-800" />{imageFiles.length > 0 && <p className="mt-1 text-[11px] font-bold text-emerald-700">{imageFiles.length} image(s) selected</p>}</label>
+          <label className="block"><span className="text-xs font-bold text-slate-700">Or one image ZIP</span><input type="file" accept=".zip,application/zip" onChange={(event) => setImageArchive(event.target.files?.[0] || null)} className="mt-1.5 block w-full text-xs text-slate-600 file:mr-2 file:rounded-lg file:border-0 file:bg-emerald-100 file:px-3 file:py-2 file:text-xs file:font-bold file:text-emerald-800" />{imageArchive && <p className="mt-1 truncate text-[11px] font-bold text-emerald-700">{imageArchive.name}</p>}</label>
+        </div>
+        <p className="mt-2 text-[10px] text-emerald-700">Your plan limit is checked before saving: Free 5 products / 1 photo each; Standard 10 / 3; Premium 25 / unlimited.</p>
+        {mediaWithoutRows && (
+          <p className="mt-2 rounded-lg bg-amber-100 px-2.5 py-1.5 text-[11px] font-bold text-amber-800">⚠️ Images/ZIP alone won't import anything — add your product rows above (CSV/Excel upload or pasted text) too. Each image is matched to a row by SKU, image_key, or product name.</p>
+        )}
+      </div>
+      <div className="text-center text-xs font-bold text-slate-400">— or paste CSV text —</div>
+
+      <textarea value={rawText} onChange={(e) => handleText(e.target.value)} rows={5}
+        placeholder="item_name,price,stock,image_url,category,moq"
+        className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-xs font-mono focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100" />
+
+      {error && <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600">⚠️ {error}</div>}
+
+      {overSlotLimit && (
+        <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-800">
+          ⚠️ You have {remainingSlots} slot{remainingSlots === 1 ? "" : "s"} left on your {tier.label} plan but pasted {parsedRows.length} rows — only the first {remainingSlots} will be created, the rest will fail. Delete some catalogue items or upgrade your plan to import all of them.
+        </div>
+      )}
+
+      {parsedRows.length > 0 && (
+        <div className="max-h-64 overflow-y-auto rounded-xl border border-slate-200">
+          <table className="w-full text-xs">
+            <thead className="sticky top-0 bg-slate-50 text-left font-bold uppercase text-slate-500">
+              <tr>{["Item", "Price", "Stock", "Image URL(s)", "Category", "MOQ"].map((h) => <th key={h} className="whitespace-nowrap px-3 py-2">{h}</th>)}</tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {parsedRows.map((r, i) => (
+                <tr key={i} className={!r.item_name || !r.price || !(r.stock || r.stock_by_size) ? "bg-red-50" : ""}>
+                  <td className="px-3 py-1.5">{r.item_name || "—"}</td>
+                  <td className="px-3 py-1.5">{r.price || "—"}</td>
+                  <td className="px-3 py-1.5">{r.stock_by_size ? `by size: ${r.stock_by_size}` : (r.stock || "—")}</td>
+                  <td className="max-w-[220px] truncate px-3 py-1.5">{r.image_url || "—"}</td>
+                  <td className="px-3 py-1.5">{r.category || "—"}</td>
+                  <td className="px-3 py-1.5">{r.moq || "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <div className="flex justify-end gap-2">
+        <button onClick={submit} disabled={submitting || !parsedRows.length}
+          className="rounded-xl bg-indigo-600 px-5 py-2 text-sm font-bold text-white shadow-lg shadow-indigo-600/15 transition hover:bg-indigo-700 disabled:opacity-50">
+          {submitting ? "Importing…" : `Import ${parsedRows.length} product${parsedRows.length !== 1 ? "s" : ""}`}
+        </button>
+      </div>
+    </>
+  );
+}
+
+function BulkImportPanel() {
+  const [mode, setMode] = useState("photos");
+  const [tier, setTier] = useState(null);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const subRes = await vendorFetch("/api/subscriptions/me");
+        const subJson = await subRes.json();
+        setTier(subJson.data || null);
+      } catch { /* noop */ }
+    })();
+  }, []);
+
+  const remainingSlots = tier ? Math.max(0, tier.image_limit - tier.images_used) : null;
+
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm space-y-4">
       <div>
         <h2 className="text-sm font-black text-slate-900">Bulk Import Products</h2>
-        <p className="mt-1 text-xs text-slate-500">Add many products at once using hosted image links instead of uploading files one at a time. Every item created here lets buyers order it instantly — no inquiry needed.</p>
+        <p className="mt-1 text-xs text-slate-500">Add many products at once. Every item created here lets buyers order it instantly — no inquiry needed.</p>
       </div>
 
-      {!results ? (
-        <>
-          <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-xs text-slate-600">
-            <p className="font-bold text-slate-700">Expected columns (header row required):</p>
-            <p className="mt-1 font-mono text-[11px] text-slate-500">item_name, sku or image_key, price, image_url (optional), category, moq, description, available_sizes, available_colors</p>
-            <p className="mt-2"><strong>item_name</strong> and <strong>price</strong> are required. Use <strong>image_url</strong>, or upload local images named as the row SKU/image_key (for example <code>SKU-001.jpg</code>).</p>
-          </div>
-
-          <label className="block">
-            <span className="text-sm font-bold text-slate-700">Upload CSV or Excel file</span>
-            <input type="file" accept=".csv,text/csv,.xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
-              onChange={(e) => e.target.files[0] && handleFile(e.target.files[0])}
-              className="mt-1.5 block w-full text-sm text-slate-600 file:mr-3 file:rounded-lg file:border-0 file:bg-indigo-50 file:px-3 file:py-2 file:text-xs file:font-bold file:text-indigo-700 hover:file:bg-indigo-100" />
-          </label>
-
-          <div className="rounded-xl border border-emerald-100 bg-emerald-50/70 p-4">
-            <p className="text-sm font-black text-emerald-950">Add local product images <span className="font-normal text-emerald-700">(optional instead of image_url)</span></p>
-            <p className="mt-1 text-[11px] leading-5 text-emerald-800">Choose images from a folder or one ZIP. RMS matches filenames to <strong>image_key</strong>, <strong>SKU</strong>, or product name: <code>SKU-001.jpg</code>, <code>SKU-001-2.jpg</code>.</p>
-            <div className="mt-3 grid gap-3 sm:grid-cols-2">
-              <label className="block"><span className="text-xs font-bold text-slate-700">Images / image folder</span><input type="file" accept="image/jpeg,image/png,image/webp,image/gif,image/bmp,image/tiff,image/heic,image/heif,image/avif" multiple webkitdirectory="" directory="" onChange={(event) => setImageFiles(Array.from(event.target.files || []))} className="mt-1.5 block w-full text-xs text-slate-600 file:mr-2 file:rounded-lg file:border-0 file:bg-emerald-100 file:px-3 file:py-2 file:text-xs file:font-bold file:text-emerald-800" />{imageFiles.length > 0 && <p className="mt-1 text-[11px] font-bold text-emerald-700">{imageFiles.length} image(s) selected</p>}</label>
-              <label className="block"><span className="text-xs font-bold text-slate-700">Or one image ZIP</span><input type="file" accept=".zip,application/zip" onChange={(event) => setImageArchive(event.target.files?.[0] || null)} className="mt-1.5 block w-full text-xs text-slate-600 file:mr-2 file:rounded-lg file:border-0 file:bg-emerald-100 file:px-3 file:py-2 file:text-xs file:font-bold file:text-emerald-800" />{imageArchive && <p className="mt-1 truncate text-[11px] font-bold text-emerald-700">{imageArchive.name}</p>}</label>
-            </div>
-            <p className="mt-2 text-[10px] text-emerald-700">Your plan limit is checked before saving: Free 5 products / 1 photo each; Standard 10 / 3; Premium 25 / unlimited.</p>
-          </div>
-          <div className="text-center text-xs font-bold text-slate-400">— or paste CSV text —</div>
-
-          <textarea value={rawText} onChange={(e) => handleText(e.target.value)} rows={5}
-            placeholder="item_name,price,image_url,category,moq"
-            className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-xs font-mono focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100" />
-
-          {error && <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600">⚠️ {error}</div>}
-
-          {parsedRows.length > 0 && (
-            <div className="max-h-64 overflow-y-auto rounded-xl border border-slate-200">
-              <table className="w-full text-xs">
-                <thead className="sticky top-0 bg-slate-50 text-left font-bold uppercase text-slate-500">
-                  <tr>{["Item", "Price", "Image URL(s)", "Category", "MOQ"].map((h) => <th key={h} className="whitespace-nowrap px-3 py-2">{h}</th>)}</tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {parsedRows.map((r, i) => (
-                    <tr key={i} className={!r.item_name || !r.price ? "bg-red-50" : ""}>
-                      <td className="px-3 py-1.5">{r.item_name || "—"}</td>
-                      <td className="px-3 py-1.5">{r.price || "—"}</td>
-                      <td className="max-w-[220px] truncate px-3 py-1.5">{r.image_url || "—"}</td>
-                      <td className="px-3 py-1.5">{r.category || "—"}</td>
-                      <td className="px-3 py-1.5">{r.moq || "—"}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-
-          <div className="flex justify-end gap-2">
-            <button onClick={submit} disabled={submitting || !parsedRows.length}
-              className="rounded-xl bg-indigo-600 px-5 py-2 text-sm font-bold text-white shadow-lg shadow-indigo-600/15 transition hover:bg-indigo-700 disabled:opacity-50">
-              {submitting ? "Importing…" : `Import ${parsedRows.length} product${parsedRows.length !== 1 ? "s" : ""}`}
-            </button>
-          </div>
-        </>
-      ) : (
-        <>
-          <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-700">{results.message}</div>
-          <div className="max-h-72 overflow-y-auto rounded-xl border border-slate-200">
-            <table className="w-full text-xs">
-              <thead className="sticky top-0 bg-slate-50 text-left font-bold uppercase text-slate-500">
-                <tr>{["Item", "Status", "Reason"].map((h) => <th key={h} className="whitespace-nowrap px-3 py-2">{h}</th>)}</tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {results.results.map((r, i) => (
-                  <tr key={i}>
-                    <td className="px-3 py-1.5">{r.item_name}</td>
-                    <td className="px-3 py-1.5">
-                      <span className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${r.status === "created" ? "bg-emerald-100 text-emerald-700" : "bg-red-100 text-red-700"}`}>{r.status}</span>
-                    </td>
-                    <td className="px-3 py-1.5 text-slate-500">{r.reason || "—"}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <div className="flex justify-end">
-            <button onClick={startOver} className="rounded-xl bg-indigo-600 px-5 py-2 text-sm font-bold text-white shadow-lg shadow-indigo-600/15 transition hover:bg-indigo-700">Import more</button>
-          </div>
-        </>
+      {tier && (
+        <div className="rounded-xl border border-indigo-100 bg-indigo-50/70 px-4 py-2.5 text-xs font-semibold text-indigo-800">
+          Your <strong>{tier.label}</strong> plan: {tier.images_used}/{tier.image_limit} catalogue items used ({remainingSlots} slot{remainingSlots === 1 ? "" : "s"} left) · up to {tier.photos_per_item != null ? `${tier.photos_per_item} photo(s)` : "unlimited photos"} per item. Rows or images beyond these limits are skipped — check each row's status after import.
+        </div>
       )}
+
+      <div className="flex gap-1.5 rounded-xl bg-slate-100 p-1 w-fit">
+        {[["photos", "Photos"], ["csv", "CSV / Excel (advanced)"]].map(([id, label]) => (
+          <button key={id} onClick={() => setMode(id)}
+            className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition ${mode === id ? "bg-white text-indigo-700 shadow" : "text-slate-500 hover:text-slate-700"}`}>
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {mode === "photos"
+        ? <QuickPhotoUploadPanel tier={tier} remainingSlots={remainingSlots} />
+        : <CsvBulkImportPanel tier={tier} remainingSlots={remainingSlots} />}
     </div>
   );
 }

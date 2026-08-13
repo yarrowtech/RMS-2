@@ -82,6 +82,7 @@ class ItemModel(BaseModel):
     size: Optional[str] = None
     color: Optional[str] = None
     catalogue_item_id: Optional[str] = None
+    direct_variant_label: Optional[str] = ""
     rfq_inquiry_id: Optional[str] = None
     rfq_award_id: Optional[str] = None
     barcode: str = ""
@@ -308,6 +309,79 @@ def calculate_po_totals(po_dict: dict):
     po_dict["grossAmount"] = round(gross_amount, 2)
     po_dict["netAmount"]   = round(net_amount, 2)
 
+
+
+def _catalogue_variant_label(listing: dict, size: str, color: str) -> str:
+    """Return the vendor-defined variant label for a selected size/colour, if one exists."""
+    size, color = str(size or "").strip().lower(), str(color or "").strip().lower()
+    if not size and not color:
+        return ""
+    for variant in listing.get("variants") or []:
+        label = str(variant.get("label") or "").strip()
+        text = label.lower()
+        if (not size or size in text) and (not color or color in text):
+            return label
+    return ""
+
+
+async def release_direct_catalogue_reservations(po: dict) -> int:
+    """Release only stock reserved by a direct catalogue PO; never touch normal PO stock."""
+    released = 0
+    for reservation in po.get("direct_catalogue_reservations") or []:
+        if reservation.get("released") or reservation.get("consumed"):
+            continue
+        try:
+            oid = ObjectId(str(reservation.get("catalogue_item_id")))
+            quantity = float(reservation.get("quantity") or 0)
+        except Exception:
+            continue
+        if quantity <= 0:
+            continue
+        variant_label = str(reservation.get("variant_label") or "").strip()
+        update = {"$inc": {"direct_reserved": -quantity}}
+        query = {"_id": oid}
+        if variant_label:
+            query["variants.label"] = variant_label
+            update["$inc"]["variants.$.direct_reserved"] = -quantity
+        await vendor_catalogue_collection.update_one(query, update)
+        released += 1
+    if released:
+        await purchaseorders_collection.update_one(
+            {"_id": po["_id"]},
+            {"$set": {"direct_catalogue_reservations_released": True, "updatedAt": datetime.utcnow()}},
+        )
+    return released
+
+
+async def consume_direct_catalogue_reservations(po: dict) -> int:
+    """Deduct a direct catalogue reservation exactly once when the vendor dispatches."""
+    if not po.get("direct_purchase") or po.get("direct_catalogue_reservations_consumed"):
+        return 0
+    claimed = await purchaseorders_collection.update_one(
+        {"_id": po["_id"], "direct_catalogue_reservations_consumed": {"$ne": True}},
+        {"$set": {"direct_catalogue_reservations_consumed": True, "direct_catalogue_dispatched_at": datetime.utcnow(), "updatedAt": datetime.utcnow()}},
+    )
+    if not claimed.matched_count:
+        return 0
+    consumed = 0
+    for reservation in po.get("direct_catalogue_reservations") or []:
+        try:
+            oid = ObjectId(str(reservation.get("catalogue_item_id")))
+            quantity = float(reservation.get("quantity") or 0)
+        except Exception:
+            continue
+        if quantity <= 0:
+            continue
+        variant_label = str(reservation.get("variant_label") or "").strip()
+        update = {"$inc": {"stock": -quantity, "direct_reserved": -quantity}, "$set": {"updated_at": datetime.utcnow()}}
+        query = {"_id": oid}
+        if variant_label:
+            query["variants.label"] = variant_label
+            update["$inc"]["variants.$.stock"] = -quantity
+            update["$inc"]["variants.$.direct_reserved"] = -quantity
+        await vendor_catalogue_collection.update_one(query, update)
+        consumed += 1
+    return consumed
 
 async def adjust_vendor_stock(items: list, vendor_id: str, reverse: bool = False) -> None:
     factor = 1 if reverse else -1
@@ -557,6 +631,63 @@ async def create_po(po: PurchaseOrderModel, ctx: dict = Depends(get_hq_tenant)):
             po_dict["vendor_id"] = vendor["_id"]
         share_link = None
 
+    # Direct catalogue orders are sent straight to the vendor, but catalogue
+    # stock is RESERVED here — never deducted until that vendor dispatches.
+    direct_reservations = []
+    if po_dict.get("direct_purchase"):
+        if po_dict.get("vendor_type") == "walkin" or not po_dict.get("vendor_id"):
+            raise HTTPException(status_code=400, detail="Direct catalogue orders require an approved registered vendor.")
+        if not po_dict.get("items"):
+            raise HTTPException(status_code=400, detail="A direct catalogue order needs at least one item.")
+        for item in po_dict["items"]:
+            catalogue_item_id = str(item.get("catalogue_item_id") or "")
+            if not ObjectId.is_valid(catalogue_item_id):
+                raise HTTPException(status_code=400, detail="Every direct-order line must come from a catalogue listing.")
+            listing = await vendor_catalogue_collection.find_one({"_id": ObjectId(catalogue_item_id), "vendor_id": po_dict["vendor_id"], "active": True, "direct_purchase_enabled": True})
+            if not listing:
+                raise HTTPException(status_code=409, detail="A direct-order listing is no longer available from this vendor.")
+            quantity = max(0.0, float(item.get("quantity") or 0))
+            moq = max(0.0, float(listing.get("moq") or 0))
+            if quantity < max(1.0, moq):
+                raise HTTPException(status_code=400, detail=f"{listing.get('item_name', 'This item')} requires a minimum order quantity of {int(moq) if moq.is_integer() else moq}.")
+            size, color = str(item.get("size") or "").strip(), str(item.get("color") or "").strip()
+            if size and listing.get("available_sizes") and size not in listing["available_sizes"]:
+                raise HTTPException(status_code=400, detail="Choose an available size from the catalogue listing.")
+            if color and listing.get("available_colors") and color not in listing["available_colors"]:
+                raise HTTPException(status_code=400, detail="Choose an available colour from the catalogue listing.")
+
+            # A vendor-defined variant row (for example “Blue / M”) is a
+            # real sellable SKU. Reserve that exact row; otherwise reserve
+            # aggregate item stock. Both checks are atomic and include prior
+            # direct-order reservations, so concurrent buyers cannot overbook.
+            variant_label = str(item.get("direct_variant_label") or "").strip() or _catalogue_variant_label(listing, size, color)
+            if variant_label and not any(str(variant.get("label") or "").strip() == variant_label for variant in (listing.get("variants") or [])):
+                raise HTTPException(status_code=400, detail="The selected catalogue variant is no longer available.")
+            reserve_query = {
+                "_id": listing["_id"],
+                "$expr": {"$gte": [{"$subtract": [{"$ifNull": ["$stock", 0]}, {"$ifNull": ["$direct_reserved", 0]}]}, quantity]},
+            }
+            reserve_update = {"$inc": {"direct_reserved": quantity}, "$set": {"updated_at": datetime.utcnow()}}
+            if listing.get("variants"):
+                if not variant_label:
+                    raise HTTPException(status_code=400, detail="Choose an exact size and colour option published by this vendor.")
+                reserve_query["variants.label"] = variant_label
+                reserve_query["$expr"] = {"$and": [
+                    reserve_query["$expr"],
+                    {"$let": {"vars": {"variant": {"$arrayElemAt": [{"$filter": {"input": "$variants", "as": "variant", "cond": {"$eq": ["$$variant.label", variant_label]}}}, 0]}}, "in": {"$gte": [{"$subtract": [{"$ifNull": ["$$variant.stock", 0]}, {"$ifNull": ["$$variant.direct_reserved", 0]}]}, quantity]}}},
+                ]}
+                reserve_update["$inc"]["variants.$.direct_reserved"] = quantity
+            reserve_result = await vendor_catalogue_collection.update_one(reserve_query, reserve_update)
+            if not reserve_result.matched_count:
+                raise HTTPException(status_code=409, detail=f"Stock changed for '{listing.get('item_name', 'this item')}' or its selected variant — please review and try again.")
+            item["description"] = listing.get("item_name") or item.get("description")
+            item["rate"] = float(listing.get("price") or 0)
+            item["direct_offer_snapshot"] = {"catalogue_item_id": catalogue_item_id, "price": item["rate"], "moq": moq, "size": size, "color": color, "variant_label": variant_label, "validated_at": datetime.utcnow().isoformat()}
+            direct_reservations.append({"catalogue_item_id": catalogue_item_id, "quantity": quantity, "size": size, "color": color, "variant_label": variant_label, "reserved_at": datetime.utcnow().isoformat()})
+        po_dict["direct_catalogue_reservations"] = direct_reservations
+        po_dict["direct_catalogue_reservations_consumed"] = False
+        po_dict["status"] = "SentToVendor"
+        po_dict["vendor_response"] = {"status": "Draft", "items": [dict(item) for item in po_dict["items"]], "createdAt": datetime.utcnow().isoformat()}
     calculate_po_totals(po_dict)
     po_dict["_id"]       = ObjectId()
     po_dict["createdAt"] = datetime.utcnow()
@@ -871,7 +1002,7 @@ async def approve_vendor_submission(po_id: str, ctx: dict = Depends(get_hq_tenan
     )
     inventory_reservation = None
     vendor_id = po.get("vendor_id")
-    if vendor_id and ObjectId.is_valid(str(vendor_id)):
+    if vendor_id and ObjectId.is_valid(str(vendor_id)) and not po.get("direct_purchase"):
         try:
             from .vendor_inventory_routes import auto_reserve_for_approved_po
             inventory_reservation = await auto_reserve_for_approved_po(
@@ -901,7 +1032,9 @@ async def reject_po(po_id: str, payload: dict = {}, ctx: dict = Depends(get_hq_t
     if po.get("status") != "VendorSubmitted":
         raise HTTPException(status_code=400, detail=f"Only VendorSubmitted POs can be rejected.")
     vendor_id = str(po.get("vendor_id") or "")
-    if vendor_id:
+    if po.get("direct_purchase"):
+        await release_direct_catalogue_reservations(po)
+    elif vendor_id:
         await adjust_vendor_stock(po.get("items", []) if po.get("status") != "VendorSubmitted" else [item for item in po.get("items", []) if item.get("lineSource") != "vendor_ad_hoc"], vendor_id, reverse=True)
     await purchaseorders_collection.update_one(
         {"_id": ObjectId(po_id), "tenant_id": ctx["tenant_id"]},
@@ -927,7 +1060,10 @@ async def cancel_po(po_id: str, payload: dict = {}, ctx: dict = Depends(get_hq_t
     if po.get("status") in ("Cancelled", "StockUpdated"):
         raise HTTPException(status_code=400, detail=f"Cannot cancel a PO with status '{po.get('status')}'.")
     stock_action = "skipped"
-    if po.get("status") in ("VendorSubmitted", "Approved", "PartiallyReceived", "FullyReceived"):
+    if po.get("direct_purchase"):
+        released = await release_direct_catalogue_reservations(po)
+        stock_action = "direct_reservation_released" if released else "skipped"
+    elif po.get("status") in ("VendorSubmitted", "Approved", "PartiallyReceived", "FullyReceived"):
         vendor_id = str(po.get("vendor_id") or "")
         if vendor_id:
             await adjust_vendor_stock(po.get("items", []) if po.get("status") != "VendorSubmitted" else [item for item in po.get("items", []) if item.get("lineSource") != "vendor_ad_hoc"], vendor_id, reverse=True)
@@ -951,7 +1087,10 @@ async def delete_purchase_order(po_id: str, ctx: dict = Depends(get_hq_tenant)):
     if not po:
         raise HTTPException(status_code=404, detail="Purchase order not found")
     stock_action = "skipped"
-    if po.get("status") in ("VendorSubmitted", "Approved", "PartiallyReceived", "FullyReceived"):
+    if po.get("direct_purchase"):
+        released = await release_direct_catalogue_reservations(po)
+        stock_action = "direct_reservation_released" if released else "skipped"
+    elif po.get("status") in ("VendorSubmitted", "Approved", "PartiallyReceived", "FullyReceived"):
         vendor_id = str(po.get("vendor_id") or "")
         if vendor_id:
             await adjust_vendor_stock(po.get("items", []) if po.get("status") != "VendorSubmitted" else [item for item in po.get("items", []) if item.get("lineSource") != "vendor_ad_hoc"], vendor_id, reverse=True)
@@ -1093,6 +1232,15 @@ async def vendor_submit_po(po_id: str, authorization: str = Header(None)):
     vendor_items = po.get("vendor_response", {}).get("items", [])
     if not vendor_items:
         raise HTTPException(status_code=400, detail="Vendor has not added any items yet")
+    if po.get("direct_purchase"):
+        expected_lines = {(str(line.get("catalogue_item_id") or ""), str(line.get("size") or ""), str(line.get("color") or "")): line for line in po.get("items") or []}
+        submitted_lines = {(str(line.get("catalogue_item_id") or ""), str(line.get("size") or ""), str(line.get("color") or "")): line for line in vendor_items}
+        if set(expected_lines) != set(submitted_lines):
+            raise HTTPException(status_code=400, detail="A direct catalogue PO must keep the buyer's published product variants unchanged.")
+        for key, expected in expected_lines.items():
+            submitted = submitted_lines[key]
+            if float(submitted.get("quantity") or 0) != float(expected.get("quantity") or 0) or float(submitted.get("rate") or 0) != float(expected.get("rate") or 0):
+                raise HTTPException(status_code=400, detail="A direct catalogue PO has a fixed quantity and price. Reject it instead of changing its commercial lines.")
     for item in vendor_items:
         item["barcode"] = await resolve_real_barcode(item)
         item["vendorConfirmedQty"] = max(0.0, float(item.get("vendorConfirmedQty", item.get("quantity")) or 0))
@@ -1234,10 +1382,10 @@ async def vendor_submit_po(po_id: str, authorization: str = Header(None)):
     stock_action = "skipped"
     # Only deduct stock on first submission â€” prevent double deduction on resubmit
     was_already_submitted = po.get("status") == "VendorSubmitted"
-    if vendor_id and not was_already_submitted:
+    if vendor_id and not was_already_submitted and not po.get("direct_purchase"):
         await adjust_vendor_stock([item for item in merged_items if item.get("lineSource") != "vendor_ad_hoc"], vendor_id, reverse=False)
         stock_action = "deducted"
-    elif vendor_id and was_already_submitted:
+    elif vendor_id and (was_already_submitted or po.get("direct_purchase")):
         stock_action = "skipped_resubmission"
 
     await purchaseorders_collection.update_one(

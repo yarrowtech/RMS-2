@@ -1,6 +1,7 @@
 import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
 import React, { useEffect, useState } from "react";
 import axios from "axios";
+import { buyerHeaders } from './buyerApi.js';
 
 const API   = `${APP_API_URL}/mbuyer`;
 const money = (v) => `₹${Number(v||0).toLocaleString("en-IN",{maximumFractionDigits:0})}`;
@@ -46,11 +47,11 @@ export default function DeliveryTracking() {
   const fetch = async () => {
     try {
       setLoading(true);
-      const res = await axios.get(`${API}/delivery-tracking`, { params: { search: search || undefined } });
+      const res = await axios.get(`${API}/delivery-tracking`, { params: { search: search || undefined }, headers: buyerHeaders() });
       setVendors(res.data.vendors || []);
       setDelayed(res.data.delayed_pos || []);
       setSummary(res.data.summary || {});
-      const shipmentRes = await axios.get(`${API}/delivery-receipts`);
+      const shipmentRes = await axios.get(`${API}/delivery-receipts`, { headers: buyerHeaders() });
       setShipments(shipmentRes.data?.data || []);
     } catch {} finally { setLoading(false); }
   };
@@ -65,7 +66,7 @@ export default function DeliveryTracking() {
     const remarks = window.prompt("Receipt remarks (optional):") || "";
     try {
       setReceiptSaving(shipment.id);
-      await axios.put(`${API}/purchaseorders/${shipment.id}/receipt`, { status, received_date: new Date().toISOString().slice(0, 10), receiver_name, receiving_location, remarks });
+      await axios.put(`${API}/purchaseorders/${shipment.id}/receipt`, { status, received_date: new Date().toISOString().slice(0, 10), receiver_name, receiving_location, remarks }, { headers: buyerHeaders() });
       await fetch();
     } catch (error) {
       alert(error.response?.data?.detail || "Unable to save receipt status");
@@ -75,7 +76,7 @@ export default function DeliveryTracking() {
     if (!noteText.trim()) return;
     try {
       setNoteSaving(true);
-      await axios.put(`${API}/po-followup/${poId}`, { note: noteText.trim(), addedBy: "M-Buyer" });
+      await axios.put(`${API}/po-followup/${poId}`, { note: noteText.trim(), addedBy: "M-Buyer" }, { headers: buyerHeaders() });
       setNotePoId(null); setNoteText("");
       await fetch();
     } catch (e) {
@@ -92,7 +93,9 @@ export default function DeliveryTracking() {
         <p style={{ margin:"4px 0 0", fontSize:13, color:"#64748B" }}>Track vendor dispatches, then complete GRC before posting GRN stock.</p>
       </div>
 
-      <div style={{ marginBottom:16, padding:"12px 16px", borderRadius:10, background:"#EEF2FF", border:"1px solid #C7D2FE", fontSize:12, lineHeight:1.55, color:"#3730A3" }}><b>Receiving flow:</b> Vendor marks goods dispatched → retailer checks physical goods and creates a GRC → approve the GRC → create and post the GRN to add accepted quantities to inventory. Delivery tracking does not replace GRC or GRN.</div>\n\n      {shipments.length > 0 && <div style={{ marginBottom:20, background:"#fff", border:"1px solid #BFDBFE", borderRadius:14, padding:16 }}>
+      <div style={{ marginBottom:16, padding:"12px 16px", borderRadius:10, background:"#EEF2FF", border:"1px solid #C7D2FE", fontSize:12, lineHeight:1.55, color:"#3730A3" }}><b>Receiving flow:</b> Vendor marks goods dispatched → retailer checks physical goods and creates a GRC → approve the GRC → create and post the GRN to add accepted quantities to inventory. Delivery tracking does not replace GRC or GRN.</div>
+
+      {shipments.length > 0 && <div style={{ marginBottom:20, background:"#fff", border:"1px solid #BFDBFE", borderRadius:14, padding:16 }}>
         <b style={{ color:"#0F1B2D" }}>Dispatched purchase orders</b>
         <p style={{ margin:"4px 0 0", fontSize:12, color:"#64748B" }}>Record the physical receipt, then create the GRC and approved GRN separately.</p>
         {shipments.map(shipment => <div key={shipment.id} style={{ marginTop:12, paddingTop:12, borderTop:"1px solid #E2E8F0", display:"flex", justifyContent:"space-between", gap:10, flexWrap:"wrap" }}>

@@ -1349,7 +1349,9 @@ async def update_vendor_delivery(po_id: str, payload: dict, authorization: str =
     delivery["timeline"] = timeline[-30:]
     await purchaseorders_collection.update_one(query, {"$set": {"delivery": delivery, "updatedAt": datetime.utcnow()}})
     if status == "Dispatched":
+        from .purchaseorder_routes import consume_direct_catalogue_reservations
         from .vendor_inventory_routes import consume_reservations_for_po
+        await consume_direct_catalogue_reservations(po)
         await consume_reservations_for_po(vendor["_id"], po)
     return {"message": "Delivery update saved", "delivery": delivery}
 
@@ -1432,6 +1434,15 @@ async def vendor_submit_po(po_id: str, authorization: str = Header(None)):
     if not vendor_items:
         raise HTTPException(status_code=400, detail="Vendor has not added any items yet")
 
+    if po.get("direct_purchase"):
+        expected_lines = {(str(line.get("catalogue_item_id") or ""), str(line.get("size") or ""), str(line.get("color") or "")): line for line in po.get("items") or []}
+        submitted_lines = {(str(line.get("catalogue_item_id") or ""), str(line.get("size") or ""), str(line.get("color") or "")): line for line in vendor_items}
+        if set(expected_lines) != set(submitted_lines):
+            raise HTTPException(status_code=400, detail="A direct catalogue PO must keep the buyer's published product variants unchanged.")
+        for key, expected in expected_lines.items():
+            submitted = submitted_lines[key]
+            if float(submitted.get("quantity") or 0) != float(expected.get("quantity") or 0) or float(submitted.get("rate") or 0) != float(expected.get("rate") or 0):
+                raise HTTPException(status_code=400, detail="A direct catalogue PO has a fixed quantity and price. Reject it instead of changing its commercial lines.")
     # A vendor's barcode is a supplier reference, not RMS stock identity.
     # Preserve it separately and leave RMS barcode creation to GRC receipt.
     for item in vendor_items:

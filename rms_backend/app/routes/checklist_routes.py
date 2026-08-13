@@ -1,99 +1,56 @@
-from fastapi import APIRouter, HTTPException, status
-from pydantic import BaseModel, Field
-from typing import Optional, List
 from datetime import datetime
+from typing import List, Optional
+
 from bson import ObjectId
+from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel, Field
+
+from app.db import checklist_collection
+from app.routes.deps import get_hq_tenant
+
+router = APIRouter(prefix="/checklist", tags=["Buyer Checklist"])
+
+class ChecklistPayload(BaseModel):
+    taskDetails: str = Field(min_length=1, max_length=1000)
+    status: str = "pending"  # pending | completed
+    dueDate: Optional[str] = ""
 
 
-from app.db import checklist_collection  
-
-router = APIRouter(prefix="/checklist", tags=["Checklist"])
-
-# Helper to handle ObjectId serialization
-def objid(v):
-    return str(v) if isinstance(v, ObjectId) else v
+def oid(value: str) -> ObjectId:
+    if not ObjectId.is_valid(value):
+        raise HTTPException(status_code=400, detail="Invalid checklist ID")
+    return ObjectId(value)
 
 
-# ------------------- MODELS -------------------
-class ChecklistBase(BaseModel):
-    id: str = Field(..., description="Custom ID like CHK-...")
-    name: Optional[str] = ""
-    month: Optional[str] = ""
-    date: Optional[str] = ""
-    fromDate: Optional[str] = ""
-    toDate: Optional[str] = ""
-    taskDetails: Optional[str] = ""
-    status: Optional[str] = ""
-    createdAt: Optional[int] = None
-    updatedAt: Optional[int] = None
-
-
-class ChecklistCreate(ChecklistBase):
-    pass
-
-
-class ChecklistUpdate(BaseModel):
-    name: Optional[str] = None
-    month: Optional[str] = None
-    date: Optional[str] = None
-    fromDate: Optional[str] = None
-    toDate: Optional[str] = None
-    taskDetails: Optional[str] = None
-    status: Optional[str] = None
-    updatedAt: Optional[int] = None
-
-
-class ChecklistResponse(ChecklistBase):
-    _id: Optional[str] = None
-
-
-# ------------------- ROUTES -------------------
-
-@router.get("/", response_model=List[ChecklistResponse])
-async def get_all_checklists():
-    """Return all checklist records."""
-    docs = await checklist_collection.find().to_list(None)
-    return [{**d, "_id": objid(d["_id"])} for d in docs]
-
-
-@router.get("/{checklist_id}", response_model=ChecklistResponse)
-async def get_checklist_by_id(checklist_id: str):
-    """Get one checklist item."""
-    doc = await checklist_collection.find_one({"id": checklist_id})
-    if not doc:
-        raise HTTPException(status_code=404, detail="Checklist not found")
-    doc["_id"] = objid(doc["_id"])
+def serialise(doc: dict) -> dict:
+    doc["id"] = str(doc.pop("_id"))
     return doc
 
 
-@router.post("/", status_code=status.HTTP_201_CREATED)
-async def create_checklist(item: ChecklistCreate):
-    """Create a new checklist entry."""
-    # If same ID exists → reject
-    exists = await checklist_collection.find_one({"id": item.id})
-    if exists:
-        raise HTTPException(status_code=400, detail="Checklist with this ID already exists")
-
-    data = item.dict()
-    data["createdAt"] = data.get("createdAt") or int(datetime.utcnow().timestamp() * 1000)
-    await checklist_collection.insert_one(data)
-    return {"message": "Checklist created successfully", "id": item.id}
+@router.get("/", response_model=List[dict])
+async def list_checklist(ctx: dict = Depends(get_hq_tenant)):
+    cursor = checklist_collection.find({"tenant_id": ctx["tenant_id"]}).sort([("status", 1), ("dueDate", 1), ("createdAt", -1)])
+    return [serialise(doc) async for doc in cursor]
 
 
-@router.put("/{checklist_id}")
-async def update_checklist(checklist_id: str, item: ChecklistUpdate):
-    """Update existing checklist."""
-    item.updatedAt = int(datetime.utcnow().timestamp() * 1000)
-    result = await checklist_collection.update_one({"id": checklist_id}, {"$set": item.dict(exclude_unset=True)})
-    if result.matched_count == 0:
-        raise HTTPException(status_code=404, detail="Checklist not found")
-    return {"message": "Checklist updated successfully"}
+@router.post("/", response_model=dict, status_code=status.HTTP_201_CREATED)
+async def create_checklist(payload: ChecklistPayload, ctx: dict = Depends(get_hq_tenant)):
+    now = datetime.utcnow()
+    result = await checklist_collection.insert_one({**payload.dict(), "tenant_id": ctx["tenant_id"], "created_by": ctx["admin_id"], "createdAt": now, "updatedAt": now})
+    return {"message": "Checklist item created", "id": str(result.inserted_id)}
 
 
-@router.delete("/{checklist_id}")
-async def delete_checklist(checklist_id: str):
-    """Delete a checklist entry."""
-    result = await checklist_collection.delete_one({"id": checklist_id})
-    if result.deleted_count == 0:
-        raise HTTPException(status_code=404, detail="Checklist not found")
-    return {"message": "Checklist deleted successfully"}
+@router.put("/{item_id}")
+async def update_checklist(item_id: str, payload: ChecklistPayload, ctx: dict = Depends(get_hq_tenant)):
+    result = await checklist_collection.update_one({"_id": oid(item_id), "tenant_id": ctx["tenant_id"]}, {"$set": {**payload.dict(), "updatedAt": datetime.utcnow()}})
+    if not result.matched_count:
+        raise HTTPException(status_code=404, detail="Checklist item not found")
+    return {"message": "Checklist item updated"}
+
+
+@router.delete("/{item_id}")
+async def delete_checklist(item_id: str, ctx: dict = Depends(get_hq_tenant)):
+    result = await checklist_collection.delete_one({"_id": oid(item_id), "tenant_id": ctx["tenant_id"]})
+    if not result.deleted_count:
+        raise HTTPException(status_code=404, detail="Checklist item not found")
+    return {"message": "Checklist item deleted"}

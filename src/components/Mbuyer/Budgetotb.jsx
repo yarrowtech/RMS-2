@@ -1,6 +1,7 @@
 import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
 import React, { useEffect, useState } from "react";
 import axios from "axios";
+import { buyerHeaders } from './buyerApi.js';
 
 const API = `${APP_API_URL}/mbuyer`;
 const money = (v) => `₹${Number(v||0).toLocaleString("en-IN",{maximumFractionDigits:0})}`;
@@ -61,7 +62,7 @@ export default function BudgetOTB() {
   const fetch = async () => {
     try {
       setLoading(true);
-      const res = await axios.get(`${API}/budgets`);
+      const res = await axios.get(`${API}/budgets`, { headers: buyerHeaders() });
       setData(res.data.data || []);
       setSummary(res.data.summary || {});
     } catch {} finally { setLoading(false); }
@@ -76,9 +77,9 @@ export default function BudgetOTB() {
     try {
       setSaving(true);
       if (editId) {
-        await axios.put(`${API}/budgets/${editId}`, { totalBudget: Number(form.totalBudget), notes: form.notes, season: form.season });
+        await axios.put(`${API}/budgets/${editId}`, { totalBudget: Number(form.totalBudget), notes: form.notes, season: form.season }, { headers: buyerHeaders() });
       } else {
-        await axios.post(`${API}/budgets`, { ...form, totalBudget: Number(form.totalBudget) });
+        await axios.post(`${API}/budgets`, { ...form, totalBudget: Number(form.totalBudget) }, { headers: buyerHeaders() });
       }
       setShowForm(false); setForm(emptyForm()); setEditId(null);
       await fetch();
@@ -89,7 +90,7 @@ export default function BudgetOTB() {
 
   const handleDelete = async (id) => {
     if (!window.confirm("Delete this budget?")) return;
-    await axios.delete(`${API}/budgets/${id}`);
+    await axios.delete(`${API}/budgets/${id}`, { headers: buyerHeaders() });
     await fetch();
   };
 
@@ -132,13 +133,19 @@ export default function BudgetOTB() {
         <SummaryCard label="Utilisation"     value={pct(summary.utilisation)}
           color={summary.utilisation >= 100 ? "#EF4444" : summary.utilisation >= 80 ? "#EAB308" : "#22C55E"} />
         <SummaryCard label="Over Budget"     value={summary.over_budget_count||0}   color="#EF4444" />
-        <SummaryCard label="Warnings"        value={summary.warning_count||0}       color="#EAB308" />
+        <SummaryCard label="Needs Budget"    value={summary.no_budget_count||0}    color="#D97706" sub="PO spend not assigned to a budget" />
       </div>
 
       {/* Over-budget alert */}
       {(summary.over_budget_count||0) > 0 && (
         <div style={{ marginBottom:16, padding:"12px 16px", borderRadius:10, background:"#FEF2F2", border:"1px solid #FECACA", fontSize:13, color:"#991B1B", fontWeight:500 }}>
           🔴 <b>{summary.over_budget_count} division(s) are over budget.</b> Review and cancel or defer pending POs.
+        </div>
+      )}
+
+      {(summary.no_budget_count||0) > 0 && (
+        <div style={{ marginBottom:16, padding:"12px 16px", borderRadius:10, background:"#FFF7ED", border:"1px solid #FED7AA", fontSize:13, color:"#9A3412", fontWeight:500 }}>
+          <b>{summary.no_budget_count} PO spend group(s) need a budget.</b> Add a budget using the same division and department to track Open To Buy correctly.
         </div>
       )}
 

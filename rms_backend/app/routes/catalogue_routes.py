@@ -291,6 +291,7 @@ async def add_catalogue_item(
     price_range_max:      float          = Form(0),
     price:                float          = Form(0),        # firm, non-negotiated price — required for direct_purchase_enabled
     direct_purchase_enabled: bool        = Form(False),     # buyer can order this item instantly, skipping the inquiry/negotiation flow
+    stock:                int            = Form(0),         # units available — required for direct_purchase_enabled, capped at order time
     available_sizes:      str            = Form(""),   # comma-separated, e.g. "S,M,L,XL"
     available_colors:     str            = Form(""),   # comma-separated
     moq:                  int            = Form(0),
@@ -315,6 +316,8 @@ async def add_catalogue_item(
         raise HTTPException(status_code=400, detail="item_name is required.")
     if direct_purchase_enabled and price <= 0:
         raise HTTPException(status_code=400, detail="A firm price is required to enable direct purchase on this item.")
+    if direct_purchase_enabled and stock <= 0:
+        raise HTTPException(status_code=400, detail="Available stock is required to enable direct purchase on this item.")
 
     # ── Tier check BEFORE any Cloudinary upload — no point burning upload
     # calls on a request that's going to be rejected anyway.
@@ -378,6 +381,7 @@ async def add_catalogue_item(
         "price_range_max":   max(0.0, price_range_max),
         "price":                  max(0.0, price),
         "direct_purchase_enabled": bool(direct_purchase_enabled),
+        "stock":             max(0, stock),
         "available_sizes":   [s.strip() for s in available_sizes.split(",") if s.strip()],
         "available_colors":  [c.strip() for c in available_colors.split(",") if c.strip()],
         "moq":               max(0, moq),
@@ -523,6 +527,13 @@ async def add_catalogue_items_bulk(request: Request, authorization: str = Header
         if price <= 0:
             results.append({"item_name": item_name, "status": "error", "reason": "A firm price is required for direct purchase."})
             continue
+        try:
+            stock = int(float(row.get("stock") or 0))
+        except (TypeError, ValueError):
+            stock = 0
+        if stock <= 0:
+            results.append({"item_name": item_name, "status": "error", "reason": "Available stock is required for direct purchase."})
+            continue
         if current_count >= tier["image_limit"]:
             results.append({"item_name": item_name, "status": "error", "reason": f"Your {tier['label']} plan allows {tier['image_limit']} active catalogue items — limit reached."})
             continue
@@ -540,10 +551,11 @@ async def add_catalogue_items_bulk(request: Request, authorization: str = Header
             "price_range_max":         price,
             "price":                   price,
             "direct_purchase_enabled": True,
+            "stock":                   stock,
             "available_sizes":         [s.strip() for s in str(row.get("available_sizes") or "").split(",") if s.strip()],
             "available_colors":        [c.strip() for c in str(row.get("available_colors") or "").split(",") if c.strip()],
             "moq":                     int(moq_raw) if moq_raw.isdigit() else 0,
-            "variants":                [],
+            "variants":                _normalise_catalogue_variants(row.get("variants") or []),
             "active":                  True,
             "tier_at_upload":          tier["tier"],
             "source":                  "bulk_import",
@@ -613,6 +625,13 @@ async def add_catalogue_items_bulk_with_images(
         if price <= 0:
             results.append({"item_name": item_name, "status": "error", "reason": "A firm price is required for direct purchase."})
             continue
+        try:
+            stock = int(float(row.get("stock") or 0))
+        except (TypeError, ValueError):
+            stock = 0
+        if stock <= 0:
+            results.append({"item_name": item_name, "status": "error", "reason": "Available stock is required for direct purchase."})
+            continue
         if current_count >= tier["image_limit"]:
             results.append({"item_name": item_name, "status": "error", "reason": f"Your {tier['label']} plan allows {tier['image_limit']} active catalogue items — limit reached."})
             continue
@@ -655,6 +674,7 @@ async def add_catalogue_items_bulk_with_images(
             "price_range_max": price,
             "price": price,
             "direct_purchase_enabled": True,
+            "stock": stock,
             "available_sizes": [value.strip() for value in str(row.get("available_sizes") or "").split(",") if value.strip()],
             "available_colors": [value.strip() for value in str(row.get("available_colors") or "").split(",") if value.strip()],
             "moq": int(moq_raw) if moq_raw.isdigit() else 0,
@@ -691,11 +711,13 @@ async def update_catalogue_item(item_id: str, payload: dict, authorization: str 
         raise HTTPException(status_code=404, detail="Catalogue item not found.")
 
     allowed = {"item_name", "category", "description", "price_range_min", "price_range_max",
-               "price", "direct_purchase_enabled",
+               "price", "direct_purchase_enabled", "stock",
                "available_sizes", "available_colors", "moq", "variants", "active"}
     patch = {k: v for k, v in payload.items() if k in allowed}
     if patch.get("direct_purchase_enabled") and float(patch.get("price", item.get("price", 0)) or 0) <= 0:
         raise HTTPException(status_code=400, detail="A firm price is required to enable direct purchase on this item.")
+    if patch.get("direct_purchase_enabled") and int(patch.get("stock", item.get("stock", 0)) or 0) <= 0:
+        raise HTTPException(status_code=400, detail="Available stock is required to enable direct purchase on this item.")
     if "variants" in patch:
         patch["variants"] = _normalise_catalogue_variants(patch["variants"])
     patch["updated_at"] = datetime.utcnow()

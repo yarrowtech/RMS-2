@@ -1,6 +1,7 @@
 import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
 import React, { useEffect, useState, useMemo } from "react";
 import axios from "axios";
+import { buyerHeaders } from './buyerApi.js';
 
 const API = `${APP_API_URL}/mbuyer/vendor-performance`;
 const money = (v) => `₹${Number(v||0).toLocaleString("en-IN",{maximumFractionDigits:0})}`;
@@ -54,7 +55,7 @@ export default function VendorPerformance() {
   const fetch = async () => {
     try {
       setLoading(true);
-      const res = await axios.get(API, { params:{ sort_by:sortBy, search:search||undefined } });
+      const res = await axios.get(API, { params:{ sort_by:sortBy, search:search||undefined }, headers: buyerHeaders() });
       setData(res.data.data || []);
       setSummary(res.data.summary || {});
     } catch {} finally { setLoading(false); }

@@ -1,6 +1,7 @@
 import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
 import React, { useEffect, useState } from "react";
 import axios from "axios";
+import { buyerHeaders } from './buyerApi.js';
 
 const API   = `${APP_API_URL}/mbuyer`;
 const PO_API= `${APP_API_URL}/purchaseorders`;
@@ -63,7 +64,7 @@ export default function ReorderAlerts() {
   const fetch = async () => {
     try {
       setLoading(true);
-      const res = await axios.get(`${API}/reorder-alerts`, {
+      const res = await axios.get(`${API}/reorder-alerts`, { headers: buyerHeaders(),
         params: { search:search||undefined, division_filter:division||undefined, critical_only:critOnly }
       });
       setData(res.data.data || []);
@@ -73,7 +74,7 @@ export default function ReorderAlerts() {
 
   const fetchVendors = async () => {
     try {
-      const res = await axios.get(`${APP_API_URL}/api/vendors/approved`);
+      const res = await axios.get(`${APP_API_URL}/api/vendors/approved`, { headers: buyerHeaders() });
       setVendors(res.data || []);
     } catch {}
   };

@@ -430,7 +430,7 @@ export default function Mbuyer() {
       // "order-items"   = Mbuyer1OrderDetail (item/amount/size/qty/colour/fabric grid)
       case "order-items":        return <Mbuyer1OrderDetail />;
       // "sample-or-real" = Mbuyer1SampleOrReal (sample vs real payment tracking)
-      case "sample-or-real":     return <Mbuyer1SampleOrReal />;
+      case "sample-or-real":     return <Mbuyer1SampleOrReal onNavigate={setActive} />;
 
       case "buyer-grn": return <MbuyerGRN />;
 
