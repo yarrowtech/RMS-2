@@ -901,3 +901,27 @@ async def send_payment_failed_email(email: EmailStr, name: str, tier_label: str,
         recipients=[email],
         html=_wrap(DANGER, "Payment Failed", body, "© CitiMart RMS · Vendor Subscriptions"),
     )
+async def send_sample_request_email(email: EmailStr, vendor_name: str, design_name: str, style_code: str = "", due_date: str = "", notes: str = "") -> bool:
+    """Send a buyer's sample-development request to a walk-in vendor."""
+    import html
+    safe_vendor = html.escape(vendor_name or "Vendor")
+    safe_design = html.escape(design_name or "sample")
+    safe_style = html.escape(style_code or "Not specified")
+    safe_due = html.escape(due_date or "Not specified")
+    safe_notes = html.escape(notes or "No additional notes.").replace("\n", "<br>")
+    body = f"""
+      <h2 style="color:#222;margin-bottom:8px;">Hello, {safe_vendor}</h2>
+      <p>A buyer has requested a development sample from your business.</p>
+      <table style="border-collapse:collapse;font-size:14px;color:#444;">
+        <tr><td style="padding:6px 14px 6px 0;font-weight:bold;">Design / product</td><td>{safe_design}</td></tr>
+        <tr><td style="padding:6px 14px 6px 0;font-weight:bold;">Style code</td><td>{safe_style}</td></tr>
+        <tr><td style="padding:6px 14px 6px 0;font-weight:bold;">Expected date</td><td>{safe_due}</td></tr>
+      </table>
+      <p style="margin-top:18px;"><strong>Specifications / notes</strong><br>{safe_notes}</p>
+      <p>Please contact the buyer to confirm availability, sample cost and dispatch details.</p>
+    """
+    return await _send(
+        subject=f"Sample request: {design_name or 'New development sample'}",
+        recipients=[email],
+        html=_wrap(PRIMARY, "RMS Sample Request", body, "RMS Procurement"),
+    )

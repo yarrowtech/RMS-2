@@ -482,7 +482,7 @@ export default function MerchendiserBuyerSidebar({
   const orderChildren = [
     { key: "order-details", label: "Order Details", icon: <FaClipboardList /> },
     { key: "order-items", label: "Order Items", icon: <FaBoxOpen /> },
-    { key: "sample-or-real", label: "Sample or Real", icon: <FaVials /> },
+    { key: "sample-or-real", label: "Samples & Development", icon: <FaVials /> },
   ];
 
   const communicationNotificationCount = inquiryResponseCount + messageNotificationCount;

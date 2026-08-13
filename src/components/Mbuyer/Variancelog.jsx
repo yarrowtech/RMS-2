@@ -1,6 +1,7 @@
 import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
 import React, { useEffect, useState, useMemo } from "react";
 import axios from "axios";
+import { buyerHeaders } from './buyerApi.js';
 
 const API   = `${APP_API_URL}/mbuyer/variance-log`;
 const money = (v) => `₹${Number(v||0).toLocaleString("en-IN",{minimumFractionDigits:2,maximumFractionDigits:2})}`;
@@ -43,7 +44,7 @@ export default function VarianceLog() {
       const params = {};
       if (statusF) params.status_filter = statusF;
       if (search)  params.search        = search;
-      const res = await axios.get(API, { params });
+      const res = await axios.get(API, { params, headers: buyerHeaders() });
       setData(res.data.data || []);
       setSummary(res.data.summary || {});
     } catch {} finally { setLoading(false); }

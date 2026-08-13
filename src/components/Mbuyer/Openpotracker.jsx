@@ -1,6 +1,7 @@
 import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
 import React, { useEffect, useState, useMemo } from "react";
 import axios from "axios";
+import { buyerHeaders } from './buyerApi.js';
 
 const API = `${APP_API_URL}/mbuyer/open-po-tracker`;
 
@@ -65,7 +66,7 @@ export default function OpenPOTracker() {
       if (urgencyF) params.urgency_filter = urgencyF;
       if (statusF)  params.status_filter  = statusF;
       if (search)   params.search         = search;
-      const res = await axios.get(API, { params });
+      const res = await axios.get(API, { params, headers: buyerHeaders() });
       setData(res.data.data || []);
       setSummary(res.data.summary || {});
     } catch { } finally { setLoading(false); }

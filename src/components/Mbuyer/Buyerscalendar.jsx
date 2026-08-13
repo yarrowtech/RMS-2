@@ -1,6 +1,7 @@
 import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
 import React, { useEffect, useState, useCallback, useMemo } from "react";
 import axios from "axios";
+import { buyerHeaders } from './buyerApi.js';
 
 const API = `${APP_API_URL}/mbuyer/calendar`;
 
@@ -286,7 +287,7 @@ export default function BuyersCalendar() {
   const fetchEvents = useCallback(async () => {
     try {
       setLoading(true);
-      const res = await axios.get(API, { params:{ month: monthStr } });
+      const res = await axios.get(API, { params:{ month: monthStr }, headers: buyerHeaders() });
       setData(res.data);
     } catch {} finally { setLoading(false); }
   }, [monthStr]);
@@ -328,13 +329,13 @@ export default function BuyersCalendar() {
 
   /* ── CRUD ── */
   const handleCreate = async (form) => {
-    await axios.post(API, form);
+    await axios.post(API, form, { headers: buyerHeaders() });
     setFormData(null);
     await fetchEvents();
   };
 
   const handleUpdate = async (form) => {
-    await axios.put(`${API}/${form.id}`, form);
+    await axios.put(`${API}/${form.id}`, form, { headers: buyerHeaders() });
     setFormData(null);
     setDetailEv(null);
     await fetchEvents();
@@ -342,7 +343,7 @@ export default function BuyersCalendar() {
 
   const handleDelete = async (ev) => {
     if (!window.confirm("Delete this event?")) return;
-    await axios.delete(`${API}/${ev.id}`);
+    await axios.delete(`${API}/${ev.id}`, { headers: buyerHeaders() });
     setDetailEv(null);
     await fetchEvents();
   };

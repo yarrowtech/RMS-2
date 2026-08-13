@@ -1,4 +1,4 @@
-﻿import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
+import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
 import React, { useEffect, useState, useCallback } from "react";
 import axios from "axios";
 
@@ -320,6 +320,40 @@ export default function Dashboard({ onNavigate }) {
         </button>
       </div>
 
+      {/* ── Daily buyer workbench ── */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 14, marginBottom: 18 }}>
+        <div style={{ borderRadius: 20, padding: 20, background: "linear-gradient(135deg, #FFFFFF 0%, #EEF2FF 100%)", border: "1px solid #C7D2FE", boxShadow: "0 10px 28px rgba(79,70,229,0.09)" }}>
+          <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+            <div>
+              <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: "0.13em", color: "#4F46E5", textTransform: "uppercase" }}>Today’s buying desk</div>
+              <div style={{ marginTop: 5, fontSize: 19, color: "#0F1B2D", fontWeight: 800 }}>Work the exceptions first, then plan the next buy.</div>
+              <div style={{ marginTop: 5, fontSize: 12, color: "#64748B" }}>Your order workflows and approvals stay exactly the same.</div>
+            </div>
+            <button type="button" onClick={() => onNavigate?.("quick-order")} style={{ padding: "11px 15px", border: "none", borderRadius: 11, background: "#4F46E5", color: "#fff", fontWeight: 800, fontSize: 12, cursor: "pointer", boxShadow: "0 7px 16px rgba(79,70,229,0.25)" }}>+ Create quick order</button>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 10, marginTop: 18 }}>
+            {[
+              { label: "Vendor review", value: kpis.needs_review || 0, note: "Submitted POs", color: "#7C3AED", key: "order-details" },
+              { label: "Delivery risk", value: kpis.overdue_pos || 0, note: "Past due POs", color: "#DC2626", key: "delivery-tracking" },
+              { label: "Stock to buy", value: low_stock.length || 0, note: "Reorder alerts", color: "#D97706", key: "reorder-alerts" },
+            ].map((task) => (
+              <button key={task.key} type="button" onClick={() => onNavigate?.(task.key)} style={{ textAlign: "left", border: `1px solid ${task.color}2A`, background: "rgba(255,255,255,0.8)", borderRadius: 13, padding: "12px", cursor: "pointer" }}>
+                <div style={{ fontSize: 23, lineHeight: 1, fontWeight: 800, color: task.color, fontFamily: "'DM Mono',monospace" }}>{task.value}</div>
+                <div style={{ fontSize: 11, fontWeight: 800, color: "#334155", marginTop: 7 }}>{task.label}</div>
+                <div style={{ fontSize: 10, color: "#94A3B8", marginTop: 2 }}>{task.note}</div>
+              </button>
+            ))}
+          </div>
+        </div>
+        <div style={{ borderRadius: 20, padding: 20, background: "#0F172A", color: "#fff", boxShadow: "0 10px 28px rgba(15,23,42,0.18)" }}>
+          <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: "0.13em", color: "#5EEAD4", textTransform: "uppercase" }}>Buy with control</div>
+          <div style={{ marginTop: 7, fontSize: 17, fontWeight: 800 }}>Monthly open-to-buy</div>
+          <div style={{ marginTop: 10, fontSize: 28, fontWeight: 800, fontFamily: "'DM Mono',monospace", color: kpis.otb_set && kpis.otb_remaining < 0 ? "#FCA5A5" : "#5EEAD4" }}>{kpis.otb_set ? money(kpis.otb_remaining) : "Not set"}</div>
+          <div style={{ marginTop: 5, color: "#CBD5E1", fontSize: 11 }}>{kpis.otb_set ? "Available after current commitments" : "Set a budget to track OTB"}</div>
+          <button type="button" onClick={() => onNavigate?.("budget-otb")} style={{ marginTop: 16, width: "100%", padding: "9px 12px", borderRadius: 10, background: "rgba(94,234,212,0.12)", border: "1px solid rgba(94,234,212,0.35)", color: "#CCFBF1", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Open Budget & OTB →</button>
+        </div>
+      </div>
+
       {/* ── Alert banners ── */}
       {kpis.overdue_pos > 0 && (
         <div style={{ marginBottom: 14, padding: "11px 16px", borderRadius: 10,
@@ -601,6 +635,10 @@ export default function Dashboard({ onNavigate }) {
                 }}
                   onMouseEnter={e => e.currentTarget.style.background = color + "0F"}
                   onMouseLeave={e => e.currentTarget.style.background = "#F8FAFD"}
+                  onClick={() => onNavigate?.(key)}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") onNavigate?.(key); }}
                 >
                   <span style={{ fontSize: 16 }}>{icon}</span>
                   <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: "#3D5166" }}>{label}</span>

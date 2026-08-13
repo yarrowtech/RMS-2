@@ -70,6 +70,11 @@ const BUSINESS_TYPES = [
 
 const today = () => new Date().toISOString().slice(0, 10);
 const EMPTY_ITEM = () => ({ description: "", quantity: "", rate: "", remarks: "" });
+const variantValues = (value, fallback) => {
+  const values = Array.isArray(value) ? value : String(value || "").split(",");
+  const clean = [...new Set(values.map((item) => String(item || "").trim()).filter(Boolean))];
+  return clean.length ? clean : [fallback];
+};
 
 function supplierHighlights(item) {
   const values = (item.supplier_operations || []).flatMap((operation) =>
@@ -288,11 +293,24 @@ export default function QuickOrderFromCatalogue() {
   const [orderDate, setOrderDate] = useState(today());
   const [orderItems, setOrderItems] = useState([EMPTY_ITEM()]);
   const [directOrderMode, setDirectOrderMode] = useState(false);
-  const [commercial, setCommercial] = useState({ gstPct: "0", freight: "0", discount: "0", tolerancePct: "0", dueDate: "", paymentTerms: "" });
+  const [directCatalogueItem, setDirectCatalogueItem] = useState(null);
+  const [variantQuantities, setVariantQuantities] = useState({});
+  const [commercial, setCommercial] = useState({ gstPct: "", freight: "", discount: "", tolerancePct: "", dueDate: "", paymentTerms: "" });
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState(null);
   const [submittedOrderNo, setSubmittedOrderNo] = useState(null);
 
+  useEffect(() => {
+    const raw = sessionStorage.getItem("rms_sample_po_prefill");
+    if (!raw) return;
+    sessionStorage.removeItem("rms_sample_po_prefill");
+    try {
+      const sample = JSON.parse(raw);
+      setOrderVendorName(sample.vendorName || "");
+      setOrderItems([{ description: sample.description || "", quantity: String(sample.quantity || ""), rate: String(sample.rate || ""), remarks: sample.remarks || "Approved sample" }]);
+      setDirectOrderMode(false); setDirectCatalogueItem(null); setStep(3);
+    } catch { /* A malformed one-time prefill must not block quick ordering. */ }
+  }, []);
   const selectedItems = Array.from(selectedMap.values());
   useEffect(() => { let cancelled = false; (async () => {
     try {
@@ -321,20 +339,12 @@ export default function QuickOrderFromCatalogue() {
   const directOrder = (item) => {
     setSubmitError(null);
     setDirectOrderMode(true);
+    setDirectCatalogueItem(item);
+    setVariantQuantities({});
     setOrderVendorName(item.vendor_name || "");
-    setOrderItems([{
-      description: item.item_name,
-      sku: item.sku || "",
-      barcode: item.barcode || "",
-      catalogue_item_id: item._id,
-      size: "", color: "",
-      quantity: String(Math.max(1, Number(item.moq) || 1)),
-      rate: String(item.price || 0),
-      remarks: "Direct order — fixed listed price, no negotiation.",
-    }]);
+    setOrderItems([]);
     setStep(3);
   };
-
 
   const runSearch = async () => {
     setSearchLoading(true);
@@ -511,7 +521,45 @@ export default function QuickOrderFromCatalogue() {
 
   const updateItem = (idx, key, val) => setOrderItems(prev => prev.map((it, i) => i === idx ? { ...it, [key]: val } : it));
   const addItem = () => setOrderItems(prev => [...prev, EMPTY_ITEM()]);
-  const removeItem = (idx) => setOrderItems(prev => prev.filter((_, i) => i !== idx));
+  const directSizes = variantValues(directCatalogueItem?.available_sizes, "Standard");
+  const directColors = variantValues(directCatalogueItem?.available_colors, "Default");
+  const configuredDirectVariants = (directCatalogueItem?.variants || []).filter((variant) => String(variant?.label || "").trim());
+  const directVariantOptions = configuredDirectVariants.length
+    ? configuredDirectVariants.map((variant) => {
+        const label = String(variant.label).trim(); const lower = label.toLowerCase();
+        const size = directSizes.find((value) => lower.includes(value.toLowerCase())) || "";
+        const color = directColors.find((value) => lower.includes(value.toLowerCase())) || "";
+        return { key: `${size || label}::${color || label}`, size, color, label, stock: variant.stock };
+      })
+    : directSizes.flatMap((size) => directColors.map((color) => ({ key: `${size}::${color}`, size: size === "Standard" ? "" : size, color: color === "Default" ? "" : color, label: "", stock: null })));
+  const directOptionFor = (size, color) => {
+    const cleanSize = size === "Standard" ? "" : size;
+    const cleanColor = color === "Default" ? "" : color;
+    return directVariantOptions.find((option) => option.size === cleanSize && option.color === cleanColor) || null;
+  };
+  const setDirectVariantQuantity = (key, value) => setVariantQuantities((current) => ({ ...current, [key]: value }));
+  const addDirectVariants = () => {
+    if (!directCatalogueItem) return;
+    const selected = directVariantOptions.filter(({ key }) => Number(variantQuantities[key]) > 0);
+    if (!selected.length) { setSubmitError("Enter a quantity for at least one size and colour combination."); return; }
+    const minimum = Math.max(1, Number(directCatalogueItem.moq) || 1);
+    if (selected.some(({ key }) => Number(variantQuantities[key]) < minimum)) { setSubmitError(`Each selected variant must meet the vendor MOQ of ${minimum}.`); return; }
+    const overStock = selected.find(({ key, stock }) => stock != null && Number(variantQuantities[key]) > Number(stock));
+    if (overStock) { setSubmitError(`Only ${overStock.stock} unit(s) of ${overStock.label || "that variant"} are left in stock.`); return; }
+    setSubmitError(null);
+    setOrderItems(selected.map(({ key, size, color, label }) => ({
+      description: directCatalogueItem.item_name || "Catalogue item",
+      sku: directCatalogueItem.sku || "",
+      barcode: directCatalogueItem.barcode || "",
+      catalogue_item_id: directCatalogueItem._id,
+      size,
+      color,
+      quantity: String(variantQuantities[key]),
+      rate: String(directCatalogueItem.price || 0),
+      remarks: "Direct order — fixed listed price, no negotiation.",
+      direct_variant_label: label || "",
+    })));
+  };  const removeItem = (idx) => setOrderItems(prev => prev.filter((_, i) => i !== idx));
 
   const submitOrder = async () => {
     setSubmitError(null);
@@ -565,7 +613,7 @@ export default function QuickOrderFromCatalogue() {
   const resetAll = () => {
     setStep(0); setCategory(""); setBusinessType(""); setResults([]); setSearched(false);
     setSelectedMap(new Map()); setItemRequests({}); setGroupId(null); setSingleInquiryId(null); setRows([]);
-    setOrderVendorName(""); setOrderItems([EMPTY_ITEM()]); setCommercial({ gstPct: "0", freight: "0", discount: "0", tolerancePct: "0", dueDate: "", paymentTerms: "" }); setSubmittedOrderNo(null); setSubmitError(null); setDirectOrderMode(false);
+    setOrderVendorName(""); setOrderItems([EMPTY_ITEM()]); setCommercial({ gstPct: "", freight: "", discount: "", tolerancePct: "", dueDate: "", paymentTerms: "" }); setSubmittedOrderNo(null); setSubmitError(null); setDirectOrderMode(false); setDirectCatalogueItem(null); setVariantQuantities({});
   };
 
   const statusStyle = {
@@ -996,38 +1044,42 @@ export default function QuickOrderFromCatalogue() {
                 </div>
 
                 <div>
-                  <div className="flex items-center justify-between mb-2">
+                  <div className="mb-2 flex items-center justify-between">
                     <label className="text-xs font-bold text-slate-600">Items <span className="font-normal text-slate-400">— one row per product / size / colour</span></label>
-                    <button onClick={addItem} className="text-xs font-bold text-indigo-600 flex items-center gap-1"><Plus className="w-3 h-3" /> Add item</button>
+                    {!directOrderMode && <button onClick={addItem} className="flex items-center gap-1 text-xs font-bold text-indigo-600"><Plus className="w-3 h-3" /> Add item</button>}
                   </div>
+
+                  {directOrderMode && directCatalogueItem && <section className="mb-3 rounded-xl border border-emerald-200 bg-emerald-50/60 p-3">
+                    <div className="flex flex-wrap items-start justify-between gap-2"><div><h3 className="text-sm font-black text-emerald-950">Choose variants and quantities</h3><p className="mt-1 text-xs text-emerald-800">Vendor price is fixed at ₹{Number(directCatalogueItem.price || 0).toLocaleString("en-IN")}. Minimum per selected variant: {Math.max(1, Number(directCatalogueItem.moq) || 1)}.</p></div><span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-bold text-emerald-700 ring-1 ring-emerald-200">{directCatalogueItem.item_name}</span></div>
+                    <div className="mt-3 overflow-x-auto"><div className="min-w-[520px] space-y-2"><div className="grid gap-2" style={{ gridTemplateColumns: `110px repeat(${directColors.length}, minmax(100px, 1fr))` }}><span className="px-2 text-[10px] font-black uppercase tracking-wide text-slate-500">Size / colour</span>{directColors.map((color) => <span key={color} className="px-2 text-center text-[10px] font-black uppercase tracking-wide text-slate-500">{color === "Default" ? "Quantity" : color}</span>)}</div>{directSizes.map((size) => <div key={size} className="grid gap-2" style={{ gridTemplateColumns: `110px repeat(${directColors.length}, minmax(100px, 1fr))` }}><span className="flex items-center px-2 text-xs font-bold text-slate-700">{size === "Standard" ? "Standard" : size}</span>{directColors.map((color) => { const option = directOptionFor(size, color); const key = option?.key || `${size}::${color}`; return option ? <input key={key} type="number" min={0} max={option.stock != null ? Number(option.stock) : undefined} disabled={Number(option.stock) === 0} placeholder="Qty" value={variantQuantities[key] || ""} onChange={(event) => setDirectVariantQuantity(key, event.target.value)} className="h-10 rounded-lg border border-emerald-200 bg-white px-3 text-center text-sm disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-300" /> : <span key={key} className="grid h-10 place-items-center rounded-lg bg-slate-100 text-[10px] font-bold text-slate-400">—</span>; })}</div>)}</div></div>
+                    <div className="mt-3 flex flex-wrap items-center justify-between gap-2"><p className="text-[11px] text-slate-600">Enter only the available combinations you want. RMS creates a separate PO line for each one.</p><button type="button" onClick={addDirectVariants} className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-black text-white hover:bg-emerald-700">Add selected variants</button></div>
+                  </section>}
+
                   <div className="space-y-2">
                     {orderItems.map((it, idx) => (
-                      <div key={idx} className="grid grid-cols-1 gap-2 rounded-xl border border-slate-100 p-2 sm:grid-cols-[1.25fr_90px_90px_75px_75px_1fr_28px]">
-                        <input placeholder="Description" value={it.description} onChange={e => updateItem(idx, "description", e.target.value)} className="h-9 px-2 border border-slate-200 rounded-lg text-xs" />
-                        <input placeholder="Size" value={it.size || ""} onChange={e => updateItem(idx, "size", e.target.value)} className="h-9 px-2 border border-slate-200 rounded-lg text-xs" />
-                        <input placeholder="Color" value={it.color || ""} onChange={e => updateItem(idx, "color", e.target.value)} className="h-9 px-2 border border-slate-200 rounded-lg text-xs" />
-                        <input type="number" placeholder="Qty" value={it.quantity} onChange={e => updateItem(idx, "quantity", e.target.value)} className="h-9 px-2 border border-slate-200 rounded-lg text-xs" />
-                        <input type="number" placeholder="Rate" value={it.rate} onChange={e => updateItem(idx, "rate", e.target.value)} className="h-9 px-2 border border-slate-200 rounded-lg text-xs" />
-                        <input placeholder="Remarks" value={it.remarks} onChange={e => updateItem(idx, "remarks", e.target.value)} className="h-9 px-2 border border-slate-200 rounded-lg text-xs" />
-                        <button onClick={() => removeItem(idx)} disabled={orderItems.length === 1}
-                          className="h-9 w-9 flex items-center justify-center text-rose-500 disabled:opacity-30">
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
+                      <div key={`${it.catalogue_item_id || "manual"}-${it.size || "none"}-${it.color || "none"}-${idx}`} className="grid grid-cols-1 gap-2 rounded-xl border border-slate-100 p-2 sm:grid-cols-[1.25fr_90px_90px_75px_75px_1fr_28px]">
+                        <input placeholder="Description" value={it.description} readOnly={directOrderMode} onChange={e => updateItem(idx, "description", e.target.value)} className="h-9 rounded-lg border border-slate-200 px-2 text-xs read-only:bg-slate-50" />
+                        <input placeholder="Size" value={it.size || ""} readOnly={directOrderMode} onChange={e => updateItem(idx, "size", e.target.value)} className="h-9 rounded-lg border border-slate-200 px-2 text-xs read-only:bg-slate-50" />
+                        <input placeholder="Color" value={it.color || ""} readOnly={directOrderMode} onChange={e => updateItem(idx, "color", e.target.value)} className="h-9 rounded-lg border border-slate-200 px-2 text-xs read-only:bg-slate-50" />
+                        <input type="number" placeholder="Qty" value={it.quantity} readOnly={directOrderMode} onChange={e => updateItem(idx, "quantity", e.target.value)} className="h-9 rounded-lg border border-slate-200 px-2 text-xs read-only:bg-slate-50" />
+                        <input type="number" placeholder="Rate" value={it.rate} readOnly={directOrderMode} onChange={e => updateItem(idx, "rate", e.target.value)} className="h-9 rounded-lg border border-slate-200 px-2 text-xs read-only:bg-slate-50" />
+                        <input placeholder="Remarks" value={it.remarks} readOnly={directOrderMode} onChange={e => updateItem(idx, "remarks", e.target.value)} className="h-9 rounded-lg border border-slate-200 px-2 text-xs read-only:bg-slate-50" />
+                        {!directOrderMode && <button onClick={() => removeItem(idx)} disabled={orderItems.length === 1} className="flex h-9 w-9 items-center justify-center text-rose-500 disabled:opacity-30"><Trash2 className="w-3.5 h-3.5" /></button>}
                       </div>
                     ))}
+                    {directOrderMode && !orderItems.length && <p className="rounded-lg border border-dashed border-emerald-200 bg-white px-3 py-2 text-xs text-slate-500">Choose quantities above, then select “Add selected variants” to create the PO lines.</p>}
                   </div>
                 </div>
-
                 <details className="rounded-xl border border-indigo-100 bg-indigo-50/60 p-3">
                   <summary className="cursor-pointer text-sm font-black text-indigo-950">Commercial details <span className="ml-1 text-xs font-semibold text-indigo-600">optional — defaults to 0</span></summary>
                   <p className="mt-2 text-xs leading-5 text-slate-600">Add these only when they differ from the vendor agreement. GST is calculated on item value + freight − discount; tolerance is an allowed delivery quantity range, not a charge.</p>
-                  <div className="mt-3 grid gap-2 sm:grid-cols-3">
-                    <input type="number" min="0" placeholder="GST / Tax %" value={commercial.gstPct} onChange={e => setCommercial(current => ({ ...current, gstPct: e.target.value }))} className="h-9 rounded-lg border border-slate-200 bg-white px-2 text-xs" />
-                    <input type="number" min="0" placeholder="Freight charge" value={commercial.freight} onChange={e => setCommercial(current => ({ ...current, freight: e.target.value }))} className="h-9 rounded-lg border border-slate-200 bg-white px-2 text-xs" />
-                    <input type="number" min="0" placeholder="Discount" value={commercial.discount} onChange={e => setCommercial(current => ({ ...current, discount: e.target.value }))} className="h-9 rounded-lg border border-slate-200 bg-white px-2 text-xs" />
-                    <input type="number" min="0" placeholder="Qty tolerance %" value={commercial.tolerancePct} onChange={e => setCommercial(current => ({ ...current, tolerancePct: e.target.value }))} className="h-9 rounded-lg border border-slate-200 bg-white px-2 text-xs" />
-                    <input type="date" value={commercial.dueDate} onChange={e => setCommercial(current => ({ ...current, dueDate: e.target.value }))} className="h-9 rounded-lg border border-slate-200 bg-white px-2 text-xs" />
-                    <input placeholder="Payment terms (optional)" value={commercial.paymentTerms} onChange={e => setCommercial(current => ({ ...current, paymentTerms: e.target.value }))} className="h-9 rounded-lg border border-slate-200 bg-white px-2 text-xs" />
+                  <div className="mt-3 grid gap-3 sm:grid-cols-3">
+                    <label className="space-y-1"><span className="block text-[11px] font-bold uppercase tracking-wide text-slate-600">GST / Tax %</span><input type="number" min="0" max="100" placeholder="Example: 5" value={commercial.gstPct} onChange={e => setCommercial(current => ({ ...current, gstPct: e.target.value }))} className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm" /></label>
+                    <label className="space-y-1"><span className="block text-[11px] font-bold uppercase tracking-wide text-slate-600">Freight charge (₹)</span><input type="number" min="0" placeholder="Example: 500" value={commercial.freight} onChange={e => setCommercial(current => ({ ...current, freight: e.target.value }))} className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm" /></label>
+                    <label className="space-y-1"><span className="block text-[11px] font-bold uppercase tracking-wide text-slate-600">Discount (₹)</span><input type="number" min="0" placeholder="Example: 250" value={commercial.discount} onChange={e => setCommercial(current => ({ ...current, discount: e.target.value }))} className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm" /></label>
+                    <label className="space-y-1"><span className="block text-[11px] font-bold uppercase tracking-wide text-slate-600">Delivery tolerance %</span><input type="number" min="0" max="100" placeholder="Example: 5" value={commercial.tolerancePct} onChange={e => setCommercial(current => ({ ...current, tolerancePct: e.target.value }))} className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm" /></label>
+                    <label className="space-y-1"><span className="block text-[11px] font-bold uppercase tracking-wide text-slate-600">Expected delivery date</span><input type="date" value={commercial.dueDate} onChange={e => setCommercial(current => ({ ...current, dueDate: e.target.value }))} className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm" /></label>
+                    <label className="space-y-1"><span className="block text-[11px] font-bold uppercase tracking-wide text-slate-600">Payment terms</span><input placeholder="Example: 30 days credit" value={commercial.paymentTerms} onChange={e => setCommercial(current => ({ ...current, paymentTerms: e.target.value }))} className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm" /></label>
                   </div>
                 </details>
                 <div className="flex justify-end pt-2 border-t border-slate-100">
