@@ -415,7 +415,9 @@ def _catalogue_image_key(value: str) -> str:
 
 
 def _is_catalogue_image(filename: str) -> bool:
-    return os.path.splitext(str(filename or "").lower())[1] in {".jpg", ".jpeg", ".png", ".webp"}
+    return os.path.splitext(str(filename or "").lower())[1] in {
+        ".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".tiff", ".tif", ".heic", ".heif", ".avif",
+    }
 
 
 def _bulk_row_image_keys(row: dict) -> list:
