@@ -28,6 +28,7 @@ export default function Upload() {
   const [loading, setLoading] = useState(false);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [uploadedFiles, setUploadedFiles] = useState([]);
+  const [uploadNotice, setUploadNotice] = useState(null);
 
   const API_BASE = `${APP_API_URL}`;
 
@@ -55,6 +56,22 @@ export default function Upload() {
     return uploadedFiles.filter((file) => file.type === historyType);
   }, [uploadedFiles, historyType]);
 
+
+  const formatUploadError = (status, detail) => {
+    if (detail && typeof detail === "object") {
+      const parts = [detail.message || `Upload failed with status ${status}`];
+      if (Array.isArray(detail.missing_columns) && detail.missing_columns.length) {
+        parts.push(`Missing: ${detail.missing_columns.join(", ")}`);
+      }
+      if (detail.selected_sheet) parts.push(`Sheet read: ${detail.selected_sheet}`);
+      if (Array.isArray(detail.detected_columns) && detail.detected_columns.length) {
+        parts.push(`Detected columns: ${detail.detected_columns.slice(0, 14).join(", ")}`);
+      }
+      return parts.join(" | ");
+    }
+    return detail || `Upload failed with status ${status}`;
+  };
+
   const uploadFiles = async (e, type) => {
     const files = e.target.files;
     if (!files.length) return;
@@ -66,6 +83,7 @@ export default function Upload() {
 
     try {
       setLoading(true);
+      setUploadNotice(null);
       const res = await fetch(`${API_BASE}/api/upload/${type}`, {
         method: "POST",
         body: formData,
@@ -73,8 +91,8 @@ export default function Upload() {
 
       if (!res.ok) {
         const errorData = await res.json().catch(() => ({}));
-        const msg = errorData.detail || `Upload failed with status ${res.status}`;
-        alert(`Upload failed: ${msg}`);
+        const msg = formatUploadError(res.status, errorData.detail);
+        setUploadNotice({ type: "error", title: `${type.toUpperCase()} upload failed`, message: msg });
         return;
       }
 
@@ -83,10 +101,13 @@ export default function Upload() {
       if (type === "stock") setStockCount(data.count || 0);
       await fetchUploadedFiles();
 
-      alert(`${type.toUpperCase()} data uploaded successfully. Inserted rows: ${data.count}`);
+      setUploadNotice({ type: "success", title: `${type.toUpperCase()} upload completed`, message: data.message || `Inserted rows: ${data.count || 0}` });
     } catch (err) {
       console.error("Upload error:", err);
-      alert("Upload failed. Check backend connection or file format.");
+      const msg = err?.message === "Failed to fetch"
+        ? `Could not reach backend at ${API_BASE}. Backend may be down, Nginx may show 502/504, or CORS/network failed.`
+        : err?.message || "Upload failed. Check backend connection or file format.";
+      setUploadNotice({ type: "error", title: `${type.toUpperCase()} upload failed`, message: msg });
     } finally {
       setLoading(false);
       e.target.value = "";
@@ -192,6 +213,18 @@ export default function Upload() {
             </div>
           </div>
 
+
+          {uploadNotice && (
+            <div className={`mt-4 rounded-lg border p-3 text-sm ${
+              uploadNotice.type === "success"
+                ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                : "border-rose-200 bg-rose-50 text-rose-800"
+            }`}>
+              <p className="font-bold">{uploadNotice.title}</p>
+              <p className="mt-1 whitespace-pre-wrap break-words text-xs leading-5">{uploadNotice.message}</p>
+            </div>
+          )}
+
           {loading && <p className="mt-4 animate-pulse text-sm text-blue-600">Uploading... Please wait</p>}
         </div>
       )}
@@ -236,6 +269,7 @@ export default function Upload() {
                   <th className="px-4 py-3 text-left">File name</th>
                   <th className="px-4 py-3 text-left">Type</th>
                   <th className="px-4 py-3 text-left">Collection</th>
+                  <th className="px-4 py-3 text-left">Sheet</th>
                   <th className="px-4 py-3 text-right">Inserted rows</th>
                   <th className="px-4 py-3 text-left">Uploaded at</th>
                   <th className="px-4 py-3 text-right">Action</th>
@@ -256,6 +290,7 @@ export default function Upload() {
                       </span>
                     </td>
                     <td className="px-4 py-3 text-slate-600">{file.collection || "-"}</td>
+                    <td className="px-4 py-3 text-slate-600">{file.selected_sheet || "-"}</td>
                     <td className="px-4 py-3 text-right font-bold text-slate-900">{file.inserted_rows ?? 0}</td>
                     <td className="px-4 py-3 text-slate-600">{fmtDateTime(file.uploaded_at)}</td>
                     <td className="px-4 py-3 text-right">
@@ -278,7 +313,7 @@ export default function Upload() {
 
                 {!filteredFiles.length && (
                   <tr>
-                    <td colSpan={6} className="px-4 py-12 text-center text-sm text-slate-500">
+                    <td colSpan={7} className="px-4 py-12 text-center text-sm text-slate-500">
                       {historyLoading ? "Loading uploaded files..." : "No uploaded files found for this view."}
                     </td>
                   </tr>
