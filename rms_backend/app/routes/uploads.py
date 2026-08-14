@@ -86,20 +86,24 @@ def read_excel_or_csv(raw: bytes, filename: str, required_groups=None) -> pd.Dat
         else:
             wb = load_workbook(BytesIO(raw), read_only=True)
             df = None
+            selected_sheet = ""
 
             for ws in wb.worksheets:
                 candidate = dataframe_from_sheet(ws)
                 if candidate is not None and sheet_matches_required(candidate.columns, required_groups):
                     df = candidate
+                    selected_sheet = ws.title
                     break
 
             if df is None:
                 df = dataframe_from_sheet(wb.active)
+                selected_sheet = wb.active.title if df is not None else ""
 
             if df is None:
                 raise HTTPException(status_code=400, detail="No valid header row found")
 
         df.columns = [normalize_column_name(c) for c in df.columns]
+        df.attrs["selected_sheet"] = selected_sheet if not fname.endswith(".csv") else "CSV"
         print("Columns:", df.columns.tolist())
         return df
 
@@ -221,7 +225,7 @@ async def upload_sales(files: List[UploadFile] = File(...)):
 
         missing = [c for c in REQUIRED if c not in df.columns]
         if missing:
-            raise HTTPException(status_code=400, detail=f"Missing columns: {missing}")
+            raise HTTPException(status_code=400, detail={"message": "Sales upload missing required columns", "missing_columns": missing, "detected_columns": df.columns.tolist(), "selected_sheet": df.attrs.get("selected_sheet", "")})
 
         # Keep IsVoid so we can filter out voided transactions
         keep = REQUIRED + ["DATE", "ISVOID"] + [c for c in OPTIONAL if c in df.columns]
@@ -281,13 +285,15 @@ async def upload_sales(files: List[UploadFile] = File(...)):
         await forecast_db["uploaded_files"].insert_one({
             "filename": file.filename, "collection": "sales_data",
             "inserted_rows": inserted, "type": "sales",
+            "selected_sheet": df.attrs.get("selected_sheet", ""),
+            "detected_columns": df.columns.tolist(),
             "file_path": saved_path,
             "content_type": file.content_type,
             "uploaded_at": datetime.utcnow(),
         })
         print(f"✅ Sales inserted: {inserted} from {file.filename}")
 
-    return JSONResponse({"status": "success", "count": total_rows})
+    return JSONResponse({"status": "success", "count": total_rows, "message": f"Sales upload completed. Inserted rows: {total_rows}"})
 
 
 # ══════════════════════════════════════════════════════════
@@ -328,7 +334,7 @@ async def upload_stock(files: List[UploadFile] = File(...)):
 
         missing = [c for c in REQUIRED if c not in df.columns]
         if missing:
-            raise HTTPException(status_code=400, detail=f"Missing columns: {missing}")
+            raise HTTPException(status_code=400, detail={"message": "Stock upload missing required columns", "missing_columns": missing, "detected_columns": df.columns.tolist(), "selected_sheet": df.attrs.get("selected_sheet", "")})
 
         # Keep all useful columns — BARCODE critical for dedup uniqueness
         # (multiple items from same vendor/dept must NOT be collapsed into 1 row)
@@ -377,13 +383,15 @@ async def upload_stock(files: List[UploadFile] = File(...)):
         await forecast_db["uploaded_files"].insert_one({
             "filename": file.filename, "collection": "stock_data",
             "inserted_rows": inserted, "type": "stock",
+            "selected_sheet": df.attrs.get("selected_sheet", ""),
+            "detected_columns": df.columns.tolist(),
             "file_path": saved_path,
             "content_type": file.content_type,
             "uploaded_at": datetime.utcnow(),
         })
         print(f"✅ Stock inserted: {inserted} from {file.filename}")
 
-    return JSONResponse({"status": "success", "count": total_rows})
+    return JSONResponse({"status": "success", "count": total_rows, "message": f"Stock upload completed. Inserted rows: {total_rows}"})
 
 
 # ══════════════════════════════════════════════════════════
@@ -723,6 +731,8 @@ async def list_uploaded_files():
             "type": doc.get("type", ""),
             "uploaded_at": doc.get("uploaded_at"),
             "content_type": doc.get("content_type", ""),
+            "selected_sheet": doc.get("selected_sheet", ""),
+            "detected_columns": doc.get("detected_columns", []),
             "downloadable": downloadable,
         })
     return {"files": jsonable_encoder(cleaned)}
