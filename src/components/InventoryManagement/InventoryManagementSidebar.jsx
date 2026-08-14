@@ -18,6 +18,7 @@ import {
   FaMapMarkedAlt,
   FaBoxOpen,
   FaStore,       // ← NEW: for Store Stock menu item
+  FaBalanceScale,
 } from "react-icons/fa";
 import { PanelLeft, PanelRight } from "lucide-react";
 
@@ -332,6 +333,7 @@ export default function RMSInventorySidebar({
                 {childItem("reports.itemAging",    <FaClock />,        "Item Aging Report")}
                 {childItem("reports.dailyMovement",<FaExchangeAlt />,  "Daily Stock Movement")}
                 {childItem("reports.warehouseWise",<FaWarehouse />,    "Warehouse Wise Stock")}
+                {childItem("reports.poGrnVariance",<FaBalanceScale />, "PO vs GRN Variance")}
               </div>
             )}
           </>

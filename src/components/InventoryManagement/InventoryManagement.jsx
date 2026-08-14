@@ -16,6 +16,7 @@ import InventoryManagementStockValuationReport from "./InventoryManagementStockV
 import InventoryManagementItemAgingReport from "./InventoryManagementItemAgingReport";
 import InventoryManagementDailyStockMovement from "./InventoryManagementDailyStockMovement";
 import InventoryManagementWareHouseWizeStock from "./InventoryManagementWareHouseWizeStock";
+import InventoryManagementPoGrnVariance from "./InventoryManagementPoGrnVariance";
 import InventoryManagementSettings from "./InventoryManagementSettings";
 import InventoryManagementStockAllocation from "./InventoryManagementStockAllocation";
 import InventoryManagementStoreStock from "./Inventorymanagementstorestock.jsx";
@@ -67,6 +68,7 @@ function labelFromKey(key, storeName = "") {
     case "reports.itemAging":     return "Item Aging Report";
     case "reports.dailyMovement": return "Daily Stock Movement";
     case "reports.warehouseWise": return "Warehouse Wise Stock";
+    case "reports.poGrnVariance": return "PO vs GRN Variance";
 
     case "settings":              return "Settings";
     case "support":               return "Help & Support";
@@ -187,6 +189,8 @@ export default function InventoryManagement() {
         return <InventoryManagementDailyStockMovement />;
       case "reports.warehouseWise":
         return <InventoryManagementWareHouseWizeStock />;
+      case "reports.poGrnVariance":
+        return <InventoryManagementPoGrnVariance />;
 
       // ── SETTINGS (both) ───────────────────────────────────────────────────
       case "support":

@@ -317,8 +317,6 @@ async def add_catalogue_item(
         raise HTTPException(status_code=400, detail="item_name is required.")
     if direct_purchase_enabled and price <= 0:
         raise HTTPException(status_code=400, detail="A firm price is required to enable direct purchase on this item.")
-    if direct_purchase_enabled and stock <= 0:
-        raise HTTPException(status_code=400, detail="Available stock is required to enable direct purchase on this item.")
 
     # ── Tier check BEFORE any Cloudinary upload — no point burning upload
     # calls on a request that's going to be rejected anyway.
@@ -532,9 +530,6 @@ async def add_catalogue_items_bulk(request: Request, authorization: str = Header
             stock = int(float(row.get("stock") or 0))
         except (TypeError, ValueError):
             stock = 0
-        if stock <= 0:
-            results.append({"item_name": item_name, "status": "error", "reason": "Available stock is required for direct purchase."})
-            continue
         if current_count >= tier["image_limit"]:
             results.append({"item_name": item_name, "status": "error", "reason": f"Your {tier['label']} plan allows {tier['image_limit']} active catalogue items — limit reached."})
             continue
@@ -630,9 +625,6 @@ async def add_catalogue_items_bulk_with_images(
             stock = int(float(row.get("stock") or 0))
         except (TypeError, ValueError):
             stock = 0
-        if stock <= 0:
-            results.append({"item_name": item_name, "status": "error", "reason": "Available stock is required for direct purchase."})
-            continue
         if current_count >= tier["image_limit"]:
             results.append({"item_name": item_name, "status": "error", "reason": f"Your {tier['label']} plan allows {tier['image_limit']} active catalogue items — limit reached."})
             continue
@@ -717,8 +709,6 @@ async def update_catalogue_item(item_id: str, payload: dict, authorization: str 
     patch = {k: v for k, v in payload.items() if k in allowed}
     if patch.get("direct_purchase_enabled") and float(patch.get("price", item.get("price", 0)) or 0) <= 0:
         raise HTTPException(status_code=400, detail="A firm price is required to enable direct purchase on this item.")
-    if patch.get("direct_purchase_enabled") and int(patch.get("stock", item.get("stock", 0)) or 0) <= 0:
-        raise HTTPException(status_code=400, detail="Available stock is required to enable direct purchase on this item.")
     if "variants" in patch:
         patch["variants"] = _normalise_catalogue_variants(patch["variants"])
     patch["updated_at"] = datetime.utcnow()
@@ -892,12 +882,12 @@ async def get_public_vendor_storefront(vendor_id: str):
     vendor = await vendors_collection.find_one({"_id": vendor_oid})
     if not vendor:
         raise HTTPException(status_code=404, detail="This vendor catalogue is not available.")
-    query = {"vendor_id": vendor_oid, "active": True, "direct_purchase_enabled": True, "price": {"$gt": 0}, "stock": {"$gt": 0}}
+    query = {"vendor_id": vendor_oid, "active": True, "direct_purchase_enabled": True, "price": {"$gt": 0}}
     items = []
     async for item in vendor_catalogue_collection.find(query).sort("created_at", -1):
         row = _serialize_item(item)
         row["reserved_stock"] = float(item.get("direct_reserved") or 0)
-        row["available_to_order"] = max(0, float(item.get("stock") or 0) - float(item.get("direct_reserved") or 0))
+        row["available_to_order"] = max(0, float(item.get("stock") or 0) - float(item.get("direct_reserved") or 0)) if float(item.get("stock") or 0) > 0 else None
         items.append(row)
     return {"status": "success", "data": {"vendor": _public_vendor_payload(vendor, vendor_oid, len(items)), "items": items}}
 
@@ -918,6 +908,14 @@ async def create_public_catalogue_order(vendor_id: str, payload: dict):
     buyer_business = str(buyer.get("business") or "").strip()[:160]
     buyer_email = str(buyer.get("email") or "").strip()[:160]
     note = str(payload.get("note") or "").strip()[:1000]
+    commercial_raw = payload.get("commercial") or {}
+    commercial = {
+        "freight": float(commercial_raw.get("freight") or 0) if isinstance(commercial_raw, dict) else 0,
+        "discount": float(commercial_raw.get("discount") or 0) if isinstance(commercial_raw, dict) else 0,
+        "gstPct": float(commercial_raw.get("gstPct") or 0) if isinstance(commercial_raw, dict) else 0,
+        "dueDate": str(commercial_raw.get("dueDate") or "").strip()[:40] if isinstance(commercial_raw, dict) else "",
+        "paymentTerms": str(commercial_raw.get("paymentTerms") or "").strip()[:240] if isinstance(commercial_raw, dict) else "",
+    }
     if not buyer_name or not buyer_phone:
         raise HTTPException(status_code=400, detail="Buyer name and mobile number are required to place a catalogue order request.")
 
@@ -935,17 +933,15 @@ async def create_public_catalogue_order(vendor_id: str, payload: dict):
         if not listing:
             raise HTTPException(status_code=409, detail="One catalogue item is no longer available.")
         qty = max(0, int(float(raw.get("quantity") or 0)))
-        moq = max(1, int(float(listing.get("moq") or 1)))
-        if qty < moq:
-            raise HTTPException(status_code=400, detail=f"{listing.get('item_name', 'This item')} has MOQ {moq}.")
+        moq = max(0, int(float(listing.get("moq") or 0)))
         size = str(raw.get("size") or "").strip()[:80]
         color = str(raw.get("color") or "").strip()[:80]
         if size and listing.get("available_sizes") and size not in listing.get("available_sizes"):
             raise HTTPException(status_code=400, detail="Choose an available size from the catalogue listing.")
         if color and listing.get("available_colors") and color not in listing.get("available_colors"):
             raise HTTPException(status_code=400, detail="Choose an available colour from the catalogue listing.")
-        available = max(0, float(listing.get("stock") or 0) - float(listing.get("direct_reserved") or 0))
-        if qty > available:
+        available = max(0, float(listing.get("stock") or 0) - float(listing.get("direct_reserved") or 0)) if float(listing.get("stock") or 0) > 0 else None
+        if available is not None and qty > available:
             raise HTTPException(status_code=409, detail=f"Only {int(available)} unit(s) are currently available for {listing.get('item_name', 'this item')}.")
         price = float(listing.get("price") or 0)
         line_total = price * qty
@@ -970,6 +966,7 @@ async def create_public_catalogue_order(vendor_id: str, payload: dict):
         "buyer": {"name": buyer_name, "phone": buyer_phone, "business": buyer_business, "email": buyer_email},
         "items": order_lines,
         "note": note,
+        "commercial": commercial,
         "estimated_total": total,
         "created_at": now,
         "updated_at": now,
@@ -1026,7 +1023,10 @@ async def get_vendor_storefront(vendor_id: str, ctx: dict = Depends(get_hq_tenan
     location = address if isinstance(address, str) else ", ".join(str(address.get(key) or "").strip() for key in ("city", "state", "country") if address.get(key)) if isinstance(address, dict) else ""
     items = []
     async for item in vendor_catalogue_collection.find({"vendor_id": vendor_oid, "active": True}).sort("created_at", -1):
-        items.append(_serialize_item(item))
+        row = _serialize_item(item)
+        row["reserved_stock"] = float(item.get("direct_reserved") or 0)
+        row["available_to_order"] = max(0, float(item.get("stock") or 0) - float(item.get("direct_reserved") or 0)) if float(item.get("stock") or 0) > 0 else None
+        items.append(row)
     tier = await get_vendor_tier(vendor_id)
     return {"status": "success", "data": {
         "vendor": {

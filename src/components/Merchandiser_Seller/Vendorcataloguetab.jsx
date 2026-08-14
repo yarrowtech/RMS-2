@@ -916,7 +916,6 @@ const askCatalogueAssistant = async () => {
     if (!form.item_name.trim()) { setError("Item name is required."); return; }
     if (form.images.length === 0) { setError("At least one image is required."); return; }
     if (form.direct_purchase_enabled && !(Number(form.price) > 0)) { setError("A firm price is required to enable direct purchase."); return; }
-    if (form.direct_purchase_enabled && !(Number(form.stock) > 0)) { setError("Available stock is required to enable direct purchase."); return; }
     setSaving(true);
     setError(null);
     try {
@@ -1196,7 +1195,6 @@ function EditDetailsModal({ item, onClose, onSaved }) {
   const handleSave = async () => {
     if (!form.item_name.trim()) { setError("Item name is required."); return; }
     if (form.direct_purchase_enabled && !(Number(form.price) > 0)) { setError("A firm price is required to enable direct purchase."); return; }
-    if (form.direct_purchase_enabled && !(Number(form.stock) > 0)) { setError("Available stock is required to enable direct purchase."); return; }
     setSaving(true);
     setError(null);
     try {
@@ -1980,13 +1978,13 @@ function QuickPhotoUploadPanel({ tier, remainingSlots }) {
     setSelectMode(false);
   };
 
-  const readyRows = rows.filter((row) => row.name.trim() && Number(row.price) > 0 && _rowStock(row) > 0);
+  const readyRows = rows.filter((row) => row.name.trim() && Number(row.price) > 0);
   const missingCount = rows.length - readyRows.length;
   const overSlotLimit = remainingSlots !== null && rows.length > remainingSlots;
 
   const submit = async () => {
     if (!rows.length) { setError("Add at least one product photo."); return; }
-    if (!readyRows.length) { setError("Every photo needs a name, price above ₹0, and stock above 0 before you can import."); return; }
+    if (!readyRows.length) { setError("Every photo needs a name and price above ?0 before you can import. Stock is optional."); return; }
     setSubmitting(true); setError("");
     try {
       const body = new FormData();
@@ -2064,7 +2062,7 @@ function QuickPhotoUploadPanel({ tier, remainingSlots }) {
             const sizes = _rowSizeList(row);
             const usingSizes = sizes.length > 0;
             const stockTotal = _rowStock(row);
-            const complete = row.name.trim() && Number(row.price) > 0 && stockTotal > 0;
+            const complete = row.name.trim() && Number(row.price) > 0;
             const isSelected = selectedIds.has(row.id);
             return (
               <div key={row.id} className={`relative rounded-xl border p-2.5 ${isSelected ? "border-indigo-400 ring-2 ring-indigo-200" : complete ? "border-slate-200" : "border-amber-300 bg-amber-50/40"}`}>
@@ -2216,7 +2214,7 @@ function CsvBulkImportPanel({ tier, remainingSlots }) {
       <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-xs text-slate-600">
         <p className="font-bold text-slate-700">Expected columns (header row required):</p>
         <p className="mt-1 font-mono text-[11px] text-slate-500">item_name, sku or image_key, price, stock, image_url (optional), category, moq, description, available_sizes, available_colors</p>
-        <p className="mt-2"><strong>item_name</strong>, <strong>price</strong>, and <strong>stock</strong> are required. Use <strong>image_url</strong>, or upload local images named as the row SKU/image_key (for example <code>SKU-001.jpg</code>).</p>
+        <p className="mt-2"><strong>item_name</strong> and <strong>price</strong> are required. <strong>stock</strong> is optional; leave blank when the buyer should check availability. Use <strong>image_url</strong>, or upload local images named as the row SKU/image_key (for example <code>SKU-001.jpg</code>).</p>
         <p className="mt-2">Same price, different stock per size? Skip <strong>stock</strong> and use <strong>stock_by_size</strong> instead — one cell like <code>S:5;M:10;L:0</code> (semicolons, not commas). Buyers then get blocked per size once that size sells out.</p>
       </div>
 
@@ -2261,7 +2259,7 @@ function CsvBulkImportPanel({ tier, remainingSlots }) {
             </thead>
             <tbody className="divide-y divide-slate-100">
               {parsedRows.map((r, i) => (
-                <tr key={i} className={!r.item_name || !r.price || !(r.stock || r.stock_by_size) ? "bg-red-50" : ""}>
+                <tr key={i} className={!r.item_name || !r.price ? "bg-red-50" : ""}>
                   <td className="px-3 py-1.5">{r.item_name || "—"}</td>
                   <td className="px-3 py-1.5">{r.price || "—"}</td>
                   <td className="px-3 py-1.5">{r.stock_by_size ? `by size: ${r.stock_by_size}` : (r.stock || "—")}</td>

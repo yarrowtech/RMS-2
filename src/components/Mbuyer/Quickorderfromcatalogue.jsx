@@ -2,7 +2,7 @@ import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
 
 
 import React, { useState, useCallback, useEffect } from "react";
-import { Search, Send, RefreshCw, CheckCircle2, Trophy, ArrowLeft, Plus, Trash2, ShoppingBag, MessageSquare, FileQuestion, Users, Link2, Store, Phone, Mail, Globe, MapPin, ExternalLink, PackageCheck, Instagram } from "lucide-react";
+import { Search, Send, RefreshCw, CheckCircle2, Trophy, ArrowLeft, Plus, Trash2, ShoppingBag, MessageSquare, FileQuestion, Users, Link2, Store, Phone, Mail, Globe, MapPin, ExternalLink, PackageCheck, Instagram, X } from "lucide-react";
 import MyInquiriesPage from "./Myinquiriespage.jsx";
 /* The import above intentionally matches the lowercase filename on disk;
    this is required on case-sensitive filesystems such as Linux. */
@@ -70,9 +70,22 @@ const BUSINESS_TYPES = [
 
 const today = () => new Date().toISOString().slice(0, 10);
 const EMPTY_ITEM = () => ({ description: "", quantity: "", rate: "", remarks: "" });
-const variantValues = (value, fallback) => {
+const cleanOptionValues = (value) => {
   const values = Array.isArray(value) ? value : String(value || "").split(",");
-  const clean = [...new Set(values.map((item) => String(item || "").trim()).filter(Boolean))];
+  return [...new Set(values.map((item) => String(item || "").trim()).filter(Boolean))];
+};
+const catalogueSizeValues = (item) => {
+  const direct = cleanOptionValues(item?.available_sizes ?? item?.sizes ?? item?.size_options ?? item?.availableSizes);
+  if (direct.length) return direct;
+  return [...new Set((item?.variants || []).map((variant) => variant?.label || variant?.size || variant?.name).map((value) => String(value || "").trim()).filter(Boolean))];
+};
+const catalogueColorValues = (item) => {
+  const direct = cleanOptionValues(item?.available_colors ?? item?.available_colours ?? item?.colors ?? item?.colours ?? item?.color_options ?? item?.availableColors);
+  if (direct.length) return direct;
+  return [...new Set((item?.variants || []).map((variant) => variant?.color || variant?.colour).map((value) => String(value || "").trim()).filter(Boolean))];
+};
+const variantValues = (value, fallback) => {
+  const clean = cleanOptionValues(value);
   return clean.length ? clean : [fallback];
 };
 
@@ -163,33 +176,39 @@ function VendorStorefronts({ onChooseForQuote, onDirectOrder, onCartCheckout }) 
   // as one consolidated PO instead of one at a time.
   const addToCart = (item) => setCart((prev) => {
     const existing = prev.find((line) => line.item._id === item._id);
-    if (existing) {
-      const cap = item.stock != null ? Number(item.stock) : Infinity;
-      return prev.map((line) => (line.item._id === item._id ? { ...line, quantity: Math.min(cap, line.quantity + 1) } : line));
-    }
-    return [...prev, { item, quantity: Math.max(1, Number(item.moq) || 1) }];
+    if (existing) return prev;
+    return [...prev, { item, quantity: Math.max(orderMinQty(item), Math.min(availableQty(item), orderMinQty(item))) }];
   });
   const updateCartQty = (itemId, quantity) => setCart((prev) => prev.map((line) => {
     if (line.item._id !== itemId) return line;
-    const cap = line.item.stock != null ? Number(line.item.stock) : Infinity;
-    const minimum = Math.max(1, Number(line.item.moq) || 1);
+    const cap = availableQty(line.item);
+    const minimum = orderMinQty(line.item);
     return { ...line, quantity: Math.max(minimum, Math.min(cap, Number(quantity) || minimum)) };
   }));
   const removeFromCart = (itemId) => setCart((prev) => prev.filter((line) => line.item._id !== itemId));
+  const increaseCartQty = (item, currentQty) => updateCartQty(item._id, Number(currentQty || 0) + 1);
+  const decreaseCartQty = (item, currentQty) => updateCartQty(item._id, Number(currentQty || 0) - 1);
   const cartCount = cart.length;
   const cartTotal = cart.reduce((sum, { item, quantity }) => sum + Number(item.price || 0) * quantity, 0);
   const checkoutCart = () => {
     if (!cart.length) return;
-    const lines = cart.map(({ item, quantity }) => ({
-      description: item.item_name,
-      sku: item.sku || "",
-      barcode: item.barcode || "",
-      catalogue_item_id: item._id,
-      size: "", color: "",
-      quantity: String(quantity),
-      rate: String(item.price || 0),
-      remarks: "Direct order — fixed listed price, no negotiation.",
-    }));
+    const lines = cart.map(({ item, quantity }) => {
+      const sizeOptions = catalogueSizeValues(item);
+      const colorOptions = catalogueColorValues(item);
+      return {
+        description: item.item_name,
+        sku: item.sku || "",
+        barcode: item.barcode || "",
+        catalogue_item_id: item._id,
+        available_sizes: sizeOptions,
+        available_colors: colorOptions,
+        size: sizeOptions.join(", "),
+        color: colorOptions.join(", "),
+        quantity: String(quantity),
+        rate: String(item.price || 0),
+        remarks: "Direct order - fixed listed price, no negotiation.",
+      };
+    });
     onCartCheckout(selected?.vendor?.name || "", lines);
     setCart([]);
     setShowCart(false);
@@ -221,6 +240,9 @@ function VendorStorefronts({ onChooseForQuote, onDirectOrder, onCartCheckout }) 
     window.open(url, "_blank", "noopener,noreferrer");
   };
   const cleanPhone = (phone) => String(phone || "").replace(/[^0-9+]/g, "");
+  const orderMinQty = () => 1;
+  const availableQty = (item) => { const raw = item?.available_to_order ?? item?.stock; const value = Number(raw); return !Number.isFinite(value) || value <= 0 ? Infinity : value; };
+  const availableText = (item) => Number.isFinite(availableQty(item)) ? Math.floor(availableQty(item)) : "Check stock";
 
   if (selected) {
     const vendor = selected.vendor || {};
@@ -252,14 +274,14 @@ function VendorStorefronts({ onChooseForQuote, onDirectOrder, onCartCheckout }) 
           const galleryItems = showDirectOnly ? (selected.items || []).filter((item) => item.direct_purchase_enabled) : (selected.items || []);
           return galleryItems.length ? <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">{galleryItems.map((item) => {
             const cartLine = cart.find((line) => line.item._id === item._id);
-            return <article key={item._id} className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm"><div className="aspect-[4/3] bg-slate-100">{item.images?.[0] ? <img src={item.images[0]} alt={item.item_name} className="h-full w-full object-cover" /> : <div className="grid h-full place-items-center text-slate-300"><PackageCheck className="h-10 w-10" /></div>}</div><div className="p-4"><div className="flex items-start justify-between gap-2"><h4 className="text-sm font-black text-slate-900">{item.item_name}</h4>{item.direct_purchase_enabled && <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-1 text-[9px] font-black text-emerald-700">Fixed price</span>}</div><p className="mt-1 text-xs text-slate-500">MOQ {item.moq || 1}{item.available_sizes?.length ? ` · ${item.available_sizes.join(", ")}` : ""}</p><p className="mt-3 text-base font-black text-slate-900">{item.direct_purchase_enabled ? `₹${Number(item.price || 0).toLocaleString("en-IN")}` : "Quotation required"}</p>
+            return <article key={item._id} className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm"><div className="aspect-[4/3] bg-slate-100">{item.images?.[0] ? <img src={item.images[0]} alt={item.item_name} className="h-full w-full object-cover" /> : <div className="grid h-full place-items-center text-slate-300"><PackageCheck className="h-10 w-10" /></div>}</div><div className="p-4"><div className="flex items-start justify-between gap-2"><h4 className="text-sm font-black text-slate-900">{item.item_name}</h4>{item.direct_purchase_enabled && <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-1 text-[9px] font-black text-emerald-700">Fixed price</span>}</div><p className="mt-1 text-xs text-slate-500">{catalogueSizeValues(item).length ? `Sizes: ${catalogueSizeValues(item).join(", ")}` : "Stock confirmed by vendor"}</p><p className="mt-3 text-base font-black text-slate-900">{item.direct_purchase_enabled ? `₹${Number(item.price || 0).toLocaleString("en-IN")}` : "Quotation required"}</p>
               {item.direct_purchase_enabled ? <div className="mt-3">
                 <button type="button" onClick={() => onDirectOrder({...item, vendor_name: vendor.name})} className="w-full rounded-xl bg-emerald-600 px-3 py-2.5 text-xs font-black text-white hover:bg-emerald-700">Buy product</button>
                 <div className="mt-2 grid grid-cols-2 gap-2">
-                  {cartLine ? <div className="flex items-center justify-between rounded-xl border border-teal-200 bg-teal-50 px-2 py-1.5">
-                    <button type="button" onClick={() => updateCartQty(item._id, cartLine.quantity - 1)} className="flex h-6 w-6 items-center justify-center rounded-full bg-white text-teal-700 shadow">−</button>
-                    <span className="text-xs font-black text-teal-800">{cartLine.quantity}</span>
-                    <button type="button" onClick={() => updateCartQty(item._id, cartLine.quantity + 1)} className="flex h-6 w-6 items-center justify-center rounded-full bg-white text-teal-700 shadow">+</button>
+                  {cartLine ? <div className="flex items-center justify-between rounded-xl border border-teal-300 bg-teal-50 px-2 py-2 shadow-inner">
+                    <button type="button" onClick={() => decreaseCartQty(item, cartLine.quantity)} className="flex h-8 w-8 items-center justify-center rounded-full bg-white text-lg font-black text-teal-700 shadow hover:bg-teal-100">-</button>
+                    <input type="number" min={orderMinQty(item)} max={Number.isFinite(availableQty(item)) ? availableQty(item) : undefined} value={cartLine.quantity} onChange={(e) => updateCartQty(item._id, e.target.value)} className="h-8 w-16 rounded-lg border border-teal-200 bg-white text-center text-sm font-black text-teal-900 outline-none" />
+                    <button type="button" onClick={() => increaseCartQty(item, cartLine.quantity)} className="flex h-8 w-8 items-center justify-center rounded-full bg-white text-lg font-black text-teal-700 shadow hover:bg-teal-100">+</button>
                   </div> : <button type="button" onClick={() => addToCart({...item, vendor_name: vendor.name})} className="rounded-xl border border-teal-300 px-3 py-2.5 text-xs font-black text-teal-700 hover:bg-teal-50">Add to cart</button>}
                   <button type="button" onClick={() => onChooseForQuote({...item, vendor_name: vendor.name})} className="rounded-xl border border-slate-200 px-3 py-2.5 text-xs font-bold text-slate-600 hover:bg-slate-50">View options</button>
                 </div>
@@ -285,12 +307,12 @@ function VendorStorefronts({ onChooseForQuote, onDirectOrder, onCartCheckout }) 
                   <div className="h-12 w-12 shrink-0 overflow-hidden rounded-lg bg-slate-100">{item.images?.[0] && <img src={item.images[0]} alt="" className="h-full w-full object-cover" />}</div>
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-xs font-bold text-slate-900">{item.item_name}</p>
-                    <p className="text-xs text-slate-500">₹{Number(item.price || 0).toLocaleString("en-IN")} each</p>
+                    <p className="text-xs text-slate-500">&#8377;{Number(item.price || 0).toLocaleString("en-IN")} each</p>
                   </div>
                   <div className="flex items-center gap-1.5">
-                    <button type="button" onClick={() => updateCartQty(item._id, quantity - 1)} className="flex h-6 w-6 items-center justify-center rounded-full border border-slate-200 text-slate-600">−</button>
-                    <span className="w-6 text-center text-xs font-black">{quantity}</span>
-                    <button type="button" onClick={() => updateCartQty(item._id, quantity + 1)} className="flex h-6 w-6 items-center justify-center rounded-full border border-slate-200 text-slate-600">+</button>
+                    <button type="button" onClick={() => decreaseCartQty(item, quantity)} className="flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-white text-lg font-black text-slate-700 shadow-sm hover:bg-slate-50">-</button>
+                    <input type="number" min={orderMinQty(item)} max={Number.isFinite(availableQty(item)) ? availableQty(item) : undefined} value={quantity} onChange={(e) => updateCartQty(item._id, e.target.value)} className="h-8 w-16 rounded-lg border border-slate-200 bg-white text-center text-sm font-black outline-none" />
+                    <button type="button" onClick={() => increaseCartQty(item, quantity)} className="flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-white text-lg font-black text-slate-700 shadow-sm hover:bg-slate-50">+</button>
                   </div>
                   <button type="button" onClick={() => removeFromCart(item._id)} className="text-slate-400 hover:text-red-600"><Trash2 className="h-3.5 w-3.5" /></button>
                 </div>
@@ -457,6 +479,8 @@ export default function QuickOrderFromCatalogue() {
     setOrderItems(lines);
     setStep(3);
   };
+
+  const cartReviewMode = directOrderMode && !directCatalogueItem && orderItems.some((item) => item.catalogue_item_id);
 
   const runSearch = async () => {
     setSearchLoading(true);
@@ -1169,11 +1193,11 @@ export default function QuickOrderFromCatalogue() {
 
                   <div className="space-y-2">
                     {orderItems.map((it, idx) => (
-                      <div key={`${it.catalogue_item_id || "manual"}-${it.size || "none"}-${it.color || "none"}-${idx}`} className="grid grid-cols-1 gap-2 rounded-xl border border-slate-100 p-2 sm:grid-cols-[1.25fr_90px_90px_75px_75px_1fr_28px]">
+                      <div key={`${it.catalogue_item_id || "manual"}-${it.size || "none"}-${it.color || "none"}-${idx}`} className="grid grid-cols-1 gap-2 rounded-xl border border-slate-100 p-2 sm:grid-cols-[1.25fr_110px_110px_75px_75px_1fr_28px]">
                         <input placeholder="Description" value={it.description} readOnly={directOrderMode} onChange={e => updateItem(idx, "description", e.target.value)} className="h-9 rounded-lg border border-slate-200 px-2 text-xs read-only:bg-slate-50" />
-                        <input placeholder="Size" value={it.size || ""} readOnly={directOrderMode} onChange={e => updateItem(idx, "size", e.target.value)} className="h-9 rounded-lg border border-slate-200 px-2 text-xs read-only:bg-slate-50" />
-                        <input placeholder="Color" value={it.color || ""} readOnly={directOrderMode} onChange={e => updateItem(idx, "color", e.target.value)} className="h-9 rounded-lg border border-slate-200 px-2 text-xs read-only:bg-slate-50" />
-                        <input type="number" placeholder="Qty" value={it.quantity} readOnly={directOrderMode} onChange={e => updateItem(idx, "quantity", e.target.value)} className="h-9 rounded-lg border border-slate-200 px-2 text-xs read-only:bg-slate-50" />
+                        <input placeholder="Size e.g. S, M, XL" title={catalogueSizeValues(it).length ? `Vendor sizes: ${catalogueSizeValues(it).join(", ")}` : "Enter size manually"} value={it.size || ""} readOnly={directOrderMode && !cartReviewMode} onChange={e => updateItem(idx, "size", e.target.value)} className="h-9 rounded-lg border border-slate-200 px-2 text-xs read-only:bg-slate-50" />
+                        <input placeholder="Color e.g. Red, Green" title={catalogueColorValues(it).length ? `Vendor colours: ${catalogueColorValues(it).join(", ")}` : "Enter colour manually"} value={it.color || ""} readOnly={directOrderMode && !cartReviewMode} onChange={e => updateItem(idx, "color", e.target.value)} className="h-9 rounded-lg border border-slate-200 px-2 text-xs read-only:bg-slate-50" />
+                        <input type="number" min="1" placeholder="Qty" value={it.quantity} readOnly={directOrderMode && !cartReviewMode} onChange={e => updateItem(idx, "quantity", e.target.value)} className="h-9 rounded-lg border border-slate-200 px-2 text-xs read-only:bg-slate-50" />
                         <input type="number" placeholder="Rate" value={it.rate} readOnly={directOrderMode} onChange={e => updateItem(idx, "rate", e.target.value)} className="h-9 rounded-lg border border-slate-200 px-2 text-xs read-only:bg-slate-50" />
                         <input placeholder="Remarks" value={it.remarks} readOnly={directOrderMode} onChange={e => updateItem(idx, "remarks", e.target.value)} className="h-9 rounded-lg border border-slate-200 px-2 text-xs read-only:bg-slate-50" />
                         {!directOrderMode && <button onClick={() => removeItem(idx)} disabled={orderItems.length === 1} className="flex h-9 w-9 items-center justify-center text-rose-500 disabled:opacity-30"><Trash2 className="w-3.5 h-3.5" /></button>}
