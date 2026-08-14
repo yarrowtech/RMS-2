@@ -2,7 +2,7 @@
 
 
 from fastapi import APIRouter, UploadFile, File, HTTPException, Query
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
 from fastapi.encoders import jsonable_encoder
 from motor.motor_asyncio import AsyncIOMotorClient
 from openpyxl import load_workbook
@@ -12,6 +12,8 @@ from typing import List
 from datetime import datetime
 import hashlib
 import os
+from pathlib import Path
+from uuid import uuid4
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -31,7 +33,8 @@ forecast_client = AsyncIOMotorClient(FORECAST_MONGO_URI)
 main_db         = main_client[MAIN_DB_NAME]
 forecast_db     = forecast_client[FORECAST_DB_NAME]
 
-os.makedirs("uploaded_files", exist_ok=True)
+UPLOAD_DIR = Path("uploaded_files").resolve()
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 
 # ══════════════════════════════════════════════════════════
@@ -48,34 +51,56 @@ def norm_text(val) -> str:
     return " ".join(s.upper().split())
 
 
-def read_excel_or_csv(raw: bytes, filename: str) -> pd.DataFrame:
+def normalize_column_name(value) -> str:
+    return str(value or "").strip().replace(" ", "").replace("-", "").replace("_", "").upper()
+
+
+def find_header_row(data):
+    for i, row in enumerate(data):
+        if row and sum(1 for c in row if c not in (None, "")) >= 4:
+            return i
+    return None
+
+
+def sheet_matches_required(headers, required_groups=None) -> bool:
+    if not required_groups:
+        return False
+    header_set = {normalize_column_name(header) for header in headers}
+    return all(any(normalize_column_name(alias) in header_set for alias in group) for group in required_groups)
+
+
+def dataframe_from_sheet(ws) -> pd.DataFrame | None:
+    data = list(ws.values)
+    header_row_idx = find_header_row(data)
+    if header_row_idx is None:
+        return None
+    headers = [str(c).strip() if c else f"COL_{j}" for j, c in enumerate(data[header_row_idx])]
+    return pd.DataFrame(data[header_row_idx + 1:], columns=headers)
+
+
+def read_excel_or_csv(raw: bytes, filename: str, required_groups=None) -> pd.DataFrame:
     fname = filename.lower()
     try:
         if fname.endswith(".csv"):
             df = pd.read_csv(BytesIO(raw))
         else:
-            wb   = load_workbook(BytesIO(raw), read_only=True)
-            ws   = wb.active
-            data = list(ws.values)
+            wb = load_workbook(BytesIO(raw), read_only=True)
+            df = None
 
-            # Find first row with 4+ non-empty cells
-            header_row_idx = None
-            for i, row in enumerate(data):
-                if row and sum(1 for c in row if c not in (None, "")) >= 4:
-                    header_row_idx = i
+            for ws in wb.worksheets:
+                candidate = dataframe_from_sheet(ws)
+                if candidate is not None and sheet_matches_required(candidate.columns, required_groups):
+                    df = candidate
                     break
-            if header_row_idx is None:
+
+            if df is None:
+                df = dataframe_from_sheet(wb.active)
+
+            if df is None:
                 raise HTTPException(status_code=400, detail="No valid header row found")
 
-            headers = [str(c).strip() if c else f"COL_{j}" for j, c in enumerate(data[header_row_idx])]
-            df = pd.DataFrame(data[header_row_idx + 1:], columns=headers)
-
-        # Normalize column names: strip + remove spaces/dashes/underscores + uppercase
-        df.columns = [
-            str(c).strip().replace(" ", "").replace("-", "").replace("_", "").upper()
-            for c in df.columns
-        ]
-        print("📋 Columns:", df.columns.tolist())
+        df.columns = [normalize_column_name(c) for c in df.columns]
+        print("Columns:", df.columns.tolist())
         return df
 
     except HTTPException:
@@ -83,24 +108,52 @@ def read_excel_or_csv(raw: bytes, filename: str) -> pd.DataFrame:
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"File read error ({filename}): {e}")
 
-
 async def insert_to_mongo(df: pd.DataFrame, collection: str) -> int:
     if df.empty:
         return 0
+
     df = df.copy()
     df["_row_hash"] = df.astype(str).sum(axis=1).apply(
         lambda x: hashlib.md5(x.encode()).hexdigest()
     )
+
+    coll = forecast_db[collection]
+    await coll.create_index("_row_hash")
+
+    hashes = df["_row_hash"].dropna().unique().tolist()
     existing = set()
-    async for doc in forecast_db[collection].find({}, {"_row_hash": 1}):
-        if "_row_hash" in doc:
-            existing.add(doc["_row_hash"])
-    new_df  = df[~df["_row_hash"].isin(existing)]
+    chunk_size = 1000
+    for start in range(0, len(hashes), chunk_size):
+        chunk = hashes[start:start + chunk_size]
+        cursor = coll.find({"_row_hash": {"$in": chunk}}, {"_row_hash": 1})
+        async for doc in cursor:
+            if "_row_hash" in doc:
+                existing.add(doc["_row_hash"])
+
+    new_df = df[~df["_row_hash"].isin(existing)]
     if new_df.empty:
         return 0
+
     records = new_df.where(pd.notnull(new_df), None).to_dict(orient="records")
-    result  = await forecast_db[collection].insert_many(records)
-    return len(result.inserted_ids)
+    inserted = 0
+    for start in range(0, len(records), chunk_size):
+        batch = records[start:start + chunk_size]
+        if not batch:
+            continue
+        result = await coll.insert_many(batch, ordered=False)
+        inserted += len(result.inserted_ids)
+    return inserted
+
+
+
+def save_original_upload(raw: bytes, filename: str, upload_type: str) -> str:
+    safe_name = Path(filename or "upload").name.replace("\\", "_").replace("/", "_")
+    stored_name = f"{upload_type}_{datetime.utcnow().strftime('%Y%m%d%H%M%S')}_{uuid4().hex}_{safe_name}"
+    target = (UPLOAD_DIR / stored_name).resolve()
+    if UPLOAD_DIR not in target.parents and target != UPLOAD_DIR:
+        raise HTTPException(status_code=400, detail="Invalid upload filename")
+    target.write_bytes(raw)
+    return str(target)
 
 
 # ══════════════════════════════════════════════════════════
@@ -146,7 +199,15 @@ async def upload_sales(files: List[UploadFile] = File(...)):
 
     for file in files:
         raw = await file.read()
-        df  = read_excel_or_csv(raw, file.filename)
+        sales_required_groups = [
+            ["STORE", "STORENAME"],
+            ["DIVISION", "DVN"],
+            ["SECTION"],
+            ["DEPARTMENT", "DEPT"],
+            ["VENDOR", "SUPPLIER"],
+            ["BILLQTY", "BILLQUANTITY"],
+        ]
+        df  = read_excel_or_csv(raw, file.filename, sales_required_groups)
 
         rename_map = {}
         for std, aliases in SALES_ALIAS_MAP.items():
@@ -215,10 +276,13 @@ async def upload_sales(files: List[UploadFile] = File(...)):
         df["BILLQTY"] = pd.to_numeric(df["BILLQTY"], errors="coerce").fillna(0)
 
         inserted = await insert_to_mongo(df, "sales_data")
+        saved_path = save_original_upload(raw, file.filename, "sales")
         total_rows += inserted
         await forecast_db["uploaded_files"].insert_one({
             "filename": file.filename, "collection": "sales_data",
             "inserted_rows": inserted, "type": "sales",
+            "file_path": saved_path,
+            "content_type": file.content_type,
             "uploaded_at": datetime.utcnow(),
         })
         print(f"✅ Sales inserted: {inserted} from {file.filename}")
@@ -252,7 +316,15 @@ async def upload_stock(files: List[UploadFile] = File(...)):
 
     for file in files:
         raw = await file.read()
-        df  = read_excel_or_csv(raw, file.filename)
+        stock_required_groups = [
+            ["SOURCESITE"],
+            ["DIVISION"],
+            ["SECTION"],
+            ["DEPARTMENT"],
+            ["VENDOR"],
+            ["CLOSINGQTY"],
+        ]
+        df  = read_excel_or_csv(raw, file.filename, stock_required_groups)
 
         missing = [c for c in REQUIRED if c not in df.columns]
         if missing:
@@ -300,10 +372,13 @@ async def upload_stock(files: List[UploadFile] = File(...)):
         df["SITE_NAME"]   = classified.apply(lambda x: x[1])
 
         inserted = await insert_to_mongo(df, "stock_data")
+        saved_path = save_original_upload(raw, file.filename, "stock")
         total_rows += inserted
         await forecast_db["uploaded_files"].insert_one({
             "filename": file.filename, "collection": "stock_data",
             "inserted_rows": inserted, "type": "stock",
+            "file_path": saved_path,
+            "content_type": file.content_type,
             "uploaded_at": datetime.utcnow(),
         })
         print(f"✅ Stock inserted: {inserted} from {file.filename}")
@@ -636,7 +711,49 @@ async def migrate_fix_dates():
 @router.get("/files")
 async def list_uploaded_files():
     files = await forecast_db["uploaded_files"].find().sort("uploaded_at", -1).to_list(100)
-    return {"files": files}
+    cleaned = []
+    for doc in files:
+        path = doc.get("file_path")
+        downloadable = bool(path and Path(path).exists())
+        cleaned.append({
+            "id": str(doc.get("_id")),
+            "filename": doc.get("filename", "Uploaded file"),
+            "collection": doc.get("collection", ""),
+            "inserted_rows": doc.get("inserted_rows", 0),
+            "type": doc.get("type", ""),
+            "uploaded_at": doc.get("uploaded_at"),
+            "content_type": doc.get("content_type", ""),
+            "downloadable": downloadable,
+        })
+    return {"files": jsonable_encoder(cleaned)}
+
+
+@router.get("/files/{file_id}/download")
+async def download_uploaded_file(file_id: str):
+    from bson import ObjectId
+
+    try:
+        oid = ObjectId(file_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid file id")
+
+    doc = await forecast_db["uploaded_files"].find_one({"_id": oid})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Uploaded file record not found")
+
+    path = doc.get("file_path")
+    if not path:
+        raise HTTPException(status_code=404, detail="Original file was not stored for this upload")
+
+    resolved = Path(path).resolve()
+    if not resolved.exists() or UPLOAD_DIR not in resolved.parents:
+        raise HTTPException(status_code=404, detail="Uploaded file not found")
+
+    return FileResponse(
+        str(resolved),
+        filename=doc.get("filename") or resolved.name,
+        media_type=doc.get("content_type") or "application/octet-stream",
+    )
 
 
 @router.get("/test")
