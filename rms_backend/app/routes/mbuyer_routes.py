@@ -4,7 +4,7 @@
 from fastapi import APIRouter, HTTPException, Query, Depends
 from .deps import get_hq_tenant
 from fastapi.responses import JSONResponse
-from typing import Optional
+from typing import Optional, Any
 from datetime import datetime, timedelta
 from bson import ObjectId
 from .forecast_analytics_routes import _compute_demand_forecast
