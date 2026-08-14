@@ -8,7 +8,7 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from openpyxl import load_workbook
 import pandas as pd
 from io import BytesIO
-from typing import List
+from typing import List, Optional
 from datetime import datetime
 import hashlib
 import os
@@ -69,7 +69,7 @@ def sheet_matches_required(headers, required_groups=None) -> bool:
     return all(any(normalize_column_name(alias) in header_set for alias in group) for group in required_groups)
 
 
-def dataframe_from_sheet(ws) -> pd.DataFrame | None:
+def dataframe_from_sheet(ws) -> Optional[pd.DataFrame]:
     data = list(ws.values)
     header_row_idx = find_header_row(data)
     if header_row_idx is None:
