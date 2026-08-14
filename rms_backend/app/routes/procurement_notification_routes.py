@@ -28,11 +28,11 @@ async def notify_buyer(tenant_id: str, event_type: str, title: str, message: str
     })
 
 
-async def notify_vendor(vendor_id, event_type: str, title: str, message: str, *, tenant_id=None, inquiry_id=None, metadata=None):
+async def notify_vendor(vendor_id, event_type: str, title: str, message: str, *, tenant_id=None, inquiry_id=None, metadata=None, category: str = "inquiries"):
     oid = vendor_id if isinstance(vendor_id, ObjectId) else ObjectId(str(vendor_id))
     return await procurement_notifications_collection.insert_one({
         "recipient_type": "vendor", "vendor_id": oid, "tenant_id": tenant_id,
-        "event_type": event_type, "category": "inquiries", "title": title, "message": message,
+        "event_type": event_type, "category": category, "title": title, "message": message,
         "inquiry_id": inquiry_id, "metadata": metadata or {}, "read": False, "created_at": datetime.utcnow(),
     })
 

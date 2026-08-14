@@ -45,6 +45,7 @@ tenants_collection = db["tenants"]
 vendor_tenant_links_collection = db["vendor_tenant_links"]
 vendor_catalogue_collection    = db["vendor_catalogue"]
 catalogue_inquiries_collection = db["catalogue_inquiries"]
+catalogue_public_orders_collection = db["catalogue_public_orders"]
 rfq_awards_collection        = db["rfq_awards"]
 procurement_notifications_collection = db["procurement_notifications"]
 vendor_subscriptions_collection = db["vendor_subscriptions"]
@@ -154,6 +155,7 @@ async def ensure_procurement_indexes():
     await catalogue_inquiries_collection.create_index([("vendor_id", 1), ("status", 1), ("created_at", -1)], name="inq_vendor_status_created")
     await catalogue_inquiries_collection.create_index([("tenant_id", 1), ("comparison_group_id", 1)], name="inq_tenant_comparison")
     await vendor_catalogue_collection.create_index([("vendor_id", 1), ("active", 1)], name="catalog_vendor_active")
+    await catalogue_public_orders_collection.create_index([("vendor_id", 1), ("status", 1), ("created_at", -1)], name="catalogue_public_vendor_status")
     await vendor_inventory_collection.create_index([("vendor_id", 1), ("catalogue_key", 1)], unique=True, name="vendor_inventory_catalogue_key")
     await vendor_inventory_ledger_collection.create_index([("vendor_id", 1), ("inventory_id", 1), ("created_at", -1)], name="vendor_inventory_ledger_item")
     await vendor_b2b_returns_collection.create_index([("buyer_vendor_id", 1), ("created_at", -1)], name="vendor_b2b_returns_buyer")

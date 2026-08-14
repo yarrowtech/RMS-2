@@ -514,48 +514,8 @@ async def _sync_to_inventory(doc: dict, product_id: str, tenant_id: str):
             upsert=True,
         )
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# ADD THIS TO: app/routes/inventory_product_routes.py
-#
-# Two changes:
-#   (A) Fix the datetime-serialization 500 error you already hit (jsonable_encoder)
-#   (B) Add the /generate-barcode/{product_id} endpoint
-#
-# Both are shown below. Copy the pieces into the existing file.
-# ═══════════════════════════════════════════════════════════════════════════════
-
-
-# ───────────────────────────────────────────────────────────────────────────────
-# (A) IMPORTS — add these two lines near the top of the file, with the other imports
-# ───────────────────────────────────────────────────────────────────────────────
 import random
-from fastapi.encoders import jsonable_encoder
 
-
-# ───────────────────────────────────────────────────────────────────────────────
-# (A) FIX list_products RETURN (around line 702) so datetime fields never 500.
-#     Replace:
-#         return JSONResponse({
-#             "status": "success",
-#             "total":  total,
-#             "data":   docs,
-#         })
-#     WITH:
-# ───────────────────────────────────────────────────────────────────────────────
-#     return JSONResponse(jsonable_encoder({
-#         "status": "success",
-#         "total":  total,
-#         "data":   docs,
-#     }))
-#
-#  (Do the same jsonable_encoder(...) wrap on get_product_by_barcode's return too,
-#   for safety — same one-line change.)
-
-
-# ───────────────────────────────────────────────────────────────────────────────
-# (B) BARCODE HELPERS — paste these in the "helpers" section of the file
-#     (near _str / _float / _now, above the ROUTES section)
-# ───────────────────────────────────────────────────────────────────────────────
 
 def _gen_master_barcode() -> str:
     """
@@ -590,10 +550,6 @@ def _is_real_manufacturer_barcode(bc: str) -> bool:
     bc = (bc or "").strip()
     return bc.isdigit() and 8 <= len(bc) <= 13
 
-
-# ───────────────────────────────────────────────────────────────────────────────
-# (B) ROUTE — paste this with the other @router routes
-# ───────────────────────────────────────────────────────────────────────────────
 
 @router.post("/generate-barcode/{product_id}")
 async def generate_barcode_for_product(product_id: str, ctx: dict = Depends(get_hq_tenant)):
