@@ -331,7 +331,7 @@ async def release_direct_catalogue_reservations(po: dict) -> int:
     """Release only stock reserved by a direct catalogue PO; never touch normal PO stock."""
     released = 0
     for reservation in po.get("direct_catalogue_reservations") or []:
-        if reservation.get("released") or reservation.get("consumed"):
+        if reservation.get("released") or reservation.get("consumed") or reservation.get("stock_reserved") is False:
             continue
         try:
             oid = ObjectId(str(reservation.get("catalogue_item_id")))
@@ -368,6 +368,8 @@ async def consume_direct_catalogue_reservations(po: dict) -> int:
         return 0
     consumed = 0
     for reservation in po.get("direct_catalogue_reservations") or []:
+        if reservation.get("stock_reserved") is False:
+            continue
         try:
             oid = ObjectId(str(reservation.get("catalogue_item_id")))
             quantity = float(reservation.get("quantity") or 0)
@@ -734,8 +736,6 @@ async def create_po(po: PurchaseOrderModel, ctx: dict = Depends(get_hq_tenant)):
                 raise HTTPException(status_code=409, detail="A direct-order listing is no longer available from this vendor.")
             quantity = max(0.0, float(item.get("quantity") or 0))
             moq = max(0.0, float(listing.get("moq") or 0))
-            if quantity < max(1.0, moq):
-                raise HTTPException(status_code=400, detail=f"{listing.get('item_name', 'This item')} requires a minimum order quantity of {int(moq) if moq.is_integer() else moq}.")
             size, color = str(item.get("size") or "").strip(), str(item.get("color") or "").strip()
             if size and listing.get("available_sizes") and size not in listing["available_sizes"]:
                 raise HTTPException(status_code=400, detail="Choose an available size from the catalogue listing.")
@@ -749,27 +749,31 @@ async def create_po(po: PurchaseOrderModel, ctx: dict = Depends(get_hq_tenant)):
             variant_label = str(item.get("direct_variant_label") or "").strip() or _catalogue_variant_label(listing, size, color)
             if variant_label and not any(str(variant.get("label") or "").strip() == variant_label for variant in (listing.get("variants") or [])):
                 raise HTTPException(status_code=400, detail="The selected catalogue variant is no longer available.")
-            reserve_query = {
-                "_id": listing["_id"],
-                "$expr": {"$gte": [{"$subtract": [{"$ifNull": ["$stock", 0]}, {"$ifNull": ["$direct_reserved", 0]}]}, quantity]},
-            }
-            reserve_update = {"$inc": {"direct_reserved": quantity}, "$set": {"updated_at": datetime.utcnow()}}
-            if listing.get("variants"):
-                if not variant_label:
-                    raise HTTPException(status_code=400, detail="Choose an exact size and colour option published by this vendor.")
-                reserve_query["variants.label"] = variant_label
-                reserve_query["$expr"] = {"$and": [
-                    reserve_query["$expr"],
-                    {"$let": {"vars": {"variant": {"$arrayElemAt": [{"$filter": {"input": "$variants", "as": "variant", "cond": {"$eq": ["$$variant.label", variant_label]}}}, 0]}}, "in": {"$gte": [{"$subtract": [{"$ifNull": ["$$variant.stock", 0]}, {"$ifNull": ["$$variant.direct_reserved", 0]}]}, quantity]}}},
-                ]}
-                reserve_update["$inc"]["variants.$.direct_reserved"] = quantity
-            reserve_result = await vendor_catalogue_collection.update_one(reserve_query, reserve_update)
-            if not reserve_result.matched_count:
-                raise HTTPException(status_code=409, detail=f"Stock changed for '{listing.get('item_name', 'this item')}' or its selected variant — please review and try again.")
+            stock_known = float(listing.get("stock") or 0) > 0
+            stock_reserved = False
+            if stock_known:
+                reserve_query = {
+                    "_id": listing["_id"],
+                    "$expr": {"$gte": [{"$subtract": [{"$ifNull": ["$stock", 0]}, {"$ifNull": ["$direct_reserved", 0]}]}, quantity]},
+                }
+                reserve_update = {"$inc": {"direct_reserved": quantity}, "$set": {"updated_at": datetime.utcnow()}}
+                if listing.get("variants"):
+                    if not variant_label:
+                        raise HTTPException(status_code=400, detail="Choose an exact size and colour option published by this vendor.")
+                    reserve_query["variants.label"] = variant_label
+                    reserve_query["$expr"] = {"$and": [
+                        reserve_query["$expr"],
+                        {"$let": {"vars": {"variant": {"$arrayElemAt": [{"$filter": {"input": "$variants", "as": "variant", "cond": {"$eq": ["$$variant.label", variant_label]}}}, 0]}}, "in": {"$gte": [{"$subtract": [{"$ifNull": ["$$variant.stock", 0]}, {"$ifNull": ["$$variant.direct_reserved", 0]}]}, quantity]}}},
+                    ]}
+                    reserve_update["$inc"]["variants.$.direct_reserved"] = quantity
+                reserve_result = await vendor_catalogue_collection.update_one(reserve_query, reserve_update)
+                if not reserve_result.matched_count:
+                    raise HTTPException(status_code=409, detail=f"Stock changed for '{listing.get('item_name', 'this item')}' or its selected variant - please review and try again.")
+                stock_reserved = True
             item["description"] = listing.get("item_name") or item.get("description")
             item["rate"] = float(listing.get("price") or 0)
-            item["direct_offer_snapshot"] = {"catalogue_item_id": catalogue_item_id, "price": item["rate"], "moq": moq, "size": size, "color": color, "variant_label": variant_label, "validated_at": datetime.utcnow().isoformat()}
-            direct_reservations.append({"catalogue_item_id": catalogue_item_id, "quantity": quantity, "size": size, "color": color, "variant_label": variant_label, "reserved_at": datetime.utcnow().isoformat()})
+            item["direct_offer_snapshot"] = {"catalogue_item_id": catalogue_item_id, "price": item["rate"], "moq": moq, "size": size, "color": color, "variant_label": variant_label, "validated_at": datetime.utcnow().isoformat(), "stock_known": stock_known, "stock_reserved": stock_reserved}
+            direct_reservations.append({"catalogue_item_id": catalogue_item_id, "quantity": quantity, "size": size, "color": color, "variant_label": variant_label, "reserved_at": datetime.utcnow().isoformat(), "stock_known": stock_known, "stock_reserved": stock_reserved})
         po_dict["direct_catalogue_reservations"] = direct_reservations
         po_dict["direct_catalogue_reservations_consumed"] = False
         po_dict["status"] = "SentToVendor"
@@ -955,8 +959,6 @@ async def update_purchase_order(po_id: str, po: PurchaseOrderModel, ctx: dict = 
                 raise HTTPException(status_code=409, detail="A direct-order listing is no longer available from this vendor.")
             quantity = max(0.0, float(item.get("quantity") or 0))
             moq = max(0.0, float(listing.get("moq") or 0))
-            if quantity < max(1.0, moq):
-                raise HTTPException(status_code=400, detail=f"{listing.get('item_name', 'This item')} requires a minimum order quantity of {int(moq) if moq.is_integer() else moq}.")
             if item.get("size") and listing.get("available_sizes") and item["size"] not in listing["available_sizes"]:
                 raise HTTPException(status_code=400, detail="Choose an available size from the catalogue listing.")
             if item.get("color") and listing.get("available_colors") and item["color"] not in listing["available_colors"]:
