@@ -141,18 +141,58 @@ function QuickOrderTabs({ activeView, onChange }) {
     </div>
   );
 }
-function VendorStorefronts({ onChooseForQuote, onDirectOrder }) {
+function VendorStorefronts({ onChooseForQuote, onDirectOrder, onCartCheckout }) {
   const [vendors, setVendors] = useState([]);
   const [selected, setSelected] = useState(null);
   const [loading, setLoading] = useState(true);
   const [detailLoading, setDetailLoading] = useState(false);
   const [error, setError] = useState("");
   const [showDirectOnly, setShowDirectOnly] = useState(false);
+  const [cart, setCart] = useState([]);
+  const [showCart, setShowCart] = useState(false);
   const galleryRef = React.useRef(null);
 
   const jumpToDirectPurchase = () => {
     setShowDirectOnly(true);
     galleryRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
+  // Cart is a second, optional path alongside the existing single-item "Buy
+  // product" button — it doesn't touch that flow, it just lets a buyer
+  // collect several fixed-price items from the same vendor and check out
+  // as one consolidated PO instead of one at a time.
+  const addToCart = (item) => setCart((prev) => {
+    const existing = prev.find((line) => line.item._id === item._id);
+    if (existing) {
+      const cap = item.stock != null ? Number(item.stock) : Infinity;
+      return prev.map((line) => (line.item._id === item._id ? { ...line, quantity: Math.min(cap, line.quantity + 1) } : line));
+    }
+    return [...prev, { item, quantity: Math.max(1, Number(item.moq) || 1) }];
+  });
+  const updateCartQty = (itemId, quantity) => setCart((prev) => prev.map((line) => {
+    if (line.item._id !== itemId) return line;
+    const cap = line.item.stock != null ? Number(line.item.stock) : Infinity;
+    const minimum = Math.max(1, Number(line.item.moq) || 1);
+    return { ...line, quantity: Math.max(minimum, Math.min(cap, Number(quantity) || minimum)) };
+  }));
+  const removeFromCart = (itemId) => setCart((prev) => prev.filter((line) => line.item._id !== itemId));
+  const cartCount = cart.length;
+  const cartTotal = cart.reduce((sum, { item, quantity }) => sum + Number(item.price || 0) * quantity, 0);
+  const checkoutCart = () => {
+    if (!cart.length) return;
+    const lines = cart.map(({ item, quantity }) => ({
+      description: item.item_name,
+      sku: item.sku || "",
+      barcode: item.barcode || "",
+      catalogue_item_id: item._id,
+      size: "", color: "",
+      quantity: String(quantity),
+      rate: String(item.price || 0),
+      remarks: "Direct order — fixed listed price, no negotiation.",
+    }));
+    onCartCheckout(selected?.vendor?.name || "", lines);
+    setCart([]);
+    setShowCart(false);
   };
 
   useEffect(() => { let cancelled = false; (async () => {
@@ -166,7 +206,7 @@ function VendorStorefronts({ onChooseForQuote, onDirectOrder }) {
   })(); return () => { cancelled = true; }; }, []);
 
   const openVendor = async (vendorId) => {
-    setDetailLoading(true); setError(""); setShowDirectOnly(false);
+    setDetailLoading(true); setError(""); setShowDirectOnly(false); setCart([]); setShowCart(false);
     try {
       const response = await authFetch(`${API_BASE}/api/catalogue/vendor/${vendorId}/storefront`);
       const body = await response.json();
@@ -185,7 +225,15 @@ function VendorStorefronts({ onChooseForQuote, onDirectOrder }) {
   if (selected) {
     const vendor = selected.vendor || {};
     return <div className="space-y-4">
-      <button type="button" onClick={() => setSelected(null)} className="inline-flex items-center gap-1 text-xs font-bold text-teal-700"><ArrowLeft className="h-3.5 w-3.5" /> All approved vendors</button>
+      <div className="flex items-center justify-between">
+        <button type="button" onClick={() => setSelected(null)} className="inline-flex items-center gap-1 text-xs font-bold text-teal-700"><ArrowLeft className="h-3.5 w-3.5" /> All approved vendors</button>
+        {cartCount > 0 && (
+          <button type="button" onClick={() => setShowCart(true)} className="inline-flex items-center gap-1.5 rounded-full bg-teal-700 px-3.5 py-1.5 text-xs font-bold text-white shadow hover:bg-teal-800">
+            <ShoppingBag className="h-3.5 w-3.5" /> Cart
+            <span className="ml-0.5 rounded-full bg-white/25 px-1.5 py-0.5 text-[10px] font-black">{cartCount}</span>
+          </button>
+        )}
+      </div>
       <section className="overflow-hidden rounded-3xl border border-teal-100 bg-gradient-to-br from-teal-800 via-teal-700 to-blue-700 p-5 text-white shadow-lg sm:p-7">
         <div className="flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between"><div className="flex min-w-0 gap-4"><div className="grid h-16 w-16 shrink-0 place-items-center rounded-2xl bg-white/15 text-2xl font-black ring-1 ring-white/30">{vendor.name?.slice(0, 1)?.toUpperCase() || "V"}</div><div><div className="flex flex-wrap items-center gap-2"><h2 className="text-xl font-black">{vendor.name}</h2>{vendor.verified && <span className="rounded-full bg-emerald-400/20 px-2 py-1 text-[10px] font-black text-emerald-50 ring-1 ring-emerald-200/50">Verified vendor</span>}</div><p className="mt-1 text-sm text-teal-100">{vendor.contact_name || "Vendor partner"}{vendor.business_type?.length ? ` · ${vendor.business_type.join(", ")}` : ""}</p>{vendor.location && <p className="mt-2 flex items-center gap-1 text-xs text-teal-100"><MapPin className="h-3.5 w-3.5" />{vendor.location}</p>}</div></div><span className="w-fit rounded-full bg-white/15 px-3 py-1.5 text-xs font-bold">{selected.items?.length || 0} products</span></div>
         <div className="mt-6 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-7">{[
@@ -202,9 +250,60 @@ function VendorStorefronts({ onChooseForQuote, onDirectOrder }) {
         </div>
         {(() => {
           const galleryItems = showDirectOnly ? (selected.items || []).filter((item) => item.direct_purchase_enabled) : (selected.items || []);
-          return galleryItems.length ? <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">{galleryItems.map((item) => <article key={item._id} className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm"><div className="aspect-[4/3] bg-slate-100">{item.images?.[0] ? <img src={item.images[0]} alt={item.item_name} className="h-full w-full object-cover" /> : <div className="grid h-full place-items-center text-slate-300"><PackageCheck className="h-10 w-10" /></div>}</div><div className="p-4"><div className="flex items-start justify-between gap-2"><h4 className="text-sm font-black text-slate-900">{item.item_name}</h4>{item.direct_purchase_enabled && <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-1 text-[9px] font-black text-emerald-700">Fixed price</span>}</div><p className="mt-1 text-xs text-slate-500">MOQ {item.moq || 1}{item.available_sizes?.length ? ` · ${item.available_sizes.join(", ")}` : ""}</p><p className="mt-3 text-base font-black text-slate-900">{item.direct_purchase_enabled ? `₹${Number(item.price || 0).toLocaleString("en-IN")}` : "Quotation required"}</p><div className="mt-3 grid grid-cols-2 gap-2">{item.direct_purchase_enabled ? <button type="button" onClick={() => onDirectOrder({...item, vendor_name: vendor.name})} className="rounded-xl bg-emerald-600 px-3 py-2.5 text-xs font-black text-white hover:bg-emerald-700">Buy product</button> : <button type="button" onClick={() => onChooseForQuote({...item, vendor_name: vendor.name})} className="rounded-xl bg-indigo-600 px-3 py-2.5 text-xs font-black text-white hover:bg-indigo-700">Request RFQ</button>}<button type="button" onClick={() => onChooseForQuote({...item, vendor_name: vendor.name})} className="rounded-xl border border-slate-200 px-3 py-2.5 text-xs font-bold text-slate-600 hover:bg-slate-50">View options</button></div></div></article>)}</div> : <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-10 text-center text-sm text-slate-500">{showDirectOnly ? "This vendor has no direct-purchase items right now." : "This approved vendor has not published products yet."}</div>;
+          return galleryItems.length ? <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">{galleryItems.map((item) => {
+            const cartLine = cart.find((line) => line.item._id === item._id);
+            return <article key={item._id} className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm"><div className="aspect-[4/3] bg-slate-100">{item.images?.[0] ? <img src={item.images[0]} alt={item.item_name} className="h-full w-full object-cover" /> : <div className="grid h-full place-items-center text-slate-300"><PackageCheck className="h-10 w-10" /></div>}</div><div className="p-4"><div className="flex items-start justify-between gap-2"><h4 className="text-sm font-black text-slate-900">{item.item_name}</h4>{item.direct_purchase_enabled && <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-1 text-[9px] font-black text-emerald-700">Fixed price</span>}</div><p className="mt-1 text-xs text-slate-500">MOQ {item.moq || 1}{item.available_sizes?.length ? ` · ${item.available_sizes.join(", ")}` : ""}</p><p className="mt-3 text-base font-black text-slate-900">{item.direct_purchase_enabled ? `₹${Number(item.price || 0).toLocaleString("en-IN")}` : "Quotation required"}</p>
+              {item.direct_purchase_enabled ? <div className="mt-3">
+                <button type="button" onClick={() => onDirectOrder({...item, vendor_name: vendor.name})} className="w-full rounded-xl bg-emerald-600 px-3 py-2.5 text-xs font-black text-white hover:bg-emerald-700">Buy product</button>
+                <div className="mt-2 grid grid-cols-2 gap-2">
+                  {cartLine ? <div className="flex items-center justify-between rounded-xl border border-teal-200 bg-teal-50 px-2 py-1.5">
+                    <button type="button" onClick={() => updateCartQty(item._id, cartLine.quantity - 1)} className="flex h-6 w-6 items-center justify-center rounded-full bg-white text-teal-700 shadow">−</button>
+                    <span className="text-xs font-black text-teal-800">{cartLine.quantity}</span>
+                    <button type="button" onClick={() => updateCartQty(item._id, cartLine.quantity + 1)} className="flex h-6 w-6 items-center justify-center rounded-full bg-white text-teal-700 shadow">+</button>
+                  </div> : <button type="button" onClick={() => addToCart({...item, vendor_name: vendor.name})} className="rounded-xl border border-teal-300 px-3 py-2.5 text-xs font-black text-teal-700 hover:bg-teal-50">Add to cart</button>}
+                  <button type="button" onClick={() => onChooseForQuote({...item, vendor_name: vendor.name})} className="rounded-xl border border-slate-200 px-3 py-2.5 text-xs font-bold text-slate-600 hover:bg-slate-50">View options</button>
+                </div>
+              </div> : <div className="mt-3 grid grid-cols-2 gap-2">
+                <button type="button" onClick={() => onChooseForQuote({...item, vendor_name: vendor.name})} className="rounded-xl bg-indigo-600 px-3 py-2.5 text-xs font-black text-white hover:bg-indigo-700">Request RFQ</button>
+                <button type="button" onClick={() => onChooseForQuote({...item, vendor_name: vendor.name})} className="rounded-xl border border-slate-200 px-3 py-2.5 text-xs font-bold text-slate-600 hover:bg-slate-50">View options</button>
+              </div>}
+            </div></article>;
+          })}</div> : <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-10 text-center text-sm text-slate-500">{showDirectOnly ? "This vendor has no direct-purchase items right now." : "This approved vendor has not published products yet."}</div>;
         })()}
       </section>
+      {showCart && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/40 sm:items-center" onClick={() => setShowCart(false)}>
+          <div className="max-h-[85vh] w-full max-w-md overflow-y-auto rounded-t-3xl bg-white p-5 shadow-2xl sm:rounded-3xl" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-black text-slate-900">Your cart</h3>
+              <button type="button" onClick={() => setShowCart(false)} className="flex h-8 w-8 items-center justify-center rounded-full text-slate-400 hover:bg-slate-100"><X className="h-4 w-4" /></button>
+            </div>
+            <p className="mt-1 text-xs text-slate-500">{cartCount} item{cartCount === 1 ? "" : "s"} from {vendor.name}</p>
+            <div className="mt-4 space-y-3">
+              {cart.map(({ item, quantity }) => (
+                <div key={item._id} className="flex items-center gap-3 rounded-xl border border-slate-100 p-2.5">
+                  <div className="h-12 w-12 shrink-0 overflow-hidden rounded-lg bg-slate-100">{item.images?.[0] && <img src={item.images[0]} alt="" className="h-full w-full object-cover" />}</div>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-xs font-bold text-slate-900">{item.item_name}</p>
+                    <p className="text-xs text-slate-500">₹{Number(item.price || 0).toLocaleString("en-IN")} each</p>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <button type="button" onClick={() => updateCartQty(item._id, quantity - 1)} className="flex h-6 w-6 items-center justify-center rounded-full border border-slate-200 text-slate-600">−</button>
+                    <span className="w-6 text-center text-xs font-black">{quantity}</span>
+                    <button type="button" onClick={() => updateCartQty(item._id, quantity + 1)} className="flex h-6 w-6 items-center justify-center rounded-full border border-slate-200 text-slate-600">+</button>
+                  </div>
+                  <button type="button" onClick={() => removeFromCart(item._id)} className="text-slate-400 hover:text-red-600"><Trash2 className="h-3.5 w-3.5" /></button>
+                </div>
+              ))}
+            </div>
+            <div className="mt-4 flex items-center justify-between border-t border-slate-100 pt-3">
+              <span className="text-sm font-bold text-slate-600">Estimated total</span>
+              <span className="text-lg font-black text-slate-900">₹{cartTotal.toLocaleString("en-IN")}</span>
+            </div>
+            <button type="button" onClick={checkoutCart} className="mt-4 w-full rounded-xl bg-teal-700 py-3 text-sm font-black text-white hover:bg-teal-800">Place order</button>
+          </div>
+        </div>
+      )}
     </div>;
   }
   return <div className="space-y-4"><section className="rounded-3xl border border-indigo-100 bg-gradient-to-r from-indigo-50 via-white to-cyan-50 p-5 sm:p-7"><p className="text-xs font-black uppercase tracking-[0.18em] text-indigo-600">Approved partner network</p><h2 className="mt-2 text-xl font-black text-slate-900">Choose a vendor storefront</h2><p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">Open only vendors approved for your retailer. Browse their products, then buy fixed-price listings or request a quote.</p></section>{error && <p className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs font-bold text-rose-700">{error}</p>}{loading || detailLoading ? <div className="flex justify-center py-12"><RefreshCw className="h-6 w-6 animate-spin text-indigo-500" /></div> : vendors.length ? <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{vendors.map((vendor) => <button key={vendor._id} type="button" onClick={() => openVendor(vendor._id)} className="group rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-indigo-300 hover:shadow-md"><div className="flex items-start gap-3"><span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-indigo-100 text-lg font-black text-indigo-700">{vendor.vendor_name?.slice(0,1)?.toUpperCase() || "V"}</span><span className="min-w-0 flex-1"><span className="flex items-center justify-between gap-2"><span className="truncate text-sm font-black text-slate-900">{vendor.vendor_name}</span><ExternalLink className="h-4 w-4 shrink-0 text-indigo-400 group-hover:text-indigo-600" /></span><span className="mt-1 block truncate text-xs text-slate-500">{vendor.business_type?.join(", ") || "Approved vendor"}</span>{vendor.city && <span className="mt-2 flex items-center gap-1 text-[11px] text-slate-500"><MapPin className="h-3 w-3" />{vendor.city}</span>}</span></div></button>)}</div> : <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-10 text-center text-sm text-slate-500">No approved vendors yet. Invite and approve a vendor first.</div>}</div>;
@@ -343,6 +442,19 @@ export default function QuickOrderFromCatalogue() {
     setVariantQuantities({});
     setOrderVendorName(item.vendor_name || "");
     setOrderItems([]);
+    setStep(3);
+  };
+
+  // Storefront cart checkout — several items picked ahead of time, so
+  // unlike directOrder() the lines are already built and go straight to
+  // the PO review step instead of the single-item size/colour matrix.
+  const cartCheckout = (vendorName, lines) => {
+    setSubmitError(null);
+    setDirectOrderMode(true);
+    setDirectCatalogueItem(null);
+    setVariantQuantities({});
+    setOrderVendorName(vendorName || "");
+    setOrderItems(lines);
     setStep(3);
   };
 
@@ -646,7 +758,7 @@ export default function QuickOrderFromCatalogue() {
   }
 
   if (activeView === "storefront") {
-    return <div className="min-h-full bg-[#F6F7FB] p-4 sm:p-6"><div className="mx-auto max-w-6xl space-y-5"><QuickOrderTabs activeView={activeView} onChange={setActiveView}/><VendorStorefronts onChooseForQuote={(item) => { openSharedItem(item); setActiveView("order"); }} onDirectOrder={(item) => { directOrder(item); setActiveView("order"); }} /></div></div>;
+    return <div className="min-h-full bg-[#F6F7FB] p-4 sm:p-6"><div className="mx-auto max-w-6xl space-y-5"><QuickOrderTabs activeView={activeView} onChange={setActiveView}/><VendorStorefronts onChooseForQuote={(item) => { openSharedItem(item); setActiveView("order"); }} onDirectOrder={(item) => { directOrder(item); setActiveView("order"); }} onCartCheckout={(vendorName, lines) => { cartCheckout(vendorName, lines); setActiveView("order"); }} /></div></div>;
   }
 
   if (activeView === "rfq") {

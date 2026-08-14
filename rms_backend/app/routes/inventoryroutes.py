@@ -726,27 +726,14 @@ async def resync_from_grns(payload: dict = {}, ctx: dict = Depends(get_hq_tenant
 # GET /inventory/stock-ledger
 # ─────────────────────────────────────────────
 
-@router.get("/stock-ledger")
-async def get_stock_ledger(
-    division:      Optional[str] = Query(None),
-    section:       Optional[str] = Query(None),
-    department:    Optional[str] = Query(None),
-    movement_type: Optional[str] = Query(None),
-    warehouse:     Optional[str] = Query(None),
-    from_date:     Optional[str] = Query(None),
-    to_date:       Optional[str] = Query(None),
-    search:        Optional[str] = Query(None),
-    ctx:           dict          = Depends(get_any_tenant),
-):
+async def _collect_ledger_rows(tenant_id: str, store_id: Optional[str], ctx: dict, product_master: dict) -> list:
     """
-    Unified stock ledger combining:
+    Shared by /stock-ledger and /daily-stock-movement — every stock-moving
+    event combining:
       1. GRN Posted items     → doc_type = "GRN (Purchase In)"
       2. GRN Cancelled items  → doc_type = "GRN Reversal"
-      3. inventory adjustments → doc_type = "Adjustment"
+      3. inventory adjustments → doc_type = "Adjustment" / "POS Sale" / "POS Return"
     """
-    tenant_id = ctx["tenant_id"]
-    store_id = active_store_id(ctx)
-    product_master = await build_product_master(tenant_id)
     rows = []
 
     # ── 1. GRN movements ────────────────────────────────────────────────
@@ -835,6 +822,26 @@ async def get_stock_ledger(
                 "remarks":    reason,
                 "source":     "adjustment",
             })
+
+    return rows
+
+
+@router.get("/stock-ledger")
+async def get_stock_ledger(
+    division:      Optional[str] = Query(None),
+    section:       Optional[str] = Query(None),
+    department:    Optional[str] = Query(None),
+    movement_type: Optional[str] = Query(None),
+    warehouse:     Optional[str] = Query(None),
+    from_date:     Optional[str] = Query(None),
+    to_date:       Optional[str] = Query(None),
+    search:        Optional[str] = Query(None),
+    ctx:           dict          = Depends(get_any_tenant),
+):
+    tenant_id = ctx["tenant_id"]
+    store_id = active_store_id(ctx)
+    product_master = await build_product_master(tenant_id)
+    rows = await _collect_ledger_rows(tenant_id, store_id, ctx, product_master)
 
     # ── Apply filters ─────────────────────────────────────────────────────
     if division:
@@ -1720,4 +1727,372 @@ async def get_expiry_aging(
         "summary": summary,
         "data":    rows,
     })
+
+
+# ─────────────────────────────────────────────
+# GET /inventory/item-aging
+# ─────────────────────────────────────────────
+
+@router.get("/item-aging")
+async def get_item_aging(
+    division:   Optional[str] = Query(None),
+    section:    Optional[str] = Query(None),
+    department: Optional[str] = Query(None),
+    bucket:     Optional[str] = Query(None),   # "0-30" | "31-60" | "61-90" | "90+"
+    search:     Optional[str] = Query(None),
+    ctx:        dict          = Depends(get_hq_tenant),
+):
+    """
+    Ages every currently-stocked item by days since its most recent Posted
+    GRN receipt — there's no other "entered stock" timestamp in this schema,
+    so a walk-in/admin item with no GRN history reports as "Unknown" rather
+    than a fabricated age. Buckets into 0-30 / 31-60 / 61-90 / 90+ days.
+    """
+    tenant_id = ctx["tenant_id"]
+    today = datetime.utcnow().date()
+    product_master = await build_product_master(tenant_id)
+
+    grn_date_map: dict = {}
+    async for grn in grn_collection.find(
+        {"status": "Posted", "tenant_id": tenant_id},
+        {"grnDate": 1, "items.barcode": 1, "_id": 0}
+    ):
+        grn_date = (grn.get("grnDate") or "")[:10]
+        if not grn_date:
+            continue
+        for item in grn.get("items", []):
+            bc = (item.get("barcode") or "").strip()
+            if bc:
+                existing = grn_date_map.get(bc, "")
+                if grn_date > existing:
+                    grn_date_map[bc] = grn_date
+
+    rows = []
+    async for doc in inventory_collection.find({"tenant_id": tenant_id}):
+        bc = (doc.get("barcode") or "").strip()
+        qty = float(doc.get("stockQty", 0) or 0)
+        if not bc or qty <= 0:
+            continue
+        pm = product_master.get(bc, {})
+        grn_date = grn_date_map.get(bc, "")
+        rate = float(doc.get("rate", 0) or 0) or pm.get("cost_price", 0)
+
+        aging_days = None
+        if grn_date:
+            try:
+                aging_days = (today - datetime.strptime(grn_date, "%Y-%m-%d").date()).days
+            except ValueError:
+                aging_days = None
+
+        if aging_days is None:
+            row_bucket = "Unknown"
+        elif aging_days <= 30:
+            row_bucket = "0-30"
+        elif aging_days <= 60:
+            row_bucket = "31-60"
+        elif aging_days <= 90:
+            row_bucket = "61-90"
+        else:
+            row_bucket = "90+"
+
+        rows.append({
+            "barcode":     bc,
+            "sku":         pm.get("sku", ""),
+            "item":        pm.get("product") or doc.get("description", "") or bc,
+            "division":    pm.get("division") or doc.get("division", ""),
+            "section":     pm.get("section") or doc.get("section", ""),
+            "department":  pm.get("department") or doc.get("department", ""),
+            "vendor_name": pm.get("vendor_name") or doc.get("vendor_name", ""),
+            "grn_no":      pm.get("grn_no") or doc.get("grn_no", ""),
+            "grn_date":    grn_date,
+            "qty":         round(qty, 2),
+            "rate":        round(rate, 2),
+            "value":       round(qty * rate, 2),
+            "aging_days":  aging_days if aging_days is not None else 0,
+            "bucket":      row_bucket,
+        })
+
+    if division:
+        rows = [r for r in rows if r["division"] == division]
+    if section:
+        rows = [r for r in rows if r["section"] == section]
+    if department:
+        rows = [r for r in rows if r["department"] == department]
+    if bucket and bucket != "All":
+        rows = [r for r in rows if r["bucket"] == bucket]
+    if search:
+        s = search.strip().lower()
+        rows = [r for r in rows if s in r["item"].lower() or s in r["sku"].lower() or s in r["barcode"].lower()]
+
+    rows.sort(key=lambda r: r["aging_days"], reverse=True)
+
+    bucket_order = ["0-30", "31-60", "61-90", "90+", "Unknown"]
+    bucket_summary = []
+    for b in bucket_order:
+        bucket_rows = [r for r in rows if r["bucket"] == b]
+        if not bucket_rows:
+            continue
+        bucket_summary.append({
+            "bucket": b,
+            "count":  len(bucket_rows),
+            "qty":    round(sum(r["qty"] for r in bucket_rows), 2),
+            "value":  round(sum(r["value"] for r in bucket_rows), 2),
+        })
+
+    summary = {
+        "total_items": len(rows),
+        "total_qty":   round(sum(r["qty"] for r in rows), 2),
+        "total_value": round(sum(r["value"] for r in rows), 2),
+        "buckets":     bucket_summary,
+    }
+
+    return JSONResponse({"status": "success", "count": len(rows), "summary": summary, "data": rows})
+
+
+# ─────────────────────────────────────────────
+# GET /inventory/stock-valuation
+# ─────────────────────────────────────────────
+
+@router.get("/stock-valuation")
+async def get_stock_valuation(
+    division:   Optional[str] = Query(None),
+    section:    Optional[str] = Query(None),
+    department: Optional[str] = Query(None),
+    warehouse:  Optional[str] = Query(None),
+    search:     Optional[str] = Query(None),
+    ctx:        dict          = Depends(get_hq_tenant),
+):
+    """
+    Stock value = stockQty × cost rate, combined across central inventory
+    ("Main Warehouse") and every store's local stock, so HQ sees the full
+    picture across every warehouse a multi-store tenant has.
+    """
+    tenant_id = ctx["tenant_id"]
+    product_master = await build_product_master(tenant_id)
+
+    rows = []
+    async for doc in inventory_collection.find({"tenant_id": tenant_id}):
+        bc = (doc.get("barcode") or "").strip()
+        qty = float(doc.get("stockQty", 0) or 0)
+        if not bc or qty <= 0:
+            continue
+        pm = product_master.get(bc, {})
+        rate = float(doc.get("rate", 0) or 0) or pm.get("cost_price", 0)
+        rows.append({
+            "barcode":    bc,
+            "sku":        pm.get("sku", ""),
+            "item":       pm.get("product") or doc.get("description", "") or bc,
+            "division":   pm.get("division") or doc.get("division", ""),
+            "section":    pm.get("section") or doc.get("section", ""),
+            "department": pm.get("department") or doc.get("department", ""),
+            "warehouse":  "Main Warehouse",
+            "qty":        round(qty, 2),
+            "rate":       round(rate, 2),
+            "value":      round(qty * rate, 2),
+        })
+
+    async for doc in store_stock_collection.find({"tenant_id": tenant_id}):
+        bc = (doc.get("barcode") or "").strip()
+        qty = float(doc.get("stockQty", 0) or 0)
+        if not bc or qty <= 0:
+            continue
+        pm = product_master.get(bc, {})
+        rate = float(doc.get("rate", 0) or 0) or pm.get("cost_price", 0)
+        rows.append({
+            "barcode":    bc,
+            "sku":        pm.get("sku", ""),
+            "item":       pm.get("product") or doc.get("description", "") or bc,
+            "division":   pm.get("division") or "",
+            "section":    pm.get("section") or "",
+            "department": pm.get("department") or "",
+            "warehouse":  doc.get("store_name") or "Store",
+            "qty":        round(qty, 2),
+            "rate":       round(rate, 2),
+            "value":      round(qty * rate, 2),
+        })
+
+    if division:
+        rows = [r for r in rows if r["division"] == division]
+    if section:
+        rows = [r for r in rows if r["section"] == section]
+    if department:
+        rows = [r for r in rows if r["department"] == department]
+    if warehouse and warehouse != "All":
+        rows = [r for r in rows if r["warehouse"] == warehouse]
+    if search:
+        s = search.strip().lower()
+        rows = [r for r in rows if s in r["item"].lower() or s in r["sku"].lower() or s in r["barcode"].lower()]
+
+    rows.sort(key=lambda r: r["value"], reverse=True)
+
+    by_warehouse: dict = {}
+    by_division: dict = {}
+    for r in rows:
+        wkey = r["warehouse"]
+        w = by_warehouse.setdefault(wkey, {"warehouse": wkey, "qty": 0.0, "value": 0.0})
+        w["qty"] += r["qty"]; w["value"] += r["value"]
+        dkey = r["division"] or "Unclassified"
+        d = by_division.setdefault(dkey, {"division": dkey, "qty": 0.0, "value": 0.0})
+        d["qty"] += r["qty"]; d["value"] += r["value"]
+
+    summary = {
+        "total_items":  len(rows),
+        "total_qty":    round(sum(r["qty"] for r in rows), 2),
+        "total_value":  round(sum(r["value"] for r in rows), 2),
+        "by_warehouse": [{**w, "qty": round(w["qty"], 2), "value": round(w["value"], 2)} for w in sorted(by_warehouse.values(), key=lambda x: -x["value"])],
+        "by_division":  [{**d, "qty": round(d["qty"], 2), "value": round(d["value"], 2)} for d in sorted(by_division.values(), key=lambda x: -x["value"])],
+    }
+
+    return JSONResponse({"status": "success", "count": len(rows), "summary": summary, "data": rows})
+
+
+# ─────────────────────────────────────────────
+# GET /inventory/warehouse-stock
+# ─────────────────────────────────────────────
+
+@router.get("/warehouse-stock")
+async def get_warehouse_stock(
+    warehouse: Optional[str] = Query(None),
+    search:    Optional[str] = Query(None),
+    ctx:       dict          = Depends(get_hq_tenant),
+):
+    """
+    Current stock quantity per item, broken down by warehouse/store.
+    Central inventory (inventory_collection) shows as "Main Warehouse";
+    each store's own stock (store_stock_collection) shows under its real
+    store name. Single-store tenants will simply see one warehouse here.
+    """
+    tenant_id = ctx["tenant_id"]
+    product_master = await build_product_master(tenant_id)
+
+    reorder_map: dict = {}
+    async for rule in reorder_rules_collection.find({"tenant_id": tenant_id}, {"barcode": 1, "reorder_level": 1, "_id": 0}):
+        bc = (rule.get("barcode") or "").strip()
+        if bc:
+            reorder_map[bc] = float(rule.get("reorder_level", 0) or 0)
+
+    rows = []
+    async for doc in inventory_collection.find({"tenant_id": tenant_id}):
+        bc = (doc.get("barcode") or "").strip()
+        if not bc:
+            continue
+        pm = product_master.get(bc, {})
+        qty = float(doc.get("stockQty", 0) or 0)
+        rows.append({
+            "barcode":       bc,
+            "sku":           pm.get("sku", ""),
+            "item":          pm.get("product") or doc.get("description", "") or bc,
+            "division":      pm.get("division") or doc.get("division", ""),
+            "warehouse":     "Main Warehouse",
+            "qty":           round(qty, 2),
+            "reorder_level": reorder_map.get(bc),
+            "status":        stock_status(qty)["label"],
+        })
+
+    async for doc in store_stock_collection.find({"tenant_id": tenant_id}):
+        bc = (doc.get("barcode") or "").strip()
+        if not bc:
+            continue
+        pm = product_master.get(bc, {})
+        qty = float(doc.get("stockQty", 0) or 0)
+        rows.append({
+            "barcode":       bc,
+            "sku":           pm.get("sku", ""),
+            "item":          pm.get("product") or doc.get("description", "") or bc,
+            "division":      pm.get("division") or "",
+            "warehouse":     doc.get("store_name") or "Store",
+            "qty":           round(qty, 2),
+            "reorder_level": reorder_map.get(bc),
+            "status":        stock_status(qty)["label"],
+        })
+
+    warehouses = sorted({r["warehouse"] for r in rows})
+
+    if warehouse and warehouse != "All":
+        rows = [r for r in rows if r["warehouse"] == warehouse]
+    if search:
+        s = search.strip().lower()
+        rows = [r for r in rows if s in r["item"].lower() or s in r["sku"].lower() or s in r["barcode"].lower()]
+
+    rows.sort(key=lambda r: (r["warehouse"], -r["qty"]))
+
+    by_warehouse: dict = {}
+    for r in rows:
+        w = by_warehouse.setdefault(r["warehouse"], {"warehouse": r["warehouse"], "items": 0, "qty": 0.0, "low_stock": 0, "out_of_stock": 0})
+        w["items"] += 1
+        w["qty"] += r["qty"]
+        if r["status"] == "Low Stock":
+            w["low_stock"] += 1
+        if r["status"] == "Out of Stock":
+            w["out_of_stock"] += 1
+
+    summary = {
+        "warehouses":   warehouses,
+        "by_warehouse": [{**w, "qty": round(w["qty"], 2)} for w in by_warehouse.values()],
+    }
+
+    return JSONResponse({"status": "success", "count": len(rows), "summary": summary, "data": rows})
+
+
+# ─────────────────────────────────────────────
+# GET /inventory/daily-stock-movement
+# ─────────────────────────────────────────────
+
+@router.get("/daily-stock-movement")
+async def get_daily_stock_movement(
+    warehouse: Optional[str] = Query(None),
+    from_date: Optional[str] = Query(None),
+    to_date:   Optional[str] = Query(None),
+    search:    Optional[str] = Query(None),
+    ctx:       dict          = Depends(get_any_tenant),
+):
+    """
+    Same underlying events as /stock-ledger (GRN in/out + adjustments),
+    grouped by date into a daily in/out/net time series plus the raw
+    transaction rows for a detail table.
+    """
+    tenant_id = ctx["tenant_id"]
+    store_id = active_store_id(ctx)
+    product_master = await build_product_master(tenant_id)
+    rows = await _collect_ledger_rows(tenant_id, store_id, ctx, product_master)
+
+    if warehouse and warehouse != "All":
+        rows = [r for r in rows if r["warehouse"] == warehouse]
+    if from_date:
+        rows = [r for r in rows if r["date"] >= from_date]
+    if to_date:
+        rows = [r for r in rows if r["date"] <= to_date]
+    if search:
+        s = search.strip().lower()
+        rows = [
+            r for r in rows
+            if s in r["product"].lower() or s in r["sku"].lower() or s in r["barcode"].lower() or s in r["doc_no"].lower()
+        ]
+
+    rows.sort(key=lambda r: r["date"], reverse=True)
+
+    by_date: dict = {}
+    for r in rows:
+        d = by_date.setdefault(r["date"], {"date": r["date"], "in_qty": 0.0, "out_qty": 0.0, "in_value": 0.0, "out_value": 0.0, "transactions": 0})
+        d["in_qty"] += r["in_qty"]; d["out_qty"] += r["out_qty"]
+        d["in_value"] += r["value"] if r["in_qty"] > 0 else 0
+        d["out_value"] += r["value"] if r["out_qty"] > 0 else 0
+        d["transactions"] += 1
+
+    daily = sorted(
+        [{**d, "in_qty": round(d["in_qty"], 2), "out_qty": round(d["out_qty"], 2),
+          "in_value": round(d["in_value"], 2), "out_value": round(d["out_value"], 2),
+          "net_qty": round(d["in_qty"] - d["out_qty"], 2)} for d in by_date.values()],
+        key=lambda x: x["date"],
+    )
+
+    summary = {
+        "total_in_qty":  round(sum(r["in_qty"] for r in rows), 2),
+        "total_out_qty": round(sum(r["out_qty"] for r in rows), 2),
+        "total_in_value": round(sum(r["value"] for r in rows if r["in_qty"] > 0), 2),
+        "total_out_value": round(sum(r["value"] for r in rows if r["out_qty"] > 0), 2),
+        "daily": daily,
+    }
+
+    return JSONResponse({"status": "success", "count": len(rows), "summary": summary, "data": rows})
 

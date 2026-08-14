@@ -61,6 +61,7 @@ from ..config import settings
 from ..db import (
     vendor_catalogue_collection,
     catalogue_inquiries_collection,
+    catalogue_public_orders_collection,
     vendors_collection,
     vendor_tenant_links_collection,
     vendor_role_operations_collection,
@@ -860,6 +861,149 @@ async def delete_catalogue_item(item_id: str, authorization: str = Header(None))
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Catalogue item not found.")
     return {"status": "success", "message": "Catalogue item deleted."}
+
+
+
+def _public_vendor_payload(vendor: dict, vendor_id: ObjectId, item_count: int = 0) -> dict:
+    address = vendor.get("address")
+    location = address if isinstance(address, str) else ", ".join(
+        str(address.get(key) or "").strip() for key in ("city", "state", "country") if address.get(key)
+    ) if isinstance(address, dict) else ""
+    return {
+        "_id": str(vendor_id),
+        "name": vendor.get("brandName") or vendor.get("name") or vendor.get("vendor_name") or "Vendor",
+        "contact_name": vendor.get("contact_person") or vendor.get("owner_name") or "",
+        "phone": str(vendor.get("phone") or vendor.get("mobile") or ""),
+        "email": vendor.get("email") or "",
+        "website": vendor.get("website") or vendor.get("website_url") or "",
+        "instagram": vendor.get("instagram") or vendor.get("instagram_url") or "",
+        "location": location or vendor.get("city") or "",
+        "business_type": vendor.get("business_type") or [],
+        "item_count": item_count,
+    }
+
+
+@router.get("/public/{vendor_id}/storefront")
+async def get_public_vendor_storefront(vendor_id: str):
+    """Public WhatsApp-style storefront. It shows only active direct-purchase listings."""
+    if not ObjectId.is_valid(vendor_id):
+        raise HTTPException(status_code=400, detail="Invalid vendor catalogue link.")
+    vendor_oid = ObjectId(vendor_id)
+    vendor = await vendors_collection.find_one({"_id": vendor_oid})
+    if not vendor:
+        raise HTTPException(status_code=404, detail="This vendor catalogue is not available.")
+    query = {"vendor_id": vendor_oid, "active": True, "direct_purchase_enabled": True, "price": {"$gt": 0}, "stock": {"$gt": 0}}
+    items = []
+    async for item in vendor_catalogue_collection.find(query).sort("created_at", -1):
+        row = _serialize_item(item)
+        row["reserved_stock"] = float(item.get("direct_reserved") or 0)
+        row["available_to_order"] = max(0, float(item.get("stock") or 0) - float(item.get("direct_reserved") or 0))
+        items.append(row)
+    return {"status": "success", "data": {"vendor": _public_vendor_payload(vendor, vendor_oid, len(items)), "items": items}}
+
+
+@router.post("/public/{vendor_id}/orders", status_code=201)
+async def create_public_catalogue_order(vendor_id: str, payload: dict):
+    """Guest storefront checkout. It records a lead/order request; it does not create PO or deduct stock."""
+    if not ObjectId.is_valid(vendor_id):
+        raise HTTPException(status_code=400, detail="Invalid vendor catalogue link.")
+    vendor_oid = ObjectId(vendor_id)
+    vendor = await vendors_collection.find_one({"_id": vendor_oid})
+    if not vendor:
+        raise HTTPException(status_code=404, detail="This vendor catalogue is not available.")
+
+    buyer = payload.get("buyer") or {}
+    buyer_name = str(buyer.get("name") or "").strip()[:120]
+    buyer_phone = re.sub(r"[^0-9+]", "", str(buyer.get("phone") or ""))[:24]
+    buyer_business = str(buyer.get("business") or "").strip()[:160]
+    buyer_email = str(buyer.get("email") or "").strip()[:160]
+    note = str(payload.get("note") or "").strip()[:1000]
+    if not buyer_name or not buyer_phone:
+        raise HTTPException(status_code=400, detail="Buyer name and mobile number are required to place a catalogue order request.")
+
+    raw_lines = payload.get("items") or []
+    if not isinstance(raw_lines, list) or not raw_lines:
+        raise HTTPException(status_code=400, detail="Add at least one product to cart.")
+
+    order_lines = []
+    total = 0.0
+    for raw in raw_lines[:50]:
+        item_id = str(raw.get("catalogue_item_id") or raw.get("_id") or "")
+        if not ObjectId.is_valid(item_id):
+            raise HTTPException(status_code=400, detail="Every cart line must use a valid catalogue item.")
+        listing = await vendor_catalogue_collection.find_one({"_id": ObjectId(item_id), "vendor_id": vendor_oid, "active": True, "direct_purchase_enabled": True})
+        if not listing:
+            raise HTTPException(status_code=409, detail="One catalogue item is no longer available.")
+        qty = max(0, int(float(raw.get("quantity") or 0)))
+        moq = max(1, int(float(listing.get("moq") or 1)))
+        if qty < moq:
+            raise HTTPException(status_code=400, detail=f"{listing.get('item_name', 'This item')} has MOQ {moq}.")
+        size = str(raw.get("size") or "").strip()[:80]
+        color = str(raw.get("color") or "").strip()[:80]
+        if size and listing.get("available_sizes") and size not in listing.get("available_sizes"):
+            raise HTTPException(status_code=400, detail="Choose an available size from the catalogue listing.")
+        if color and listing.get("available_colors") and color not in listing.get("available_colors"):
+            raise HTTPException(status_code=400, detail="Choose an available colour from the catalogue listing.")
+        available = max(0, float(listing.get("stock") or 0) - float(listing.get("direct_reserved") or 0))
+        if qty > available:
+            raise HTTPException(status_code=409, detail=f"Only {int(available)} unit(s) are currently available for {listing.get('item_name', 'this item')}.")
+        price = float(listing.get("price") or 0)
+        line_total = price * qty
+        total += line_total
+        order_lines.append({
+            "catalogue_item_id": ObjectId(item_id),
+            "item_name": listing.get("item_name") or "Catalogue item",
+            "image": (listing.get("images") or [""])[0],
+            "size": size,
+            "color": color,
+            "quantity": qty,
+            "rate": price,
+            "line_total": line_total,
+            "moq": moq,
+        })
+
+    now = datetime.utcnow()
+    doc = {
+        "vendor_id": vendor_oid,
+        "status": "New",
+        "source": "public_catalogue",
+        "buyer": {"name": buyer_name, "phone": buyer_phone, "business": buyer_business, "email": buyer_email},
+        "items": order_lines,
+        "note": note,
+        "estimated_total": total,
+        "created_at": now,
+        "updated_at": now,
+    }
+    result = await catalogue_public_orders_collection.insert_one(doc)
+    try:
+        await notify_vendor(
+            vendor_oid,
+            "public_catalogue_order",
+            "New catalogue order request",
+            f"{buyer_name} placed a catalogue request for {len(order_lines)} item(s) worth INR {total:,.0f}.",
+            metadata={"public_order_id": str(result.inserted_id), "source": "public_catalogue"},
+        )
+    except Exception as exc:
+        print(f"Public catalogue notification failed: {exc}")
+    return {"status": "success", "message": "Catalogue order request sent to the vendor.", "id": str(result.inserted_id), "estimated_total": total}
+
+
+@router.get("/my-catalogue/public-orders")
+async def list_public_catalogue_orders(authorization: str = Header(None)):
+    """Vendor view of guest storefront order requests."""
+    vendor_id = _decode_vendor(authorization)
+    rows = []
+    async for row in catalogue_public_orders_collection.find({"vendor_id": ObjectId(vendor_id)}).sort("created_at", -1).limit(200):
+        row["_id"] = str(row["_id"])
+        row["vendor_id"] = str(row["vendor_id"])
+        for line in row.get("items") or []:
+            if line.get("catalogue_item_id"):
+                line["catalogue_item_id"] = str(line["catalogue_item_id"])
+        for field in ("created_at", "updated_at"):
+            if row.get(field):
+                row[field] = str(row[field])
+        rows.append(row)
+    return {"status": "success", "data": rows}
 
 
 # ═══════════════════════════════════════════════════════════════════════════

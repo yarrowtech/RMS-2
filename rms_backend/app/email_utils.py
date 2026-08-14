@@ -925,3 +925,45 @@ async def send_sample_request_email(email: EmailStr, vendor_name: str, design_na
         recipients=[email],
         html=_wrap(PRIMARY, "RMS Sample Request", body, "RMS Procurement"),
     )
+
+async def send_purchase_order_created_email(
+    email: EmailStr,
+    vendor_name: str,
+    retailer_name: str,
+    po_no: str,
+    order_date: str = "",
+    amount: float = 0,
+    link: str = "",
+) -> bool:
+    """Notify a vendor that a buyer has created a purchase order."""
+    import html
+
+    safe_vendor = html.escape(vendor_name or "Vendor")
+    safe_retailer = html.escape(retailer_name or "RMS buyer")
+    safe_po = html.escape(po_no or "New PO")
+    safe_date = html.escape(order_date or "Not specified")
+    safe_link = html.escape(link or "")
+    try:
+        amount_text = f"INR {float(amount or 0):,.2f}"
+    except (TypeError, ValueError):
+        amount_text = "INR 0.00"
+
+    action = _btn("Open purchase order", safe_link, PRIMARY) if safe_link else ""
+    body = f"""
+      <h2 style="color:#222;margin-bottom:8px;">Hello, {safe_vendor}</h2>
+      <p style="font-size:15px;color:#444;">{safe_retailer} has created a new purchase order for you in RMS.</p>
+      <table style="border-collapse:collapse;font-size:14px;color:#444;margin:16px 0;">
+        <tr><td style="padding:6px 18px 6px 0;font-weight:bold;">PO number</td><td>{safe_po}</td></tr>
+        <tr><td style="padding:6px 18px 6px 0;font-weight:bold;">Order date</td><td>{safe_date}</td></tr>
+        <tr><td style="padding:6px 18px 6px 0;font-weight:bold;">Order value</td><td>{amount_text}</td></tr>
+      </table>
+      {action}
+      <p style="font-size:14px;color:#555;margin-top:18px;">Please review the PO, confirm item availability, and update dispatch details when the goods are ready.</p>
+      {_divider()}
+      {_note("This is an automated purchase order notice from RMS.")}
+    """
+    return await _send(
+        subject=f"New purchase order {safe_po} from {safe_retailer}",
+        recipients=[email],
+        html=_wrap(PRIMARY, "New Purchase Order", body, "RMS Procurement"),
+    )

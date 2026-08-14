@@ -1,4 +1,4 @@
-import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
+import { API_BASE_URL as APP_API_URL, FRONTEND_BASE_URL } from "../../config/api.js";
 import DocumentConversation from "../DocumentConversation.jsx";
 
 
@@ -721,7 +721,7 @@ import DocumentConversation from "../DocumentConversation.jsx";
 // }
 
 import React, { useState, useEffect, useCallback } from "react";
-import { CheckCircle2, CircleHelp, Image as ImageIcon, Plus, Sparkles, X, Trash2, MessageSquare, RefreshCw, Tag, Images, Send } from "lucide-react";
+import { CheckCircle2, CircleHelp, Clipboard, ExternalLink, Image as ImageIcon, Plus, ShoppingBag, Sparkles, X, Trash2, MessageSquare, RefreshCw, Tag, Images, Send } from "lucide-react";
 import VendorSubscriptionTab from "./Vendorsubscriptiontab.jsx";
 
 const API_BASE = APP_API_URL;
@@ -744,6 +744,86 @@ async function vendorFetch(path, options = {}) {
       ...(options.headers || {}),
     },
   });
+}
+
+
+function getVendorIdFromToken() {
+  const token = getVendorToken();
+  try {
+    const payload = token.split(".")[1];
+    if (!payload) return "";
+    const json = JSON.parse(atob(payload.replace(/-/g, "+").replace(/_/g, "/")));
+    return json.vendor_id || "";
+  } catch {
+    return "";
+  }
+}
+
+function PublicCatalogueShareCard({ activeCount = 0 }) {
+  const vendorId = getVendorIdFromToken();
+  const publicLink = vendorId ? `${FRONTEND_BASE_URL}/catalogue/${vendorId}` : "";
+  const message = publicLink ? `View my RMS catalogue and place your order request here: ${publicLink}` : "";
+  const [copied, setCopied] = useState("");
+
+  const copy = async (value, label) => {
+    if (!value) return;
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopied(`${label} copied`);
+      setTimeout(() => setCopied(""), 2200);
+    } catch {
+      window.prompt("Copy this", value);
+    }
+  };
+
+  return (
+    <section className="rounded-2xl border border-emerald-200 bg-gradient-to-r from-emerald-50 via-white to-cyan-50 p-4 shadow-sm">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex gap-3">
+          <span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-emerald-600 text-white shadow-lg shadow-emerald-200"><ShoppingBag className="h-5 w-5" /></span>
+          <div>
+            <p className="text-xs font-black uppercase tracking-[0.16em] text-emerald-700">Public catalogue link</p>
+            <h2 className="mt-1 text-sm font-black text-slate-900">Share like WhatsApp catalogue</h2>
+            <p className="mt-1 text-xs leading-5 text-slate-600">Buyers can open this mobile page, add fixed-price items to cart and send you an order request. Formal PO flow stays inside RMS.</p>
+          </div>
+        </div>
+        <div className="flex flex-col gap-2 sm:flex-row">
+          <button type="button" disabled={!publicLink || activeCount === 0} onClick={() => copy(publicLink, "Link")} className="inline-flex items-center justify-center gap-2 rounded-xl border border-emerald-200 bg-white px-3 py-2 text-xs font-black text-emerald-700 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-50"><Clipboard className="h-3.5 w-3.5" />Copy link</button>
+          <button type="button" disabled={!message || activeCount === 0} onClick={() => copy(message, "WhatsApp text")} className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-3 py-2 text-xs font-black text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"><Send className="h-3.5 w-3.5" />Copy WhatsApp text</button>
+          <a href={publicLink || "#"} target="_blank" rel="noreferrer" className={`inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-700 hover:bg-slate-50 ${!publicLink || activeCount === 0 ? "pointer-events-none opacity-50" : ""}`}><ExternalLink className="h-3.5 w-3.5" />Preview</a>
+        </div>
+      </div>
+      {copied && <p className="mt-3 rounded-xl border border-emerald-200 bg-emerald-100 px-3 py-2 text-xs font-black text-emerald-800">{copied}</p>}
+      {activeCount === 0 && <p className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-800">Add at least one active direct-purchase item with price and stock before sharing the public catalogue.</p>}
+    </section>
+  );
+}
+
+function PublicCatalogueOrdersPanel() {
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const load = useCallback(async () => {
+    setLoading(true); setError("");
+    try {
+      const response = await vendorFetch("/api/catalogue/my-catalogue/public-orders");
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || "Could not load public orders.");
+      setRows(data.data || []);
+    } catch (err) {
+      setError(err.message || "Could not load public orders.");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+  useEffect(() => { load(); }, [load]);
+  const total = (row) => Number(row.estimated_total || 0).toLocaleString("en-IN");
+  return <div className="space-y-4">
+    <section className="rounded-2xl border border-teal-100 bg-gradient-to-r from-teal-50 to-cyan-50 p-4"><h2 className="text-sm font-black text-slate-900">Public catalogue order requests</h2><p className="mt-1 text-xs leading-5 text-slate-600">These are leads from the public catalogue link. Confirm stock/tax/freight with the buyer, then create or convert to a formal RMS PO when needed.</p></section>
+    {error && <p className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs font-bold text-rose-700">{error}</p>}
+    <div className="flex justify-end"><button onClick={load} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-700"><RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />Refresh</button></div>
+    {loading ? <div className="grid place-items-center rounded-2xl border border-slate-200 bg-white p-12"><RefreshCw className="h-6 w-6 animate-spin text-indigo-500" /></div> : rows.length ? <div className="space-y-3">{rows.map((row) => <article key={row._id} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"><div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"><div><div className="flex flex-wrap items-center gap-2"><span className="rounded-full bg-emerald-100 px-2 py-1 text-[10px] font-black text-emerald-700">{row.status || "New"}</span><span className="text-[11px] font-bold text-slate-400">{String(row.created_at || "").slice(0, 16)}</span></div><h3 className="mt-2 text-sm font-black text-slate-900">{row.buyer?.business || row.buyer?.name || "Buyer"}</h3><p className="mt-1 text-xs text-slate-500">{row.buyer?.name} - {row.buyer?.phone}{row.buyer?.email ? ` - ${row.buyer.email}` : ""}</p></div><div className="text-left sm:text-right"><p className="text-xs font-bold text-slate-500">Estimated total</p><p className="text-lg font-black text-slate-900">&#8377;{total(row)}</p></div></div><div className="mt-3 divide-y divide-slate-100 rounded-xl border border-slate-100">{(row.items || []).map((item, idx) => <div key={`${row._id}-${idx}`} className="flex items-center gap-3 p-2.5"><img src={item.image} alt="" className="h-11 w-11 rounded-lg object-cover bg-slate-100" /><div className="min-w-0 flex-1"><p className="truncate text-xs font-black text-slate-900">{item.item_name}</p><p className="text-[11px] text-slate-500">{[item.size, item.color].filter(Boolean).join(" / ") || "Standard"} - Qty {item.quantity} - &#8377;{Number(item.rate || 0).toLocaleString("en-IN")}</p></div></div>)}</div>{row.note && <p className="mt-3 rounded-xl bg-slate-50 p-3 text-xs leading-5 text-slate-600">{row.note}</p>}</article>)}</div> : <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-12 text-center text-sm text-slate-500">No public catalogue requests yet.</div>}
+  </div>;
 }
 
 const LISTING_ESSENTIALS = [
@@ -1340,6 +1420,8 @@ function CataloguePanel() {
       {error && (
         <div className="text-xs font-semibold text-rose-600 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2">⚠ {error}</div>
       )}
+
+      <PublicCatalogueShareCard activeCount={activeCount} />
 
       <section className="rounded-2xl border border-indigo-100 bg-gradient-to-r from-indigo-50 to-cyan-50 p-4">
         <div className="flex gap-3"><span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-white text-indigo-600 shadow-sm"><CircleHelp className="h-4 w-4" /></span><div><h2 className="text-sm font-black text-slate-900">Create a retailer-ready catalogue</h2><p className="mt-1 text-xs leading-5 text-slate-600">Add the basics first, then improve your listing anytime from Edit and Images.</p></div></div>
@@ -2265,7 +2347,7 @@ export default function VendorCatalogueTab() {
         </div>
 
         <div className="flex gap-2 bg-white p-1 rounded-xl border border-slate-200 w-fit">
-          {[["catalogue", "Catalogue"], ["bulk", "Bulk Import"], ["inquiries", "Inquiries"], ["subscription", "Subscription"]].map(([id, label]) => (
+          {[["catalogue", "Catalogue"], ["bulk", "Bulk Import"], ["public-orders", "Public Orders"], ["inquiries", "Inquiries"], ["subscription", "Subscription"]].map(([id, label]) => (
             <button key={id} onClick={() => setTab(id)}
               className={`px-4 py-2 rounded-lg text-xs font-bold transition ${tab === id ? "bg-indigo-600 text-white" : "text-slate-500 hover:bg-slate-50"}`}>
               {label}
@@ -2273,7 +2355,7 @@ export default function VendorCatalogueTab() {
           ))}
         </div>
 
-        {tab === "catalogue" ? <CataloguePanel /> : tab === "bulk" ? <BulkImportPanel /> : tab === "inquiries" ? <InquiriesPanel /> : <VendorSubscriptionTab />}
+        {tab === "catalogue" ? <CataloguePanel /> : tab === "bulk" ? <BulkImportPanel /> : tab === "public-orders" ? <PublicCatalogueOrdersPanel /> : tab === "inquiries" ? <InquiriesPanel /> : <VendorSubscriptionTab />}
       </div>
     </div>
   );

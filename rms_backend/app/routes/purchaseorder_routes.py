@@ -8,9 +8,12 @@ from datetime import datetime, timedelta
 from bson import ObjectId
 import uuid
 import re
+from urllib.parse import quote
 
 from app.db import purchaseorders_collection, vendors_collection, product_collection, vendor_tenant_links_collection, vendor_catalogue_collection
 from .deps import get_hq_tenant
+from .procurement_notification_routes import notify_vendor
+from ..email_utils import send_purchase_order_created_email
 
 router = APIRouter(prefix="/purchaseorders", tags=["Purchase Orders"])
 
@@ -438,6 +441,88 @@ def _make_share_link(token: str) -> str:
     return f"{APP_BASE_URL}/po-view/{token}"
 
 
+def _clean_whatsapp_mobile(value: str) -> str:
+    digits = re.sub(r"\D", "", str(value or ""))
+    if len(digits) == 10:
+        return "91" + digits
+    return digits
+
+
+def _vendor_notification_preferences(vendor_doc: Optional[dict]) -> dict:
+    defaults = {"purchase_orders": True, "email_alerts": True, "whatsapp_alerts": False}
+    settings_doc = (vendor_doc or {}).get("settings") if isinstance((vendor_doc or {}).get("settings"), dict) else {}
+    saved = settings_doc.get("notification_preferences") if isinstance(settings_doc.get("notification_preferences"), dict) else {}
+    return {**defaults, **saved}
+
+
+def _build_po_alert_payload(po: dict, vendor_doc: Optional[dict] = None, share_link: str = "") -> dict:
+    walkin = po.get("walkin_vendor") or {}
+    vendor_name = ((vendor_doc or {}).get("vendor_name") or (vendor_doc or {}).get("name") or walkin.get("name") or po.get("vendorName") or "Vendor")
+    retailer_name = po.get("ownerSite") or po.get("raised_by_name") or "RMS buyer"
+    link = share_link or f"{APP_BASE_URL}/merchandiser-seller"
+    amount = float(po.get("netAmount") or 0)
+    message = (
+        f"Dear {vendor_name},\n\n"
+        f"A Purchase Order {po.get('orderNo', '')} has been raised from {retailer_name}.\n"
+        f"Order date: {po.get('orderDate', '')}\n"
+        f"Total value: {po.get('currency', 'INR')} {amount:,.2f}\n\n"
+        f"Please review it here:\n{link}\n\n"
+        f"Regards,\nRMS"
+    )
+    mobile = ((vendor_doc or {}).get("contactMobile") or (vendor_doc or {}).get("mobile") or (vendor_doc or {}).get("phone") or walkin.get("mobile") or "")
+    clean_mobile = _clean_whatsapp_mobile(mobile)
+    return {
+        "vendor_name": vendor_name,
+        "retailer_name": retailer_name,
+        "portal_link": link,
+        "whatsapp_mobile": clean_mobile,
+        "whatsapp_message": message,
+        "whatsapp_url": f"https://wa.me/{clean_mobile}?text={quote(message)}" if clean_mobile else "",
+    }
+
+
+async def _send_po_created_alerts(po: dict, ctx: dict, vendor_doc: Optional[dict] = None, share_link: str = "") -> dict:
+    alert = _build_po_alert_payload(po, vendor_doc, share_link)
+    prefs = _vendor_notification_preferences(vendor_doc)
+    portal_notified = False
+    email_attempted = False
+    email_sent = False
+
+    if po.get("vendor_id") and prefs.get("purchase_orders", True):
+        await notify_vendor(
+            po["vendor_id"],
+            "purchase_order_created",
+            "New purchase order assigned",
+            f"{alert['retailer_name']} created PO {po.get('orderNo', '')} worth {po.get('currency', 'INR')} {float(po.get('netAmount') or 0):,.2f}.",
+            tenant_id=ctx.get("tenant_id"),
+            metadata={"po_id": po.get("id", ""), "order_no": po.get("orderNo", ""), "amount": po.get("netAmount", 0), "portal_link": alert["portal_link"]},
+            category="purchase_orders",
+        )
+        portal_notified = True
+
+    recipient_email = ((vendor_doc or {}).get("email") or ((po.get("walkin_vendor") or {}).get("email")) or "")
+    if recipient_email and (not vendor_doc or prefs.get("email_alerts", True)):
+        email_attempted = True
+        email_sent = await send_purchase_order_created_email(
+            recipient_email,
+            alert["vendor_name"],
+            alert["retailer_name"],
+            po.get("orderNo", ""),
+            po.get("orderDate", ""),
+            po.get("netAmount", 0),
+            alert["portal_link"],
+        )
+
+    alert.update({
+        "portal_notification_created": portal_notified,
+        "email_attempted": email_attempted,
+        "email_sent": email_sent,
+        "whatsapp_auto_sent": False,
+        "whatsapp_note": "Auto WhatsApp needs Meta WhatsApp Business credentials; use whatsapp_url/message for manual sending now.",
+    })
+    return alert
+
+
 def _po_public_payload(po: dict) -> dict:
     """Sanitised PO data safe to expose on the public link (no internal IDs)."""
     wv = po.get("walkin_vendor") or {}
@@ -584,6 +669,7 @@ async def create_po(po: PurchaseOrderModel, ctx: dict = Depends(get_hq_tenant)):
     po_dict["raised_by_user_id"] = str(ctx.get("admin_id") or "")
     po_dict["raised_by_name"] = ctx.get("admin_name") or "HQ Buyer"
     po_dict["raised_by_department"] = ctx.get("department") or ""
+    vendor = None
     if not po_dict.get("orderNo"):
         po_dict["orderNo"] = await generate_po_number(ctx["tenant_id"])
 
@@ -699,26 +785,15 @@ async def create_po(po: PurchaseOrderModel, ctx: dict = Depends(get_hq_tenant)):
     if po_dict.get("vendor_id"):
         po_dict["vendor_id"] = str(po_dict["vendor_id"])
 
-    response = {"message": "Purchase Order created successfully", "order": po_dict}
+    alert = await _send_po_created_alerts(po_dict, ctx, vendor, share_link or "")
+    response = {"message": "Purchase Order created successfully", "order": po_dict, "vendor_alert": alert}
     if share_link:
         response["share_link"] = share_link
         response["share_token"] = token
-        # WhatsApp message pre-filled
-        wv   = po_dict.get("walkin_vendor") or {}
-        mob  = wv.get("mobile", "")
-        name = wv.get("name") or po_dict.get("vendorName", "")
-        wa_text = (
-            f"Dear {name},\n\n"
-            f"A Purchase Order {po_dict['orderNo']} has been raised for you "
-            f"from {po_dict.get('ownerSite', 'us')} "
-            f"dated {po_dict.get('orderDate', '')}.\n\n"
-            f"Total Value: {po_dict.get('currency','INR')} {po_dict.get('netAmount',0):,.2f}\n\n"
-            f"Please view and accept your PO here:\n{share_link}\n\n"
-            f"This link is valid for {TOKEN_EXPIRY_DAYS} days.\n"
-            f"Regards,\n{po_dict.get('ownerSite', 'RMS')}"
-        )
-        response["whatsapp_message"] = wa_text
-        response["whatsapp_mobile"]  = mob
+    if alert.get("whatsapp_message"):
+        response["whatsapp_message"] = alert["whatsapp_message"]
+        response["whatsapp_mobile"] = alert.get("whatsapp_mobile", "")
+        response["whatsapp_url"] = alert.get("whatsapp_url", "")
 
     return response
 
