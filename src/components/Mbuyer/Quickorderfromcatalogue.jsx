@@ -283,7 +283,7 @@ function VendorStorefronts({ onChooseForQuote, onDirectOrder, onCartCheckout }) 
                     <input type="number" min={orderMinQty(item)} max={Number.isFinite(availableQty(item)) ? availableQty(item) : undefined} value={cartLine.quantity} onChange={(e) => updateCartQty(item._id, e.target.value)} className="h-8 w-16 rounded-lg border border-teal-200 bg-white text-center text-sm font-black text-teal-900 outline-none" />
                     <button type="button" onClick={() => increaseCartQty(item, cartLine.quantity)} className="flex h-8 w-8 items-center justify-center rounded-full bg-white text-lg font-black text-teal-700 shadow hover:bg-teal-100">+</button>
                   </div> : <button type="button" onClick={() => addToCart({...item, vendor_name: vendor.name})} className="rounded-xl border border-teal-300 px-3 py-2.5 text-xs font-black text-teal-700 hover:bg-teal-50">Add to cart</button>}
-                  <button type="button" onClick={() => onChooseForQuote({...item, vendor_name: vendor.name})} className="rounded-xl border border-slate-200 px-3 py-2.5 text-xs font-bold text-slate-600 hover:bg-slate-50">View options</button>
+                  <button type="button" onClick={() => onChooseForQuote({...item, vendor_name: vendor.name})} className="rounded-xl border border-slate-200 px-3 py-2.5 text-xs font-bold text-slate-600 hover:bg-slate-50">Request RFQ</button>
                 </div>
               </div> : <div className="mt-3 grid grid-cols-2 gap-2">
                 <button type="button" onClick={() => onChooseForQuote({...item, vendor_name: vendor.name})} className="rounded-xl bg-indigo-600 px-3 py-2.5 text-xs font-black text-white hover:bg-indigo-700">Request RFQ</button>
@@ -458,12 +458,26 @@ export default function QuickOrderFromCatalogue() {
   // straight to the same PO review step (3) that pickWinner() below uses,
   // so it reuses the exact same, already-tested submitOrder() call.
   const directOrder = (item) => {
+    const sizeOptions = catalogueSizeValues(item);
+    const colorOptions = catalogueColorValues(item);
     setSubmitError(null);
     setDirectOrderMode(true);
-    setDirectCatalogueItem(item);
+    setDirectCatalogueItem(null);
     setVariantQuantities({});
     setOrderVendorName(item.vendor_name || "");
-    setOrderItems([]);
+    setOrderItems([{
+      description: item.item_name || "Catalogue item",
+      sku: item.sku || "",
+      barcode: item.barcode || "",
+      catalogue_item_id: item._id,
+      available_sizes: sizeOptions,
+      available_colors: colorOptions,
+      size: sizeOptions.join(", "),
+      color: colorOptions.join(", "),
+      quantity: "1",
+      rate: String(item.price || 0),
+      remarks: "Direct order - fixed listed price, no negotiation.",
+    }]);
     setStep(3);
   };
 
