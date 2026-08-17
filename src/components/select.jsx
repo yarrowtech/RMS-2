@@ -85,6 +85,33 @@ const STORE_THEME = {
   enterprise:   { icon: Globe2, accent: "from-violet-600 to-fuchsia-600", badge: "bg-violet-50 text-violet-700 ring-violet-200" },
 };
 
+const FALLBACK_VENDOR_TIERS = {
+  free: {
+    label: "Free", image_limit: 5, visibility_days: 45, business_type_limit: 1,
+    inquiry_limit_per_month: 20, price_inr: 0, featured_badge: false,
+    network_page_size: 8, network_requests_per_month: 3,
+    finance_export: false, finance_retailer_breakdown: false, finance_forecasting: false,
+  },
+  standard: {
+    label: "Standard", image_limit: 10, visibility_days: 45, business_type_limit: 3,
+    inquiry_limit_per_month: null, price_inr: 1499, featured_badge: false,
+    network_page_size: 20, network_requests_per_month: 25,
+    finance_export: true, finance_retailer_breakdown: true, finance_forecasting: false,
+  },
+  premium: {
+    label: "Premium", image_limit: 25, visibility_days: 90, business_type_limit: null,
+    inquiry_limit_per_month: null, price_inr: 3499, featured_badge: true,
+    network_page_size: 40, network_requests_per_month: null,
+    finance_export: true, finance_retailer_breakdown: true, finance_forecasting: true,
+  },
+};
+
+const FALLBACK_STORE_PLANS = {
+  basic: { label: "Basic", price_inr: 50000, max_stores: 1, new_permissions: [] },
+  professional: { label: "Professional", price_inr: 90000, max_stores: 5, new_permissions: ["inventory", "finance", "logistics", "merchandiser_buyer"] },
+  enterprise: { label: "Enterprise", price_inr: 125000, max_stores: null, new_permissions: ["inventory", "finance", "logistics", "merchandiser_buyer", "hr"] },
+};
+
 function vendorBullets(cfg) {
   return [
     `${cfg.image_limit} catalogue images, ${cfg.visibility_days}-day visibility`,
@@ -177,14 +204,17 @@ export default function ProfessionalRoleSelector() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   useEffect(() => {
+    setVendorTiers(FALLBACK_VENDOR_TIERS);
+    setStorePlans(FALLBACK_STORE_PLANS);
+
     fetch(`${API_BASE_URL}/api/subscriptions/tiers`)
-      .then((r) => r.json())
-      .then((json) => setVendorTiers(json.data || null))
-      .catch(() => {});
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error("Could not load vendor plans"))))
+      .then((json) => setVendorTiers(json.data || FALLBACK_VENDOR_TIERS))
+      .catch(() => setVendorTiers(FALLBACK_VENDOR_TIERS));
     fetch(`${API_BASE_URL}/api/store-upgrades/plans`)
-      .then((r) => r.json())
-      .then((json) => setStorePlans(json.plans || null))
-      .catch(() => {});
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error("Could not load retailer plans"))))
+      .then((json) => setStorePlans(json.plans || FALLBACK_STORE_PLANS))
+      .catch(() => setStorePlans(FALLBACK_STORE_PLANS));
   }, []);
 
   return (
