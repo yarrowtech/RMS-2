@@ -315,8 +315,7 @@ async def add_catalogue_item(
 
     if not item_name.strip():
         raise HTTPException(status_code=400, detail="item_name is required.")
-    if direct_purchase_enabled and price <= 0:
-        raise HTTPException(status_code=400, detail="A firm price is required to enable direct purchase on this item.")
+    direct_purchase_enabled = price > 0
 
     # ── Tier check BEFORE any Cloudinary upload — no point burning upload
     # calls on a request that's going to be rejected anyway.
@@ -379,7 +378,7 @@ async def add_catalogue_item(
         "price_range_min":   max(0.0, price_range_min),
         "price_range_max":   max(0.0, price_range_max),
         "price":                  max(0.0, price),
-        "direct_purchase_enabled": bool(direct_purchase_enabled),
+        "direct_purchase_enabled": price > 0,
         "stock":             max(0, stock),
         "available_sizes":   [s.strip() for s in available_sizes.split(",") if s.strip()],
         "available_colors":  [c.strip() for c in available_colors.split(",") if c.strip()],
@@ -707,8 +706,12 @@ async def update_catalogue_item(item_id: str, payload: dict, authorization: str 
                "price", "direct_purchase_enabled", "stock",
                "available_sizes", "available_colors", "moq", "variants", "active"}
     patch = {k: v for k, v in payload.items() if k in allowed}
-    if patch.get("direct_purchase_enabled") and float(patch.get("price", item.get("price", 0)) or 0) <= 0:
-        raise HTTPException(status_code=400, detail="A firm price is required to enable direct purchase on this item.")
+    if "price" in patch or "direct_purchase_enabled" in patch:
+        try:
+            effective_price = float(patch.get("price", item.get("price", 0)) or 0)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="Catalogue price must be a valid number.")
+        patch["direct_purchase_enabled"] = effective_price > 0
     if "variants" in patch:
         patch["variants"] = _normalise_catalogue_variants(patch["variants"])
     patch["updated_at"] = datetime.utcnow()
