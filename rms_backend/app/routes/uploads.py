@@ -12,6 +12,7 @@ from datetime import datetime, timedelta
 import hashlib
 import asyncio
 import json
+import re
 import os
 from pathlib import Path
 from uuid import uuid4
@@ -59,7 +60,7 @@ def norm_text(val) -> str:
 
 
 def normalize_column_name(value) -> str:
-    return str(value or "").strip().replace(" ", "").replace("-", "").replace("_", "").upper()
+    return re.sub(r"[^A-Z0-9]+", "", str(value or "").strip().upper())
 
 
 def sheet_matches_required(headers, required_groups=None) -> bool:
@@ -139,9 +140,18 @@ async def insert_to_mongo(df: pd.DataFrame, collection: str, upload_id: Optional
         return 0
 
     df = df.copy()
-    df["_row_hash"] = df.astype(str).sum(axis=1).apply(
-        lambda x: hashlib.md5(x.encode()).hexdigest()
-    )
+    hash_columns = sorted(column for column in df.columns if column != "_row_hash")
+
+    def row_fingerprint(row) -> str:
+        # Length-prefix every value so combinations such as AB+C and A+BC
+        # can never produce the same input string.
+        parts = []
+        for column in hash_columns:
+            value = "" if pd.isna(row[column]) else str(row[column])
+            parts.append(f"{column}:{len(value)}:{value}")
+        return hashlib.md5("|".join(parts).encode("utf-8")).hexdigest()
+
+    df["_row_hash"] = df.apply(row_fingerprint, axis=1)
 
     coll = forecast_db[collection]
     await coll.create_index("_row_hash")
@@ -223,6 +233,7 @@ async def save_upload_stream(file: UploadFile, upload_type: str) -> str:
 async def upload_sales(files: List[UploadFile] = File(...)):
     required = ["STORE", "DIVISION", "SECTION", "DEPARTMENT", "VENDOR", "BILLQTY"]
     optional = ["CAT1", "CAT2", "CAT3", "CAT4", "CAT5", "CATEGORY6", "RSP", "STANDARDRATE"]
+    identity_fields = ["BILLNO", "BARCODE", "ITEMCODE", "SKU", "LINENO"]
     aliases = {
         "STORE": ["STORE", "STORENAME"], "DIVISION": ["DIVISION", "DVN"],
         "SECTION": ["SECTION"], "DEPARTMENT": ["DEPARTMENT", "DEPT"],
@@ -232,6 +243,9 @@ async def upload_sales(files: List[UploadFile] = File(...)):
         "CAT4": ["CAT4(PLANE,F/S,H/S)", "CAT4PLANEFSHS", "CAT4PLANE", "CAT4"],
         "CAT5": ["CAT5(SIZE)", "CAT5SIZE", "CAT5"], "CATEGORY6": ["AGEING", "CATEGORY6", "CAT6"],
         "RSP": ["RSP", "SELLINGPRICE"], "STANDARDRATE": ["STDRATE", "STANDARDRATE"],
+        "BILLNO": ["BILLNO", "BILLNUMBER", "INVOICENO", "INVOICENUMBER", "RECEIPTNO"],
+        "BARCODE": ["BARCODE", "EAN", "UPC"], "ITEMCODE": ["ITEMCODE", "PRODUCTCODE"],
+        "SKU": ["SKU", "SKUCODE"], "LINENO": ["LINENO", "LINENUMBER", "SRNO", "SERIALNO"],
     }
     required_groups = [aliases[name] for name in required]
     total_rows = 0
@@ -260,9 +274,13 @@ async def upload_sales(files: List[UploadFile] = File(...)):
         selected_sheet = ""
         detected_columns = []
         chunks_seen = 0
+        source_row_offset = 0
         for df in iter_excel_or_csv(saved_path, file.filename, required_groups):
             chunks_seen += 1
             selected_sheet = selected_sheet or df.attrs.get("selected_sheet", "")
+            source_rows = len(df)
+            df["_SOURCE_ROW"] = range(source_row_offset + 1, source_row_offset + source_rows + 1)
+            source_row_offset += source_rows
             rename_map = {}
             for standard, choices in aliases.items():
                 for choice in choices:
@@ -274,12 +292,16 @@ async def upload_sales(files: List[UploadFile] = File(...)):
             missing = [name for name in required if name not in df.columns]
             if missing:
                 raise HTTPException(status_code=400, detail={"message": "Sales upload missing required columns", "missing_columns": missing, "detected_columns": df.columns.tolist(), "selected_sheet": selected_sheet})
-            keep = required + ["DATE", "ISVOID"] + [name for name in optional if name in df.columns]
+            keep = required + ["DATE", "ISVOID", "_SOURCE_ROW"]
+            keep += [name for name in optional + identity_fields if name in df.columns]
             df = df[[name for name in keep if name in df.columns]].copy()
             if "ISVOID" in df.columns:
                 df = df[df["ISVOID"].apply(lambda value: str(value).strip().upper() not in ("YES", "TRUE", "1", "Y"))].drop(columns=["ISVOID"])
             for name in ["STORE", "DIVISION", "SECTION", "DEPARTMENT", "VENDOR"]:
                 df[name] = df[name].apply(norm_text)
+            for name in identity_fields:
+                if name in df.columns:
+                    df[name] = df[name].apply(norm_text)
             for name in ["CAT1", "CAT2", "CAT3", "CAT4", "CAT5", "CATEGORY6"]:
                 if name in df.columns:
                     df[name] = df[name].apply(clean_category)
