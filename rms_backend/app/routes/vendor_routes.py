@@ -1368,6 +1368,34 @@ async def download_vendor_purchase_order(po_id: str, format: str = Query("pdf"),
     return _po_export_response(po, vendor, fmt)
 
 
+@vendor_bp.post("/purchaseorders/{po_id}/payment-proof/verify")
+async def verify_payment_proof(po_id: str, payload: dict, authorization: str = Header(None)):
+    """Vendor confirms or rejects the buyer's uploaded offline-payment proof."""
+    vendor = await require_vendor_identity(authorization)
+    po_query = vendor_po_query(po_id, vendor["_id"])
+    po = await purchaseorders_collection.find_one(po_query)
+    if not po:
+        raise HTTPException(status_code=404, detail="PO not found or not assigned to this vendor")
+    if not po.get("payment_proof"):
+        raise HTTPException(status_code=400, detail="No payment proof has been submitted for this order yet.")
+
+    new_status = str(payload.get("status") or "").strip().lower()
+    if new_status not in ("verified", "rejected"):
+        raise HTTPException(status_code=400, detail="Status must be 'verified' or 'rejected'.")
+
+    await purchaseorders_collection.update_one(
+        po_query,
+        {"$set": {
+            "payment_proof.status":      new_status,
+            "payment_proof.verified_at": datetime.utcnow(),
+            "payment_proof.verified_by": vendor.get("name") or vendor.get("vendor_name") or "Vendor",
+            "payment_proof.verify_note": str(payload.get("note") or "").strip()[:500],
+            "updatedAt": datetime.utcnow(),
+        }}
+    )
+    return {"message": f"Payment marked as {new_status}."}
+
+
 @vendor_bp.get("/purchaseorders/{vendor_name}")
 async def get_vendor_purchase_orders(vendor_name: str):
     """Retired name-based route; vendor identity must come from the token."""

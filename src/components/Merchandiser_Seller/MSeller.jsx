@@ -184,7 +184,7 @@ const PAGE_TITLES = {
 };
 
 export default function MSeller() {
-  const [activeTab,      setActiveTab]      = useState("dashboard");
+  const [activeTab,      setActiveTab]      = useState(() => new URLSearchParams(window.location.search).get("tab") || "dashboard");
   const [sidebarOpen,    setSidebarOpen]    = useState(true);
   const [drawerOpen,     setDrawerOpen]     = useState(false);
   const [vendorProfile,  setVendorProfile]  = useState(null);

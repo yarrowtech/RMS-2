@@ -1,5 +1,5 @@
 
-from fastapi import APIRouter, HTTPException, status, Depends, Header
+from fastapi import APIRouter, HTTPException, status, Depends, Header, File, Form, UploadFile
 from jose import jwt, JWTError
 from ..config import settings, frontend_url
 from pydantic import BaseModel, Field
@@ -9,6 +9,8 @@ from bson import ObjectId
 import uuid
 import re
 from urllib.parse import quote
+import cloudinary
+import cloudinary.uploader
 
 from app.db import purchaseorders_collection, vendors_collection, product_collection, vendor_tenant_links_collection, vendor_catalogue_collection
 from .deps import get_hq_tenant
@@ -135,6 +137,17 @@ class WalkinVendorModel(BaseModel):
     pan:            str = ""
 
 
+class PaymentProofModel(BaseModel):
+    image_url:     Optional[str]      = None
+    utr_reference: Optional[str]      = ""
+    note:          Optional[str]      = ""
+    submitted_at:  Optional[datetime] = None
+    status:        Optional[str]      = "pending"   # pending | verified | rejected
+    verified_at:   Optional[datetime] = None
+    verified_by:   Optional[str]      = None
+    verify_note:   Optional[str]      = ""
+
+
 class PurchaseOrderModel(BaseModel):
     id: Optional[str] = None
     orderNo: Optional[str] = None
@@ -182,6 +195,7 @@ class PurchaseOrderModel(BaseModel):
     vendor_type:   Optional[str]               = "registered"
     direct_purchase: Optional[bool]            = False
     walkin_vendor: Optional[WalkinVendorModel] = None
+    payment_proof: Optional[PaymentProofModel] = None
 
 
 # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
@@ -859,6 +873,61 @@ async def get_purchase_order(po_id: str, ctx: dict = Depends(get_hq_tenant)):
     del po["_id"]
     po["vendor_id"] = objid(po.get("vendor_id"))
     return PurchaseOrderModel(**po)
+
+
+@router.post("/{po_id}/payment-proof")
+async def submit_payment_proof(
+    po_id: str,
+    screenshot: UploadFile = File(...),
+    utr_reference: str = Form(""),
+    note: str = Form(""),
+    ctx: dict = Depends(get_hq_tenant),
+):
+    """
+    Buyer uploads proof of an offline payment (UPI/QR/bank transfer) made
+    directly to the vendor for a direct-purchase order. This never touches
+    PO status or stock — it's a side channel so the vendor can see and
+    confirm the money arrived.
+    """
+    try:
+        po = await purchaseorders_collection.find_one({"_id": ObjectId(po_id), "tenant_id": ctx["tenant_id"]})
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid Purchase Order ID")
+    if not po:
+        raise HTTPException(status_code=404, detail="Purchase order not found")
+    if not po.get("direct_purchase"):
+        raise HTTPException(status_code=400, detail="Payment proof can only be submitted for direct-purchase orders.")
+    if not utr_reference.strip():
+        raise HTTPException(status_code=400, detail="Enter the UPI / transaction reference number.")
+
+    try:
+        raw = await screenshot.read()
+        result = cloudinary.uploader.upload(
+            raw,
+            folder="payment_proofs",
+            resource_type="auto",
+            public_id=f"{po_id}_{uuid.uuid4().hex[:8]}",
+            overwrite=False,
+        )
+        image_url = result["secure_url"]
+    except Exception:
+        raise HTTPException(status_code=502, detail="Could not upload the payment screenshot. Please try again.")
+
+    payment_proof = {
+        "image_url":     image_url,
+        "utr_reference": utr_reference.strip(),
+        "note":          note.strip(),
+        "submitted_at":  datetime.utcnow(),
+        "status":        "pending",
+        "verified_at":   None,
+        "verified_by":   None,
+        "verify_note":   "",
+    }
+    await purchaseorders_collection.update_one(
+        {"_id": ObjectId(po_id)},
+        {"$set": {"payment_proof": payment_proof, "updatedAt": datetime.utcnow()}}
+    )
+    return {"message": "Payment proof submitted. The vendor will verify it shortly.", "payment_proof": payment_proof}
 
 '''
 @router.put("/{po_id}")
