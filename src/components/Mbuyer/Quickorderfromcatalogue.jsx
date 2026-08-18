@@ -2,7 +2,7 @@ import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
 
 
 import React, { useState, useCallback, useEffect } from "react";
-import { Search, Send, RefreshCw, CheckCircle2, Trophy, ArrowLeft, Plus, Trash2, ShoppingBag, MessageSquare, FileQuestion, Users, Link2, Store, Phone, Mail, Globe, MapPin, ExternalLink, PackageCheck, Instagram, X } from "lucide-react";
+import { Search, Send, RefreshCw, CheckCircle2, Trophy, ArrowLeft, Plus, Trash2, ShoppingBag, MessageSquare, FileQuestion, Users, Link2, Store, Phone, Mail, Globe, MapPin, ExternalLink, PackageCheck, Instagram, X, UploadCloud, Clock, ShieldCheck, ShieldX } from "lucide-react";
 import MyInquiriesPage from "./Myinquiriespage.jsx";
 /* The import above intentionally matches the lowercase filename on disk;
    this is required on case-sensitive filesystems such as Linux. */
@@ -420,6 +420,11 @@ export default function QuickOrderFromCatalogue() {
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState(null);
   const [submittedOrderNo, setSubmittedOrderNo] = useState(null);
+  const [submittedOrderId, setSubmittedOrderId] = useState(null);
+  const [paymentProof, setPaymentProof] = useState(null);
+  const [paymentProofDraft, setPaymentProofDraft] = useState({ file: null, utr: "", note: "" });
+  const [paymentProofSubmitting, setPaymentProofSubmitting] = useState(false);
+  const [paymentProofError, setPaymentProofError] = useState(null);
 
   useEffect(() => {
     const raw = sessionStorage.getItem("rms_sample_po_prefill");
@@ -752,7 +757,8 @@ export default function QuickOrderFromCatalogue() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || "Failed to create purchase order.");
-      setSubmittedOrderNo(data.orderNo || data.id || "created");
+      setSubmittedOrderNo(data.order?.orderNo || data.orderNo || data.id || "created");
+      setSubmittedOrderId(data.order?.id || data.id || null);
     } catch (err) {
       setSubmitError(err.message);
     } finally {
@@ -760,10 +766,35 @@ export default function QuickOrderFromCatalogue() {
     }
   };
 
+  const submitPaymentProof = async () => {
+    setPaymentProofError(null);
+    if (!paymentProofDraft.file) { setPaymentProofError("Attach a payment screenshot."); return; }
+    if (!paymentProofDraft.utr.trim()) { setPaymentProofError("Enter the UPI / transaction reference number."); return; }
+    setPaymentProofSubmitting(true);
+    try {
+      const fd = new FormData();
+      fd.append("screenshot", paymentProofDraft.file);
+      fd.append("utr_reference", paymentProofDraft.utr.trim());
+      fd.append("note", paymentProofDraft.note.trim());
+      const res = await authFetch(`${API_BASE}/purchaseorders/${submittedOrderId}/payment-proof`, {
+        method: "POST",
+        body: fd,
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "Failed to submit payment proof.");
+      setPaymentProof(data.payment_proof);
+    } catch (err) {
+      setPaymentProofError(err.message);
+    } finally {
+      setPaymentProofSubmitting(false);
+    }
+  };
+
   const resetAll = () => {
     setStep(0); setCategory(""); setBusinessType(""); setResults([]); setSearched(false);
     setSelectedMap(new Map()); setItemRequests({}); setGroupId(null); setSingleInquiryId(null); setRows([]);
     setOrderVendorName(""); setOrderItems([EMPTY_ITEM()]); setCommercial({ gstPct: "", freight: "", discount: "", tolerancePct: "", dueDate: "", paymentTerms: "" }); setSubmittedOrderNo(null); setSubmitError(null); setDirectOrderMode(false); setDirectCatalogueItem(null); setVariantQuantities({});
+    setSubmittedOrderId(null); setPaymentProof(null); setPaymentProofDraft({ file: null, utr: "", note: "" }); setPaymentProofError(null);
   };
 
   const statusStyle = {
@@ -834,6 +865,42 @@ export default function QuickOrderFromCatalogue() {
             <CheckCircle2 className="w-12 h-12 text-emerald-500 mx-auto" />
             <p className="text-lg font-black text-slate-900">Purchase order created</p>
             <p className="text-sm text-slate-500">Order {submittedOrderNo} — {orderVendorName}</p>
+
+            {directOrderMode && submittedOrderId && (
+              <div className="mt-5 text-left rounded-xl border border-slate-200 bg-slate-50 p-4 max-w-md mx-auto">
+                {paymentProof ? (
+                  <div className="flex items-start gap-2.5">
+                    {paymentProof.status === "verified" ? <ShieldCheck className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
+                      : paymentProof.status === "rejected" ? <ShieldX className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
+                      : <Clock className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />}
+                    <div>
+                      <p className="text-xs font-black text-slate-900">
+                        {paymentProof.status === "verified" ? "Payment verified by vendor"
+                          : paymentProof.status === "rejected" ? "Vendor rejected this payment proof"
+                          : "Payment proof submitted — pending vendor verification"}
+                      </p>
+                      <p className="mt-0.5 text-[11px] text-slate-500">Ref: {paymentProof.utr_reference}</p>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <p className="text-xs font-black text-slate-900 flex items-center gap-1.5"><UploadCloud className="w-3.5 h-3.5" /> Paid the vendor already (UPI/QR/bank transfer)?</p>
+                    <p className="mt-0.5 text-[11px] text-slate-500">Upload proof so the vendor can confirm they've received it.</p>
+                    <div className="mt-3 space-y-2">
+                      <input type="file" accept="image/*" onChange={e => setPaymentProofDraft(d => ({ ...d, file: e.target.files?.[0] || null }))} className="w-full text-xs" />
+                      <input value={paymentProofDraft.utr} onChange={e => setPaymentProofDraft(d => ({ ...d, utr: e.target.value }))} placeholder="UPI / transaction reference no." className="w-full h-9 rounded-lg border border-slate-200 px-2.5 text-xs" />
+                      <input value={paymentProofDraft.note} onChange={e => setPaymentProofDraft(d => ({ ...d, note: e.target.value }))} placeholder="Note (optional)" className="w-full h-9 rounded-lg border border-slate-200 px-2.5 text-xs" />
+                      {paymentProofError && <p className="text-[11px] font-semibold text-rose-600">⚠ {paymentProofError}</p>}
+                      <button onClick={submitPaymentProof} disabled={paymentProofSubmitting}
+                        className="w-full h-9 rounded-lg bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-xs font-bold">
+                        {paymentProofSubmitting ? "Submitting…" : "Submit payment proof"}
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+
             <button onClick={resetAll}
               className="mt-4 h-9 px-5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-bold">
               Start another order
@@ -1207,7 +1274,7 @@ export default function QuickOrderFromCatalogue() {
 
                   <div className="space-y-2">
                     {orderItems.map((it, idx) => (
-                      <div key={`${it.catalogue_item_id || "manual"}-${it.size || "none"}-${it.color || "none"}-${idx}`} className="grid grid-cols-1 gap-2 rounded-xl border border-slate-100 p-2 sm:grid-cols-[1.25fr_110px_110px_75px_75px_1fr_28px]">
+                      <div key={`${it.catalogue_item_id || "manual"}-${idx}`} className="grid grid-cols-1 gap-2 rounded-xl border border-slate-100 p-2 sm:grid-cols-[1.25fr_110px_110px_75px_75px_1fr_28px]">
                         <input placeholder="Description" value={it.description} readOnly={directOrderMode} onChange={e => updateItem(idx, "description", e.target.value)} className="h-9 rounded-lg border border-slate-200 px-2 text-xs read-only:bg-slate-50" />
                         <input placeholder="Size e.g. S, M, XL" title={catalogueSizeValues(it).length ? `Vendor sizes: ${catalogueSizeValues(it).join(", ")}` : "Enter size manually"} value={it.size || ""} readOnly={directOrderMode && !cartReviewMode} onChange={e => updateItem(idx, "size", e.target.value)} className="h-9 rounded-lg border border-slate-200 px-2 text-xs read-only:bg-slate-50" />
                         <input placeholder="Color e.g. Red, Green" title={catalogueColorValues(it).length ? `Vendor colours: ${catalogueColorValues(it).join(", ")}` : "Enter colour manually"} value={it.color || ""} readOnly={directOrderMode && !cartReviewMode} onChange={e => updateItem(idx, "color", e.target.value)} className="h-9 rounded-lg border border-slate-200 px-2 text-xs read-only:bg-slate-50" />

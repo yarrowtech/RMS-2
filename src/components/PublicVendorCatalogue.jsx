@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import { API_BASE_URL } from "../config/api.js";
-import { ArrowLeft, Building2, CheckCircle2, Mail, MapPin, MessageCircle, Minus, PackageOpen, Phone, Plus, RefreshCw, ShoppingBag, Store, Trash2 } from "lucide-react";
+import { ArrowLeft, Building2, CheckCircle2, Mail, MapPin, MessageCircle, Minus, PackageOpen, Pencil, Phone, Plus, RefreshCw, ShoppingBag, Store, Trash2 } from "lucide-react";
 
 const money = (value) => `\u20b9${Number(value || 0).toLocaleString("en-IN")}`;
 const cleanPhone = (phone) => String(phone || "").replace(/[^0-9+]/g, "");
@@ -28,6 +28,7 @@ export default function PublicVendorCatalogue() {
   const [commercial, setCommercial] = useState({ gstPct: "", freight: "", discount: "", dueDate: "", paymentTerms: "" });
   const [submitting, setSubmitting] = useState(false);
   const [success, setSuccess] = useState("");
+  const [isOwnVendor, setIsOwnVendor] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -42,6 +43,25 @@ export default function PublicVendorCatalogue() {
         if (!cancelled) setError(err.message || "Catalogue is not available.");
       } finally {
         if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [vendorId]);
+
+  // If the person viewing this public link is logged in as the vendor who
+  // owns this catalogue, offer a shortcut back to their own management tab
+  // instead of leaving them stuck on the anonymous buyer view.
+  useEffect(() => {
+    let cancelled = false;
+    const vendorToken = localStorage.getItem("vendor_token");
+    if (!vendorToken) return;
+    (async () => {
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/vendors/me`, { headers: { Authorization: `Bearer ${vendorToken}` } });
+        const data = await response.json();
+        if (!cancelled && response.ok && String(data?._id) === String(vendorId)) setIsOwnVendor(true);
+      } catch {
+        // Not fatal — the page just stays in anonymous buyer view.
       }
     })();
     return () => { cancelled = true; };
@@ -150,7 +170,10 @@ export default function PublicVendorCatalogue() {
     <header className="sticky top-0 z-30 border-b border-white/10 bg-[#071411]/90 px-4 py-3 backdrop-blur-xl">
       <div className="mx-auto flex max-w-5xl items-center justify-between gap-3">
         <Link to="/" className="inline-flex items-center gap-2 text-sm font-bold text-emerald-100"><ArrowLeft className="h-4 w-4" /> RMS</Link>
-        <button onClick={() => setCheckoutOpen(true)} className="relative rounded-full bg-emerald-500 px-4 py-2 text-sm font-black text-slate-950 shadow-lg shadow-emerald-900/30"><ShoppingBag className="mr-1.5 inline h-4 w-4" /> Cart {cart.length ? `(${cart.length})` : ""}</button>
+        <div className="flex items-center gap-2">
+          {isOwnVendor && <Link to="/dashboard/vendor?tab=catalogue" className="inline-flex items-center gap-1.5 rounded-full bg-white/10 px-4 py-2 text-sm font-black text-emerald-100 ring-1 ring-white/15 hover:bg-white/15"><Pencil className="h-3.5 w-3.5" /> Manage this catalogue</Link>}
+          <button onClick={() => setCheckoutOpen(true)} className="relative rounded-full bg-emerald-500 px-4 py-2 text-sm font-black text-slate-950 shadow-lg shadow-emerald-900/30"><ShoppingBag className="mr-1.5 inline h-4 w-4" /> Cart {cart.length ? `(${cart.length})` : ""}</button>
+        </div>
       </div>
     </header>
 

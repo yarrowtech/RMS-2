@@ -574,10 +574,41 @@ function DeliveryPanel({ po, onSave }) {
   const timeline = po.delivery?.timeline || [];
   return <div style={{ margin:"0 24px 22px", padding:16, borderRadius:14, background:"#F5F3FF", border:"1px solid #DDD6FE" }}><p style={{ margin:"0 0 4px", fontSize:13, fontWeight:800, color:T.navy }}>Delivery & dispatch</p><p style={{ margin:"0 0 8px", fontSize:11, color:T.muted }}>You already submitted the PO, which confirms your items and rates. Use this section only when the goods are being prepared or sent.</p><div style={{ margin:"0 0 14px", padding:"9px 11px", borderRadius:9, background:"#fff", border:"1px solid #DDD6FE", fontSize:11, lineHeight:1.55, color:T.label }}><b>What to do:</b> Select <b>Production started</b> while making the goods. When they leave your location, select <b>Dispatched</b> and add the delivery date and tracking details if you have them. After arrival, the retailer records a <b>GRC</b> for the physical receipt, then posts a <b>GRN</b> to add accepted goods to stock.</div><div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))", gap:10 }}><label style={{ fontSize:11, fontWeight:700, color:T.label }}>Status<select value={form.status} onChange={e=>change("status",e.target.value)} style={{ width:"100%", marginTop:4, padding:8, borderRadius:8, border:`1px solid ${T.border}`, background:"#fff" }}><option value="ProductionStarted">Production started</option><option value="ReadyToDispatch">Ready to dispatch</option><option value="Dispatched">Dispatched</option></select></label><label style={{ fontSize:11, fontWeight:700, color:T.label }}>Expected dispatch<input type="date" value={form.expected_dispatch_date} onChange={e=>change("expected_dispatch_date",e.target.value)} style={{ width:"100%", marginTop:4, padding:7, borderRadius:8, border:`1px solid ${T.border}` }} /></label><label style={{ fontSize:11, fontWeight:700, color:T.label }}>Expected delivery<input type="date" value={form.expected_delivery_date} onChange={e=>change("expected_delivery_date",e.target.value)} style={{ width:"100%", marginTop:4, padding:7, borderRadius:8, border:`1px solid ${T.border}` }} /></label><label style={{ fontSize:11, fontWeight:700, color:T.label }}>Transporter<input value={form.transporter_name} onChange={e=>change("transporter_name",e.target.value)} style={{ width:"100%", marginTop:4, padding:7, borderRadius:8, border:`1px solid ${T.border}` }} /></label><label style={{ fontSize:11, fontWeight:700, color:T.label }}>Tracking / AWB<input value={form.tracking_number} onChange={e=>change("tracking_number",e.target.value)} style={{ width:"100%", marginTop:4, padding:7, borderRadius:8, border:`1px solid ${T.border}` }} /></label><label style={{ fontSize:11, fontWeight:700, color:T.label }}>Vehicle<input value={form.vehicle_number} onChange={e=>change("vehicle_number",e.target.value)} style={{ width:"100%", marginTop:4, padding:7, borderRadius:8, border:`1px solid ${T.border}` }} /></label></div><textarea value={form.dispatch_note} onChange={e=>change("dispatch_note",e.target.value)} placeholder="Dispatch note for retailer" style={{ width:"100%", marginTop:10, minHeight:54, padding:8, borderRadius:8, border:`1px solid ${T.border}`, resize:"vertical" }} /><div style={{ display:"flex", justifyContent:"space-between", gap:10, marginTop:10, alignItems:"center" }}><span style={{ fontSize:11, color:T.muted }}>{po.delivery?.retailer_receipt ? `Retailer receipt: ${po.delivery.retailer_receipt.status}` : "Retailer has not recorded receipt yet."}</span><IconBtn variant="violet" onClick={save} disabled={savingDelivery}>{savingDelivery ? "Saving…" : "Save delivery update"}</IconBtn></div>{timeline.length>0 && <div style={{ marginTop:12, borderTop:`1px solid #DDD6FE`, paddingTop:8 }}>{timeline.slice(-4).reverse().map((event,index)=><p key={index} style={{ margin:"4px 0", fontSize:11, color:T.label }}><b>{event.actor}</b> · {event.event} · {event.at ? new Date(event.at).toLocaleString() : ""}</p>)}</div>}</div>;
 }
+function PaymentProofPanel({ po, onVerify }) {
+  const proof = po.payment_proof;
+  if (!proof) return null;
+  const statusCfg = {
+    pending:  { bg: T.amberSoft,   text: "#92400E", label: "Awaiting your verification" },
+    verified: { bg: T.emeraldSoft, text: "#064E3B", label: "You verified this payment" },
+    rejected: { bg: T.roseSoft,    text: "#881337", label: "You rejected this payment proof" },
+  }[proof.status] || { bg: "#F3F4F6", text: "#374151", label: proof.status };
+
+  return (
+    <div style={{ margin: "0 24px 22px", padding: 16, borderRadius: 14, background: "#F0FDFA", border: "1px solid #99F6E4" }}>
+      <p style={{ margin: "0 0 8px", fontSize: 13, fontWeight: 800, color: T.navy }}>Buyer's payment proof</p>
+      <div style={{ display: "flex", gap: 14, alignItems: "flex-start", flexWrap: "wrap" }}>
+        <a href={proof.image_url} target="_blank" rel="noreferrer">
+          <img src={proof.image_url} alt="Payment screenshot" style={{ width: 96, height: 96, objectFit: "cover", borderRadius: 10, border: `1px solid ${T.border}` }} />
+        </a>
+        <div style={{ flex: 1, minWidth: 200 }}>
+          <p style={{ margin: 0, fontSize: 12, color: T.label }}>Ref / UTR: <b>{proof.utr_reference || "—"}</b></p>
+          {proof.note && <p style={{ margin: "4px 0 0", fontSize: 12, color: T.muted }}>Note: {proof.note}</p>}
+          <span style={{ display: "inline-block", marginTop: 8, padding: "3px 10px", borderRadius: 999, fontSize: 11, fontWeight: 700, background: statusCfg.bg, color: statusCfg.text }}>{statusCfg.label}</span>
+          {proof.status === "pending" && (
+            <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+              <IconBtn variant="teal" onClick={() => onVerify("verified")}>✓ Confirm received</IconBtn>
+              <IconBtn variant="ghost" onClick={() => onVerify("rejected")}>Reject</IconBtn>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
 function POCard({
   po, flatItems, expanded, onToggle,
   itemsDraft, onAddItem, onItemChange, onProductSelect,
-  onSave, onSubmit, onPreFill, onToggleNewProduct, onOpenConversation, onDownload, onSaveDelivery, saving,
+  onSave, onSubmit, onPreFill, onToggleNewProduct, onOpenConversation, onDownload, onSaveDelivery, onVerifyPaymentProof, saving,
 }) {
   const draft     = itemsDraft[po._id] || [];
   const canSubmit = po.status === "SentToVendor" || po.status === "WalkinAccepted";
@@ -1014,6 +1045,8 @@ function POCard({
             </div>
           )}
 
+          <PaymentProofPanel po={po} onVerify={(status) => onVerifyPaymentProof(status)} />
+
           {po.status === "VendorSubmitted" || po.status === "Approved" ? <DeliveryPanel po={po} onSave={onSaveDelivery} /> : <div style={{ margin: "0 24px 22px", padding: "12px 14px", borderRadius: 12, background: "#F8FAFD", border: `1px dashed ${T.border}`, fontSize: 12, color: T.muted }}><b style={{ color: T.label }}>Delivery & Dispatch is locked.</b> Save your items and submit this PO first. After submission, you can update production and dispatch details.</div>}
         </div>
       )}
@@ -1123,6 +1156,18 @@ export default function VendorPurchaseOrders({ vendorName }) {
     catch (err) { alert(err.response?.data?.detail || "Could not save delivery update"); }
   };
 
+  const verifyPaymentProof = async (poId, status) => {
+    if (!window.confirm(status === "verified" ? "Confirm you have received this payment?" : "Reject this payment proof?")) return;
+    try {
+      const token = getToken();
+      const res = await axios.post(`${APP_API_URL}/api/vendors/purchaseorders/${poId}/payment-proof/verify`, { status }, { headers: { Authorization: `Bearer ${token}` } });
+      alert(res.data.message || "Updated");
+      await refreshOrders();
+    } catch (err) {
+      alert(err.response?.data?.detail || "Could not update payment proof");
+    }
+  };
+
   const toggleExpand = (id) => setExpanded(expanded === id ? null : id);
 
   const addNewItem = (poId) => {
@@ -1224,7 +1269,7 @@ export default function VendorPurchaseOrders({ vendorName }) {
   // now start at 0, exactly like a product an admin adds manually with
   // no stock yet — consistent with the existing-product path, which
   // never touches "current stock" at PO-creation time either.
-  const createProductForRow = async (row, poId) => {
+  const createProductForRow = async (row) => {
     const token = getToken();
     const fd = new FormData();
     fd.append("product_name", row.new_product_name.trim());
@@ -1262,7 +1307,7 @@ export default function VendorPurchaseOrders({ vendorName }) {
       const resolvedItems = [];
       for (const it of items) {
         if (it.is_new_product) {
-          const created = await createProductForRow(it, poId);
+          const created = await createProductForRow(it);
           resolvedItems.push({
             product_sku: created.sku || "",
             barcode:     created.barcode || "",
@@ -1289,8 +1334,8 @@ export default function VendorPurchaseOrders({ vendorName }) {
             lineSource: "vendor_ad_hoc",
             requiresBuyerApproval: true,
             createdFromPOId: poId,
-            createdProductSku: created.sku || "",
-            createdProductBarcode: created.barcode || "",
+            createdProductSku: "",
+            createdProductBarcode: "",
           });
         }
       }
@@ -1442,6 +1487,7 @@ export default function VendorPurchaseOrders({ vendorName }) {
                     onOpenConversation={() => setConversationPo(po)}
                     onDownload={(format) => downloadPurchaseOrder(poKey, format)}
                     onSaveDelivery={(payload) => saveDelivery(poKey, payload)}
+                    onVerifyPaymentProof={(status) => verifyPaymentProof(poKey, status)}
                     saving={saving}
                   />
                 );
