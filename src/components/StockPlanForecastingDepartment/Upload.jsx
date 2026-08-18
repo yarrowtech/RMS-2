@@ -1,6 +1,6 @@
 import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
 import React, { useEffect, useMemo, useState } from "react";
-import { FaDownload, FaFileAlt, FaFileUpload, FaHistory, FaRedo } from "react-icons/fa";
+import { FaDownload, FaFileAlt, FaFileUpload, FaHistory, FaRedo, FaTrash } from "react-icons/fa";
 
 const fmtDateTime = (value) => {
   if (!value) return "-";
@@ -25,10 +25,13 @@ export default function Upload() {
   const [historyType, setHistoryType] = useState("all");
   const [salesCount, setSalesCount] = useState(0);
   const [stockCount, setStockCount] = useState(0);
+  const [salesProcessed, setSalesProcessed] = useState(0);
+  const [stockProcessed, setStockProcessed] = useState(0);
   const [loading, setLoading] = useState(false);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [uploadedFiles, setUploadedFiles] = useState([]);
   const [uploadNotice, setUploadNotice] = useState(null);
+  const [deletingId, setDeletingId] = useState("");
 
   const API_BASE = `${APP_API_URL}`;
 
@@ -72,6 +75,24 @@ export default function Upload() {
     return detail || `Upload failed with status ${status}`;
   };
 
+  const waitForUploadJob = async (jobId, type) => {
+    for (;;) {
+      await new Promise((resolve) => window.setTimeout(resolve, 2000));
+      const res = await fetch(`${API_BASE}/api/upload/jobs/${jobId}`);
+      const job = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(job.detail || `Could not check upload job (${res.status})`);
+      if (job.status === "failed") throw new Error(job.error || "Background upload processing failed.");
+      if (job.status === "completed") return job;
+      setUploadNotice({
+        type: "success",
+        title: `${type.toUpperCase()} upload ${job.status === "processing" ? "is processing" : "is queued"}`,
+        message: job.status === "processing"
+          ? "The server is processing the file in chunks. Final row counts will appear when it finishes."
+          : "The file is waiting for the current import to finish.",
+      });
+    }
+  };
+
   const uploadFiles = async (e, type) => {
     const files = e.target.files;
     if (!files.length) return;
@@ -96,9 +117,19 @@ export default function Upload() {
         return;
       }
 
-      const data = await res.json();
-      if (type === "sales") setSalesCount(data.count || 0);
-      if (type === "stock") setStockCount(data.count || 0);
+      let data = await res.json();
+      if (data.job_id) {
+        setUploadNotice({ type: "success", title: `${type.toUpperCase()} upload queued`, message: data.message });
+        data = await waitForUploadJob(data.job_id, type);
+      }
+      if (type === "sales") {
+        setSalesCount(data.inserted_rows ?? data.count ?? 0);
+        setSalesProcessed(data.processed_rows ?? data.count ?? 0);
+      }
+      if (type === "stock") {
+        setStockCount(data.inserted_rows ?? data.count ?? 0);
+        setStockProcessed(data.processed_rows ?? data.count ?? 0);
+      }
       await fetchUploadedFiles();
 
       setUploadNotice({ type: "success", title: `${type.toUpperCase()} upload completed`, message: data.message || `Inserted rows: ${data.count || 0}` });
@@ -117,6 +148,25 @@ export default function Upload() {
   const downloadFile = (file) => {
     if (!file?.downloadable) return;
     window.open(`${API_BASE}/api/upload/files/${file.id}/download`, "_blank", "noopener,noreferrer");
+  };
+
+  const deleteFile = async (file) => {
+    const warning = file.data_deletable
+      ? `Delete ${file.filename} and its ${file.inserted_rows ?? 0} imported rows? This cannot be undone.`
+      : `Delete the old upload record ${file.filename}? Its imported database rows cannot be identified safely and will be preserved.`;
+    if (!window.confirm(warning)) return;
+    try {
+      setDeletingId(file.id);
+      const res = await fetch(`${API_BASE}/api/upload/files/${file.id}`, { method: "DELETE" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || `Delete failed with status ${res.status}`);
+      setUploadedFiles((current) => current.filter((item) => item.id !== file.id));
+      window.alert(data.message || "Upload deleted successfully.");
+    } catch (err) {
+      window.alert(err.message || "Could not delete this upload.");
+    } finally {
+      setDeletingId("");
+    }
   };
 
   return (
@@ -180,7 +230,7 @@ export default function Upload() {
                 />
               </div>
               <p className="mt-3 text-xs text-slate-600">
-                Uploaded rows (Sales): <b>{salesCount}</b>
+                Processed: <b>{salesProcessed}</b> &nbsp; Newly inserted: <b>{salesCount}</b>
               </p>
             </div>
 
@@ -208,7 +258,7 @@ export default function Upload() {
                 />
               </div>
               <p className="mt-3 text-xs text-slate-600">
-                Uploaded rows (Stock): <b>{stockCount}</b>
+                Processed: <b>{stockProcessed}</b> &nbsp; Newly inserted: <b>{stockCount}</b>
               </p>
             </div>
           </div>
@@ -270,7 +320,8 @@ export default function Upload() {
                   <th className="px-4 py-3 text-left">Type</th>
                   <th className="px-4 py-3 text-left">Collection</th>
                   <th className="px-4 py-3 text-left">Sheet</th>
-                  <th className="px-4 py-3 text-right">Inserted rows</th>
+                  <th className="px-4 py-3 text-right">Processed</th>
+                  <th className="px-4 py-3 text-right">Inserted</th>
                   <th className="px-4 py-3 text-left">Uploaded at</th>
                   <th className="px-4 py-3 text-right">Action</th>
                 </tr>
@@ -291,9 +342,11 @@ export default function Upload() {
                     </td>
                     <td className="px-4 py-3 text-slate-600">{file.collection || "-"}</td>
                     <td className="px-4 py-3 text-slate-600">{file.selected_sheet || "-"}</td>
+                    <td className="px-4 py-3 text-right text-slate-600">{file.processed_rows ?? file.inserted_rows ?? 0}</td>
                     <td className="px-4 py-3 text-right font-bold text-slate-900">{file.inserted_rows ?? 0}</td>
                     <td className="px-4 py-3 text-slate-600">{fmtDateTime(file.uploaded_at)}</td>
                     <td className="px-4 py-3 text-right">
+                      <div className="flex justify-end gap-2">
                       <button
                         type="button"
                         onClick={() => downloadFile(file)}
@@ -307,13 +360,23 @@ export default function Upload() {
                       >
                         <FaDownload /> Download
                       </button>
+                      <button
+                        type="button"
+                        onClick={() => deleteFile(file)}
+                        disabled={deletingId === file.id}
+                        className="inline-flex items-center gap-2 rounded-md bg-rose-600 px-3 py-2 text-xs font-bold text-white hover:bg-rose-700 disabled:cursor-wait disabled:opacity-60"
+                        title={file.data_deletable ? "Delete original file and rows imported by it" : "Delete legacy upload record; imported rows will remain"}
+                      >
+                        <FaTrash /> {deletingId === file.id ? "Deleting..." : "Delete"}
+                      </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
 
                 {!filteredFiles.length && (
                   <tr>
-                    <td colSpan={7} className="px-4 py-12 text-center text-sm text-slate-500">
+                    <td colSpan={8} className="px-4 py-12 text-center text-sm text-slate-500">
                       {historyLoading ? "Loading uploaded files..." : "No uploaded files found for this view."}
                     </td>
                   </tr>

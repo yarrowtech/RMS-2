@@ -1,16 +1,17 @@
 
 
 
-from fastapi import APIRouter, UploadFile, File, HTTPException, Query
+from fastapi import APIRouter, UploadFile, File, HTTPException, Query, BackgroundTasks
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.encoders import jsonable_encoder
 from motor.motor_asyncio import AsyncIOMotorClient
 from openpyxl import load_workbook
 import pandas as pd
-from io import BytesIO
-from typing import List, Optional
-from datetime import datetime
+from typing import Iterator, List, Optional
+from datetime import datetime, timedelta
 import hashlib
+import asyncio
+import json
 import os
 from pathlib import Path
 from uuid import uuid4
@@ -35,6 +36,12 @@ forecast_db     = forecast_client[FORECAST_DB_NAME]
 
 UPLOAD_DIR = Path("uploaded_files").resolve()
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+UPLOAD_READ_SIZE = 1024 * 1024
+DATAFRAME_CHUNK_SIZE = max(100, int(os.getenv("UPLOAD_ROW_CHUNK_SIZE", "5000")))
+MAX_UPLOAD_BYTES = max(1, int(os.getenv("MAX_UPLOAD_MB", "200"))) * 1024 * 1024
+UPLOAD_JOB_LOCK = asyncio.Semaphore(1)
+FORECAST_INDEX_LOCK = asyncio.Lock()
+FORECAST_INDEXES_READY = False
 
 
 # ══════════════════════════════════════════════════════════
@@ -55,13 +62,6 @@ def normalize_column_name(value) -> str:
     return str(value or "").strip().replace(" ", "").replace("-", "").replace("_", "").upper()
 
 
-def find_header_row(data):
-    for i, row in enumerate(data):
-        if row and sum(1 for c in row if c not in (None, "")) >= 4:
-            return i
-    return None
-
-
 def sheet_matches_required(headers, required_groups=None) -> bool:
     if not required_groups:
         return False
@@ -69,50 +69,72 @@ def sheet_matches_required(headers, required_groups=None) -> bool:
     return all(any(normalize_column_name(alias) in header_set for alias in group) for group in required_groups)
 
 
-def dataframe_from_sheet(ws) -> Optional[pd.DataFrame]:
-    data = list(ws.values)
-    header_row_idx = find_header_row(data)
-    if header_row_idx is None:
-        return None
-    headers = [str(c).strip() if c else f"COL_{j}" for j, c in enumerate(data[header_row_idx])]
-    return pd.DataFrame(data[header_row_idx + 1:], columns=headers)
+def _sheet_header(ws):
+    """Return the first plausible header without materialising the worksheet."""
+    for row_index, row in enumerate(ws.iter_rows(values_only=True)):
+        if row and sum(1 for cell in row if cell not in (None, "")) >= 4:
+            headers = [str(cell).strip() if cell else f"COL_{j}" for j, cell in enumerate(row)]
+            return row_index, headers
+    return None, None
 
 
-def read_excel_or_csv(raw: bytes, filename: str, required_groups=None) -> pd.DataFrame:
-    fname = filename.lower()
+def iter_excel_or_csv(
+    file_path: str, filename: str, required_groups=None,
+    chunk_size: int = DATAFRAME_CHUNK_SIZE,
+) -> Iterator[pd.DataFrame]:
+    """Yield normalized DataFrames while keeping memory bounded."""
+    fname = (filename or "").lower()
     try:
         if fname.endswith(".csv"):
-            df = pd.read_csv(BytesIO(raw))
-        else:
-            wb = load_workbook(BytesIO(raw), read_only=True)
-            df = None
-            selected_sheet = ""
+            for df in pd.read_csv(file_path, chunksize=chunk_size):
+                df.columns = [normalize_column_name(c) for c in df.columns]
+                df.attrs["selected_sheet"] = "CSV"
+                yield df
+            return
 
+        wb = load_workbook(file_path, read_only=True, data_only=True)
+        try:
+            selected_ws = None
+            header_row_idx = None
+            headers = None
+            active_fallback = None
             for ws in wb.worksheets:
-                candidate = dataframe_from_sheet(ws)
-                if candidate is not None and sheet_matches_required(candidate.columns, required_groups):
-                    df = candidate
-                    selected_sheet = ws.title
+                candidate_idx, candidate_headers = _sheet_header(ws)
+                if ws == wb.active:
+                    active_fallback = (ws, candidate_idx, candidate_headers)
+                if candidate_headers and sheet_matches_required(candidate_headers, required_groups):
+                    selected_ws, header_row_idx, headers = ws, candidate_idx, candidate_headers
                     break
 
-            if df is None:
-                df = dataframe_from_sheet(wb.active)
-                selected_sheet = wb.active.title if df is not None else ""
-
-            if df is None:
+            if selected_ws is None and active_fallback and active_fallback[2]:
+                selected_ws, header_row_idx, headers = active_fallback
+            if selected_ws is None or headers is None:
                 raise HTTPException(status_code=400, detail="No valid header row found")
 
-        df.columns = [normalize_column_name(c) for c in df.columns]
-        df.attrs["selected_sheet"] = selected_sheet if not fname.endswith(".csv") else "CSV"
-        print("Columns:", df.columns.tolist())
-        return df
+            normalized_headers = [normalize_column_name(header) for header in headers]
+            rows = []
+            for row_index, row in enumerate(selected_ws.iter_rows(values_only=True)):
+                if row_index <= header_row_idx:
+                    continue
+                rows.append(row)
+                if len(rows) >= chunk_size:
+                    df = pd.DataFrame(rows, columns=normalized_headers)
+                    df.attrs["selected_sheet"] = selected_ws.title
+                    yield df
+                    rows = []
+            if rows:
+                df = pd.DataFrame(rows, columns=normalized_headers)
+                df.attrs["selected_sheet"] = selected_ws.title
+                yield df
+        finally:
+            wb.close()
 
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"File read error ({filename}): {e}")
 
-async def insert_to_mongo(df: pd.DataFrame, collection: str) -> int:
+async def insert_to_mongo(df: pd.DataFrame, collection: str, upload_id: Optional[str] = None) -> int:
     if df.empty:
         return 0
 
@@ -134,11 +156,14 @@ async def insert_to_mongo(df: pd.DataFrame, collection: str) -> int:
             if "_row_hash" in doc:
                 existing.add(doc["_row_hash"])
 
-    new_df = df[~df["_row_hash"].isin(existing)]
+    new_df = df[~df["_row_hash"].isin(existing)].drop_duplicates(subset=["_row_hash"])
     if new_df.empty:
         return 0
 
     records = new_df.where(pd.notnull(new_df), None).to_dict(orient="records")
+    if upload_id:
+        for record in records:
+            record["_upload_id"] = upload_id
     inserted = 0
     for start in range(0, len(records), chunk_size):
         batch = records[start:start + chunk_size]
@@ -150,13 +175,32 @@ async def insert_to_mongo(df: pd.DataFrame, collection: str) -> int:
 
 
 
-def save_original_upload(raw: bytes, filename: str, upload_type: str) -> str:
+def upload_target(filename: str, upload_type: str) -> Path:
     safe_name = Path(filename or "upload").name.replace("\\", "_").replace("/", "_")
     stored_name = f"{upload_type}_{datetime.utcnow().strftime('%Y%m%d%H%M%S')}_{uuid4().hex}_{safe_name}"
     target = (UPLOAD_DIR / stored_name).resolve()
     if UPLOAD_DIR not in target.parents and target != UPLOAD_DIR:
         raise HTTPException(status_code=400, detail="Invalid upload filename")
-    target.write_bytes(raw)
+    return target
+
+
+async def save_upload_stream(file: UploadFile, upload_type: str) -> str:
+    """Copy an upload in small blocks instead of retaining it in RAM."""
+    target = upload_target(file.filename, upload_type)
+    size = 0
+    try:
+        with target.open("wb") as output:
+            while chunk := await file.read(UPLOAD_READ_SIZE):
+                size += len(chunk)
+                if size > MAX_UPLOAD_BYTES:
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"File exceeds the {MAX_UPLOAD_BYTES // (1024 * 1024)} MB upload limit",
+                    )
+                output.write(chunk)
+    except Exception:
+        target.unlink(missing_ok=True)
+        raise
     return str(target)
 
 
@@ -176,227 +220,247 @@ def save_original_upload(raw: bytes, filename: str, upload_type: str) -> str:
 #  "Std Rate"            → STDRATE          → STANDARDRATE
 # ══════════════════════════════════════════════════════════
 
-@router.post("/sales")
 async def upload_sales(files: List[UploadFile] = File(...)):
-    total_rows = 0
-    REQUIRED   = ["STORE", "DIVISION", "SECTION", "DEPARTMENT", "VENDOR", "BILLQTY"]
-    OPTIONAL   = ["CAT1", "CAT2", "CAT3", "CAT4", "CAT5", "CATEGORY6", "RSP", "STANDARDRATE"]
-
-    SALES_ALIAS_MAP = {
-        "STORE":        ["STORE", "STORENAME"],
-        "DIVISION":     ["DIVISION", "DVN"],
-        "SECTION":      ["SECTION"],
-        "DEPARTMENT":   ["DEPARTMENT", "DEPT"],
-        "VENDOR":       ["VENDOR", "SUPPLIER"],
-        "BILLQTY":      ["BILLQTY", "BILLQUANTITY"],
-        "DATE":         ["BILLDATE", "DATE"],
-        # Exact normalized names from real sales file
-        "CAT1":         ["CAT1(DESIGNNO.)", "CAT1DESIGNNO", "CAT1"],
-        "CAT2":         ["CAT2(BRAND)",     "CAT2BRAND",    "CAT2"],
-        "CAT3":         ["CAT3(STYLE)",     "CAT3STYLE",    "CAT3"],
-        "CAT4":         ["CAT4(PLANE,F/S,H/S)", "CAT4PLANEFSHS", "CAT4PLANE", "CAT4"],
-        "CAT5":         ["CAT5(SIZE)",      "CAT5SIZE",     "CAT5"],
-        "CATEGORY6":    ["AGEING",          "CATEGORY6",    "CAT6"],
-        "RSP":          ["RSP", "SELLINGPRICE"],
-        "STANDARDRATE": ["STDRATE", "STANDARDRATE"],
+    required = ["STORE", "DIVISION", "SECTION", "DEPARTMENT", "VENDOR", "BILLQTY"]
+    optional = ["CAT1", "CAT2", "CAT3", "CAT4", "CAT5", "CATEGORY6", "RSP", "STANDARDRATE"]
+    aliases = {
+        "STORE": ["STORE", "STORENAME"], "DIVISION": ["DIVISION", "DVN"],
+        "SECTION": ["SECTION"], "DEPARTMENT": ["DEPARTMENT", "DEPT"],
+        "VENDOR": ["VENDOR", "SUPPLIER"], "BILLQTY": ["BILLQTY", "BILLQUANTITY"],
+        "DATE": ["BILLDATE", "DATE"], "CAT1": ["CAT1(DESIGNNO.)", "CAT1DESIGNNO", "CAT1"],
+        "CAT2": ["CAT2(BRAND)", "CAT2BRAND", "CAT2"], "CAT3": ["CAT3(STYLE)", "CAT3STYLE", "CAT3"],
+        "CAT4": ["CAT4(PLANE,F/S,H/S)", "CAT4PLANEFSHS", "CAT4PLANE", "CAT4"],
+        "CAT5": ["CAT5(SIZE)", "CAT5SIZE", "CAT5"], "CATEGORY6": ["AGEING", "CATEGORY6", "CAT6"],
+        "RSP": ["RSP", "SELLINGPRICE"], "STANDARDRATE": ["STDRATE", "STANDARDRATE"],
     }
+    required_groups = [aliases[name] for name in required]
+    total_rows = 0
+    total_processed = 0
+
+    def clean_category(value):
+        if value is None or hasattr(value, "year"):
+            return ""
+        text = str(value).strip()
+        if text.lower() in ("nan", "none", ""):
+            return ""
+        try:
+            float(text)
+            return ""
+        except ValueError:
+            pass
+        if len(text) >= 8 and text[4] == "-" and text[7] == "-":
+            return ""
+        return " ".join(text.upper().split())
 
     for file in files:
-        raw = await file.read()
-        sales_required_groups = [
-            ["STORE", "STORENAME"],
-            ["DIVISION", "DVN"],
-            ["SECTION"],
-            ["DEPARTMENT", "DEPT"],
-            ["VENDOR", "SUPPLIER"],
-            ["BILLQTY", "BILLQUANTITY"],
-        ]
-        df  = read_excel_or_csv(raw, file.filename, sales_required_groups)
-
-        rename_map = {}
-        for std, aliases in SALES_ALIAS_MAP.items():
-            for alias in aliases:
-                an = alias.strip().replace(" ", "").replace("-", "").replace("_", "").upper()
-                if an in df.columns and std not in rename_map.values():
-                    rename_map[an] = std
-                    break
-        df.rename(columns=rename_map, inplace=True)
-        print("📋 Sales renamed:", rename_map)
-
-        missing = [c for c in REQUIRED if c not in df.columns]
-        if missing:
-            raise HTTPException(status_code=400, detail={"message": "Sales upload missing required columns", "missing_columns": missing, "detected_columns": df.columns.tolist(), "selected_sheet": df.attrs.get("selected_sheet", "")})
-
-        # Keep IsVoid so we can filter out voided transactions
-        keep = REQUIRED + ["DATE", "ISVOID"] + [c for c in OPTIONAL if c in df.columns]
-        df   = df[[c for c in keep if c in df.columns]].copy()
-
-        # Drop voided transactions — they should not count toward salesQty
-        if "ISVOID" in df.columns:
-            before = len(df)
-            df = df[df["ISVOID"].apply(lambda x: str(x).strip().upper() not in ("YES", "TRUE", "1", "Y"))]
-            dropped = before - len(df)
-            if dropped:
-                print(f"⚠️ Dropped {dropped} voided rows")
-            df = df.drop(columns=["ISVOID"])
-
-        for c in ["STORE", "DIVISION", "SECTION", "DEPARTMENT", "VENDOR"]:
-            if c in df.columns:
-                df[c] = df[c].apply(norm_text)
-
-        def clean_category(val):
-            """Keep only genuine category labels — discard numbers, dates, empty."""
-            if val is None:
-                return ""
-            # If pandas read it as a datetime object, discard it
-            if hasattr(val, 'year'):
-                return ""
-            s = str(val).strip()
-            if s.lower() in ("nan", "none", ""):
-                return ""
-            # Discard pure numbers (price/qty leaked into cat column)
-            try:
-                float(s)
-                return ""
-            except ValueError:
-                pass
-            # Discard date strings like "2025-03-08 00:00:00" or "08/03/2025"
-            if len(s) >= 8 and s[4] == "-" and s[7] == "-":
-                return ""
-            return " ".join(s.upper().split())
-
-        for cat in ["CAT1", "CAT2", "CAT3", "CAT4", "CAT5", "CATEGORY6"]:
-            if cat in df.columns:
-                df[cat] = df[cat].apply(clean_category)
-
-        if "DATE" in df.columns:
-            df["DATE"] = pd.to_datetime(df["DATE"], errors="coerce", dayfirst=True)
-            bad = df["DATE"].isna().sum()
-            if bad:
-                print(f"⚠️ Dropping {bad} rows with bad dates")
-            df = df.dropna(subset=["DATE"])
-            df["DATE"] = df["DATE"].apply(lambda x: x.to_pydatetime())
-
-        df["BILLQTY"] = pd.to_numeric(df["BILLQTY"], errors="coerce").fillna(0)
-
-        inserted = await insert_to_mongo(df, "sales_data")
-        saved_path = save_original_upload(raw, file.filename, "sales")
-        total_rows += inserted
+        upload_id = uuid4().hex
+        saved_path = await save_upload_stream(file, "sales")
+        file_inserted = 0
+        file_processed = 0
+        selected_sheet = ""
+        detected_columns = []
+        chunks_seen = 0
+        for df in iter_excel_or_csv(saved_path, file.filename, required_groups):
+            chunks_seen += 1
+            selected_sheet = selected_sheet or df.attrs.get("selected_sheet", "")
+            rename_map = {}
+            for standard, choices in aliases.items():
+                for choice in choices:
+                    normalized = normalize_column_name(choice)
+                    if normalized in df.columns and standard not in rename_map.values():
+                        rename_map[normalized] = standard
+                        break
+            df.rename(columns=rename_map, inplace=True)
+            missing = [name for name in required if name not in df.columns]
+            if missing:
+                raise HTTPException(status_code=400, detail={"message": "Sales upload missing required columns", "missing_columns": missing, "detected_columns": df.columns.tolist(), "selected_sheet": selected_sheet})
+            keep = required + ["DATE", "ISVOID"] + [name for name in optional if name in df.columns]
+            df = df[[name for name in keep if name in df.columns]].copy()
+            if "ISVOID" in df.columns:
+                df = df[df["ISVOID"].apply(lambda value: str(value).strip().upper() not in ("YES", "TRUE", "1", "Y"))].drop(columns=["ISVOID"])
+            for name in ["STORE", "DIVISION", "SECTION", "DEPARTMENT", "VENDOR"]:
+                df[name] = df[name].apply(norm_text)
+            for name in ["CAT1", "CAT2", "CAT3", "CAT4", "CAT5", "CATEGORY6"]:
+                if name in df.columns:
+                    df[name] = df[name].apply(clean_category)
+            if "DATE" in df.columns:
+                df["DATE"] = pd.to_datetime(df["DATE"], errors="coerce", dayfirst=True)
+                df = df.dropna(subset=["DATE"])
+                df["DATE"] = df["DATE"].apply(lambda value: value.to_pydatetime())
+            df["BILLQTY"] = pd.to_numeric(df["BILLQTY"], errors="coerce").fillna(0)
+            file_processed += len(df)
+            detected_columns = detected_columns or df.columns.tolist()
+            file_inserted += await insert_to_mongo(df, "sales_data", upload_id)
+        if chunks_seen == 0:
+            Path(saved_path).unlink(missing_ok=True)
+            raise HTTPException(status_code=400, detail=f"No data rows found in {file.filename}")
+        total_rows += file_inserted
+        total_processed += file_processed
         await forecast_db["uploaded_files"].insert_one({
-            "filename": file.filename, "collection": "sales_data",
-            "inserted_rows": inserted, "type": "sales",
-            "selected_sheet": df.attrs.get("selected_sheet", ""),
-            "detected_columns": df.columns.tolist(),
-            "file_path": saved_path,
-            "content_type": file.content_type,
-            "uploaded_at": datetime.utcnow(),
+            "filename": file.filename, "collection": "sales_data", "inserted_rows": file_inserted,
+            "processed_rows": file_processed, "upload_id": upload_id,
+            "type": "sales", "selected_sheet": selected_sheet, "detected_columns": detected_columns,
+            "file_path": saved_path, "content_type": file.content_type, "uploaded_at": datetime.utcnow(),
         })
-        print(f"✅ Sales inserted: {inserted} from {file.filename}")
+        print(f"Sales inserted in {chunks_seen} chunks: {file_inserted} from {file.filename}")
 
-    return JSONResponse({"status": "success", "count": total_rows, "message": f"Sales upload completed. Inserted rows: {total_rows}"})
+    return JSONResponse({
+        "status": "success", "count": total_rows, "inserted_rows": total_rows,
+        "processed_rows": total_processed, "skipped_rows": max(0, total_processed - total_rows),
+        "message": f"Sales upload completed. Processed {total_processed}, inserted {total_rows}, skipped {max(0, total_processed - total_rows)} duplicate rows.",
+    })
 
 
-# ══════════════════════════════════════════════════════════
-#  STOCK UPLOAD
-#
-#  Actual Excel columns (confirmed from real files):
-#  "Source Site"  → SOURCESITE   → SOURCESITE
-#  "CLOSING_QTY"  → CLOSINGQTY   → CLOSINGQTY
-#  "Stock as on"  → STOCKASON    → STOCKASON
-#  "CATEGORY1-5"  → CATEGORY1-5  (already correct)
-#
-#  Godowns (case-insensitive substring match):
-#    Package, SEMI FRESH WAREHOUSE, WAREHOUSE
-#  Stores:
-#    CITIMART - CHOWRINGHEE, CITIMART - HATIBAGAN, CITIMART - NEW MARKET
-# ══════════════════════════════════════════════════════════
+# STOCK UPLOAD
 
 # Confirmed godown keywords from real data
 GODOWN_KEYWORDS = ["PACKAGE", "WAREHOUSE"]  # "WAREHOUSE" catches SEMI FRESH WAREHOUSE too
 
-@router.post("/stock")
 async def upload_stock(files: List[UploadFile] = File(...)):
+    required = ["SOURCESITE", "DIVISION", "SECTION", "DEPARTMENT", "VENDOR", "CLOSINGQTY"]
+    required_groups = [[name] for name in required]
+    keep = [
+        "SOURCESITE", "DIVISION", "SECTION", "DEPARTMENT", "VENDOR", "BARCODE", "ITEMCODE",
+        "CATEGORY1", "CATEGORY2", "CATEGORY3", "CATEGORY4", "CATEGORY5", "CATEGORY6", "CAT6",
+        "CLOSINGQTY", "STOCKASON",
+    ]
     total_rows = 0
-    # After header normalization these are the exact column names:
-    REQUIRED = ["SOURCESITE", "DIVISION", "SECTION", "DEPARTMENT", "VENDOR", "CLOSINGQTY"]
+    total_processed = 0
+
+    def classify_site(site: str):
+        if not site:
+            return "UNKNOWN", "UNKNOWN"
+        return ("GODOWN", site) if any(keyword in site for keyword in GODOWN_KEYWORDS) else ("STORE", site)
 
     for file in files:
-        raw = await file.read()
-        stock_required_groups = [
-            ["SOURCESITE"],
-            ["DIVISION"],
-            ["SECTION"],
-            ["DEPARTMENT"],
-            ["VENDOR"],
-            ["CLOSINGQTY"],
-        ]
-        df  = read_excel_or_csv(raw, file.filename, stock_required_groups)
-
-        missing = [c for c in REQUIRED if c not in df.columns]
-        if missing:
-            raise HTTPException(status_code=400, detail={"message": "Stock upload missing required columns", "missing_columns": missing, "detected_columns": df.columns.tolist(), "selected_sheet": df.attrs.get("selected_sheet", "")})
-
-        # Keep all useful columns — BARCODE critical for dedup uniqueness
-        # (multiple items from same vendor/dept must NOT be collapsed into 1 row)
-        KEEP = [
-            "SOURCESITE",
-            "DIVISION", "SECTION", "DEPARTMENT", "VENDOR",
-            "BARCODE", "ITEMCODE",
-            "CATEGORY1", "CATEGORY2", "CATEGORY3", "CATEGORY4", "CATEGORY5",
-            "CATEGORY6", "CAT6",
-            "CLOSINGQTY",
-            "STOCKASON",
-        ]
-        df = df[[c for c in KEEP if c in df.columns]].copy()
-
-        # Normalize text
-        for c in ["SOURCESITE", "DIVISION", "SECTION", "DEPARTMENT", "VENDOR"]:
-            if c in df.columns:
-                df[c] = df[c].apply(norm_text)
-
-        for cat in ["CATEGORY1","CATEGORY2","CATEGORY3","CATEGORY4","CATEGORY5","CATEGORY6","CAT6"]:
-            if cat in df.columns:
-                df[cat] = df[cat].apply(norm_text)
-
-        if "STOCKASON" in df.columns:
-            df["STOCKASON"] = pd.to_datetime(df["STOCKASON"], errors="coerce", dayfirst=True)
-            df["STOCKASON"] = df["STOCKASON"].apply(lambda x: x.to_pydatetime() if pd.notnull(x) else None)
-
-        df["CLOSINGQTY"] = pd.to_numeric(df["CLOSINGQTY"], errors="coerce").fillna(0)
-
-        # Classify SOURCESITE → SOURCE_SITE ("STORE"/"GODOWN") + SITE_NAME
-        def classify_site(site: str):
-            if not site:
-                return ("UNKNOWN", "UNKNOWN")
-            for kw in GODOWN_KEYWORDS:
-                if kw in site:          # site already norm_text'd → uppercase
-                    return ("GODOWN", site)
-            return ("STORE", site)
-
-        classified        = df["SOURCESITE"].apply(classify_site)
-        df["SOURCE_SITE"] = classified.apply(lambda x: x[0])
-        df["SITE_NAME"]   = classified.apply(lambda x: x[1])
-
-        inserted = await insert_to_mongo(df, "stock_data")
-        saved_path = save_original_upload(raw, file.filename, "stock")
-        total_rows += inserted
+        upload_id = uuid4().hex
+        saved_path = await save_upload_stream(file, "stock")
+        file_inserted = 0
+        file_processed = 0
+        selected_sheet = ""
+        detected_columns = []
+        chunks_seen = 0
+        for df in iter_excel_or_csv(saved_path, file.filename, required_groups):
+            chunks_seen += 1
+            selected_sheet = selected_sheet or df.attrs.get("selected_sheet", "")
+            missing = [name for name in required if name not in df.columns]
+            if missing:
+                raise HTTPException(status_code=400, detail={"message": "Stock upload missing required columns", "missing_columns": missing, "detected_columns": df.columns.tolist(), "selected_sheet": selected_sheet})
+            df = df[[name for name in keep if name in df.columns]].copy()
+            for name in ["SOURCESITE", "DIVISION", "SECTION", "DEPARTMENT", "VENDOR"]:
+                df[name] = df[name].apply(norm_text)
+            for name in ["CATEGORY1", "CATEGORY2", "CATEGORY3", "CATEGORY4", "CATEGORY5", "CATEGORY6", "CAT6"]:
+                if name in df.columns:
+                    df[name] = df[name].apply(norm_text)
+            if "STOCKASON" in df.columns:
+                df["STOCKASON"] = pd.to_datetime(df["STOCKASON"], errors="coerce", dayfirst=True)
+                df["STOCKASON"] = df["STOCKASON"].apply(lambda value: value.to_pydatetime() if pd.notnull(value) else None)
+            df["CLOSINGQTY"] = pd.to_numeric(df["CLOSINGQTY"], errors="coerce").fillna(0)
+            classified = df["SOURCESITE"].apply(classify_site)
+            df["SOURCE_SITE"] = classified.apply(lambda value: value[0])
+            df["SITE_NAME"] = classified.apply(lambda value: value[1])
+            file_processed += len(df)
+            detected_columns = detected_columns or df.columns.tolist()
+            file_inserted += await insert_to_mongo(df, "stock_data", upload_id)
+        if chunks_seen == 0:
+            Path(saved_path).unlink(missing_ok=True)
+            raise HTTPException(status_code=400, detail=f"No data rows found in {file.filename}")
+        total_rows += file_inserted
+        total_processed += file_processed
         await forecast_db["uploaded_files"].insert_one({
-            "filename": file.filename, "collection": "stock_data",
-            "inserted_rows": inserted, "type": "stock",
-            "selected_sheet": df.attrs.get("selected_sheet", ""),
-            "detected_columns": df.columns.tolist(),
-            "file_path": saved_path,
-            "content_type": file.content_type,
-            "uploaded_at": datetime.utcnow(),
+            "filename": file.filename, "collection": "stock_data", "inserted_rows": file_inserted,
+            "processed_rows": file_processed, "upload_id": upload_id,
+            "type": "stock", "selected_sheet": selected_sheet, "detected_columns": detected_columns,
+            "file_path": saved_path, "content_type": file.content_type, "uploaded_at": datetime.utcnow(),
         })
-        print(f"✅ Stock inserted: {inserted} from {file.filename}")
+        print(f"Stock inserted in {chunks_seen} chunks: {file_inserted} from {file.filename}")
 
-    return JSONResponse({"status": "success", "count": total_rows, "message": f"Stock upload completed. Inserted rows: {total_rows}"})
+    return JSONResponse({
+        "status": "success", "count": total_rows, "inserted_rows": total_rows,
+        "processed_rows": total_processed, "skipped_rows": max(0, total_processed - total_rows),
+        "message": f"Stock upload completed. Processed {total_processed}, inserted {total_rows}, skipped {max(0, total_processed - total_rows)} duplicate rows.",
+    })
 
 
-# ══════════════════════════════════════════════════════════
-#  FILTER OPTIONS
-# ══════════════════════════════════════════════════════════
+async def run_upload_job(job_id: str, upload_type: str, queued_files: list):
+    async with UPLOAD_JOB_LOCK:
+        await forecast_db["upload_jobs"].update_one(
+            {"job_id": job_id},
+            {"$set": {"status": "processing", "started_at": datetime.utcnow()}},
+        )
+        opened_files = []
+        try:
+            for queued in queued_files:
+                handle = open(queued["path"], "rb")
+                opened_files.append(handle)
+                queued["upload"] = UploadFile(file=handle, filename=queued["filename"])
+                queued["upload"].headers = {"content-type": queued.get("content_type") or "application/octet-stream"}
+
+            uploads = [queued["upload"] for queued in queued_files]
+            response = await (upload_sales(uploads) if upload_type == "sales" else upload_stock(uploads))
+            result = json.loads(response.body.decode("utf-8"))
+            await forecast_db["upload_jobs"].update_one(
+                {"job_id": job_id},
+                {"$set": {**result, "status": "completed", "completed_at": datetime.utcnow()}},
+            )
+        except Exception as exc:
+            await forecast_db["upload_jobs"].update_one(
+                {"job_id": job_id},
+                {"$set": {"status": "failed", "error": str(exc), "completed_at": datetime.utcnow()}},
+            )
+        finally:
+            for handle in opened_files:
+                handle.close()
+            for queued in queued_files:
+                Path(queued["path"]).unlink(missing_ok=True)
+
+
+async def queue_upload(files: List[UploadFile], upload_type: str, background_tasks: BackgroundTasks):
+    job_id = uuid4().hex
+    queued_files = []
+    try:
+        for file in files:
+            queued_path = await save_upload_stream(file, f"queued_{upload_type}")
+            queued_files.append({
+                "path": queued_path, "filename": file.filename,
+                "content_type": file.content_type,
+            })
+    except Exception:
+        for queued in queued_files:
+            Path(queued["path"]).unlink(missing_ok=True)
+        raise
+
+    await forecast_db["upload_jobs"].insert_one({
+        "job_id": job_id, "type": upload_type, "status": "queued",
+        "filenames": [item["filename"] for item in queued_files],
+        "created_at": datetime.utcnow(),
+    })
+    background_tasks.add_task(run_upload_job, job_id, upload_type, queued_files)
+    return JSONResponse(
+        status_code=202,
+        content={"status": "queued", "job_id": job_id, "message": "Upload saved and queued for processing."},
+    )
+
+
+@router.post("/sales")
+async def queue_sales_upload(background_tasks: BackgroundTasks, files: List[UploadFile] = File(...)):
+    return await queue_upload(files, "sales", background_tasks)
+
+
+@router.post("/stock")
+async def queue_stock_upload(background_tasks: BackgroundTasks, files: List[UploadFile] = File(...)):
+    return await queue_upload(files, "stock", background_tasks)
+
+
+@router.get("/jobs/{job_id}")
+async def get_upload_job(job_id: str):
+    job = await forecast_db["upload_jobs"].find_one({"job_id": job_id}, {"_id": 0})
+    if not job:
+        raise HTTPException(status_code=404, detail="Upload job not found")
+    return jsonable_encoder(job)
+
+
+# FILTER OPTIONS
 
 @router.get("/filters/options")
 async def get_filter_options():
@@ -453,6 +517,26 @@ async def get_filter_options():
 #  separate column — here it's a separate row per godown location.
 # ══════════════════════════════════════════════════════════
 
+async def ensure_stock_gap_indexes():
+    global FORECAST_INDEXES_READY
+    if FORECAST_INDEXES_READY:
+        return
+    async with FORECAST_INDEX_LOCK:
+        if FORECAST_INDEXES_READY:
+            return
+        await asyncio.gather(
+            forecast_db["sales_data"].create_index([
+                ("DATE", 1), ("STORE", 1), ("DIVISION", 1),
+                ("SECTION", 1), ("DEPARTMENT", 1), ("VENDOR", 1),
+            ], name="stock_gap_sales_filters"),
+            forecast_db["stock_data"].create_index([
+                ("STOCKASON", -1), ("SOURCE_SITE", 1), ("SITE_NAME", 1),
+                ("DIVISION", 1), ("SECTION", 1), ("DEPARTMENT", 1), ("VENDOR", 1),
+            ], name="stock_gap_stock_filters"),
+        )
+        FORECAST_INDEXES_READY = True
+
+
 @router.get("/stock-gap")
 async def stock_gap(
     fromDate:    str = Query(...),
@@ -471,6 +555,7 @@ async def stock_gap(
         days_range = (dt_to - dt_from).days + 1
         if days_range <= 0:
             raise HTTPException(status_code=400, detail="Invalid date range")
+        await ensure_stock_gap_indexes()
 
         def mlist(val: str) -> list:
             return [v.strip().upper() for v in val.split(",") if v.strip()]
@@ -479,7 +564,7 @@ async def stock_gap(
         # 1. SALES
         #    key = (STORE, DIV, SEC, DEPT, VENDOR)
         # ────────────────────────────────────────────
-        sales_filter: dict = {"DATE": {"$gte": dt_from, "$lte": dt_to}}
+        sales_filter: dict = {"DATE": {"$gte": dt_from, "$lt": dt_to + timedelta(days=1)}}
         if store      != "All": sales_filter["STORE"]      = {"$in": mlist(store)}
         if division   != "All": sales_filter["DIVISION"]   = {"$in": mlist(division)}
         if section    != "All": sales_filter["SECTION"]    = {"$in": mlist(section)}
@@ -496,23 +581,24 @@ async def stock_gap(
         sales_qty_map:  dict = {}   # (STORE, DIV, SEC, DEPT, VENDOR) → qty
         sales_cats_map: dict = {}   # (STORE, DIV, SEC, DEPT, VENDOR) → [c1..c6]
 
-        async for r in forecast_db["sales_data"].find(sales_filter):
+        sales_pipeline = [
+            {"$match": sales_filter},
+            {"$group": {
+                "_id": {"store": "$STORE", "division": "$DIVISION", "section": "$SECTION", "department": "$DEPARTMENT", "vendor": "$VENDOR"},
+                "qty": {"$sum": {"$ifNull": ["$BILLQTY", 0]}},
+                "CAT1": {"$max": {"$ifNull": ["$CAT1", ""]}}, "CAT2": {"$max": {"$ifNull": ["$CAT2", ""]}},
+                "CAT3": {"$max": {"$ifNull": ["$CAT3", ""]}}, "CAT4": {"$max": {"$ifNull": ["$CAT4", ""]}},
+                "CAT5": {"$max": {"$ifNull": ["$CAT5", ""]}}, "CATEGORY6": {"$max": {"$ifNull": ["$CATEGORY6", ""]}},
+            }},
+        ]
+        async for r in forecast_db["sales_data"].aggregate(sales_pipeline, allowDiskUse=True, batchSize=1000):
+            group = r.get("_id") or {}
             key = (
-                norm_text(r.get("STORE")),
-                norm_text(r.get("DIVISION")),
-                norm_text(r.get("SECTION")),
-                norm_text(r.get("DEPARTMENT")),
-                norm_text(r.get("VENDOR")),
+                norm_text(group.get("store")), norm_text(group.get("division")),
+                norm_text(group.get("section")), norm_text(group.get("department")), norm_text(group.get("vendor")),
             )
-            sales_qty_map[key] = sales_qty_map.get(key, 0.0) + float(r.get("BILLQTY") or 0)
-            if key not in sales_cats_map:
-                sales_cats_map[key] = ["", "", "", "", "", ""]
-            cats = sales_cats_map[key]
-            for i, f in enumerate(["CAT1","CAT2","CAT3","CAT4","CAT5","CATEGORY6"]):
-                if not cats[i]:
-                    v = norm_text(r.get(f))
-                    if v:
-                        cats[i] = v
+            sales_qty_map[key] = float(r.get("qty") or 0)
+            sales_cats_map[key] = [norm_text(r.get(name)) for name in ["CAT1", "CAT2", "CAT3", "CAT4", "CAT5", "CATEGORY6"]]
 
         print(f"✅ Sales keys: {len(sales_qty_map)} | days={days_range} | holdingDays={holdingDays}")
 
@@ -549,14 +635,25 @@ async def stock_gap(
         store_map:  dict = {}   # (SITE_NAME, DIV, SEC, DEPT, VENDOR) → storeStock
         godown_map: dict = {}   # (DIV, SEC, DEPT, VENDOR) → combined godownStock
 
-        async for s in forecast_db["stock_data"].find(stock_filter):
-            site   = norm_text(s.get("SITE_NAME"))
-            source = norm_text(s.get("SOURCE_SITE"))
-            div    = norm_text(s.get("DIVISION"))
-            sec    = norm_text(s.get("SECTION"))
-            dept   = norm_text(s.get("DEPARTMENT"))
-            ven    = norm_text(s.get("VENDOR"))
-            qty    = float(s.get("CLOSINGQTY") or 0)
+        stock_pipeline = [
+            {"$match": stock_filter},
+            {"$group": {
+                "_id": {
+                    "site": "$SITE_NAME", "source": "$SOURCE_SITE", "division": "$DIVISION",
+                    "section": "$SECTION", "department": "$DEPARTMENT", "vendor": "$VENDOR",
+                },
+                "qty": {"$sum": {"$ifNull": ["$CLOSINGQTY", 0]}},
+            }},
+        ]
+        async for s in forecast_db["stock_data"].aggregate(stock_pipeline, allowDiskUse=True, batchSize=1000):
+            group  = s.get("_id") or {}
+            site   = norm_text(group.get("site"))
+            source = norm_text(group.get("source"))
+            div    = norm_text(group.get("division"))
+            sec    = norm_text(group.get("section"))
+            dept   = norm_text(group.get("department"))
+            ven    = norm_text(group.get("vendor"))
+            qty    = float(s.get("qty") or 0)
 
             if source == "STORE":
                 skey = (site, div, sec, dept, ven)
@@ -728,12 +825,14 @@ async def list_uploaded_files():
             "filename": doc.get("filename", "Uploaded file"),
             "collection": doc.get("collection", ""),
             "inserted_rows": doc.get("inserted_rows", 0),
+            "processed_rows": doc.get("processed_rows", doc.get("inserted_rows", 0)),
             "type": doc.get("type", ""),
             "uploaded_at": doc.get("uploaded_at"),
             "content_type": doc.get("content_type", ""),
             "selected_sheet": doc.get("selected_sheet", ""),
             "detected_columns": doc.get("detected_columns", []),
             "downloadable": downloadable,
+            "data_deletable": bool(doc.get("upload_id")),
         })
     return {"files": jsonable_encoder(cleaned)}
 
@@ -764,6 +863,50 @@ async def download_uploaded_file(file_id: str):
         filename=doc.get("filename") or resolved.name,
         media_type=doc.get("content_type") or "application/octet-stream",
     )
+
+
+@router.delete("/files/{file_id}")
+async def delete_uploaded_file(file_id: str):
+    from bson import ObjectId
+
+    try:
+        oid = ObjectId(file_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid file id")
+
+    doc = await forecast_db["uploaded_files"].find_one({"_id": oid})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Uploaded file record not found")
+
+    collection = doc.get("collection")
+    upload_id = doc.get("upload_id")
+    deleted_rows = 0
+    if upload_id and collection in {"sales_data", "stock_data"}:
+        result = await forecast_db[collection].delete_many({"_upload_id": upload_id})
+        deleted_rows = result.deleted_count
+
+    file_deleted = False
+    path = doc.get("file_path")
+    if path:
+        resolved = Path(path).resolve()
+        if UPLOAD_DIR in resolved.parents and resolved.exists():
+            try:
+                resolved.unlink()
+                file_deleted = True
+            except OSError:
+                file_deleted = False
+
+    await forecast_db["uploaded_files"].delete_one({"_id": oid})
+    legacy_data_preserved = not bool(upload_id)
+    return {
+        "status": "success", "deleted_rows": deleted_rows, "file_deleted": file_deleted,
+        "legacy_data_preserved": legacy_data_preserved,
+        "message": (
+            f"Upload deleted. Removed {deleted_rows} imported rows."
+            if not legacy_data_preserved
+            else "Upload record deleted. Its older imported rows were preserved because this upload predates per-upload row tracking."
+        ),
+    }
 
 
 @router.get("/test")
