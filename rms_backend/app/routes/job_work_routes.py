@@ -38,12 +38,23 @@ def _number(value: Any, default: float = 0.0) -> float:
         return default
 
 
+def _is_overdue(row: dict) -> bool:
+    promised = (row.get("vendor_acknowledgement") or {}).get("promised_ready_date") or ""
+    if not promised or row.get("status") == "COMPLETED" or row.get("vendor_progress_stage") == "READY_FOR_RETURN":
+        return False
+    try:
+        return datetime.strptime(promised, "%Y-%m-%d").date() < datetime.utcnow().date()
+    except ValueError:
+        return False
+
+
 def _serialize(document: dict) -> dict:
     row = dict(document)
     row["id"] = str(row.pop("_id"))
     for key in ("created_at", "updated_at", "issued_at", "due_date"):
         if isinstance(row.get(key), datetime):
             row[key] = row[key].isoformat()
+    row["is_overdue"] = _is_overdue(row)
     return row
 
 
@@ -470,7 +481,13 @@ async def vendor_job_work_orders(authorization: str = Header(None)):
 
 @router.post("/vendor/orders/{order_id}/acknowledge")
 async def vendor_acknowledge_job_work(order_id: str, payload: dict | None = None, authorization: str = Header(None)):
-    """Vendor confirms receipt of the job-work instruction/material challan."""
+    """
+    Vendor confirms receipt of the job-work instruction/material challan.
+    This is the "scan and fill" step: the vendor states the date they took
+    the material, how many pieces they received, and the date by which
+    they promise finished goods will be ready — that promise then drives
+    the is_overdue flag everywhere this order is shown.
+    """
     vendor_id = _vendor_session(authorization)
     await _require_vendor_job_work_access(vendor_id)
     if not ObjectId.is_valid(order_id):
@@ -480,13 +497,34 @@ async def vendor_acknowledge_job_work(order_id: str, payload: dict | None = None
         raise HTTPException(status_code=404, detail="Job work order not found for this vendor.")
     if order.get("status") not in {"ISSUED", "PARTIALLY_RECEIVED"}:
         raise HTTPException(status_code=400, detail="Material must be issued before it can be acknowledged.")
+
+    payload = payload or {}
+    taken_date = str(payload.get("taken_date") or "").strip()
+    promised_ready_date = str(payload.get("promised_ready_date") or "").strip()
+    pieces_received = _number(payload.get("pieces_received"))
+    note = str(payload.get("note") or "").strip()[:1000]
+
+    if not taken_date or not promised_ready_date or pieces_received <= 0:
+        raise HTTPException(status_code=400, detail="Date taken, pieces received and a promised ready-by date are required.")
+    try:
+        datetime.strptime(taken_date, "%Y-%m-%d")
+        datetime.strptime(promised_ready_date, "%Y-%m-%d")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Dates must be in YYYY-MM-DD format.")
+
     now = datetime.utcnow()
-    note = str((payload or {}).get("note") or "").strip()[:1000]
+    acknowledgement = {
+        "taken_date": taken_date,
+        "pieces_received": pieces_received,
+        "promised_ready_date": promised_ready_date,
+        "note": note,
+        "acknowledged_at": now.isoformat(),
+    }
     await job_work_orders_collection.update_one(
         {"_id": order["_id"], "assigned_vendor_id": vendor_id},
-        {"$set": {"vendor_acknowledged_at": now, "vendor_acknowledgement_note": note, "updated_at": now}},
+        {"$set": {"vendor_acknowledged_at": now, "vendor_acknowledgement": acknowledgement, "updated_at": now}},
     )
-    return {"message": "Job work instruction acknowledged. The retailer will record the physical receipt."}
+    return {"message": "Job work instruction acknowledged. The retailer will record the physical receipt.", "data": acknowledgement}
 
 
 @router.post("/vendor/orders/{order_id}/progress")
