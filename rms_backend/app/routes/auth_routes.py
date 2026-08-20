@@ -32,6 +32,7 @@ DEPARTMENT_ROUTES: Dict[str, str] = {
     "Third Party":                    "/third-party",
     "Production & Job Work":          "/production",
     "Merchandiser Buyer":             "/merchandiser-buyer",
+    "Marketing":                       "/marketing",
     "Vendor":                         "/merchandiser-seller",
     "Store Owner":                    "/dashboard/store-owner",
 }

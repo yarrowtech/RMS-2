@@ -323,7 +323,7 @@ import {
   FaShoppingCart,
   FaIdBadge,
 } from "react-icons/fa";
-import { PanelLeft, PanelRight, PackageCheck, Building2, Wrench, Shield, DollarSign, Palette, TrendingUp, Network, Factory, Package, LineChart } from "lucide-react";
+import { PanelLeft, PanelRight, PackageCheck, Building2, Wrench, Shield, DollarSign, Palette, TrendingUp, Network, Factory, Package, LineChart, Megaphone } from "lucide-react";
 import { FaSitemap } from "react-icons/fa";
 import { useNavigate } from "react-router-dom";
 
@@ -351,6 +351,7 @@ const DEPARTMENT_WORKSPACES = [
   { department: "Forecast & Analytics",         path: "/forecast-analytics",  icon: LineChart,   label: "Forecast & Analytics" },
   { department: "Third Party",                  path: "/third-party",         icon: Network,     label: "Third Party" },
   { department: "Production & Job Work",        path: "/production",          icon: Factory,     label: "Production & Job Work" },
+  { department: "Marketing",                    path: "/marketing",           icon: Megaphone,   label: "Marketing" },
 ];
 
 const cn = (...a) => a.filter(Boolean).join(" ");
