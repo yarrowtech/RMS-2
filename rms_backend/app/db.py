@@ -148,6 +148,10 @@ forecast_restock_drafts_collection   = db["forecast_restock_drafts"]
 # anyone has a login token.
 usage_events_collection = db["usage_events"]
 
+# Marketing department campaign planning and redemption impact tracking.
+marketing_campaigns_collection = db["marketing_campaigns"]
+marketing_offer_redemptions_collection = db["marketing_offer_redemptions"]
+
 async def ensure_procurement_indexes():
     """Create the indexes required by catalogue/RFQ hot paths and idempotency."""
     await purchaseorders_collection.create_index([("tenant_id", 1), ("orderNo", 1)], name="po_tenant_number")
@@ -234,6 +238,8 @@ async def ensure_procurement_indexes():
     await usage_events_collection.create_index([("feature", 1), ("event_type", 1), ("created_at", -1)], name="usage_events_feature_type_created")
     await usage_events_collection.create_index([("role", 1), ("admin_id", 1), ("created_at", -1)], name="usage_events_role_admin_created")
     await usage_events_collection.create_index([("role", 1), ("vendor_id", 1), ("created_at", -1)], name="usage_events_role_vendor_created")
+    await marketing_campaigns_collection.create_index([("tenant_id", 1), ("status", 1), ("start_date", -1)], name="marketing_campaign_tenant_status")
+    await marketing_offer_redemptions_collection.create_index([("tenant_id", 1), ("campaign_id", 1), ("created_at", -1)], name="marketing_redemption_campaign")
     await error_logs_collection.create_index([("created_at", -1)], name="error_logs_created")
     await error_logs_collection.create_index([("resolved", 1), ("created_at", -1)], name="error_logs_resolved_created")
     await error_logs_collection.create_index([("source", 1), ("created_at", -1)], name="error_logs_source_created")

@@ -43,6 +43,7 @@ const DEPT_COLOR_BY_ID = {
   "Forecast & Analytics":         "violet",
   "Third Party":                  "slate",
   "Production & Job Work":        "fuchsia",
+  "Marketing":                    "teal",
   "Cashier":                      "orange",
   "Inventory (Store)":            "indigo",
   "Finance (Store)":              "emerald",
@@ -74,6 +75,7 @@ const PERMISSIONS = [
   { id:"logistics",       label:"Logistics",         group:"Admin"      },
   { id:"reports",         label:"Reports",           group:"Admin"      },
   { id:"user_management", label:"User Management",   group:"Admin"      },
+  { id:"marketing",       label:"Marketing",         group:"Growth"     },
 ];
 
 // Quick permission presets — still a frontend-only UX convenience; the
@@ -86,7 +88,8 @@ const PRESETS = {
   "Buyer":             ["purchase_orders","vendors","mbuyer","reports"],
   "Store Manager":     ["cashier","store_stock","sales","reports"],
   "Finance":           ["finance","reports"],
-  "Full HQ Access":    ["inventory","purchase_orders","grn","grc","vendors","stock_allocation","stock_transfer","job_work","mbuyer","hr","finance","logistics","reports","user_management"],
+  "Marketing Lead":    ["marketing","sales","reports"],
+  "Full HQ Access":    ["inventory","purchase_orders","grn","grc","vendors","stock_allocation","stock_transfer","job_work","mbuyer","hr","finance","logistics","marketing","reports","user_management"],
 };
 
 const DEPT_COLOR = {

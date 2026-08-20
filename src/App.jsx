@@ -23,6 +23,7 @@ import InventoryManagement from "./components/InventoryManagement/InventoryManag
 import StockPlanForecasting from "./components/StockPlanForecastingDepartment/StockPlanForecasting.jsx";
 import ForecastAnalytics from "./components/ForecastAnalytics.jsx";
 import ProductionJobWork from "./components/Production/ProductionJobWork.jsx";
+import Marketing from "./components/Marketing/Marketing.jsx";
 import Admin from "./components/Admin/Admin";
 import GRRC from "./components/InventoryManagement/GRRC.jsx";
 import GRN from "./components/InventoryManagement/GRN.jsx";
@@ -100,7 +101,7 @@ export default function App() {
             handleAuthRedirect() which navigates here automatically.
             Path must match DEPARTMENT_ROUTES redirect_url in auth_routes.py  */}
         <Route path="/dashboard/select" element={<DepartmentSelector />} />
-        <Route path="/support" element={<DepartmentRouteGuard department={["HQ", "IT", "Administrator", "HR", "Cashier", "Finance", "Logistics", "Design & Pattern", "Inventory", "Stock Planning & Forecasting", "Forecast & Analytics", "Third Party", "Production & Job Work", "Merchandiser Buyer", "Store Owner"]}><RetailerHelpSupport /></DepartmentRouteGuard>} />
+        <Route path="/support" element={<DepartmentRouteGuard department={["HQ", "IT", "Administrator", "HR", "Cashier", "Finance", "Logistics", "Design & Pattern", "Inventory", "Stock Planning & Forecasting", "Forecast & Analytics", "Third Party", "Production & Job Work", "Merchandiser Buyer", "Marketing", "Store Owner"]}><RetailerHelpSupport /></DepartmentRouteGuard>} />
 
         {/* â”€â”€ Direct dashboard routes â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             These match the DEPARTMENT_ROUTES values in auth_routes.py exactly.
@@ -119,6 +120,7 @@ export default function App() {
         <Route path="/dashboard/third-party"        element={<DepartmentRouteGuard department="Third Party"><ThirdPartyDept /></DepartmentRouteGuard>} />
         <Route path="/dashboard/production"         element={<DepartmentRouteGuard department="Production & Job Work"><ProductionJobWork /></DepartmentRouteGuard>} />
         <Route path="/dashboard/merchandiser-buyer" element={<DepartmentRouteGuard department="Merchandiser Buyer"><Mbuyer /></DepartmentRouteGuard>} />
+        <Route path="/dashboard/marketing"          element={<DepartmentRouteGuard department="Marketing"><Marketing /></DepartmentRouteGuard>} />
         <Route path="/dashboard/vendor"             element={<VendorRouteGuard><MSeller /></VendorRouteGuard>} />
         <Route path="/dashboard/store-owner"        element={<DepartmentRouteGuard department="Store Owner"><StoreOwnerDashboard /></DepartmentRouteGuard>} />
         <Route path="/dashboard/store-owner/purchasing" element={<DepartmentRouteGuard department="Store Owner"><StorePurchasing /></DepartmentRouteGuard>} />
@@ -133,6 +135,7 @@ export default function App() {
         <Route path="/merchandiser-buyer" element={<DepartmentRouteGuard department="Merchandiser Buyer"><Mbuyer /></DepartmentRouteGuard>} />
         <Route path="/third-party"        element={<DepartmentRouteGuard department="Third Party"><ThirdPartyDept /></DepartmentRouteGuard>} />
         <Route path="/production"         element={<DepartmentRouteGuard department="Production & Job Work"><ProductionJobWork /></DepartmentRouteGuard>} />
+        <Route path="/marketing"          element={<DepartmentRouteGuard department="Marketing"><Marketing /></DepartmentRouteGuard>} />
 
         {/* Merchandiser-Seller */}
         <Route path="/merchandiser-seller/login"          element={<MSellerLogin />} />
@@ -178,6 +181,7 @@ export default function App() {
         <Route path="/admin/cashier/dashboard"            element={<DepartmentRouteGuard department="Cashier"><Cashier /></DepartmentRouteGuard>} />
         <Route path="/admin/third-party/dashboard"        element={<DepartmentRouteGuard department="Third Party"><ThirdPartyDept /></DepartmentRouteGuard>} />
         <Route path="/admin/merchandiser-buyer/dashboard" element={<DepartmentRouteGuard department="Merchandiser Buyer"><Mbuyer /></DepartmentRouteGuard>} />
+        <Route path="/admin/marketing/dashboard"          element={<DepartmentRouteGuard department="Marketing"><Marketing /></DepartmentRouteGuard>} />
         <Route path="/admin/product-mapping"              element={<DepartmentRouteGuard department={["IT", "Store Owner"]}><ProductMapping /></DepartmentRouteGuard>} />
         <Route path="*" element={<Navigate to="/admin/login" replace />} />
       </Routes>

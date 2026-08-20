@@ -472,7 +472,7 @@ from ..models import AdminCreate
 HQ_ONLY_DEPARTMENTS = [
     "Merchandiser Buyer", "Logistics", "IT", "Design & Pattern",
     "Stock Planning & Forecasting", "Third Party", "Production & Job Work",
-    "Forecast & Analytics",
+    "Forecast & Analytics", "Marketing",
 ]
 
 # Departments that ONLY make sense at a single store (no HQ equivalent).
@@ -499,7 +499,7 @@ HQ_PERMISSIONS = [
     "job_work",
     "cashier", "store_stock", "sales",
     "hr", "finance", "logistics", "reports",
-    "user_management", "forecast_analytics",
+    "user_management", "forecast_analytics", "marketing",
 ]
 
 # Suggested default permissions when a department is picked at STORE scope

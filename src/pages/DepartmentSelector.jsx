@@ -19,6 +19,7 @@ const DEPT_ROUTES = {
   "Third Party":                    "/dashboard/third-party",
   "Production & Job Work":          "/dashboard/production",
   "Merchandiser Buyer":             "/dashboard/merchandiser-buyer",
+  "Marketing":                       "/dashboard/marketing",
   "Vendor":                         "/dashboard/vendor",
 };
 
