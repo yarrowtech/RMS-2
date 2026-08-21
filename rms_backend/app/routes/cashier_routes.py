@@ -504,6 +504,60 @@ async def search_products(
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+
+@router.get("/product-cache")
+async def product_cache(
+    authorization: str = Header(None),
+    limit: int = Query(5000, ge=1, le=10000),
+):
+    """
+    Store-wise POS catalogue snapshot for offline cashier billing.
+    This is read-only: it does not create stock, invoices, or sales entries.
+    """
+    store = await _require_store_context(authorization)
+    tenant_id = store["tenant_id"]
+    store_id = store["store_id"]
+
+    results = []
+    seen = set()
+    cursor = product_collection.find({"tenant_id": tenant_id}).limit(limit)
+    async for p in cursor:
+        if not p.get("has_variants"):
+            bc = (p.get("barcode") or "").strip()
+            if not bc or bc in seen:
+                continue
+            if _is_vendor_only(p):
+                inv = await inventory_collection.find_one({"barcode": bc, "tenant_id": tenant_id})
+                if not inv:
+                    continue
+            qty = await _inv_qty(bc, tenant_id, store_id)
+            seen.add(bc)
+            results.append(_product_to_pos(p, qty))
+        else:
+            for v in p.get("variants", []):
+                bc = (v.get("barcode") or "").strip()
+                if not bc or bc in seen:
+                    continue
+                if _is_vendor_only(p):
+                    inv = await inventory_collection.find_one({"barcode": bc, "tenant_id": tenant_id})
+                    if not inv:
+                        continue
+                qty = await _inv_qty(bc, tenant_id, store_id)
+                seen.add(bc)
+                results.append(_variant_to_pos(p, v, qty))
+                if len(results) >= limit:
+                    break
+        if len(results) >= limit:
+            break
+
+    return JSONResponse({
+        "status": "success",
+        "count": len(results),
+        "cached_at": datetime.utcnow().isoformat(),
+        "store_id": store_id,
+        "data": results,
+    })
+
 # POST /cashier/bill
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -516,10 +570,32 @@ async def save_bill(
     items        = payload.get("items", [])
     summary      = payload.get("summary", {})
     bill_meta = payload.get("bill", {})
+    client_offline_id = str(payload.get("clientOfflineId") or "").strip()
+    offline_invoice_no = str(payload.get("offlineInvoiceNo") or "").strip()
+    created_offline_at = str(payload.get("createdOfflineAt") or "").strip()
+    sync_source = str(payload.get("syncSource") or "").strip()
     store     = await _require_store_context(authorization)
     tenant_id  = store["tenant_id"]
     store_id   = store["store_id"]
     store_name = store["store_name"]
+
+    if client_offline_id:
+        existing = await sales_collection.find_one({
+            "tenant_id": tenant_id,
+            "store_id": store_id,
+            "client_offline_id": client_offline_id,
+        })
+        if existing:
+            return {
+                "status":              "success",
+                "invoice_no":          existing.get("invoice_no", ""),
+                "id":                  str(existing.get("_id", "")),
+                "message":             "Offline bill already synced.",
+                "store_id":            store_id,
+                "duplicate":           True,
+                "inventory_warnings":  [],
+                "inventory_not_found": [],
+            }
 
     # A bill must show the person authenticated to the POS, rather than a
     # browser-provided value that can be stale or manually changed.
@@ -593,6 +669,11 @@ async def save_bill(
         "tenant_id":        tenant_id,
         "store_id":         store_id,
         "store_name":       store_name,
+        "client_offline_id": client_offline_id,
+        "offline_invoice_no": offline_invoice_no,
+        "created_offline_at": created_offline_at,
+        "sync_source": sync_source or ("offline_pos" if client_offline_id else "online_pos"),
+        "synced_from_offline": bool(client_offline_id),
         "summary": {
             "total_sale":     _float(summary.get("totalSale")),
             "total_savings":  _float(summary.get("totalSavings")),
