@@ -131,6 +131,13 @@ hr_leave_requests_collection    = db["hr_leave_requests"]
 hr_salary_records_collection    = db["hr_salary_records"]
 hr_holidays_collection          = db["hr_holidays"]
 
+# The one deliberate exception to "no parallel employee list" above: floor
+# staff (e.g. salespeople) who need HR tracking (division/section/floor)
+# but never need a system login. Creating them never touches
+# admins_collection, never sends a setup email, and never counts against
+# the tenant's admin-seat limit.
+hr_floor_staff_collection       = db["hr_floor_staff"]
+
 # Forecast & Analytics automation output — recomputed wholesale on every
 # cron run (delete-then-insert per tenant), not incrementally patched, so
 # these always reflect exactly what the last run saw. Not a source of

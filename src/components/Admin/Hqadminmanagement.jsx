@@ -5,9 +5,10 @@ import { createPortal } from "react-dom";
 import {
   Plus, Eye, Trash2, Lock, Unlock, Search,
   CheckCircle, XCircle, Clock, X, AlertCircle,
-  Users, Shield, UserPlus, Pencil, CreditCard, CalendarClock
+  Users, Shield, UserPlus, Pencil, CreditCard, CalendarClock, ArrowUpRight, UploadCloud
 } from "lucide-react";
 import toast from "react-hot-toast";
+import BulkStaffImportModal from "../../utils/BulkStaffImportModal.jsx";
 
 const API   = APP_API_URL;
 const api = async (path, opts = {}) => {
@@ -113,6 +114,7 @@ const EMPTY_FORM = {
                 // the page itself branches on localStorage.store_id), so a
                 // department string alone can no longer tell us the scope.
   managedDepartments:[], permissions:[], store_id:"",
+  division:"", section:"", floor:"", is_department_head:false,
 };
 
 function deptLabel(id) {
@@ -126,10 +128,24 @@ function deptColor(id) {
 // ══════════════════════════════════════════════════════════════════════════════
 // ADD ADMIN MODAL
 // ══════════════════════════════════════════════════════════════════════════════
-function AddAdminModal({ onClose, onCreated, stores = [], deptConfig }) {
+// Distinct previously-typed values for one store, so Division/Section/Floor
+// stay consistent instead of every admin spelling "Menswear" differently.
+function orgValuesForStore(admins, storeId, key) {
+  if (!storeId) return [];
+  return [...new Set(
+    admins
+      .filter((a) => a.store_id === storeId && a[key])
+      .map((a) => a[key])
+  )].sort();
+}
+
+function AddAdminModal({ onClose, onCreated, stores = [], deptConfig, admins = [] }) {
   const [form,   setForm]   = useState(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
   const [errors, setErrors] = useState({});
+  const divisionOptions = orgValuesForStore(admins, form.store_id, "division");
+  const sectionOptions  = orgValuesForStore(admins, form.store_id, "section");
+  const floorOptions    = orgValuesForStore(admins, form.store_id, "floor");
 
   const hqDepartments      = deptConfig?.hq_departments    || [];
   const storeDepartments   = deptConfig?.store_departments || [];
@@ -214,6 +230,10 @@ function AddAdminModal({ onClose, onCreated, stores = [], deptConfig }) {
           managedDepartments: form.managedDepartments,
           permissions:        form.permissions,
           store_id:           isStoreScope ? form.store_id : null,
+          division:           form.division.trim(),
+          section:            form.section.trim(),
+          floor:              form.floor.trim(),
+          is_department_head: form.is_department_head,
         }),
       });
       toast.success(`Admin created! Setup email sent to ${form.email}`);
@@ -346,6 +366,38 @@ function AddAdminModal({ onClose, onCreated, stores = [], deptConfig }) {
             )}
           </div>
 
+          {/* Org placement — purely descriptive, doesn't affect access.
+              Division/Section/Floor/Head are all store-level concepts — an
+              HQ department usually has just one or two people anyway, so
+              there's nothing to designate a "head" among. */}
+          {isStoreScope && selectedDepts.length > 0 && (
+            <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3">
+              <p className={LBL}>Org placement <span className="text-slate-400 font-normal normal-case tracking-normal">— optional, for org structure only</span></p>
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <label className={LBL}>Division</label>
+                  <input className={INP} list="division-options" value={form.division} onChange={e=>setForm(f=>({...f,division:e.target.value}))} placeholder="e.g. Menswear" />
+                  <datalist id="division-options">{divisionOptions.map(v => <option key={v} value={v} />)}</datalist>
+                </div>
+                <div>
+                  <label className={LBL}>Section</label>
+                  <input className={INP} list="section-options" value={form.section} onChange={e=>setForm(f=>({...f,section:e.target.value}))} placeholder="e.g. Billing" />
+                  <datalist id="section-options">{sectionOptions.map(v => <option key={v} value={v} />)}</datalist>
+                </div>
+                <div>
+                  <label className={LBL}>Floor</label>
+                  <input className={INP} list="floor-options" value={form.floor} onChange={e=>setForm(f=>({...f,floor:e.target.value}))} placeholder="e.g. Ground Floor" />
+                  <datalist id="floor-options">{floorOptions.map(v => <option key={v} value={v} />)}</datalist>
+                </div>
+              </div>
+              <label className="flex items-center gap-2.5 cursor-pointer">
+                <input type="checkbox" checked={form.is_department_head} onChange={e=>setForm(f=>({...f,is_department_head:e.target.checked}))} className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-400" />
+                <span className="text-sm font-semibold text-slate-700">Make head of {deptLabel(selectedDepts[0])}</span>
+              </label>
+              {form.is_department_head && <p className="text-[11px] text-amber-600">This replaces the current head of {deptLabel(selectedDepts[0])}, if there is one.</p>}
+            </div>
+          )}
+
           {/* Store assignment — only when Level = Store */}
           {isStoreScope && (
             <div className="bg-teal-50 border border-teal-200 rounded-xl p-4">
@@ -413,9 +465,16 @@ function AddAdminModal({ onClose, onCreated, stores = [], deptConfig }) {
 // ══════════════════════════════════════════════════════════════════════════════
 // VIEW ADMIN MODAL
 // ══════════════════════════════════════════════════════════════════════════════
-function EditPermissionsModal({ admin, onClose, onSaved, deptConfig }) {
+function EditPermissionsModal({ admin, onClose, onSaved, deptConfig, admins = [] }) {
   const [permissions, setPermissions] = useState([...(admin.permissions || [])]);
   const [departments, setDepartments] = useState([...(admin.managedDepartments || [])]);
+  const [division, setDivision] = useState(admin.division || "");
+  const [section, setSection] = useState(admin.section || "");
+  const [floor, setFloor] = useState(admin.floor || "");
+  const [isHead, setIsHead] = useState(Boolean(admin.is_department_head));
+  const divisionOptions = orgValuesForStore(admins, admin.store_id, "division");
+  const sectionOptions  = orgValuesForStore(admins, admin.store_id, "section");
+  const floorOptions    = orgValuesForStore(admins, admin.store_id, "floor");
   const [saving, setSaving] = useState(false);
 
   const availableDepartments = admin.scope === "store"
@@ -439,7 +498,7 @@ function EditPermissionsModal({ admin, onClose, onSaved, deptConfig }) {
       setSaving(true);
       await api(`/hq/admins/${admin.id}`, {
         method: "PATCH",
-        body: JSON.stringify({ permissions, managedDepartments: departments }),
+        body: JSON.stringify({ permissions, managedDepartments: departments, division, section, floor, is_department_head: isHead }),
       });
       toast.success(`Access updated for ${admin.name}`);
       await onSaved();
@@ -483,6 +542,33 @@ function EditPermissionsModal({ admin, onClose, onSaved, deptConfig }) {
               })}
             </div>
           </section>
+          {admin.scope === "store" && (
+            <section className="mb-6 bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3">
+              <p className="text-xs font-black uppercase tracking-widest text-slate-500">Org placement <span className="text-slate-400 font-normal normal-case tracking-normal">— optional, for org structure only</span></p>
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <label className={LBL}>Division</label>
+                  <input className={INP} list="edit-division-options" value={division} onChange={e=>setDivision(e.target.value)} placeholder="e.g. Menswear" />
+                  <datalist id="edit-division-options">{divisionOptions.map(v => <option key={v} value={v} />)}</datalist>
+                </div>
+                <div>
+                  <label className={LBL}>Section</label>
+                  <input className={INP} list="edit-section-options" value={section} onChange={e=>setSection(e.target.value)} placeholder="e.g. Billing" />
+                  <datalist id="edit-section-options">{sectionOptions.map(v => <option key={v} value={v} />)}</datalist>
+                </div>
+                <div>
+                  <label className={LBL}>Floor</label>
+                  <input className={INP} list="edit-floor-options" value={floor} onChange={e=>setFloor(e.target.value)} placeholder="e.g. Ground Floor" />
+                  <datalist id="edit-floor-options">{floorOptions.map(v => <option key={v} value={v} />)}</datalist>
+                </div>
+              </div>
+              <label className="flex items-center gap-2.5 cursor-pointer">
+                <input type="checkbox" checked={isHead} onChange={e=>setIsHead(e.target.checked)} className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-400" />
+                <span className="text-sm font-semibold text-slate-700">Head of {deptLabel(departments[0] || admin.department)}</span>
+              </label>
+              {isHead && !admin.is_department_head && <p className="text-[11px] text-amber-600">This replaces the current head of {deptLabel(departments[0] || admin.department)}, if there is one.</p>}
+            </section>
+          )}
           {["Operations", "Store", "Admin"].map(group => (
             <div key={group} className="mb-6 last:mb-0">
               <p className="text-xs font-black text-slate-500 uppercase tracking-widest mb-3">{group}</p>
@@ -537,6 +623,10 @@ function ViewAdminModal({ admin, onClose }) {
           {[
             ["Scope",       admin.scope === "hq" ? "HQ Admin" : "Store Admin"],
             ["Store",       admin.store_name || "—"],
+            ["Division",    admin.division || "—"],
+            ["Section",     admin.section || "—"],
+            ["Floor",       admin.floor || "—"],
+            ["Department head", admin.is_department_head ? "★ Yes" : "No"],
             ["Status",      admin.status],
             ["Password",    admin.password_set ? "Set" : "Pending setup"],
             ["Tenant",      admin.tenant_id],
@@ -596,10 +686,75 @@ function loadRazorpayCheckout() {
 // StorePlanStatus); /api/retailer-subscriptions/me now also covers
 // multi-store tenants on the self-serve paid billing path.
 // ══════════════════════════════════════════════════════════════════════════════
+const UPGRADE_PLAN_ORDER = { basic: 0, professional: 1, enterprise: 2 };
+const UPGRADE_PLAN_INFO = {
+  professional: { label: "Professional", stores: 5, admins: 15, price_inr: 90000 },
+  enterprise:   { label: "Enterprise",   stores: "Unlimited", admins: "Unlimited", price_inr: 125000 },
+};
+
+function UpgradePlanModal({ currentPlan, onClose }) {
+  const [upgrading, setUpgrading] = useState("");
+  const targets = Object.keys(UPGRADE_PLAN_INFO).filter(
+    (key) => UPGRADE_PLAN_ORDER[key] > (UPGRADE_PLAN_ORDER[currentPlan] ?? 0)
+  );
+
+  const upgrade = async (plan) => {
+    setUpgrading(plan);
+    try {
+      const result = await api("/api/retailer-subscriptions/upgrade", {
+        method: "POST",
+        body: JSON.stringify({ requested_plan: plan }),
+      });
+      if (!result.payment_link) throw new Error("Razorpay did not return a secure payment link.");
+      window.location.assign(result.payment_link);
+    } catch (e) {
+      toast.error(e.message || "Could not start secure upgrade.");
+      setUpgrading("");
+    }
+  };
+
+  return createPortal(
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4" style={{ zIndex: 99999 }}>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden">
+        <div className="bg-gradient-to-r from-indigo-600 to-indigo-700 px-6 py-5 flex items-center justify-between">
+          <div>
+            <h2 className="text-lg font-bold text-white">Upgrade Plan</h2>
+            <p className="text-indigo-100 text-xs mt-0.5">More stores and staff seats, billed monthly</p>
+          </div>
+          <button onClick={onClose} className="text-white/80 hover:text-white"><X className="w-5 h-5" /></button>
+        </div>
+        <div className="p-6 space-y-3">
+          {targets.length === 0 ? (
+            <p className="text-sm text-slate-500 text-center py-6">You're already on the top plan — nothing higher to upgrade to.</p>
+          ) : targets.map((key) => {
+            const plan = UPGRADE_PLAN_INFO[key];
+            return (
+              <div key={key} className="rounded-xl border border-slate-200 p-4 flex items-center justify-between gap-4">
+                <div>
+                  <p className="text-sm font-black text-slate-900">{plan.label}</p>
+                  <p className="text-xs text-slate-500 mt-0.5">{plan.stores} store{plan.stores !== 1 ? "s" : ""} · {plan.admins} staff seats</p>
+                  <p className="text-sm font-bold text-indigo-700 mt-1">₹{plan.price_inr.toLocaleString("en-IN")}/month</p>
+                </div>
+                <button onClick={() => upgrade(key)} disabled={Boolean(upgrading)}
+                  className="shrink-0 h-10 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold disabled:opacity-50 transition">
+                  {upgrading === key ? "Opening…" : `Upgrade`}
+                </button>
+              </div>
+            );
+          })}
+          <p className="text-[11px] text-slate-400 pt-1">Your current billing cycle ends and a fresh {targets[0] ? UPGRADE_PLAN_INFO[targets[0]].label : "new"}-plan cycle starts once payment is confirmed.</p>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
 function SubscriptionBanner() {
   const [subscription, setSubscription] = useState(null);
   const [loading, setLoading] = useState(true);
   const [renewing, setRenewing] = useState(false);
+  const [showUpgrade, setShowUpgrade] = useState(false);
 
   useEffect(() => {
     api("/api/retailer-subscriptions/me")
@@ -628,6 +783,7 @@ function SubscriptionBanner() {
   const statusText = subscription.access_state === "active"
     ? `${subscription.days_remaining} day${Number(subscription.days_remaining) === 1 ? "" : "s"} left`
     : subscription.access_state === "grace" ? "Grace period active" : "Renewal required";
+  const canUpgrade = (UPGRADE_PLAN_ORDER[subscription.plan] ?? 0) < UPGRADE_PLAN_ORDER.enterprise;
 
   return (
     <section className={`flex flex-wrap items-center justify-between gap-4 rounded-2xl border p-4 shadow-sm ${urgent ? "border-amber-200 bg-amber-50" : "border-emerald-200 bg-emerald-50"}`}>
@@ -639,9 +795,18 @@ function SubscriptionBanner() {
           <p className="text-xs text-slate-600">Next payment due {dueDate} · ₹{Number(subscription.amount_inr || 0).toLocaleString("en-IN")}/month</p>
         </div>
       </div>
-      <button type="button" onClick={renew} disabled={renewing} className={`inline-flex h-10 items-center justify-center gap-2 rounded-xl px-4 text-sm font-black text-white transition disabled:opacity-60 ${urgent ? "bg-amber-600 hover:bg-amber-700" : "bg-emerald-600 hover:bg-emerald-700"}`}>
-        <CreditCard className="h-4 w-4" /> {renewing ? "Opening secure payment…" : "Renew securely"}
-      </button>
+      <div className="flex items-center gap-2">
+        {canUpgrade && (
+          <button type="button" onClick={() => setShowUpgrade(true)}
+            className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-indigo-300 bg-white px-4 text-sm font-black text-indigo-700 hover:bg-indigo-50 transition">
+            <ArrowUpRight className="h-4 w-4" /> Upgrade Plan
+          </button>
+        )}
+        <button type="button" onClick={renew} disabled={renewing} className={`inline-flex h-10 items-center justify-center gap-2 rounded-xl px-4 text-sm font-black text-white transition disabled:opacity-60 ${urgent ? "bg-amber-600 hover:bg-amber-700" : "bg-emerald-600 hover:bg-emerald-700"}`}>
+          <CreditCard className="h-4 w-4" /> {renewing ? "Opening secure payment…" : "Renew securely"}
+        </button>
+      </div>
+      {showUpgrade && <UpgradePlanModal currentPlan={subscription.plan} onClose={() => setShowUpgrade(false)} />}
     </section>
   );
 }
@@ -779,6 +944,7 @@ export default function HQAdminManagement() {
   const [search,    setSearch]    = useState("");
   const [filterScope, setFilterScope] = useState("all");
   const [showAdd,   setShowAdd]   = useState(false);
+  const [showBulkImport, setShowBulkImport] = useState(false);
   const [showBuySeats, setShowBuySeats] = useState(false);
   const [viewAdmin, setViewAdmin] = useState(null);
   const [editAdmin, setEditAdmin] = useState(null);
@@ -803,6 +969,10 @@ export default function HQAdminManagement() {
 
   const handleSuspend = async (admin) => {
     const newStatus = (admin.status==="ACTIVE"||admin.status==="Active") ? "SUSPENDED" : "ACTIVE";
+    if (newStatus === "SUSPENDED" && admin.is_department_head) {
+      const proceed = window.confirm(`${admin.name} is the head of ${deptLabel(admin.managedDepartments?.[0] || admin.department)}. Suspending them leaves that department without a head — continue?`);
+      if (!proceed) return;
+    }
     try {
       await api(`/hq/admins/${admin.id}`, { method:"PATCH", body: JSON.stringify({ status: newStatus }) });
       toast.success(`${admin.name} ${newStatus === "ACTIVE" ? "activated" : "suspended"} — takes effect on their next request`);
@@ -853,6 +1023,10 @@ export default function HQAdminManagement() {
           <button onClick={() => setShowBuySeats(true)}
             className="inline-flex items-center gap-2 px-4 py-2 border border-indigo-200 bg-indigo-50 text-indigo-700 rounded-xl text-sm font-bold hover:bg-indigo-100 transition">
             <CreditCard className="w-4 h-4"/> Buy Seats
+          </button>
+          <button onClick={() => setShowBulkImport(true)}
+            className="inline-flex items-center gap-2 px-4 py-2 border border-teal-200 bg-teal-50 text-teal-700 rounded-xl text-sm font-bold hover:bg-teal-100 transition">
+            <UploadCloud className="w-4 h-4"/> Bulk Import
           </button>
           <button onClick={() => setShowAdd(true)}
             className="inline-flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-indigo-600 to-indigo-700 text-white rounded-xl text-sm font-bold hover:opacity-90 transition shadow-md">
@@ -943,7 +1117,10 @@ export default function HQAdminManagement() {
                     </td>
                     {/* Depts */}
                     <td className="px-4 py-3.5">
-                      <div className="flex flex-wrap gap-1">
+                      <div className="flex flex-wrap items-center gap-1">
+                        {admin.is_department_head && (
+                          <span className="px-2 py-0.5 bg-indigo-600 text-white rounded-full text-xs font-bold">★ Head</span>
+                        )}
                         {(admin.managedDepartments||[]).slice(0,2).map(d => (
                           <span key={d} className="px-2 py-0.5 bg-amber-100 text-amber-700 rounded-full text-xs font-semibold">{deptLabel(d)}</span>
                         ))}
@@ -951,6 +1128,9 @@ export default function HQAdminManagement() {
                           <span className="px-2 py-0.5 bg-slate-100 text-slate-600 rounded-full text-xs">+{admin.managedDepartments.length-2}</span>
                         )}
                       </div>
+                      {(admin.division || admin.section || admin.floor) && (
+                        <p className="mt-1 text-[10px] text-slate-400">{[admin.division, admin.section, admin.floor].filter(Boolean).join(" · ")}</p>
+                      )}
                     </td>
                     {/* Permissions */}
                     <td className="px-4 py-3.5">
@@ -1004,6 +1184,11 @@ export default function HQAdminManagement() {
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6">
             <h3 className="text-base font-black text-slate-900 mb-2">Delete Admin?</h3>
             <p className="text-sm text-slate-600 mb-1">Delete <b>{confirmDelete.name}</b>?</p>
+            {confirmDelete.is_department_head && (
+              <p className="text-xs font-bold text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-2">
+                ⚠ {confirmDelete.name} is the head of {deptLabel(confirmDelete.managedDepartments?.[0] || confirmDelete.department)} — deleting them leaves that department without a head.
+              </p>
+            )}
             <p className="text-xs text-red-500 mb-5">This cannot be undone.</p>
             <div className="flex gap-3">
               <button onClick={() => setConfirmDelete(null)}
@@ -1018,9 +1203,18 @@ export default function HQAdminManagement() {
           </div>
         </div>
       ), document.body)}
-      {showAdd && createPortal(<AddAdminModal onClose={() => setShowAdd(false)} onCreated={fetchAll} stores={stores} deptConfig={deptConfig}/>, document.body)}
+      {showAdd && createPortal(<AddAdminModal onClose={() => setShowAdd(false)} onCreated={fetchAll} stores={stores} deptConfig={deptConfig} admins={admins}/>, document.body)}
+      {showBulkImport && (
+        <BulkStaffImportModal
+          onClose={() => setShowBulkImport(false)}
+          onImported={fetchAll}
+          deptConfig={deptConfig}
+          stores={stores}
+          postJson={(path, body) => api(path, { method: "POST", body: JSON.stringify(body) })}
+        />
+      )}
       {viewAdmin && createPortal(<ViewAdminModal admin={viewAdmin} onClose={() => setViewAdmin(null)}/>, document.body)}
-      {editAdmin && createPortal(<EditPermissionsModal admin={editAdmin} onClose={() => setEditAdmin(null)} onSaved={fetchAll} deptConfig={deptConfig}/>, document.body)}
+      {editAdmin && createPortal(<EditPermissionsModal admin={editAdmin} onClose={() => setEditAdmin(null)} onSaved={fetchAll} deptConfig={deptConfig} admins={admins}/>, document.body)}
     </div>
   );
 }

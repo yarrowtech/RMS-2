@@ -20,9 +20,11 @@ from ..db import (
     admins_collection,
     hr_attendance_collection,
     hr_employee_profiles_collection,
+    hr_floor_staff_collection,
     hr_holidays_collection,
     hr_leave_requests_collection,
     hr_salary_records_collection,
+    stores_collection,
 )
 
 router = APIRouter(prefix="/api/hr", tags=["HR"])
@@ -109,6 +111,11 @@ async def list_employees(ctx: TenantCtx = Depends(get_hr_context)):
             "email": admin.get("email", ""),
             "phone": admin.get("phone", ""),
             "department": admin.get("department", ""),
+            "division": admin.get("division", ""),
+            "section": admin.get("section", ""),
+            "floor": admin.get("floor", ""),
+            "is_department_head": bool(admin.get("is_department_head", False)),
+            "store_id": admin.get("store_id"),
             "store_name": admin.get("store_name"),
             "scope": admin.get("scope", "hq"),
             "status": admin.get("status", "ACTIVE"),
@@ -139,6 +146,127 @@ async def update_employee_profile(admin_id: str, payload: EmployeeProfileUpdate,
         upsert=True,
     )
     return {"status": "success", "message": "Employee profile updated."}
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# FLOOR STAFF — HR-tracked people (e.g. salespeople) who never need a
+# system login. A genuine record separate from admins_collection: no
+# email, no password-setup email, no admin-seat consumption.
+# ═══════════════════════════════════════════════════════════════════════════
+
+def _serialize_floor_staff(doc: dict) -> dict:
+    row = dict(doc)
+    row["id"] = str(row.pop("_id"))
+    for key in ("created_at", "updated_at"):
+        if isinstance(row.get(key), datetime):
+            row[key] = row[key].isoformat()
+    return row
+
+
+class FloorStaffCreate(BaseModel):
+    name:      str
+    phone:     Optional[str] = ""
+    role:      Optional[str] = ""   # free text, e.g. "Sales Associate" — not an access department
+    division:  Optional[str] = ""
+    section:   Optional[str] = ""
+    floor:     Optional[str] = ""
+    store_id:  Optional[str] = None  # required only when the caller is HQ (store HR uses their own store)
+
+
+class FloorStaffUpdate(BaseModel):
+    name:     Optional[str] = None
+    phone:    Optional[str] = None
+    role:     Optional[str] = None
+    division: Optional[str] = None
+    section:  Optional[str] = None
+    floor:    Optional[str] = None
+    status:   Optional[str] = None  # "Active" | "Inactive"
+
+
+@router.get("/floor-staff")
+async def list_floor_staff(ctx: TenantCtx = Depends(get_hr_context)):
+    query: dict = {"tenant_id": ctx["tenant_id"]}
+    query.update(_store_scope_query(ctx))
+    staff = []
+    async for doc in hr_floor_staff_collection.find(query).sort("created_at", -1):
+        staff.append(_serialize_floor_staff(doc))
+    return {"status": "success", "data": staff}
+
+
+@router.post("/floor-staff", status_code=201)
+async def create_floor_staff(payload: FloorStaffCreate, ctx: TenantCtx = Depends(get_hr_context)):
+    name = payload.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Name is required.")
+
+    if _is_store_scoped(ctx):
+        store_id = ctx.get("store_id")
+        if not store_id:
+            raise HTTPException(status_code=403, detail="This HR account is not assigned to a store.")
+    else:
+        store_id = payload.store_id
+        if not store_id:
+            raise HTTPException(status_code=400, detail="store_id is required.")
+
+    store_name = None
+    if ObjectId.is_valid(store_id):
+        store = await stores_collection.find_one({"_id": ObjectId(store_id), "tenant_id": ctx["tenant_id"]})
+        if not store:
+            raise HTTPException(status_code=404, detail="Store not found under your tenant.")
+        store_name = store.get("name", "")
+
+    now = datetime.utcnow()
+    doc = {
+        "tenant_id":   ctx["tenant_id"],
+        "store_id":    store_id,
+        "store_name":  store_name,
+        "name":        name,
+        "phone":       (payload.phone or "").strip(),
+        "role":        (payload.role or "").strip(),
+        "division":    (payload.division or "").strip(),
+        "section":     (payload.section or "").strip(),
+        "floor":       (payload.floor or "").strip(),
+        "status":      "Active",
+        "created_by":  ctx.get("admin_id"),
+        "created_at":  now,
+        "updated_at":  now,
+    }
+    result = await hr_floor_staff_collection.insert_one(doc)
+    doc["_id"] = result.inserted_id
+    return {"status": "success", "message": f"{name} added.", "data": _serialize_floor_staff(doc)}
+
+
+@router.patch("/floor-staff/{staff_id}")
+async def update_floor_staff(staff_id: str, payload: FloorStaffUpdate, ctx: TenantCtx = Depends(get_hr_context)):
+    query = {"_id": _oid(staff_id, "staff id"), "tenant_id": ctx["tenant_id"]}
+    query.update(_store_scope_query(ctx))
+    existing = await hr_floor_staff_collection.find_one(query)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Floor staff record not found in your assigned scope.")
+
+    patch: dict = {"updated_at": datetime.utcnow()}
+    for field in ("name", "phone", "role", "division", "section", "floor"):
+        value = getattr(payload, field)
+        if value is not None:
+            patch[field] = value.strip()
+    if payload.status is not None:
+        if payload.status not in ("Active", "Inactive"):
+            raise HTTPException(status_code=400, detail="status must be Active or Inactive")
+        patch["status"] = payload.status
+
+    await hr_floor_staff_collection.update_one({"_id": existing["_id"]}, {"$set": patch})
+    return {"status": "success", "message": "Floor staff updated."}
+
+
+@router.delete("/floor-staff/{staff_id}")
+async def delete_floor_staff(staff_id: str, ctx: TenantCtx = Depends(get_hr_context)):
+    query = {"_id": _oid(staff_id, "staff id"), "tenant_id": ctx["tenant_id"]}
+    query.update(_store_scope_query(ctx))
+    existing = await hr_floor_staff_collection.find_one(query)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Floor staff record not found in your assigned scope.")
+    await hr_floor_staff_collection.delete_one({"_id": existing["_id"]})
+    return {"status": "success", "message": f"{existing.get('name')} removed."}
 
 
 # ═══════════════════════════════════════════════════════════════════════════

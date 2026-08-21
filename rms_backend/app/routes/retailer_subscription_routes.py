@@ -164,6 +164,158 @@ async def create_retailer_renewal_link(ctx: dict = Depends(get_tenant)):
     }
 
 
+@router.post("/upgrade")
+async def create_retailer_upgrade_link(payload: dict, ctx: dict = Depends(get_tenant)):
+    """
+    Create a Razorpay-hosted payment link to move this tenant to a higher
+    paid plan (Professional or Enterprise). Only a genuine upgrade is
+    allowed — same logic tenants use for a normal renewal, just billed at
+    the new plan's price and flipping `plan` on successful payment instead
+    of only extending the expiry date.
+    """
+    requested_plan = normalize_retailer_plan(payload.get("requested_plan"))
+    if requested_plan not in ("professional", "enterprise"):
+        raise HTTPException(status_code=400, detail="requested_plan must be 'professional' or 'enterprise'.")
+
+    tenant = await _billed_tenant(ctx)
+    current_plan = normalize_retailer_plan(tenant.get("plan"))
+    if not is_paid_retailer_plan(current_plan):
+        raise HTTPException(status_code=409, detail="This internal plan cannot be upgraded here.")
+
+    plan_order = {"basic": 0, "professional": 1, "enterprise": 2}
+    if plan_order.get(requested_plan, -1) <= plan_order.get(current_plan, 0):
+        raise HTTPException(status_code=400, detail=f"'{requested_plan}' is not an upgrade from your current '{current_plan}' plan.")
+
+    config = retailer_plan_config(requested_plan)
+    now = datetime.utcnow()
+    expires_at = now + timedelta(days=RENEWAL_LINK_VALIDITY_DAYS)
+    key_id, key_secret = _razorpay_credentials()
+    amount_paise = int(config["price_inr"] * 100)
+    reference_id = f"RMS-UPGRADE-{tenant['tenant_id']}-{int(now.timestamp())}"[:40]
+    customer = {
+        "name": tenant.get("hq_admin_name") or tenant.get("company_name") or "RMS retailer",
+        "email": tenant.get("hq_admin_email") or "",
+    }
+    contact = "".join(char for char in str(tenant.get("phone") or "") if char.isdigit())
+    if len(contact) >= 10:
+        customer["contact"] = contact[-10:]
+    if not customer["email"]:
+        customer.pop("email")
+
+    razorpay_link = await asyncio.to_thread(
+        _razorpay_create_payment_link_sync,
+        key_id,
+        key_secret,
+        {
+            "amount": amount_paise,
+            "currency": "INR",
+            "accept_partial": False,
+            "expire_by": int(expires_at.timestamp()),
+            "reference_id": reference_id,
+            "description": f"RMS upgrade to {config['label']} - {tenant.get('company_name') or tenant['tenant_id']}",
+            "customer": customer,
+            "notify": {"email": bool(customer.get("email")), "sms": bool(customer.get("contact"))},
+            "reminder_enable": True,
+            "callback_url": f"{settings.frontend_base_url.rstrip('/')}/retailer/complete-payment?status=processing",
+            "callback_method": "get",
+            "notes": {
+                "purpose": "retailer_upgrade",
+                "tenant_id": tenant["tenant_id"],
+                "plan": requested_plan,
+                "previous_plan": current_plan,
+            },
+        },
+    )
+    payment_link_id = str(razorpay_link.get("id") or "")
+    payment_link_url = str(razorpay_link.get("short_url") or "")
+    if not payment_link_id or not payment_link_url:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Razorpay did not return a hosted upgrade link.")
+
+    await retailer_subscription_payments_collection.insert_one({
+        "tenant_id": tenant["tenant_id"],
+        "company_name": tenant.get("company_name", ""),
+        "plan": requested_plan,
+        "previous_plan": current_plan,
+        "amount_paise": amount_paise,
+        "amount_inr": config["price_inr"],
+        "currency": "INR",
+        "status": "upgrade_link_created",
+        "payment_kind": "upgrade",
+        "razorpay_order_id": f"payment_link:{payment_link_id}",
+        "razorpay_payment_link_id": payment_link_id,
+        "razorpay_payment_link_url": payment_link_url,
+        "razorpay_payment_link_reference": reference_id,
+        "payment_link_expires_at": expires_at,
+        "created_at": now,
+        "updated_at": now,
+    })
+    return {
+        "message": f"Secure Razorpay upgrade link created for the {config['label']} plan.",
+        "payment_link": payment_link_url,
+        "expires_at": expires_at.isoformat(),
+        "amount_inr": config["price_inr"],
+        "requested_plan": requested_plan,
+    }
+
+
+async def process_retailer_upgrade_payment_link_webhook(event: dict, event_id: str = "") -> dict | None:
+    """Flip the tenant onto its new (higher) plan after Razorpay confirms the upgrade payment."""
+    if str(event.get("event") or "") != "payment_link.paid":
+        return None
+    payload = event.get("payload") or {}
+    link = (payload.get("payment_link") or {}).get("entity") or {}
+    notes = link.get("notes") or {}
+    if str(notes.get("purpose") or "") != "retailer_upgrade":
+        return None
+
+    payment_link_id = str(link.get("id") or "")
+    tenant_id = str(notes.get("tenant_id") or "")
+    requested_plan = normalize_retailer_plan(notes.get("plan"))
+    payment_entity = (payload.get("payment") or {}).get("entity") or {}
+    payment_id = str(payment_entity.get("id") or "")
+    if not payment_link_id or not tenant_id or not payment_id:
+        return {"status": "ignored", "reason": "invalid_retailer_upgrade_link"}
+
+    payment = await retailer_subscription_payments_collection.find_one({
+        "tenant_id": tenant_id,
+        "payment_kind": "upgrade",
+        "razorpay_order_id": f"payment_link:{payment_link_id}",
+        "razorpay_payment_link_id": payment_link_id,
+    })
+    if not payment:
+        return {"status": "ignored", "reason": "unknown_retailer_upgrade_link"}
+    if payment.get("status") == "captured":
+        return {"status": "already_processed"}
+    if int(link.get("amount_paid") or 0) != int(payment.get("amount_paise") or 0):
+        return {"status": "ignored", "reason": "amount_mismatch"}
+
+    tenant = await tenants_collection.find_one({"tenant_id": tenant_id})
+    if not tenant:
+        return {"status": "ignored", "reason": "unknown_tenant"}
+
+    now = datetime.utcnow()
+    period_days = int(retailer_plan_config(requested_plan)["billing_period_days"])
+    next_due = now + timedelta(days=period_days)
+    claim = await retailer_subscription_payments_collection.update_one(
+        {"_id": payment["_id"], "status": {"$ne": "captured"}},
+        {"$set": {"status": "captured", "razorpay_payment_id": payment_id, "captured_at": now, "updated_at": now}, "$addToSet": {"webhook_event_ids": event_id or f"payment_link.paid:{payment_id}"}},
+    )
+    if not claim.modified_count:
+        return {"status": "already_processed"}
+    await tenants_collection.update_one(
+        {"_id": tenant["_id"]},
+        {"$set": {
+            "plan": requested_plan,
+            "subscription_status": "active",
+            "subscription_renewed_at": now,
+            "subscription_expires_at": next_due,
+            "subscription_payment_id": payment_id,
+            "updated_at": now,
+        }},
+    )
+    return {"status": "upgraded", "tenant_id": tenant_id, "plan": requested_plan, "next_payment_due": next_due.isoformat()}
+
+
 async def process_retailer_renewal_payment_link_webhook(event: dict, event_id: str = "") -> dict | None:
     """Extend a single-store subscription only after Razorpay's signed payment_link.paid event."""
     if str(event.get("event") or "") != "payment_link.paid":
