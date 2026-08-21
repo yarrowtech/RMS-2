@@ -12,6 +12,91 @@ import { CASHIER_API_BASE as API_BASE, cashierFetch } from "./cashierApi";
 function money(v)  { return `₹${Math.abs(Number(v || 0)).toFixed(2)}`; }
 function num(v)    { return Math.abs(Number(v || 0)).toFixed(2); }
 
+const OFFLINE_BILLS_KEY = "rms_cashier_offline_bills_v1";
+
+function readOfflineBills() {
+  try {
+    const raw = localStorage.getItem(OFFLINE_BILLS_KEY);
+    const rows = raw ? JSON.parse(raw) : [];
+    return Array.isArray(rows) ? rows : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeOfflineBills(rows) {
+  try {
+    localStorage.setItem(OFFLINE_BILLS_KEY, JSON.stringify(Array.isArray(rows) ? rows : []));
+  } catch {
+    // Keep POS usable even if browser storage is full or blocked.
+  }
+}
+
+function makeOfflineInvoiceNo(isReturn = false) {
+  const d = new Date();
+  const stamp = [
+    d.getFullYear(),
+    String(d.getMonth() + 1).padStart(2, "0"),
+    String(d.getDate()).padStart(2, "0"),
+    String(d.getHours()).padStart(2, "0"),
+    String(d.getMinutes()).padStart(2, "0"),
+    String(d.getSeconds()).padStart(2, "0"),
+  ].join("");
+  const rand = Math.random().toString(36).slice(2, 6).toUpperCase();
+  return `${isReturn ? "OFF-RET" : "OFF-INV"}-${stamp}-${rand}`;
+}
+
+function makeOfflineId() {
+  return `offline_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+
+const POS_PRODUCT_CACHE_KEY = "rms_cashier_product_cache_v1";
+
+function readProductCache() {
+  try {
+    const raw = localStorage.getItem(POS_PRODUCT_CACHE_KEY);
+    const parsed = raw ? JSON.parse(raw) : null;
+    return parsed && Array.isArray(parsed.products) ? parsed : { products: [], cachedAt: "" };
+  } catch {
+    return { products: [], cachedAt: "" };
+  }
+}
+
+function writeProductCache(products, cachedAt = new Date().toISOString()) {
+  try {
+    const safeProducts = Array.isArray(products) ? products : [];
+    localStorage.setItem(POS_PRODUCT_CACHE_KEY, JSON.stringify({ products: safeProducts, cachedAt }));
+  } catch {
+    // Offline cache is helpful, but it must never break cashier billing.
+  }
+}
+
+function mergeProductCache(existingProducts, nextProducts) {
+  const byBarcode = new Map();
+  [...(existingProducts || []), ...(nextProducts || [])].forEach(product => {
+    const bc = String(product?.barcode || "").trim();
+    if (bc) byBarcode.set(bc, product);
+  });
+  return Array.from(byBarcode.values());
+}
+
+function findCachedProductByBarcode(products, barcode) {
+  const target = String(barcode || "").trim().toLowerCase();
+  return (products || []).find(product => String(product?.barcode || "").trim().toLowerCase() === target) || null;
+}
+
+function searchCachedProducts(products, query, limit = 20) {
+  const q = String(query || "").trim().toLowerCase();
+  if (!q) return [];
+  return (products || []).filter(product => {
+    const haystack = [product.name, product.barcode, product.sku, product.division, product.section, product.department]
+      .map(value => String(value || "").toLowerCase())
+      .join(" ");
+    return haystack.includes(q);
+  }).slice(0, limit);
+}
+
 
 function numToWords(n) {
   const a = ["","One","Two","Three","Four","Five","Six","Seven","Eight","Nine",
@@ -253,7 +338,98 @@ function InvoiceLookupModal({ open, onClose, onLoadItems }) {
 }
 
 /* ─── Generate Bill Popup ─── */
-function GenerateBillPopup({ open, isReturn, items, bill, setBill, summary, onClose, onFinalize, saving, originalInvoice }) {
+
+function ManualOfflineItemModal({ open, barcode, onClose, onAdd }) {
+  const [form, setForm] = useState({ barcode: "", name: "", price: "", gst: "0", qty: "1" });
+
+  useEffect(() => {
+    if (!open) return;
+    setForm({ barcode: barcode || "", name: "", price: "", gst: "0", qty: "1" });
+  }, [open, barcode]);
+
+  if (!open) return null;
+
+  const submit = () => {
+    const cleanBarcode = String(form.barcode || "").trim();
+    const name = String(form.name || "").trim();
+    const price = Number(form.price || 0);
+    const gst = Number(form.gst || 0);
+    const qty = Math.max(1, Number(form.qty || 1));
+    if (!cleanBarcode) return alert("Barcode is required for offline sync.");
+    if (!name) return alert("Product name is required.");
+    if (!price || price <= 0) return alert("Enter valid selling price.");
+
+    onAdd({
+      _id: `manual-offline-${cleanBarcode}-${Date.now()}`,
+      name,
+      barcode: cleanBarcode,
+      hsn: "",
+      price,
+      mrp: price,
+      cost_price: 0,
+      gst,
+      itemDiscount: 0,
+      sku: "MANUAL-OFFLINE",
+      division: "Manual Offline",
+      section: "POS",
+      department: "Emergency Billing",
+      unit: "pcs",
+      stock: null,
+      has_variants: false,
+      manual_offline: true,
+      qty,
+      total: qty * price,
+    });
+  };
+
+  return ReactDOM.createPortal(
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/55 p-3">
+      <div className="w-full max-w-lg overflow-hidden rounded-3xl bg-white shadow-2xl">
+        <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
+          <div>
+            <p className="text-[10px] font-black uppercase tracking-[0.18em] text-amber-600">No internet / not in cache</p>
+            <h2 className="text-lg font-black text-slate-950">Add manual offline item</h2>
+          </div>
+          <button onClick={onClose} className="rounded-xl bg-slate-100 p-3 hover:bg-slate-200"><FaTimes size={13} /></button>
+        </div>
+        <div className="space-y-3 p-5">
+          <p className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs font-bold text-amber-800">
+            Use this only when the product was not cached. It will sync as a normal bill later; stock may need review if barcode is not found on server.
+          </p>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="space-y-1 sm:col-span-2">
+              <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">Barcode</span>
+              <input value={form.barcode} onChange={e => setForm({ ...form, barcode: e.target.value })} className="h-11 w-full rounded-xl border border-slate-200 px-4 text-sm font-bold outline-none focus:border-amber-500" />
+            </label>
+            <label className="space-y-1 sm:col-span-2">
+              <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">Product name</span>
+              <input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="e.g. Cotton T-shirt" className="h-11 w-full rounded-xl border border-slate-200 px-4 text-sm font-bold outline-none focus:border-amber-500" />
+            </label>
+            <label className="space-y-1">
+              <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">Qty</span>
+              <input type="number" min="1" value={form.qty} onChange={e => setForm({ ...form, qty: e.target.value })} className="h-11 w-full rounded-xl border border-slate-200 px-4 text-sm font-bold outline-none focus:border-amber-500" />
+            </label>
+            <label className="space-y-1">
+              <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">Price</span>
+              <input type="number" min="0" value={form.price} onChange={e => setForm({ ...form, price: e.target.value })} className="h-11 w-full rounded-xl border border-slate-200 px-4 text-sm font-bold outline-none focus:border-amber-500" />
+            </label>
+            <label className="space-y-1 sm:col-span-2">
+              <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">GST %</span>
+              <input type="number" min="0" value={form.gst} onChange={e => setForm({ ...form, gst: e.target.value })} className="h-11 w-full rounded-xl border border-slate-200 px-4 text-sm font-bold outline-none focus:border-amber-500" />
+            </label>
+          </div>
+          <div className="grid gap-3 pt-2 sm:grid-cols-2">
+            <button onClick={onClose} className="rounded-2xl border border-slate-200 py-3 text-xs font-black uppercase tracking-widest text-slate-600 hover:bg-slate-50">Cancel</button>
+            <button onClick={submit} className="rounded-2xl bg-amber-600 py-3 text-xs font-black uppercase tracking-widest text-white hover:bg-amber-700">Add to bill</button>
+          </div>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+function GenerateBillPopup({ open, isReturn, items, bill, setBill, summary, onClose, onFinalize, onSaveOffline, saving, originalInvoice }) {
   const [paid, setPaid] = useState("");
 
   useEffect(() => {
@@ -266,6 +442,13 @@ function GenerateBillPopup({ open, isReturn, items, bill, setBill, summary, onCl
 
   const payable = Math.abs(summary.netPayable);
   const change  = Number(paid) > payable ? Number(paid) - payable : 0;
+  const validateCash = () => {
+    if (bill.paymentMethod === "Cash" && !isReturn && (!paid || Number(paid) < payable)) {
+      alert("Insufficient paid amount");
+      return false;
+    }
+    return true;
+  };
 
   return ReactDOM.createPortal(
     <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/55 p-3">
@@ -420,14 +603,34 @@ function GenerateBillPopup({ open, isReturn, items, bill, setBill, summary, onCl
         </div>
 
         <div className="border-t border-slate-100 bg-white p-5">
-          <button onClick={() => {
-            if (bill.paymentMethod === "Cash" && !isReturn && (!paid || Number(paid) < payable)) return alert("Insufficient paid amount");
-            onFinalize(Number(paid || 0), change);
-          }} disabled={saving}
-            className={`flex w-full cursor-pointer items-center justify-center gap-2 rounded-2xl py-4 text-xs font-black uppercase tracking-widest text-white disabled:opacity-60 ${isReturn ? "bg-rose-600" : "bg-violet-600"}`}>
-            {saving ? <FaSpinner className="animate-spin" /> : <FaPrint />}
-            {saving ? "Saving…" : isReturn ? "Finalize Return Bill" : "Finalize Bill"}
-          </button>
+          <div className="grid gap-3 sm:grid-cols-[0.75fr_1.25fr]">
+            {!isReturn && (
+              <button
+                type="button"
+                onClick={() => {
+                  if (!validateCash()) return;
+                  onSaveOffline?.(Number(paid || 0), change, "Saved manually by cashier");
+                }}
+                disabled={saving}
+                className="flex cursor-pointer items-center justify-center gap-2 rounded-2xl border border-amber-200 bg-amber-50 py-4 text-xs font-black uppercase tracking-widest text-amber-700 hover:bg-amber-100 disabled:opacity-60"
+              >
+                <FaExclamationTriangle /> Save offline
+              </button>
+            )}
+            <button onClick={() => {
+              if (!validateCash()) return;
+              onFinalize(Number(paid || 0), change);
+            }} disabled={saving}
+              className={`flex w-full cursor-pointer items-center justify-center gap-2 rounded-2xl py-4 text-xs font-black uppercase tracking-widest text-white disabled:opacity-60 ${isReturn ? "bg-rose-600 sm:col-span-2" : "bg-violet-600"}`}>
+              {saving ? <FaSpinner className="animate-spin" /> : <FaPrint />}
+              {saving ? "Saving..." : isReturn ? "Finalize Return Bill" : "Finalize Bill"}
+            </button>
+          </div>
+          {!isReturn && (
+            <p className="mt-3 text-center text-[11px] font-semibold text-slate-400">
+              Offline bills print with a temporary invoice and sync later when internet/backend is back.
+            </p>
+          )}
         </div>
       </div>
     </div>,
@@ -437,6 +640,15 @@ function GenerateBillPopup({ open, isReturn, items, bill, setBill, summary, onCl
 
 /* ─── Receipt Modal ─── */
 function ReceiptModal({ open, receipt, onClose }) {
+  useEffect(() => {
+    if (!open) return undefined;
+    const onKeyDown = event => {
+      if (event.key === "Escape") onClose?.();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [open, onClose]);
+
   if (!open || !receipt) return null;
   const isReturn = receipt.isReturn;
   const s = receipt.summary;
@@ -538,6 +750,7 @@ function ReceiptModal({ open, receipt, onClose }) {
   <!-- Invoice Details -->
   <table class="summary">
     <tr><td colspan="2"><span class="bold">Invoice No:</span> ${receipt.invoiceNo}</td></tr>
+    ${receipt.offline ? `<tr><td colspan="2"><span class="bold">Status:</span> Pending offline sync</td></tr>` : ""}
     ${receipt.originalInvoice ? `<tr><td colspan="2"><span class="bold">Against:</span> ${receipt.originalInvoice}</td></tr>` : ""}
     <tr>
       <td>Date: ${receipt.date}</td>
@@ -657,21 +870,32 @@ function ReceiptModal({ open, receipt, onClose }) {
   };
 
   return ReactDOM.createPortal(
-    <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 p-3">
-      <div className="w-full max-w-[400px] overflow-hidden rounded-3xl bg-white shadow-2xl">
+    <div
+      className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 p-3"
+      onMouseDown={onClose}
+    >
+      <div
+        className="relative flex max-h-[94vh] w-full max-w-[400px] flex-col overflow-hidden rounded-3xl bg-white shadow-2xl"
+        onMouseDown={e => e.stopPropagation()}
+      >
 
         {/* Modal Header */}
-        <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
+        <div className="sticky top-0 z-20 flex items-center justify-between border-b border-slate-200 bg-white px-4 py-3 shadow-sm">
           <h2 className="text-sm font-black text-slate-900">
             {isReturn ? "Credit Note" : "Tax Invoice"}
           </h2>
-          <button onClick={onClose}
-            className="grid h-10 w-10 place-items-center rounded-xl bg-slate-100 hover:bg-slate-200">
-            <FaTimes size={13} />
+          <button
+            type="button"
+            onClick={onClose}
+            onMouseDown={e => e.stopPropagation()}
+            className="relative z-30 grid h-12 w-12 cursor-pointer place-items-center rounded-2xl bg-slate-100 text-slate-950 shadow-sm hover:bg-rose-50 hover:text-rose-600 active:scale-95"
+            aria-label="Close receipt"
+          >
+            <FaTimes size={15} />
           </button>
         </div>
 
-        <div className="max-h-[80vh] overflow-y-auto p-4">
+        <div className="flex-1 overflow-y-auto p-4">
 
           {/* ── Thermal Preview ── */}
           <div
@@ -698,6 +922,7 @@ function ReceiptModal({ open, receipt, onClose }) {
             {/* Invoice Details */}
             <div className="space-y-0.5">
               <div><span className="font-bold">Invoice No:</span> {receipt.invoiceNo}</div>
+              {receipt.offline && <p className="font-black text-amber-700">Status: Pending offline sync</p>}
               {receipt.originalInvoice && <p>Against: {receipt.originalInvoice}</p>}
               <div className="flex justify-between">
                 <span>Date: {receipt.date}</span>
@@ -911,6 +1136,12 @@ export default function CashierPOS() {
   const [saving,         setSaving]         = useState(false);
   const [invoiceLookup,  setInvoiceLookup]  = useState(false);  // ← NEW
   const [originalInvoice,setOriginalInvoice]= useState("");     // ← NEW
+  const [offlineBills,   setOfflineBills]   = useState(() => readOfflineBills());
+  const [syncingOffline, setSyncingOffline] = useState(false);
+  const [productCache,     setProductCache] = useState(() => readProductCache());
+  const [cacheRefreshing,  setCacheRefreshing] = useState(false);
+  const [manualOfflineOpen, setManualOfflineOpen] = useState(false);
+  const [manualOfflineBarcode, setManualOfflineBarcode] = useState("");
 
   // The cashier name belongs to the authenticated session, never a generic
   // POS default. `admin_name` is written by authRedirect immediately after
@@ -922,6 +1153,15 @@ export default function CashierPOS() {
   }));
 
   const isReturn = mode === "return";
+  const pendingOfflineCount = useMemo(
+    () => offlineBills.filter(row => row.status === "pending").length,
+    [offlineBills]
+  );
+  const cachedProducts = useMemo(
+    () => (Array.isArray(productCache?.products) ? productCache.products : []),
+    [productCache]
+  );
+  const cachedProductCount = cachedProducts.length;
 
   useEffect(() => { barcodeRef.current?.focus(); }, []);
   useEffect(() => {
@@ -933,6 +1173,29 @@ export default function CashierPOS() {
     setTimeout(() => setToast({ msg: "", type: "default" }), 1600);
   }, []);
 
+  const refreshProductCache = useCallback(async (silent = false) => {
+    setCacheRefreshing(true);
+    try {
+      const res = await cashierFetch(`${API_BASE}/cashier/product-cache`);
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.detail || "Product cache failed");
+      const mergedProducts = mergeProductCache(readProductCache().products, json.data || []);
+      const cachedAt = json.cached_at || new Date().toISOString();
+      writeProductCache(mergedProducts, cachedAt);
+      setProductCache({ products: mergedProducts, cachedAt });
+      if (!silent) showToast(`${mergedProducts.length} products cached for offline billing`, "success");
+    } catch (e) {
+      setProductCache(readProductCache());
+      if (!silent) showToast(e.message || "Could not refresh offline product cache", "error");
+    } finally {
+      setCacheRefreshing(false);
+    }
+  }, [showToast]);
+
+  useEffect(() => {
+    refreshProductCache(true);
+  }, [refreshProductCache]);
+
   /* ── Search (debounced) ── */
   useEffect(() => {
     if (!search.trim()) { setSearchRes([]); return; }
@@ -941,42 +1204,94 @@ export default function CashierPOS() {
       try {
         const res  = await cashierFetch(`${API_BASE}/cashier/search?q=${encodeURIComponent(search.trim())}`);
         const json = await res.json();
-        setSearchRes(json.data || []);
-      } catch { setSearchRes([]); }
+        const onlineResults = json.data || [];
+        setSearchRes(onlineResults);
+        if (onlineResults.length) {
+          const mergedProducts = mergeProductCache(readProductCache().products, onlineResults);
+          writeProductCache(mergedProducts);
+          setProductCache(prev => ({ ...prev, products: mergedProducts }));
+        }
+      } catch {
+        const cachedResults = searchCachedProducts(readProductCache().products, search.trim());
+        setSearchRes(cachedResults);
+        if (cachedResults.length) showToast("Showing offline cached products", "success");
+      }
       finally { setSearching(false); }
     }, 300);
     return () => clearTimeout(t);
-  }, [search]);
+  }, [search, showToast]);
 
   /* ── Barcode scan ── */
-  const scanBarcode = useCallback(async () => {
-    const bc = barcode.trim();
-    if (!bc) return showToast("Enter a barcode", "error");
-    setScanning(true);
-    try {
-      const res  = await cashierFetch(`${API_BASE}/cashier/lookup/${encodeURIComponent(bc)}`);
-      if (!res.ok) { showToast("Product not found", "error"); return; }
-      const json = await res.json();
-      addProduct(json.data);
-    } catch { showToast("Network error", "error"); }
-    finally { setScanning(false); }
-  }, [barcode]); // eslint-disable-line
+  const openManualOfflineItem = useCallback((prefillBarcode = "") => {
+    setManualOfflineBarcode(prefillBarcode || barcode || "");
+    setManualOfflineOpen(true);
+  }, [barcode]);
+
+  const addManualOfflineItem = useCallback((product) => {
+    setItems(prev => [...prev, product]);
+    setBarcode("");
+    setSearch("");
+    setSearchRes([]);
+    setManualOfflineOpen(false);
+    showToast("Manual offline item added", "success");
+  }, [showToast]);
 
   const addProduct = useCallback((product) => {
+    if (!product || !product._id) {
+      showToast("Invalid product data. Refresh products or add it manually.", "error");
+      return;
+    }
+    const price = Number(product.price || 0);
     const qtyDelta = isReturn ? -1 : 1;
     setItems(prev => {
       const exist = prev.find(i => i._id === product._id);
       if (exist) {
         const qty = exist.qty + qtyDelta;
         if (qty === 0) return prev.filter(i => i._id !== product._id);
-        return prev.map(i => i._id === product._id ? { ...i, qty, total: qty * i.price } : i);
+        return prev.map(i => i._id === product._id ? { ...i, qty, total: qty * Number(i.price || 0) } : i);
       }
-      return [...prev, { ...product, qty: qtyDelta, total: qtyDelta * product.price }];
+      return [...prev, { ...product, price, qty: qtyDelta, total: qtyDelta * price }];
     });
     setBarcode(""); setSearch(""); setSearchRes([]);
-    showToast(`${product.name} ${isReturn ? "returned" : "added"}`, "success");
+    showToast(`${product.name || "Product"} ${isReturn ? "returned" : "added"}`, "success");
     setTimeout(() => barcodeRef.current?.focus(), 40);
   }, [isReturn, showToast]);
+
+  const scanBarcode = useCallback(async () => {
+    const bc = barcode.trim();
+    if (!bc) return showToast("Enter a barcode", "error");
+    setScanning(true);
+    try {
+      const res  = await cashierFetch(`${API_BASE}/cashier/lookup/${encodeURIComponent(bc)}`);
+      if (!res.ok) {
+        const cached = findCachedProductByBarcode(readProductCache().products, bc);
+        if (cached) {
+          addProduct(cached);
+          showToast("Added from offline cache", "success");
+          return;
+        }
+        showToast("Product not found in online/cache. Add manually if needed.", "error");
+        openManualOfflineItem(bc);
+        return;
+      }
+      const json = await res.json();
+      addProduct(json.data);
+      const mergedProducts = mergeProductCache(readProductCache().products, [json.data]);
+      writeProductCache(mergedProducts);
+      setProductCache(prev => ({ ...prev, products: mergedProducts }));
+    } catch {
+      const cached = findCachedProductByBarcode(readProductCache().products, bc);
+      if (cached) {
+        addProduct(cached);
+        showToast("Added from offline cache", "success");
+      } else {
+        showToast("Network error and product not in offline cache", "error");
+        openManualOfflineItem(bc);
+      }
+    }
+    finally { setScanning(false); }
+  }, [barcode, showToast, openManualOfflineItem, addProduct]);
+
 
   /* ── Load items from invoice lookup ── */
   const handleLoadReturnItems = useCallback((returnItems, invNo) => {
@@ -1030,6 +1345,117 @@ export default function CashierPOS() {
     setBill(prev => ({ ...prev, customerName: "", mobile: "", offer: "", appliedOffer: 0, discount: "", paymentMethod: "Cash" }));
   };
 
+  const saveOfflineBill = useCallback((paidAmount = 0, changeReturn = 0, reason = "Backend unavailable") => {
+    if (isReturn) {
+      showToast("Returns need online invoice validation", "error");
+      return;
+    }
+    if (!items.length) {
+      showToast("No items to save offline", "error");
+      return;
+    }
+
+    const clientOfflineId = makeOfflineId();
+    const offlineInvoiceNo = makeOfflineInvoiceNo(false);
+    const createdOfflineAt = new Date().toISOString();
+    const itemSnapshot = items.map(item => ({ ...item }));
+    const summarySnapshot = { ...summary };
+    const billSnapshot = { ...bill };
+    const queueItem = {
+      id: clientOfflineId,
+      status: "pending",
+      offlineInvoiceNo,
+      createdAt: createdOfflineAt,
+      reason,
+      storeId: localStorage.getItem("store_id") || localStorage.getItem("selected_store_id") || "",
+      cashierName: billSnapshot.cashierName,
+      total: summarySnapshot.netPayable,
+      payload: {
+        isReturn: false,
+        items: itemSnapshot,
+        summary: summarySnapshot,
+        bill: billSnapshot,
+        paidAmount,
+        changeReturn,
+        originalInvoice: "",
+        clientOfflineId,
+        offlineInvoiceNo,
+        createdOfflineAt,
+        syncSource: "offline_pos",
+      },
+    };
+
+    const next = [queueItem, ...readOfflineBills()];
+    writeOfflineBills(next);
+    setOfflineBills(next);
+    setReceipt({
+      invoiceNo: offlineInvoiceNo,
+      date: new Date(createdOfflineAt).toLocaleString("en-IN"),
+      cashierName: billSnapshot.cashierName,
+      customerName: billSnapshot.customerName,
+      mobile: billSnapshot.mobile,
+      paymentMethod: billSnapshot.paymentMethod,
+      paidAmount,
+      changeReturn,
+      appliedOffer: billSnapshot.appliedOffer,
+      discount: billSnapshot.discount,
+      originalInvoice: "",
+      items: itemSnapshot,
+      summary: summarySnapshot,
+      isReturn: false,
+      offline: true,
+    });
+    setBillOpen(false);
+    setReceiptOpen(true);
+    clearAll();
+    showToast("Bill saved offline. Sync when backend is back.", "success");
+  }, [isReturn, items, summary, bill, showToast]); // eslint-disable-line
+
+  const syncOfflineBills = useCallback(async () => {
+    const pending = readOfflineBills().filter(row => row.status === "pending");
+    if (!pending.length) {
+      setOfflineBills(readOfflineBills());
+      return showToast("No offline bills to sync", "success");
+    }
+
+    setSyncingOffline(true);
+    let synced = 0;
+    let failed = 0;
+
+    for (const row of pending) {
+      try {
+        const res = await cashierFetch(`${API_BASE}/cashier/bill`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(row.payload),
+        });
+        let data = {};
+        try { data = await res.json(); } catch { data = {}; }
+        if (!res.ok) throw new Error(data.detail || "Sync failed");
+
+        const nextRows = readOfflineBills().map(item => item.id === row.id
+          ? { ...item, status: "synced", syncedAt: new Date().toISOString(), serverInvoiceNo: data.invoice_no, lastError: "" }
+          : item
+        );
+        writeOfflineBills(nextRows);
+        setOfflineBills(nextRows);
+        synced += 1;
+      } catch (e) {
+        const nextRows = readOfflineBills().map(item => item.id === row.id
+          ? { ...item, lastError: e.message || "Sync failed" }
+          : item
+        );
+        writeOfflineBills(nextRows);
+        setOfflineBills(nextRows);
+        failed += 1;
+      }
+    }
+
+    setSyncingOffline(false);
+    if (failed) showToast(`${synced} synced, ${failed} pending`, "error");
+    else showToast(`${synced} offline bill(s) synced`, "success");
+  }, [showToast]);
+
   const finalizeBill = useCallback(async (paidAmount = 0, changeReturn = 0) => {
     setSaving(true);
     try {
@@ -1046,8 +1472,13 @@ export default function CashierPOS() {
           originalInvoice,   
         }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.detail || "Save failed");
+      let data = {};
+      try { data = await res.json(); } catch { data = {}; }
+      if (!res.ok) {
+        const err = new Error(data.detail || "Save failed");
+        err.serverRejected = true;
+        throw err;
+      }
 
       if (data.inventory_warnings?.length) {
         data.inventory_warnings.forEach(w => showToast(w, "error"));
@@ -1075,11 +1506,15 @@ export default function CashierPOS() {
       clearAll();
       showToast(isReturn ? "Return bill generated ✓" : "Bill generated ✓", "success");
     } catch (e) {
-      showToast(e.message || "Failed to save bill", "error");
+      if (!isReturn && !e.serverRejected) {
+        saveOfflineBill(paidAmount, changeReturn, e.message || "Network/backend unavailable");
+      } else {
+        showToast(e.message || "Failed to save bill", "error");
+      }
     } finally {
       setSaving(false);
     }
-  }, [isReturn, items, summary, bill, showToast, originalInvoice]); // eslint-disable-line
+  }, [isReturn, items, summary, bill, showToast, originalInvoice, saveOfflineBill]); // eslint-disable-line
 
   return (
     <div className="min-h-screen bg-[#f4f7fb] text-slate-900">
@@ -1119,6 +1554,29 @@ export default function CashierPOS() {
                 {originalInvoice ? originalInvoice : "Load Invoice"}
               </button>
             )}
+
+            {pendingOfflineCount > 0 && (
+              <button
+                type="button"
+                onClick={syncOfflineBills}
+                disabled={syncingOffline}
+                className="flex cursor-pointer items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-xs font-black uppercase tracking-widest text-amber-700 hover:bg-amber-100 disabled:opacity-60"
+              >
+                {syncingOffline ? <FaSpinner className="animate-spin" /> : <FaExclamationTriangle size={12} />}
+                Sync offline ({pendingOfflineCount})
+              </button>
+            )}
+
+            <button
+              type="button"
+              onClick={() => refreshProductCache(false)}
+              disabled={cacheRefreshing}
+              className="flex cursor-pointer items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-xs font-black uppercase tracking-widest text-emerald-700 hover:bg-emerald-100 disabled:opacity-60"
+              title={productCache.cachedAt ? `Last cached ${new Date(productCache.cachedAt).toLocaleString("en-IN")}` : "No product cache yet"}
+            >
+              {cacheRefreshing ? <FaSpinner className="animate-spin" /> : <FaBarcode size={12} />}
+              Offline products {cachedProductCount ? `(${cachedProductCount})` : ""}
+            </button>
 
             <button disabled={!items.length} onClick={() => setBillOpen(true)}
               className={`flex items-center gap-2 rounded-xl px-5 py-2.5 text-xs font-black uppercase tracking-widest ${
@@ -1301,10 +1759,18 @@ export default function CashierPOS() {
         </div>
       </main>
 
+      <ManualOfflineItemModal
+        open={manualOfflineOpen}
+        barcode={manualOfflineBarcode}
+        onClose={() => setManualOfflineOpen(false)}
+        onAdd={addManualOfflineItem}
+      />
+
       <GenerateBillPopup
         open={billOpen} isReturn={isReturn} items={items}
         bill={bill} setBill={setBill} summary={summary}
         onClose={() => setBillOpen(false)} onFinalize={finalizeBill}
+        onSaveOffline={saveOfflineBill}
         saving={saving} originalInvoice={originalInvoice}
       />
       <ReceiptModal open={receiptOpen} receipt={receipt} onClose={() => setReceiptOpen(false)} />
