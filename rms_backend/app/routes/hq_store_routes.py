@@ -17,7 +17,7 @@ from typing import Any, Dict, List, Optional
 from datetime import datetime
 from bson import ObjectId
 
-from .deps import get_hq_tenant
+from .deps import get_hq_tenant, get_hq_or_store_hr_tenant
 from ..db import stores_collection, admins_collection, tenants_collection, retailer_store_addons_collection
 from ..auth import create_password_setup_token
 from ..email_utils import send_password_setup_email
@@ -58,6 +58,19 @@ async def _single_store_owner_store_id(ctx: TenantCtx) -> Optional[str]:
     if not ctx.get("store_id"):
         raise HTTPException(status_code=403, detail="Store Owner has no primary store assigned.")
     return ctx["store_id"]
+
+
+async def _caller_locked_store_id(ctx: TenantCtx) -> Optional[str]:
+    """
+    Any genuinely store-scoped caller (a store's own HR admin, reached via
+    get_hq_or_store_hr_tenant) is locked to their own store — never another
+    store, never tenant-wide. Covers the single-store "Store Owner" special
+    case too (that admin is scope=hq but still tied to one store). True HQ
+    admins get None back, meaning no lock.
+    """
+    if ctx.get("scope") in ("store", "branch") and ctx.get("store_id"):
+        return ctx["store_id"]
+    return await _single_store_owner_store_id(ctx)
 
 def _serialize_store(s: dict) -> dict:
     return {
@@ -493,6 +506,11 @@ SHARED_DEPARTMENTS = [
 HQ_DEPARTMENTS    = HQ_ONLY_DEPARTMENTS + SHARED_DEPARTMENTS
 STORE_DEPARTMENTS = STORE_ONLY_DEPARTMENTS + SHARED_DEPARTMENTS
 
+# A store's own HR admin can hire freely for Cashier/Inventory/etc., but
+# creating another HR or Finance admin at their store is sensitive enough
+# that it stays HQ-only — a store-scoped caller must ask HQ to do it.
+STORE_HR_RESTRICTED_DEPARTMENTS = {"HR", "Finance"}
+
 HQ_PERMISSIONS = [
     "inventory", "purchase_orders", "grn", "grc", "vendors",
     "stock_allocation", "stock_transfer", "mbuyer",
@@ -534,12 +552,35 @@ class HQAdminCreate(BaseModel):
     permissions:        List[str]    = []
     # Required when scope == "store"
     store_id:           Optional[str] = None
+    # Finer org placement within a department — purely descriptive, doesn't
+    # affect access/permissions. is_department_head marks this person as the
+    # one head of their primary department (see _promote_department_head).
+    division:           Optional[str] = ""
+    section:            Optional[str] = ""
+    floor:              Optional[str] = ""
+    is_department_head: Optional[bool] = False
 
 
 class HQAdminUpdate(BaseModel):
     permissions:        Optional[List[str]] = None
     managedDepartments: Optional[List[str]] = None
     status:             Optional[str] = None   # "ACTIVE" | "SUSPENDED"
+    division:           Optional[str] = None
+    section:            Optional[str] = None
+    floor:              Optional[str] = None
+    is_department_head: Optional[bool] = None
+
+
+async def _promote_department_head(tenant_id: str, department: str, scope: str, store_id: Optional[str], admin_id: ObjectId) -> None:
+    """Only one head per department (per store, at store scope). Promoting
+    a new head demotes whoever previously held it — never two heads at once."""
+    demote_query: Dict[str, Any] = {
+        "tenant_id": tenant_id, "department": department, "scope": scope,
+        "_id": {"$ne": admin_id},
+    }
+    if scope == "store":
+        demote_query["store_id"] = store_id
+    await admins_collection.update_many(demote_query, {"$set": {"is_department_head": False}})
 
 
 @router.get("/departments")
@@ -569,15 +610,16 @@ async def get_department_config():
 
 
 @router.get("/admins")
-async def hq_list_admins(ctx: TenantCtx = Depends(get_hq_tenant)):
-    """HQ Admin lists all admins under their tenant (excludes superadmin)."""
-    owner_store_id = await _single_store_owner_store_id(ctx)
+async def hq_list_admins(ctx: TenantCtx = Depends(get_hq_or_store_hr_tenant)):
+    """HQ Admin lists all admins under their tenant (excludes superadmin).
+    A store's own HR admin sees only their store's staff."""
+    locked_store_id = await _caller_locked_store_id(ctx)
     query = {
         "tenant_id": ctx["tenant_id"],
         "department": {"$ne": "SUPERADMIN"},
     }
-    if owner_store_id:
-        query.update({"scope": "store", "store_id": owner_store_id})
+    if locked_store_id:
+        query.update({"scope": "store", "store_id": locked_store_id})
     admins = []
     async for a in admins_collection.find(query).sort("created_at", -1):
         admins.append({
@@ -588,6 +630,10 @@ async def hq_list_admins(ctx: TenantCtx = Depends(get_hq_tenant)):
             "department":         a.get("department", ""),
             "managedDepartments": a.get("managedDepartments", []),
             "permissions":        a.get("permissions", []),
+            "division":           a.get("division", ""),
+            "section":            a.get("section", ""),
+            "floor":              a.get("floor", ""),
+            "is_department_head": bool(a.get("is_department_head", False)),
             "scope":              a.get("scope", "hq"),
             "store_id":           a.get("store_id"),
             "store_name":         a.get("store_name"),
@@ -602,7 +648,7 @@ async def hq_list_admins(ctx: TenantCtx = Depends(get_hq_tenant)):
 @router.post("/admins", status_code=201)
 async def hq_create_admin(
     payload: HQAdminCreate,
-    ctx: TenantCtx = Depends(get_hq_tenant),
+    ctx: TenantCtx = Depends(get_hq_or_store_hr_tenant),
 ):
     """
     HQ Admin creates a department admin — HQ-scoped or store-scoped.
@@ -622,11 +668,11 @@ async def hq_create_admin(
     if payload.scope not in ("hq", "store"):
         raise HTTPException(status_code=400, detail="scope must be 'hq' or 'store'.")
 
-    owner_store_id = await _single_store_owner_store_id(ctx)
-    if owner_store_id and (payload.scope != "store" or payload.store_id != owner_store_id):
+    locked_store_id = await _caller_locked_store_id(ctx)
+    if locked_store_id and (payload.scope != "store" or payload.store_id != locked_store_id):
         raise HTTPException(
             status_code=403,
-            detail="A Store Owner can create staff only for their own primary store.",
+            detail="You can create staff only for your own store.",
         )
 
     if not payload.managedDepartments:
@@ -634,6 +680,12 @@ async def hq_create_admin(
 
     if "SUPERADMIN" in payload.managedDepartments:
         raise HTTPException(status_code=403, detail="Cannot create SUPERADMIN accounts.")
+
+    if locked_store_id and STORE_HR_RESTRICTED_DEPARTMENTS.intersection(payload.managedDepartments):
+        raise HTTPException(
+            status_code=403,
+            detail="Creating an HR or Finance admin needs HQ approval — ask your HQ admin to create this account.",
+        )
 
     tenant = await tenants_collection.find_one({"tenant_id": ctx["tenant_id"]}, {"plan": 1, "bonus_admin_seats": 1})
     plan_cfg = retailer_plan_config((tenant or {}).get("plan", "basic"))
@@ -707,6 +759,10 @@ async def hq_create_admin(
         "store_id":           store_id,
         "store_name":         store_name,
         "store_type":         store_type,
+        "division":           (payload.division or "").strip(),
+        "section":            (payload.section or "").strip(),
+        "floor":              (payload.floor or "").strip(),
+        "is_department_head": bool(payload.is_department_head),
         "hashed_password":    None,
         "status":             "PENDING",
         "password_set":       False,
@@ -716,6 +772,9 @@ async def hq_create_admin(
 
     result = await admins_collection.insert_one(doc)
     admin_id = str(result.inserted_id)
+
+    if payload.is_department_head:
+        await _promote_department_head(ctx["tenant_id"], primary_dept, payload.scope, store_id, result.inserted_id)
 
     token      = create_password_setup_token(payload.email, primary_dept)
     setup_link = f"{settings.frontend_base_url}/admin/setup-password?token={token}"
@@ -736,7 +795,7 @@ async def hq_create_admin(
 async def hq_update_admin(
     admin_id: str,
     payload: HQAdminUpdate,
-    ctx: TenantCtx = Depends(get_hq_tenant),
+    ctx: TenantCtx = Depends(get_hq_or_store_hr_tenant),
 ):
     """
     HQ Admin updates permissions or suspends/activates an admin.
@@ -757,9 +816,9 @@ async def hq_update_admin(
     if not admin:
         raise HTTPException(status_code=404, detail="Admin not found")
 
-    owner_store_id = await _single_store_owner_store_id(ctx)
-    if owner_store_id and (
-        admin.get("scope") != "store" or admin.get("store_id") != owner_store_id
+    locked_store_id = await _caller_locked_store_id(ctx)
+    if locked_store_id and (
+        admin.get("scope") != "store" or admin.get("store_id") != locked_store_id
     ):
         raise HTTPException(status_code=403, detail="You can manage only staff assigned to your own store.")
 
@@ -785,6 +844,11 @@ async def hq_update_admin(
             )
         if not payload.managedDepartments:
             raise HTTPException(status_code=400, detail="An admin must have at least one department.")
+        if locked_store_id and STORE_HR_RESTRICTED_DEPARTMENTS.intersection(payload.managedDepartments):
+            raise HTTPException(
+                status_code=403,
+                detail="Assigning HR or Finance needs HQ approval — ask your HQ admin to make this change.",
+            )
         patch["managedDepartments"] = payload.managedDepartments
         # Keep the legacy single department field aligned with the first
         # selected department. Older screens and setup emails still read it.
@@ -793,15 +857,24 @@ async def hq_update_admin(
         if payload.status not in ("ACTIVE", "SUSPENDED"):
             raise HTTPException(status_code=400, detail="status must be ACTIVE or SUSPENDED")
         patch["status"] = payload.status
+    if payload.division           is not None: patch["division"] = payload.division.strip()
+    if payload.section            is not None: patch["section"]  = payload.section.strip()
+    if payload.floor              is not None: patch["floor"]    = payload.floor.strip()
+    if payload.is_department_head is not None: patch["is_department_head"] = payload.is_department_head
 
     await admins_collection.update_one({"_id": oid}, {"$set": patch})
+
+    if payload.is_department_head:
+        department = patch.get("department", admin.get("department", ""))
+        await _promote_department_head(ctx["tenant_id"], department, admin.get("scope", "hq"), admin.get("store_id"), oid)
+
     return JSONResponse({"status": "success", "message": "Admin updated."})
 
 
 @router.delete("/admins/{admin_id}")
 async def hq_delete_admin(
     admin_id: str,
-    ctx: TenantCtx = Depends(get_hq_tenant),
+    ctx: TenantCtx = Depends(get_hq_or_store_hr_tenant),
 ):
     """HQ Admin deletes an admin under their tenant."""
     try: oid = ObjectId(admin_id)
@@ -815,9 +888,9 @@ async def hq_delete_admin(
     if not admin:
         raise HTTPException(status_code=404, detail="Admin not found")
 
-    owner_store_id = await _single_store_owner_store_id(ctx)
-    if owner_store_id and (
-        admin.get("scope") != "store" or admin.get("store_id") != owner_store_id
+    locked_store_id = await _caller_locked_store_id(ctx)
+    if locked_store_id and (
+        admin.get("scope") != "store" or admin.get("store_id") != locked_store_id
     ):
         raise HTTPException(status_code=403, detail="You can manage only staff assigned to your own store.")
 

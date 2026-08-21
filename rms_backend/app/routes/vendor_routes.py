@@ -1147,7 +1147,7 @@ async def get_vendor_dashboard_summary(authorization: str = Header(None)):
 
     orders = await purchaseorders_collection.find(
         vendor_filter,
-        {"status": 1, "netAmount": 1, "createdAt": 1, "orderDate": 1, "currency": 1},
+        {"status": 1, "netAmount": 1, "createdAt": 1, "orderDate": 1, "currency": 1, "items": 1},
     ).to_list(None)
 
     pending_statuses = {"Pending", "SentToVendor", "WalkinAccepted"}
@@ -1158,8 +1158,25 @@ async def get_vendor_dashboard_summary(authorization: str = Header(None)):
     current_month_revenue = 0.0
     previous_month_revenue = 0.0
     currencies = set()
+    status_counts: dict[str, int] = {}
+    # Last 6 calendar months including the current one, oldest first.
+    month_buckets: list[tuple[int, int]] = []
+    cursor_year, cursor_month = this_month_start.year, this_month_start.month
+    for _ in range(6):
+        month_buckets.append((cursor_year, cursor_month))
+        cursor_month -= 1
+        if cursor_month == 0:
+            cursor_month = 12
+            cursor_year -= 1
+    month_buckets.reverse()
+    trend_map = {f"{y:04d}-{m:02d}": 0.0 for y, m in month_buckets}
+    item_totals: dict[str, dict] = {}
+
     for order in orders:
-        if order.get("status") not in confirmed_statuses:
+        status = order.get("status") or "Unknown"
+        status_counts[status] = status_counts.get(status, 0) + 1
+
+        if status not in confirmed_statuses:
             continue
         try:
             amount = float(order.get("netAmount") or 0)
@@ -1169,10 +1186,22 @@ async def get_vendor_dashboard_summary(authorization: str = Header(None)):
         currencies.add(order.get("currency") or "INR")
 
         order_date = _vendor_dashboard_date(order.get("createdAt")) or _vendor_dashboard_date(order.get("orderDate"))
-        if order_date and order_date >= this_month_start:
-            current_month_revenue += amount
-        elif order_date and order_date >= previous_month_start:
-            previous_month_revenue += amount
+        if order_date:
+            bucket_key = f"{order_date.year:04d}-{order_date.month:02d}"
+            if bucket_key in trend_map:
+                trend_map[bucket_key] += amount
+            if order_date >= this_month_start:
+                current_month_revenue += amount
+            elif order_date >= previous_month_start:
+                previous_month_revenue += amount
+
+        for item in order.get("items") or []:
+            description = str(item.get("description") or "Item").strip() or "Item"
+            qty = float(item.get("quantity") or 0)
+            rate = float(item.get("rate") or 0)
+            bucket = item_totals.setdefault(description, {"description": description, "quantity": 0.0, "revenue": 0.0})
+            bucket["quantity"] += qty
+            bucket["revenue"] += qty * rate
 
     revenue_change_pct = None
     if previous_month_revenue > 0:
@@ -1180,6 +1209,19 @@ async def get_vendor_dashboard_summary(authorization: str = Header(None)):
             ((current_month_revenue - previous_month_revenue) / previous_month_revenue) * 100,
             1,
         )
+
+    monthly_revenue_trend = [
+        {"month": key, "revenue": round(value, 2)}
+        for key, value in trend_map.items()
+    ]
+    order_status_breakdown = [
+        {"status": status, "count": count}
+        for status, count in sorted(status_counts.items(), key=lambda pair: pair[1], reverse=True)
+    ]
+    top_items = sorted(item_totals.values(), key=lambda row: row["revenue"], reverse=True)[:5]
+    for row in top_items:
+        row["quantity"] = round(row["quantity"], 2)
+        row["revenue"] = round(row["revenue"], 2)
 
     return {
         "total_products": total_products,
@@ -1190,6 +1232,9 @@ async def get_vendor_dashboard_summary(authorization: str = Header(None)):
         "previous_month_revenue": round(previous_month_revenue, 2),
         "revenue_change_pct": revenue_change_pct,
         "currency": currencies.pop() if len(currencies) == 1 else "INR",
+        "monthly_revenue_trend": monthly_revenue_trend,
+        "order_status_breakdown": order_status_breakdown,
+        "top_items": top_items,
     }
 
 @vendor_bp.get("/my-purchaseorders")

@@ -4,11 +4,36 @@ from fastapi.responses import JSONResponse
 from typing import Optional
 from datetime import datetime, timedelta
 from bson import ObjectId
+import os
+import secrets
 
-from ..db import product_collection, inventory_collection, sales_collection, store_stock_collection
+from ..db import db, product_collection, inventory_collection, sales_collection, store_stock_collection
 from .store_helper import get_store_context
 
 router = APIRouter(prefix="/cashier", tags=["Cashier POS"])
+
+cashier_audit_collection = db["cashier_pos_audit_logs"]
+cashier_shift_collection = db["cashier_shifts"]
+
+
+def _public_invoice_url(token: str) -> str:
+    frontend = os.getenv("FRONTEND_URL") or os.getenv("PUBLIC_FRONTEND_URL") or "https://rms.raphaaa.com"
+    return f"{frontend.rstrip('/')}/invoice/{token}"
+
+
+async def _audit_pos(ctx: dict, action: str, details: dict = None):
+    try:
+        await cashier_audit_collection.insert_one({
+            "tenant_id": ctx.get("tenant_id"),
+            "store_id": ctx.get("store_id"),
+            "store_name": ctx.get("store_name"),
+            "cashier_name": ctx.get("admin_name") or ctx.get("name") or "POS",
+            "action": action,
+            "details": details or {},
+            "created_at": datetime.utcnow(),
+        })
+    except Exception:
+        pass
 
 
 async def _require_store_context(authorization: str = None) -> dict:
@@ -569,12 +594,22 @@ async def save_bill(
     is_return    = bool(payload.get("isReturn", False))
     items        = payload.get("items", [])
     summary      = payload.get("summary", {})
-    bill_meta = payload.get("bill", {})
+    bill_meta    = payload.get("bill", {})
+    payment_split = bill_meta.get("paymentSplit") or payload.get("paymentSplit") or {}
+    if not isinstance(payment_split, dict):
+        payment_split = {}
+    clean_payment_split = {
+        "Cash": _float(payment_split.get("Cash")),
+        "Card": _float(payment_split.get("Card")),
+        "UPI":  _float(payment_split.get("UPI")),
+    }
+    split_total = sum(clean_payment_split.values())
     client_offline_id = str(payload.get("clientOfflineId") or "").strip()
     offline_invoice_no = str(payload.get("offlineInvoiceNo") or "").strip()
     created_offline_at = str(payload.get("createdOfflineAt") or "").strip()
     sync_source = str(payload.get("syncSource") or "").strip()
-    store     = await _require_store_context(authorization)
+
+    store = await _require_store_context(authorization)
     tenant_id  = store["tenant_id"]
     store_id   = store["store_id"]
     store_name = store["store_name"]
@@ -586,19 +621,24 @@ async def save_bill(
             "client_offline_id": client_offline_id,
         })
         if existing:
+            await _audit_pos(store, "offline_sync_duplicate", {
+                "client_offline_id": client_offline_id,
+                "invoice_no": existing.get("invoice_no", ""),
+            })
             return {
-                "status":              "success",
-                "invoice_no":          existing.get("invoice_no", ""),
-                "id":                  str(existing.get("_id", "")),
-                "message":             "Offline bill already synced.",
-                "store_id":            store_id,
-                "duplicate":           True,
-                "inventory_warnings":  [],
-                "inventory_not_found": [],
+                "status": "success",
+                "invoice_no": existing.get("invoice_no", ""),
+                "id": str(existing.get("_id", "")),
+                "message": "Offline bill already synced.",
+                "store_id": store_id,
+                "duplicate": True,
+                "sync_status": "already_synced",
+                "share_url": existing.get("share_url", ""),
+                "inventory_warnings": existing.get("inventory_warnings", []),
+                "inventory_not_found": existing.get("inventory_not_found", []),
+                "stock_conflicts": existing.get("stock_conflicts", []),
             }
 
-    # A bill must show the person authenticated to the POS, rather than a
-    # browser-provided value that can be stale or manually changed.
     cashier_name = (store.get("admin_name") or bill_meta.get("cashierName") or "POS").strip()
 
     if is_return:
@@ -623,117 +663,248 @@ async def save_bill(
     if not items:
         raise HTTPException(status_code=400, detail="No items in bill.")
 
-    now        = datetime.utcnow()
+    now = datetime.utcnow()
     invoice_no = await _generate_invoice_no(is_return, tenant_id, store_id)
 
     clean_items = []
     for item in items:
-        bc  = (item.get("barcode") or "").strip()
+        bc = (item.get("barcode") or "").strip()
         qty = abs(_int(item.get("qty", 0)))
         if not bc or qty == 0:
             continue
         clean_items.append({
-            "barcode":      bc,
-            "sku":          item.get("sku", ""),
-            "name":         item.get("name", ""),
-            "hsn":          item.get("hsn", ""),
-            "qty":          qty,
-            "price":        _float(item.get("price")),
-            "mrp":          _float(item.get("mrp")),
-            "cost_price":   _float(item.get("cost_price")),
-            "gst":          _float(item.get("gst")),
+            "barcode": bc,
+            "sku": item.get("sku", ""),
+            "name": item.get("name", ""),
+            "hsn": item.get("hsn", ""),
+            "qty": qty,
+            "price": _float(item.get("price")),
+            "mrp": _float(item.get("mrp")),
+            "cost_price": _float(item.get("cost_price")),
+            "gst": _float(item.get("gst")),
             "itemDiscount": _float(item.get("itemDiscount")),
-            "total":        _float(item.get("total")),
-            "division":     item.get("division", ""),
-            "section":      item.get("section", ""),
-            "department":   item.get("department", ""),
+            "total": _float(item.get("total")),
+            "division": item.get("division", ""),
+            "section": item.get("section", ""),
+            "department": item.get("department", ""),
         })
 
     if not clean_items:
         raise HTTPException(status_code=400, detail="No valid line items.")
 
+    stock_conflicts = []
+    if client_offline_id and not is_return:
+        for item in clean_items:
+            current_qty = await _inv_qty(item["barcode"], tenant_id, store_id)
+            if current_qty < item["qty"]:
+                stock_conflicts.append({
+                    "barcode": item["barcode"],
+                    "name": item.get("name", item["barcode"]),
+                    "ordered_qty": item["qty"],
+                    "available_at_sync": current_qty,
+                    "short_by": item["qty"] - current_qty,
+                })
+
+    share_token = secrets.token_urlsafe(18)
     bill_doc = {
-        "invoice_no":       invoice_no,
-        "type":             "return" if is_return else "sale",
+        "invoice_no": invoice_no,
+        "type": "return" if is_return else "sale",
         "original_invoice": payload.get("originalInvoice", ""),
-        "date":             now.strftime("%Y-%m-%d %H:%M"),
-        "cashier_name":     cashier_name,
-        "customer_name":    bill_meta.get("customerName", ""),
-        "mobile":           bill_meta.get("mobile", ""),
-        "payment_method":   bill_meta.get("paymentMethod", "Cash"),
-        "applied_offer":    _float(bill_meta.get("appliedOffer")),
-        "discount_pct":     _float(bill_meta.get("discount")),
-        "paid_amount":      _float(payload.get("paidAmount")),
-        "change_return":    _float(payload.get("changeReturn")),
-        "items":            clean_items,
-        "tenant_id":        tenant_id,
-        "store_id":         store_id,
-        "store_name":       store_name,
+        "date": now.strftime("%Y-%m-%d %H:%M"),
+        "cashier_name": cashier_name,
+        "customer_name": bill_meta.get("customerName", ""),
+        "mobile": bill_meta.get("mobile", ""),
+        "payment_method": bill_meta.get("paymentMethod", "Cash"),
+        "payment_split": clean_payment_split if split_total > 0 else {},
+        "applied_offer": _float(bill_meta.get("appliedOffer")),
+        "discount_pct": _float(bill_meta.get("discount")),
+        "paid_amount": _float(payload.get("paidAmount")),
+        "change_return": _float(payload.get("changeReturn")),
+        "items": clean_items,
+        "tenant_id": tenant_id,
+        "store_id": store_id,
+        "store_name": store_name,
         "client_offline_id": client_offline_id,
         "offline_invoice_no": offline_invoice_no,
         "created_offline_at": created_offline_at,
         "sync_source": sync_source or ("offline_pos" if client_offline_id else "online_pos"),
         "synced_from_offline": bool(client_offline_id),
+        "sync_status": "synced" if client_offline_id else "online",
+        "stock_conflicts": stock_conflicts,
+        "inventory_warnings": [],
+        "inventory_not_found": [],
+        "share_token": share_token,
+        "share_url": _public_invoice_url(share_token),
+        "share_ready": True,
         "summary": {
-            "total_sale":     _float(summary.get("totalSale")),
-            "total_savings":  _float(summary.get("totalSavings")),
+            "total_sale": _float(summary.get("totalSale")),
+            "total_savings": _float(summary.get("totalSavings")),
             "taxable_amount": _float(summary.get("taxableAmount")),
-            "cgst_amount":    _float(summary.get("cgstAmount")),
-            "sgst_amount":    _float(summary.get("sgstAmount")),
-            "igst_amount":    _float(summary.get("igstAmount")),
-            "total_gst":      _float(summary.get("totalGstAmount")),
-            "round_off":      _float(summary.get("roundOff")),
-            "net_payable":    _float(summary.get("netPayable")),
+            "cgst_amount": _float(summary.get("cgstAmount")),
+            "sgst_amount": _float(summary.get("sgstAmount")),
+            "igst_amount": _float(summary.get("igstAmount")),
+            "total_gst": _float(summary.get("totalGstAmount")),
+            "round_off": _float(summary.get("roundOff")),
+            "net_payable": _float(summary.get("netPayable")),
         },
         "created_at": now,
     }
 
     result = await sales_collection.insert_one(bill_doc)
 
-    inventory_warnings  = []
+    inventory_warnings = []
     inventory_not_found = []
-
     for item in clean_items:
-        bc         = item["barcode"]
-        qty        = item["qty"]
-        qty_change = qty if is_return else -qty
-
+        qty_change = item["qty"] if is_return else -item["qty"]
         update_result = await _apply_stock_change(
-            bc           = bc,
-            qty_change   = qty_change,
-            invoice_no   = invoice_no,
-            cashier_name = cashier_name,
-            is_return    = is_return,
-            now          = now,
-            store_id     = store_id,
-            store_name   = store_name,
-            tenant_id    = tenant_id,
+            bc=item["barcode"],
+            qty_change=qty_change,
+            invoice_no=invoice_no,
+            cashier_name=cashier_name,
+            is_return=is_return,
+            now=now,
+            store_id=store_id,
+            store_name=store_name,
+            tenant_id=tenant_id,
         )
-
         if not update_result["updated"]:
             inventory_not_found.append({
-                "barcode": bc,
-                "name":    item.get("name", bc),
-                "reason":  update_result.get("reason", "unknown"),
+                "barcode": item["barcode"],
+                "name": item.get("name", item["barcode"]),
+                "reason": update_result.get("reason", "unknown"),
             })
         elif update_result.get("went_negative"):
             inventory_warnings.append(
-                f"'{item['name']}' stock went negative "
-                f"({update_result['old_qty']} → {update_result['new_qty']})."
+                f"'{item['name']}' stock went negative ({update_result['old_qty']} -> {update_result['new_qty']})."
             )
 
-    return {
-        "status":              "success",
-        "invoice_no":          invoice_no,
-        "id":                  str(result.inserted_id),
-        "message":             f"{'Return bill' if is_return else 'Bill'} saved.",
-        "store_id":            store_id,
-        "inventory_warnings":  inventory_warnings,
+    await sales_collection.update_one({"_id": result.inserted_id}, {"$set": {
+        "inventory_warnings": inventory_warnings,
         "inventory_not_found": inventory_not_found,
+        "stock_conflicts": stock_conflicts,
+    }})
+    await _audit_pos(store, "bill_saved", {
+        "invoice_no": invoice_no,
+        "type": "return" if is_return else "sale",
+        "net_payable": bill_doc.get("summary", {}).get("net_payable", 0),
+        "payment_method": bill_doc.get("payment_method"),
+        "payment_split": bill_doc.get("payment_split", {}),
+        "synced_from_offline": bool(client_offline_id),
+        "stock_conflicts": stock_conflicts,
+        "inventory_not_found": inventory_not_found,
+    })
+
+    return {
+        "status": "success",
+        "invoice_no": invoice_no,
+        "id": str(result.inserted_id),
+        "message": f"{'Return bill' if is_return else 'Bill'} saved.",
+        "store_id": store_id,
+        "sync_status": "synced" if client_offline_id else "online",
+        "share_url": bill_doc.get("share_url", ""),
+        "inventory_warnings": inventory_warnings,
+        "inventory_not_found": inventory_not_found,
+        "stock_conflicts": stock_conflicts,
     }
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
+# ???????????????????????????????????????????????????????????????????????????????
+# CASHIER SHIFT + BILL SHARING
+# ???????????????????????????????????????????????????????????????????????????????
+
+@router.get("/shift/current")
+async def current_shift(authorization: str = Header(None)):
+    ctx = await _require_store_context(authorization)
+    shift = await cashier_shift_collection.find_one({**_store_scope(ctx), "status": "open"}, sort=[("opened_at", -1)])
+    if not shift:
+        return {"status": "success", "shift": None}
+    shift["_id"] = str(shift["_id"])
+    return {"status": "success", "shift": shift}
+
+
+@router.post("/shift/open")
+async def open_shift(payload: dict, authorization: str = Header(None)):
+    ctx = await _require_store_context(authorization)
+    existing = await cashier_shift_collection.find_one({**_store_scope(ctx), "status": "open"})
+    if existing:
+        existing["_id"] = str(existing["_id"])
+        return {"status": "success", "shift": existing, "message": "Shift already open."}
+    now = datetime.utcnow()
+    doc = {
+        **_store_scope(ctx),
+        "store_name": ctx.get("store_name", ""),
+        "cashier_name": ctx.get("admin_name") or ctx.get("name") or "POS",
+        "opening_cash": _float(payload.get("openingCash")),
+        "status": "open",
+        "opened_at": now,
+        "opened_at_label": now.strftime("%Y-%m-%d %H:%M"),
+    }
+    result = await cashier_shift_collection.insert_one(doc)
+    doc["_id"] = str(result.inserted_id)
+    await _audit_pos(ctx, "shift_opened", {"shift_id": doc["_id"], "opening_cash": doc["opening_cash"]})
+    return {"status": "success", "shift": doc}
+
+
+@router.post("/shift/close")
+async def close_shift(payload: dict, authorization: str = Header(None)):
+    ctx = await _require_store_context(authorization)
+    shift = await cashier_shift_collection.find_one({**_store_scope(ctx), "status": "open"}, sort=[("opened_at", -1)])
+    if not shift:
+        raise HTTPException(status_code=400, detail="No open shift found.")
+    opened_at = shift.get("opened_at") or datetime.utcnow()
+    now = datetime.utcnow()
+    q = {**_store_scope(ctx), "type": "sale", "created_at": {"$gte": opened_at, "$lte": now}}
+    cash_sales = 0.0
+    total_sales = 0.0
+    bill_count = 0
+    async for doc in sales_collection.find(q):
+        bill_count += 1
+        amount = _float(doc.get("summary", {}).get("net_payable"))
+        total_sales += amount
+        split = doc.get("payment_split") or {}
+        if split:
+            cash_sales += _float(split.get("Cash"))
+        elif (doc.get("payment_method") or "Cash") == "Cash":
+            cash_sales += amount
+    expected_cash = _float(shift.get("opening_cash")) + cash_sales
+    counted_cash = _float(payload.get("countedCash"))
+    mismatch = counted_cash - expected_cash
+    update = {
+        "status": "closed",
+        "closed_at": now,
+        "closed_at_label": now.strftime("%Y-%m-%d %H:%M"),
+        "counted_cash": counted_cash,
+        "expected_cash": expected_cash,
+        "cash_sales": cash_sales,
+        "total_sales": total_sales,
+        "bill_count": bill_count,
+        "cash_mismatch": mismatch,
+        "notes": payload.get("notes", ""),
+    }
+    await cashier_shift_collection.update_one({"_id": shift["_id"]}, {"$set": update})
+    await _audit_pos(ctx, "shift_closed", {"shift_id": str(shift["_id"]), **update})
+    shift.update(update)
+    shift["_id"] = str(shift["_id"])
+    return {"status": "success", "shift": shift}
+
+
+@router.post("/bill/{invoice_no:path}/share")
+async def prepare_bill_share(invoice_no: str, authorization: str = Header(None)):
+    ctx = await _require_store_context(authorization)
+    doc = await sales_collection.find_one({"invoice_no": invoice_no, **_store_scope(ctx)})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Invoice not found.")
+    token = doc.get("share_token") or secrets.token_urlsafe(18)
+    share_url = doc.get("share_url") or _public_invoice_url(token)
+    await sales_collection.update_one({"_id": doc["_id"]}, {"$set": {"share_token": token, "share_url": share_url, "share_ready": True}})
+    await _audit_pos(ctx, "bill_share_prepared", {"invoice_no": invoice_no, "mobile": doc.get("mobile", ""), "share_url": share_url})
+    whatsapp_url = ""
+    mobile = "".join(ch for ch in str(doc.get("mobile", "")) if ch.isdigit())
+    if mobile:
+        whatsapp_url = f"https://wa.me/91{mobile[-10:]}?text=Your%20RMS%20invoice%20{invoice_no}%20is%20ready:%20{share_url}"
+    return {"status": "success", "invoice_no": invoice_no, "share_url": share_url, "whatsapp_url": whatsapp_url, "mobile": doc.get("mobile", "")}
+
+
 # GET /cashier/bills
 # ═══════════════════════════════════════════════════════════════════════════════
 

@@ -124,6 +124,25 @@ async def get_hq_tenant(ctx: Dict[str, Any] = Depends(get_tenant)) -> Dict[str, 
     return ctx
 
 
+async def get_hq_or_store_hr_tenant(ctx: Dict[str, Any] = Depends(get_tenant)) -> Dict[str, Any]:
+    """
+    HQ admins, plus a store's own HR admin, may manage staff for that store.
+    Route handlers must still lock a store-scoped caller to their own
+    store_id — this dependency only decides who gets past the door.
+    """
+    if ctx["scope"] == "hq":
+        return ctx
+    if ctx["scope"] in ("store", "branch") and ctx.get("store_id"):
+        departments = set(ctx.get("_managed_departments") or [])
+        permissions = set(ctx.get("_permissions") or [])
+        if "HR" in departments or "hr" in permissions:
+            return ctx
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="HQ access, or store HR access, is required to manage staff.",
+    )
+
+
 async def get_receiving_tenant(ctx: Dict[str, Any] = Depends(get_tenant)) -> Dict[str, Any]:
     """Allow receiving at HQ, plus the Inventory role of a single-store tenant.
 

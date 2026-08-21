@@ -97,6 +97,24 @@ function searchCachedProducts(products, query, limit = 20) {
   }).slice(0, limit);
 }
 
+function paymentSplitTotal(split = {}) {
+  return ["Cash", "Card", "UPI"].reduce((sum, key) => sum + Number(split?.[key] || 0), 0);
+}
+
+function cleanPaymentSplit(split = {}) {
+  return {
+    Cash: Number(split.Cash || 0),
+    Card: Number(split.Card || 0),
+    UPI: Number(split.UPI || 0),
+  };
+}
+
+function makeWhatsAppBillUrl(mobile, invoiceNo, shareUrl) {
+  const digits = String(mobile || "").replace(/\D/g, "").slice(-10);
+  const text = encodeURIComponent(`Your RMS invoice ${invoiceNo} is ready: ${shareUrl}`);
+  return digits ? `https://wa.me/91${digits}?text=${text}` : "";
+}
+
 
 function numToWords(n) {
   const a = ["","One","Two","Three","Four","Five","Six","Seven","Eight","Nine",
@@ -431,19 +449,36 @@ function ManualOfflineItemModal({ open, barcode, onClose, onAdd }) {
 
 function GenerateBillPopup({ open, isReturn, items, bill, setBill, summary, onClose, onFinalize, onSaveOffline, saving, originalInvoice }) {
   const [paid, setPaid] = useState("");
+  const [splitEnabled, setSplitEnabled] = useState(false);
+  const [split, setSplit] = useState({ Cash: "", Card: "", UPI: "" });
 
   useEffect(() => {
     document.body.style.overflow = open ? "hidden" : "auto";
-    if (!open) setPaid("");
+    if (!open) {
+      setPaid("");
+      setSplitEnabled(false);
+      setSplit({ Cash: "", Card: "", UPI: "" });
+    }
     return () => { document.body.style.overflow = "auto"; };
   }, [open]);
 
   if (!open) return null;
 
   const payable = Math.abs(summary.netPayable);
-  const change  = Number(paid) > payable ? Number(paid) - payable : 0;
+  const splitClean = cleanPaymentSplit(split);
+  const paidTotal = splitEnabled ? paymentSplitTotal(splitClean) : Number(paid || (bill.paymentMethod === "Cash" ? 0 : payable));
+  const change  = paidTotal > payable ? paidTotal - payable : 0;
+  const selectedPaymentMethod = splitEnabled ? "Split" : bill.paymentMethod;
   const validateCash = () => {
-    if (bill.paymentMethod === "Cash" && !isReturn && (!paid || Number(paid) < payable)) {
+    if (isReturn) return true;
+    if (splitEnabled) {
+      if (paidTotal < payable) {
+        alert(`Split payment is short by ?${(payable - paidTotal).toFixed(2)}`);
+        return false;
+      }
+      return true;
+    }
+    if (bill.paymentMethod === "Cash" && (!paid || Number(paid) < payable)) {
       alert("Insufficient paid amount");
       return false;
     }
@@ -609,7 +644,7 @@ function GenerateBillPopup({ open, isReturn, items, bill, setBill, summary, onCl
                 type="button"
                 onClick={() => {
                   if (!validateCash()) return;
-                  onSaveOffline?.(Number(paid || 0), change, "Saved manually by cashier");
+                  onSaveOffline?.(paidTotal, change, "Saved manually by cashier", selectedPaymentMethod, splitEnabled ? splitClean : {});
                 }}
                 disabled={saving}
                 className="flex cursor-pointer items-center justify-center gap-2 rounded-2xl border border-amber-200 bg-amber-50 py-4 text-xs font-black uppercase tracking-widest text-amber-700 hover:bg-amber-100 disabled:opacity-60"
@@ -619,7 +654,7 @@ function GenerateBillPopup({ open, isReturn, items, bill, setBill, summary, onCl
             )}
             <button onClick={() => {
               if (!validateCash()) return;
-              onFinalize(Number(paid || 0), change);
+              onFinalize(paidTotal, change, selectedPaymentMethod, splitEnabled ? splitClean : {});
             }} disabled={saving}
               className={`flex w-full cursor-pointer items-center justify-center gap-2 rounded-2xl py-4 text-xs font-black uppercase tracking-widest text-white disabled:opacity-60 ${isReturn ? "bg-rose-600 sm:col-span-2" : "bg-violet-600"}`}>
               {saving ? <FaSpinner className="animate-spin" /> : <FaPrint />}
@@ -640,6 +675,9 @@ function GenerateBillPopup({ open, isReturn, items, bill, setBill, summary, onCl
 
 /* ─── Receipt Modal ─── */
 function ReceiptModal({ open, receipt, onClose }) {
+  const [shareInfo, setShareInfo] = useState(null);
+  const [sharing, setSharing] = useState(false);
+
   useEffect(() => {
     if (!open) return undefined;
     const onKeyDown = event => {
@@ -649,9 +687,39 @@ function ReceiptModal({ open, receipt, onClose }) {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [open, onClose]);
 
+  useEffect(() => {
+    if (!open) setShareInfo(null);
+  }, [open]);
+
   if (!open || !receipt) return null;
   const isReturn = receipt.isReturn;
   const s = receipt.summary;
+  const splitRows = Object.entries(receipt.paymentSplit || {}).filter(([, value]) => Number(value || 0) > 0);
+
+  const prepareShare = async () => {
+    const fallbackUrl = receipt.shareUrl || "";
+    if (receipt.offline) {
+      if (fallbackUrl && navigator.clipboard) await navigator.clipboard.writeText(fallbackUrl);
+      setShareInfo({ share_url: fallbackUrl, whatsapp_url: makeWhatsAppBillUrl(receipt.mobile, receipt.invoiceNo, fallbackUrl) });
+      return;
+    }
+    setSharing(true);
+    try {
+      const res = await cashierFetch(`${API_BASE}/cashier/bill/${encodeURIComponent(receipt.invoiceNo)}/share`, { method: "POST" });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.detail || "Share link failed");
+      setShareInfo(json);
+      if (json.share_url && navigator.clipboard) await navigator.clipboard.writeText(json.share_url);
+    } catch {
+      if (fallbackUrl) {
+        setShareInfo({ share_url: fallbackUrl, whatsapp_url: makeWhatsAppBillUrl(receipt.mobile, receipt.invoiceNo, fallbackUrl) });
+      } else {
+        alert("Could not prepare bill link right now.");
+      }
+    } finally {
+      setSharing(false);
+    }
+  };
 
   const handlePrint = () => {
     const totalSale = receipt.items.reduce((a, i) => a + Math.abs(i.total), 0);
@@ -801,7 +869,7 @@ function ReceiptModal({ open, receipt, onClose }) {
 
   <!-- Payment -->
   <table class="summary">
-    <tr><td>${receipt.paymentMethod}</td><td class="val">${num(s.netPayable)}</td></tr>
+    ${splitRows.length ? splitRows.map(([mode, amount]) => `<tr><td>${mode}</td><td class="val">${num(amount)}</td></tr>`).join("") : `<tr><td>${receipt.paymentMethod}</td><td class="val">${num(s.netPayable)}</td></tr>`}
     <tr><td>Customer Paid :</td><td class="val">${num(receipt.paidAmount)}</td></tr>
     <tr><td>Balance Refund :</td><td class="val">${num(receipt.changeReturn)}</td></tr>
   </table>
@@ -990,10 +1058,17 @@ function ReceiptModal({ open, receipt, onClose }) {
 
             {/* Payment */}
             <div className="space-y-1">
-              <div className="flex justify-between">
-                <span>{receipt.paymentMethod}</span>
-                <span>{num(s.netPayable)}</span>
-              </div>
+              {splitRows.length ? splitRows.map(([mode, amount]) => (
+                <div key={mode} className="flex justify-between">
+                  <span>{mode}</span>
+                  <span>{num(amount)}</span>
+                </div>
+              )) : (
+                <div className="flex justify-between">
+                  <span>{receipt.paymentMethod}</span>
+                  <span>{num(s.netPayable)}</span>
+                </div>
+              )}
               <div className="flex justify-between">
                 <span>Customer Paid :</span>
                 <span>{num(receipt.paidAmount)}</span>
@@ -1105,11 +1180,28 @@ function ReceiptModal({ open, receipt, onClose }) {
             <div className="text-center">*{receipt.invoiceNo}*</div>
           </div>
 
-          {/* Print Button */}
-          <button onClick={handlePrint}
-            className="mt-5 flex w-full items-center justify-center gap-2 rounded-2xl bg-slate-950 py-3 text-[11px] font-black uppercase tracking-widest text-white hover:bg-slate-800">
-            <FaPrint /> Print Receipt
-          </button>
+          {receipt.stockConflicts?.length > 0 && (
+            <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-[11px] font-bold text-amber-800">
+              Stock conflict flagged: {receipt.stockConflicts.length} item(s) were low during offline sync. Admin should review stock.
+            </div>
+          )}
+
+          <div className="mt-5 grid gap-2">
+            <button onClick={handlePrint}
+              className="flex w-full items-center justify-center gap-2 rounded-2xl bg-slate-950 py-3 text-[11px] font-black uppercase tracking-widest text-white hover:bg-slate-800">
+              <FaPrint /> Print Receipt
+            </button>
+            <button onClick={prepareShare} disabled={sharing || receipt.offline}
+              className="flex w-full items-center justify-center gap-2 rounded-2xl border border-emerald-200 bg-emerald-50 py-3 text-[11px] font-black uppercase tracking-widest text-emerald-700 hover:bg-emerald-100 disabled:opacity-50">
+              {sharing ? <FaSpinner className="animate-spin" /> : <FaCheckCircle />} {receipt.offline ? "Sync first to share bill" : "Copy / send bill link"}
+            </button>
+            {shareInfo?.share_url && (
+              <div className="rounded-2xl bg-slate-50 p-3 text-[11px] font-bold text-slate-600">
+                <p className="break-all">{shareInfo.share_url}</p>
+                {shareInfo.whatsapp_url && <a className="mt-2 inline-block font-black text-emerald-700" href={shareInfo.whatsapp_url} target="_blank" rel="noreferrer">Open WhatsApp message</a>}
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </div>,
@@ -1142,6 +1234,8 @@ export default function CashierPOS() {
   const [cacheRefreshing,  setCacheRefreshing] = useState(false);
   const [manualOfflineOpen, setManualOfflineOpen] = useState(false);
   const [manualOfflineBarcode, setManualOfflineBarcode] = useState("");
+  const [currentShift, setCurrentShift] = useState(null);
+  const [shiftBusy, setShiftBusy] = useState(false);
 
   // The cashier name belongs to the authenticated session, never a generic
   // POS default. `admin_name` is written by authRedirect immediately after
@@ -1155,6 +1249,14 @@ export default function CashierPOS() {
   const isReturn = mode === "return";
   const pendingOfflineCount = useMemo(
     () => offlineBills.filter(row => row.status === "pending").length,
+    [offlineBills]
+  );
+  const failedOfflineCount = useMemo(
+    () => offlineBills.filter(row => row.status === "failed").length,
+    [offlineBills]
+  );
+  const syncedOfflineCount = useMemo(
+    () => offlineBills.filter(row => row.status === "synced").length,
     [offlineBills]
   );
   const cachedProducts = useMemo(
@@ -1172,6 +1274,64 @@ export default function CashierPOS() {
     setToast({ msg, type });
     setTimeout(() => setToast({ msg: "", type: "default" }), 1600);
   }, []);
+
+  const loadCurrentShift = useCallback(async () => {
+    try {
+      const res = await cashierFetch(`${API_BASE}/cashier/shift/current`);
+      const json = await res.json();
+      if (res.ok) setCurrentShift(json.shift || null);
+    } catch {
+      // shift status is helpful but should not block POS billing
+    }
+  }, []);
+
+  useEffect(() => {
+    loadCurrentShift();
+  }, [loadCurrentShift]);
+
+  const openShift = useCallback(async () => {
+    const openingCash = window.prompt("Opening cash in drawer?", "0");
+    if (openingCash === null) return;
+    setShiftBusy(true);
+    try {
+      const res = await cashierFetch(`${API_BASE}/cashier/shift/open`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ openingCash: Number(openingCash || 0) }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.detail || "Could not open shift");
+      setCurrentShift(json.shift || null);
+      showToast("Shift opened", "success");
+    } catch (e) {
+      showToast(e.message || "Could not open shift", "error");
+    } finally {
+      setShiftBusy(false);
+    }
+  }, [showToast]);
+
+  const closeShift = useCallback(async () => {
+    const countedCash = window.prompt("Counted cash in drawer?", String(currentShift?.expected_cash || ""));
+    if (countedCash === null) return;
+    const notes = window.prompt("Closing note (optional)", "") || "";
+    setShiftBusy(true);
+    try {
+      const res = await cashierFetch(`${API_BASE}/cashier/shift/close`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ countedCash: Number(countedCash || 0), notes }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.detail || "Could not close shift");
+      setCurrentShift(null);
+      const mismatch = Number(json.shift?.cash_mismatch || 0);
+      showToast(`Shift closed. Mismatch ?${mismatch.toFixed(2)}`, Math.abs(mismatch) > 0.01 ? "error" : "success");
+    } catch (e) {
+      showToast(e.message || "Could not close shift", "error");
+    } finally {
+      setShiftBusy(false);
+    }
+  }, [currentShift, showToast]);
 
   const refreshProductCache = useCallback(async (silent = false) => {
     setCacheRefreshing(true);
@@ -1345,7 +1505,7 @@ export default function CashierPOS() {
     setBill(prev => ({ ...prev, customerName: "", mobile: "", offer: "", appliedOffer: 0, discount: "", paymentMethod: "Cash" }));
   };
 
-  const saveOfflineBill = useCallback((paidAmount = 0, changeReturn = 0, reason = "Backend unavailable") => {
+  const saveOfflineBill = useCallback((paidAmount = 0, changeReturn = 0, reason = "Backend unavailable", paymentMethodOverride = bill.paymentMethod, paymentSplitOverride = {}) => {
     if (isReturn) {
       showToast("Returns need online invoice validation", "error");
       return;
@@ -1360,7 +1520,7 @@ export default function CashierPOS() {
     const createdOfflineAt = new Date().toISOString();
     const itemSnapshot = items.map(item => ({ ...item }));
     const summarySnapshot = { ...summary };
-    const billSnapshot = { ...bill };
+    const billSnapshot = { ...bill, paymentMethod: paymentMethodOverride, paymentSplit: paymentSplitOverride };
     const queueItem = {
       id: clientOfflineId,
       status: "pending",
@@ -1395,6 +1555,7 @@ export default function CashierPOS() {
       customerName: billSnapshot.customerName,
       mobile: billSnapshot.mobile,
       paymentMethod: billSnapshot.paymentMethod,
+      paymentSplit: billSnapshot.paymentSplit,
       paidAmount,
       changeReturn,
       appliedOffer: billSnapshot.appliedOffer,
@@ -1412,7 +1573,7 @@ export default function CashierPOS() {
   }, [isReturn, items, summary, bill, showToast]); // eslint-disable-line
 
   const syncOfflineBills = useCallback(async () => {
-    const pending = readOfflineBills().filter(row => row.status === "pending");
+    const pending = readOfflineBills().filter(row => ["pending", "failed"].includes(row.status));
     if (!pending.length) {
       setOfflineBills(readOfflineBills());
       return showToast("No offline bills to sync", "success");
@@ -1423,6 +1584,10 @@ export default function CashierPOS() {
     let failed = 0;
 
     for (const row of pending) {
+      if (row.status === "syncing" || row.status === "synced") continue;
+      const markedSyncing = readOfflineBills().map(item => item.id === row.id ? { ...item, status: "syncing", lastError: "" } : item);
+      writeOfflineBills(markedSyncing);
+      setOfflineBills(markedSyncing);
       try {
         const res = await cashierFetch(`${API_BASE}/cashier/bill`, {
           method: "POST",
@@ -1434,7 +1599,7 @@ export default function CashierPOS() {
         if (!res.ok) throw new Error(data.detail || "Sync failed");
 
         const nextRows = readOfflineBills().map(item => item.id === row.id
-          ? { ...item, status: "synced", syncedAt: new Date().toISOString(), serverInvoiceNo: data.invoice_no, lastError: "" }
+          ? { ...item, status: "synced", syncedAt: new Date().toISOString(), serverInvoiceNo: data.invoice_no, shareUrl: data.share_url || item.shareUrl || "", stockConflicts: data.stock_conflicts || [], lastError: "" }
           : item
         );
         writeOfflineBills(nextRows);
@@ -1442,7 +1607,7 @@ export default function CashierPOS() {
         synced += 1;
       } catch (e) {
         const nextRows = readOfflineBills().map(item => item.id === row.id
-          ? { ...item, lastError: e.message || "Sync failed" }
+          ? { ...item, status: "failed", lastError: e.message || "Sync failed" }
           : item
         );
         writeOfflineBills(nextRows);
@@ -1452,11 +1617,11 @@ export default function CashierPOS() {
     }
 
     setSyncingOffline(false);
-    if (failed) showToast(`${synced} synced, ${failed} pending`, "error");
+    if (failed) showToast(`${synced} synced, ${failed} failed`, "error");
     else showToast(`${synced} offline bill(s) synced`, "success");
   }, [showToast]);
 
-  const finalizeBill = useCallback(async (paidAmount = 0, changeReturn = 0) => {
+  const finalizeBill = useCallback(async (paidAmount = 0, changeReturn = 0, paymentMethodOverride = bill.paymentMethod, paymentSplitOverride = {}) => {
     setSaving(true);
     try {
       const res = await cashierFetch(`${API_BASE}/cashier/bill`, {
@@ -1466,7 +1631,7 @@ export default function CashierPOS() {
           isReturn,
           items,
           summary,
-          bill,
+          bill: { ...bill, paymentMethod: paymentMethodOverride, paymentSplit: paymentSplitOverride },
           paidAmount,
           changeReturn,
           originalInvoice,   
@@ -1490,7 +1655,10 @@ export default function CashierPOS() {
         cashierName:     bill.cashierName,
         customerName:    bill.customerName,
         mobile:          bill.mobile,
-        paymentMethod:   bill.paymentMethod,
+        paymentMethod:   paymentMethodOverride,
+        paymentSplit:    paymentSplitOverride,
+        shareUrl:        data.share_url || "",
+        stockConflicts:  data.stock_conflicts || [],
         paidAmount,
         changeReturn,
         appliedOffer:    bill.appliedOffer,
@@ -1507,7 +1675,7 @@ export default function CashierPOS() {
       showToast(isReturn ? "Return bill generated ✓" : "Bill generated ✓", "success");
     } catch (e) {
       if (!isReturn && !e.serverRejected) {
-        saveOfflineBill(paidAmount, changeReturn, e.message || "Network/backend unavailable");
+        saveOfflineBill(paidAmount, changeReturn, e.message || "Network/backend unavailable", paymentMethodOverride, paymentSplitOverride);
       } else {
         showToast(e.message || "Failed to save bill", "error");
       }
@@ -1555,15 +1723,27 @@ export default function CashierPOS() {
               </button>
             )}
 
-            {pendingOfflineCount > 0 && (
+            <button
+              type="button"
+              onClick={currentShift ? closeShift : openShift}
+              disabled={shiftBusy}
+              className={`flex cursor-pointer items-center gap-2 rounded-xl border px-4 py-2.5 text-xs font-black uppercase tracking-widest disabled:opacity-60 ${currentShift ? "border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100" : "border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100"}`}
+              title={currentShift ? `Opened ${currentShift.opened_at_label || "today"}` : "Open cashier shift"}
+            >
+              {shiftBusy ? <FaSpinner className="animate-spin" /> : <FaCheckCircle size={12} />}
+              {currentShift ? "Close shift" : "Open shift"}
+            </button>
+
+            {(pendingOfflineCount > 0 || failedOfflineCount > 0) && (
               <button
                 type="button"
                 onClick={syncOfflineBills}
                 disabled={syncingOffline}
                 className="flex cursor-pointer items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-xs font-black uppercase tracking-widest text-amber-700 hover:bg-amber-100 disabled:opacity-60"
+                title={`${pendingOfflineCount} pending, ${failedOfflineCount} failed, ${syncedOfflineCount} synced locally`}
               >
                 {syncingOffline ? <FaSpinner className="animate-spin" /> : <FaExclamationTriangle size={12} />}
-                Sync offline ({pendingOfflineCount})
+                Offline {pendingOfflineCount} pending / {failedOfflineCount} failed
               </button>
             )}
 

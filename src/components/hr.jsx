@@ -1,10 +1,11 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { getAdminName, getAdminScope, getStoreName, logoutOrReturnToDepartmentSelector } from "../utils/authRedirect";
+import { getAdminName, getAdminScope, getStoreId, getStoreName, logoutOrReturnToDepartmentSelector } from "../utils/authRedirect";
 import { API_BASE_URL } from "../config/api.js";
 import {
   Users, Calendar, DollarSign, Clock, Plane, LogOut, Bell, X, Plus,
-  Check, Search, RefreshCw, LogIn, BarChart3,
+  Check, Search, RefreshCw, LogIn, BarChart3, UserPlus, AlertCircle, UploadCloud, Store, Trash2, Pencil,
 } from "lucide-react";
+import BulkStaffImportModal from "../utils/BulkStaffImportModal.jsx";
 
 function getAdminToken() {
   return (
@@ -29,6 +30,7 @@ async function hrFetch(path, options = {}) {
 const MENU = [
   { id: "dashboard", label: "Overview", icon: BarChart3 },
   { id: "employees", label: "People", icon: Users },
+  { id: "floor-staff", label: "Floor Staff", icon: Store },
   { id: "attendance", label: "Attendance", icon: Clock },
   { id: "leaves", label: "Leave Centre", icon: Calendar },
   { id: "salary", label: "Payroll", icon: DollarSign },
@@ -114,6 +116,187 @@ function DashboardView() {
     </div>
   );
 }
+const INP2 = "w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm text-slate-800 placeholder-slate-400 outline-none focus:ring-2 focus:ring-indigo-400 focus:border-indigo-400 transition bg-white";
+const LBL2 = "block text-xs font-bold text-slate-600 uppercase tracking-widest mb-1.5";
+
+// Distinct previously-typed values for one store, so Division/Section/Floor
+// stay consistent instead of every admin spelling "Menswear" differently.
+function orgValuesForStore(list, storeId, key) {
+  if (!storeId) return [];
+  return [...new Set(
+    list
+      .filter((e) => e.store_id === storeId && e[key])
+      .map((e) => e[key])
+  )].sort();
+}
+
+/* ── Add Staff modal — store HR (and HQ HR) can create staff without
+   needing Admin Management, which store-scoped HR can't reach anyway. ── */
+function AddStaffModal({ onClose, onCreated, employees = [] }) {
+  const ownScope = getAdminScope();
+  const ownStoreId = getStoreId();
+  const isStoreScope = ownScope === "store";
+
+  const [deptConfig, setDeptConfig] = useState(null);
+  const [stores, setStores] = useState([]);
+  const [form, setForm] = useState({
+    name: "", email: "", phone: "",
+    scope: isStoreScope ? "store" : "hq",
+    store_id: isStoreScope ? ownStoreId : "",
+    managedDepartments: [],
+    division: "", section: "", floor: "", is_department_head: false,
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const divisionOptions = orgValuesForStore(employees, form.store_id, "division");
+  const sectionOptions  = orgValuesForStore(employees, form.store_id, "section");
+  const floorOptions    = orgValuesForStore(employees, form.store_id, "floor");
+
+  useEffect(() => {
+    hrFetch("/hq/departments").then((res) => setDeptConfig(res.data)).catch(() => {});
+    if (!isStoreScope) hrFetch("/hq/stores").then((res) => setStores(res.data || [])).catch(() => {});
+  }, [isStoreScope]);
+
+  const formScopeIsStore = form.scope === "store";
+  const depts = formScopeIsStore ? (deptConfig?.store_departments || []) : (deptConfig?.hq_departments || []);
+  const defaultPerms = deptConfig?.store_department_default_permissions || {};
+
+  const toggleDept = (id) => setForm((f) => {
+    const has = f.managedDepartments.includes(id);
+    return { ...f, managedDepartments: has ? f.managedDepartments.filter((d) => d !== id) : [...f.managedDepartments, id] };
+  });
+
+  const submit = async () => {
+    if (!form.name.trim() || !form.email.trim() || !form.managedDepartments.length) {
+      setError("Name, email and at least one department are required.");
+      return;
+    }
+    if (formScopeIsStore && !form.store_id) { setError("Select a store."); return; }
+    setSaving(true); setError("");
+    try {
+      const permissions = [...new Set(form.managedDepartments.flatMap((d) => defaultPerms[d] || []))];
+      await hrFetch("/hq/admins", {
+        method: "POST",
+        body: JSON.stringify({
+          name: form.name.trim(), email: form.email.trim(), phone: form.phone.trim(),
+          scope: form.scope, managedDepartments: form.managedDepartments, permissions,
+          store_id: formScopeIsStore ? form.store_id : null,
+          division: form.division.trim(), section: form.section.trim(), floor: form.floor.trim(),
+          is_department_head: form.is_department_head,
+        }),
+      });
+      onCreated();
+      onClose();
+    } catch (err) {
+      setError(err.message || "Could not create staff.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-3 sm:p-5" style={{ zIndex: 99999 }}>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xl flex flex-col" style={{ maxHeight: "88dvh", overflow: "hidden" }}>
+        <div className="bg-gradient-to-r from-slate-800 to-slate-900 px-6 py-5 flex items-center justify-between shrink-0">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-teal-400/20 flex items-center justify-center"><UserPlus className="w-5 h-5 text-teal-300" /></div>
+            <div>
+              <h2 className="text-lg font-bold text-white">Add Staff</h2>
+              <p className="text-xs text-slate-400">{isStoreScope ? `For ${getStoreName() || "your store"}` : "Creates an account and sends setup email"}</p>
+            </div>
+          </div>
+          <button onClick={onClose} className="text-slate-400 hover:text-white p-2 rounded-lg hover:bg-white/10 transition"><X className="w-5 h-5" /></button>
+        </div>
+
+        <div className="p-5 space-y-4" style={{ flex: 1, overflowY: "auto", minHeight: 0 }}>
+          {error && <p className="text-xs text-red-500 flex items-center gap-1"><AlertCircle className="w-3 h-3" />{error}</p>}
+          <div className="grid grid-cols-2 gap-3">
+            <div className="col-span-2">
+              <label className={LBL2}>Full Name *</label>
+              <input className={INP2} value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} placeholder="e.g. Rahul Sharma" />
+            </div>
+            <div>
+              <label className={LBL2}>Email *</label>
+              <input type="email" className={INP2} value={form.email} onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))} placeholder="staff@company.com" />
+            </div>
+            <div>
+              <label className={LBL2}>Phone</label>
+              <input className={INP2} value={form.phone} onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))} placeholder="+91 98765 43210" />
+            </div>
+          </div>
+
+          {!isStoreScope && (
+            <div>
+              <label className={LBL2}>Store</label>
+              <select className={INP2} value={form.store_id} onChange={(e) => setForm((f) => ({ ...f, scope: "store", store_id: e.target.value }))}>
+                <option value="">— Select store / branch —</option>
+                {stores.map((s) => <option key={s.id} value={s.id}>{s.name} ({s.code})</option>)}
+              </select>
+              <p className="mt-1 text-[11px] text-slate-400">Leave blank to create an HQ-level HR staff instead of store staff.</p>
+            </div>
+          )}
+
+          <div>
+            <label className={LBL2}>Departments *</label>
+            {!deptConfig ? (
+              <div className="text-xs text-slate-400 py-3 text-center">Loading departments…</div>
+            ) : (
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                {depts.map((deptId) => {
+                  const active = form.managedDepartments.includes(deptId);
+                  return (
+                    <button key={deptId} type="button" onClick={() => toggleDept(deptId)}
+                      className={`px-3 py-2 rounded-xl border text-xs font-semibold text-left transition-all flex items-center gap-2 ${active ? "border-teal-400 bg-teal-50 text-teal-700" : "border-slate-200 text-slate-600 hover:border-slate-300 bg-white"}`}>
+                      <div className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 ${active ? "bg-teal-500 border-teal-500" : "border-slate-300"}`}>
+                        {active && <Check className="w-3 h-3 text-white" />}
+                      </div>
+                      {deptId}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {formScopeIsStore && (
+            <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3">
+              <p className={LBL2}>Org placement <span className="text-slate-400 font-normal normal-case tracking-normal">— optional</span></p>
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <label className={LBL2}>Division</label>
+                  <input className={INP2} list="staff-division-options" value={form.division} onChange={(e) => setForm((f) => ({ ...f, division: e.target.value }))} placeholder="e.g. Menswear" />
+                  <datalist id="staff-division-options">{divisionOptions.map((v) => <option key={v} value={v} />)}</datalist>
+                </div>
+                <div>
+                  <label className={LBL2}>Section</label>
+                  <input className={INP2} list="staff-section-options" value={form.section} onChange={(e) => setForm((f) => ({ ...f, section: e.target.value }))} placeholder="e.g. Billing" />
+                  <datalist id="staff-section-options">{sectionOptions.map((v) => <option key={v} value={v} />)}</datalist>
+                </div>
+                <div>
+                  <label className={LBL2}>Floor</label>
+                  <input className={INP2} list="staff-floor-options" value={form.floor} onChange={(e) => setForm((f) => ({ ...f, floor: e.target.value }))} placeholder="e.g. Ground Floor" />
+                  <datalist id="staff-floor-options">{floorOptions.map((v) => <option key={v} value={v} />)}</datalist>
+                </div>
+              </div>
+              <label className="flex items-center gap-2.5 cursor-pointer">
+                <input type="checkbox" checked={form.is_department_head} onChange={(e) => setForm((f) => ({ ...f, is_department_head: e.target.checked }))} className="w-4 h-4 rounded border-slate-300 text-teal-600 focus:ring-teal-400" />
+                <span className="text-sm font-semibold text-slate-700">Make head of {form.managedDepartments[0] || "this department"}</span>
+              </label>
+            </div>
+          )}
+        </div>
+
+        <div className="px-5 py-4 border-t border-slate-100 flex gap-3" style={{ flexShrink: 0 }}>
+          <button onClick={onClose} className="flex-1 py-2.5 border border-slate-200 rounded-xl text-sm font-bold text-slate-600 hover:bg-slate-50 transition">Cancel</button>
+          <button onClick={submit} disabled={saving} className="flex-1 py-2.5 bg-gradient-to-r from-teal-600 to-teal-700 text-white rounded-xl text-sm font-bold hover:opacity-90 transition disabled:opacity-50">
+            {saving ? "Creating…" : "Create Staff & Send Email"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ── Employees ── */
 function EmployeesView() {
   const [employees, setEmployees] = useState([]);
@@ -123,6 +306,8 @@ function EmployeesView() {
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState({ join_date: "", employment_type: "Full-time", notes: "" });
   const [saving, setSaving] = useState(false);
+  const [showAdd, setShowAdd] = useState(false);
+  const [showBulkImport, setShowBulkImport] = useState(false);
 
   const fetchEmployees = useCallback(async () => {
     setLoading(true);
@@ -162,10 +347,32 @@ function EmployeesView() {
     <div className="hr-panel overflow-hidden">
       <ErrorBanner message={error} />
       <div className="p-6 border-b">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-2xl font-semibold">Employee Directory</h2>
-          <p className="text-xs text-slate-400">Pulled from your admin & store staff accounts — add or remove staff via Admin Management.</p>
+        <div className="flex items-center justify-between mb-4 gap-3">
+          <div>
+            <h2 className="text-2xl font-semibold">Employee Directory</h2>
+            <p className="text-xs text-slate-400">Pulled from your admin & store staff accounts.</p>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <button onClick={() => setShowBulkImport(true)}
+              className="inline-flex items-center gap-2 px-4 py-2 border border-teal-200 bg-teal-50 text-teal-700 rounded-xl text-sm font-bold hover:bg-teal-100 transition">
+              <UploadCloud className="w-4 h-4" /> Bulk Import
+            </button>
+            <button onClick={() => setShowAdd(true)}
+              className="inline-flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-teal-600 to-teal-700 text-white rounded-xl text-sm font-bold hover:opacity-90 transition">
+              <UserPlus className="w-4 h-4" /> Add Staff
+            </button>
+          </div>
         </div>
+        {showAdd && <AddStaffModal onClose={() => setShowAdd(false)} onCreated={fetchEmployees} employees={employees} />}
+        {showBulkImport && (
+          <BulkStaffImportModal
+            onClose={() => setShowBulkImport(false)}
+            onImported={fetchEmployees}
+            lockedStoreId={getAdminScope() === "store" ? getStoreId() : ""}
+            postJson={(path, body) => hrFetch(path, { method: "POST", body: JSON.stringify(body) })}
+            getToken={getAdminToken}
+          />
+        )}
         <div className="relative">
           <Search className="w-5 h-5 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
           <input type="text" placeholder="Search employees…" value={search} onChange={(e) => setSearch(e.target.value)}
@@ -192,7 +399,15 @@ function EmployeesView() {
               {filtered.map((emp) => (
                 <tr key={emp.id} className="hover:bg-gray-50">
                   <td className="px-6 py-4"><div className="font-medium">{emp.name}</div><div className="text-sm text-gray-500">{emp.email}</div></td>
-                  <td className="px-6 py-4">{emp.department}</td>
+                  <td className="px-6 py-4">
+                    <div className="flex items-center gap-1.5">
+                      {emp.is_department_head && <span className="px-1.5 py-0.5 bg-indigo-600 text-white rounded-full text-[10px] font-bold">★</span>}
+                      {emp.department}
+                    </div>
+                    {(emp.division || emp.section || emp.floor) && (
+                      <p className="mt-0.5 text-[11px] text-slate-400">{[emp.division, emp.section, emp.floor].filter(Boolean).join(" · ")}</p>
+                    )}
+                  </td>
                   <td className="px-6 py-4">{emp.store_name || (emp.scope === "hq" ? "HQ" : "—")}</td>
                   <td className="px-6 py-4">
                     {editing === emp.id ? (
@@ -228,6 +443,215 @@ function EmployeesView() {
               )}
             </tbody>
           </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ── Floor Staff — HR-tracked people with no system login (e.g. salespeople).
+   Separate list from Employees: no email, no password, no admin seat. ── */
+function FloorStaffModal({ onClose, onSaved, existing, ownStoreId, employees }) {
+  const isStoreScope = Boolean(ownStoreId);
+  const [form, setForm] = useState({
+    name: existing?.name || "", phone: existing?.phone || "", role: existing?.role || "",
+    division: existing?.division || "", section: existing?.section || "", floor: existing?.floor || "",
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const divisionOptions = orgValuesForStore(employees, ownStoreId, "division");
+  const sectionOptions  = orgValuesForStore(employees, ownStoreId, "section");
+  const floorOptions    = orgValuesForStore(employees, ownStoreId, "floor");
+
+  const submit = async () => {
+    if (!form.name.trim()) { setError("Name is required."); return; }
+    setSaving(true); setError("");
+    try {
+      if (existing) {
+        await hrFetch(`/api/hr/floor-staff/${existing.id}`, { method: "PATCH", body: JSON.stringify(form) });
+      } else {
+        await hrFetch("/api/hr/floor-staff", { method: "POST", body: JSON.stringify({ ...form, store_id: ownStoreId }) });
+      }
+      onSaved();
+      onClose();
+    } catch (err) {
+      setError(err.message || "Could not save this record.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-3 sm:p-5" style={{ zIndex: 99999 }}>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg flex flex-col" style={{ maxHeight: "88dvh", overflow: "hidden" }}>
+        <div className="bg-gradient-to-r from-slate-800 to-slate-900 px-6 py-5 flex items-center justify-between shrink-0">
+          <div>
+            <h2 className="text-lg font-bold text-white">{existing ? "Edit Floor Staff" : "Add Floor Staff"}</h2>
+            <p className="text-xs text-slate-400">No login required — just an HR record for tracking</p>
+          </div>
+          <button onClick={onClose} className="text-slate-400 hover:text-white p-2 rounded-lg hover:bg-white/10 transition"><X className="w-5 h-5" /></button>
+        </div>
+        <div className="p-5 space-y-3" style={{ flex: 1, overflowY: "auto", minHeight: 0 }}>
+          {error && <p className="text-xs text-red-500 flex items-center gap-1"><AlertCircle className="w-3 h-3" />{error}</p>}
+          {!isStoreScope && !existing && <p className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">Only store HR can add floor staff directly — head office HR can view but not create them here yet.</p>}
+          <div className="grid grid-cols-2 gap-3">
+            <div className="col-span-2">
+              <label className={LBL2}>Full Name *</label>
+              <input className={INP2} value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} placeholder="e.g. Priya Sharma" />
+            </div>
+            <div>
+              <label className={LBL2}>Phone</label>
+              <input className={INP2} value={form.phone} onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))} placeholder="+91 98765 43210" />
+            </div>
+            <div>
+              <label className={LBL2}>Role</label>
+              <input className={INP2} value={form.role} onChange={(e) => setForm((f) => ({ ...f, role: e.target.value }))} placeholder="e.g. Sales Associate" />
+            </div>
+          </div>
+          <div className="grid grid-cols-3 gap-3">
+            <div>
+              <label className={LBL2}>Division</label>
+              <input className={INP2} list="floor-division-options" value={form.division} onChange={(e) => setForm((f) => ({ ...f, division: e.target.value }))} placeholder="e.g. Menswear" />
+              <datalist id="floor-division-options">{divisionOptions.map((v) => <option key={v} value={v} />)}</datalist>
+            </div>
+            <div>
+              <label className={LBL2}>Section</label>
+              <input className={INP2} list="floor-section-options" value={form.section} onChange={(e) => setForm((f) => ({ ...f, section: e.target.value }))} placeholder="e.g. Billing" />
+              <datalist id="floor-section-options">{sectionOptions.map((v) => <option key={v} value={v} />)}</datalist>
+            </div>
+            <div>
+              <label className={LBL2}>Floor</label>
+              <input className={INP2} list="floor-floor-options" value={form.floor} onChange={(e) => setForm((f) => ({ ...f, floor: e.target.value }))} placeholder="e.g. Ground Floor" />
+              <datalist id="floor-floor-options">{floorOptions.map((v) => <option key={v} value={v} />)}</datalist>
+            </div>
+          </div>
+        </div>
+        <div className="px-5 py-4 border-t border-slate-100 flex gap-3" style={{ flexShrink: 0 }}>
+          <button onClick={onClose} className="flex-1 py-2.5 border border-slate-200 rounded-xl text-sm font-bold text-slate-600 hover:bg-slate-50 transition">Cancel</button>
+          <button onClick={submit} disabled={saving || (!isStoreScope && !existing)} className="flex-1 py-2.5 bg-gradient-to-r from-teal-600 to-teal-700 text-white rounded-xl text-sm font-bold hover:opacity-90 transition disabled:opacity-50">
+            {saving ? "Saving…" : existing ? "Save Changes" : "Add Floor Staff"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function FloorStaffView() {
+  const [staff, setStaff] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [search, setSearch] = useState("");
+  const [modalFor, setModalFor] = useState(null); // null | "new" | staff object
+  const [confirmDelete, setConfirmDelete] = useState(null);
+  const ownStoreId = getAdminScope() === "store" ? getStoreId() : "";
+
+  const fetchStaff = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await hrFetch("/api/hr/floor-staff");
+      setStaff(res.data || []);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { fetchStaff(); }, [fetchStaff]);
+
+  const doDelete = async () => {
+    const target = confirmDelete;
+    setConfirmDelete(null);
+    try {
+      await hrFetch(`/api/hr/floor-staff/${target.id}`, { method: "DELETE" });
+      await fetchStaff();
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const filtered = staff.filter((s) => s.name.toLowerCase().includes(search.toLowerCase()) || (s.role || "").toLowerCase().includes(search.toLowerCase()));
+
+  return (
+    <div className="hr-panel overflow-hidden">
+      <ErrorBanner message={error} />
+      <div className="p-6 border-b">
+        <div className="flex items-center justify-between mb-4 gap-3">
+          <div>
+            <h2 className="text-2xl font-semibold">Floor Staff</h2>
+            <p className="text-xs text-slate-400">Salespeople and other floor staff — tracked here, no system login needed.</p>
+          </div>
+          <button onClick={() => setModalFor("new")}
+            className="inline-flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-teal-600 to-teal-700 text-white rounded-xl text-sm font-bold hover:opacity-90 transition shrink-0">
+            <UserPlus className="w-4 h-4" /> Add Floor Staff
+          </button>
+        </div>
+        <div className="relative">
+          <Search className="w-5 h-5 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+          <input type="text" placeholder="Search floor staff…" value={search} onChange={(e) => setSearch(e.target.value)}
+            className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent" />
+        </div>
+      </div>
+      {loading ? (
+        <div className="flex justify-center py-16"><RefreshCw className="w-6 h-6 text-slate-300 animate-spin" /></div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Name</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Role</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Placement</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Store</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-200">
+              {filtered.map((s) => (
+                <tr key={s.id} className="hover:bg-gray-50">
+                  <td className="px-6 py-4"><div className="font-medium">{s.name}</div><div className="text-sm text-gray-500">{s.phone || "—"}</div></td>
+                  <td className="px-6 py-4">{s.role || "—"}</td>
+                  <td className="px-6 py-4 text-sm text-slate-500">{[s.division, s.section, s.floor].filter(Boolean).join(" · ") || "—"}</td>
+                  <td className="px-6 py-4">{s.store_name || "—"}</td>
+                  <td className="px-6 py-4">
+                    <span className={`px-2 py-1 rounded-full text-xs ${s.status === "Active" ? "bg-green-100 text-green-800" : "bg-yellow-100 text-yellow-800"}`}>{s.status}</span>
+                  </td>
+                  <td className="px-6 py-4">
+                    <div className="flex gap-3">
+                      <button onClick={() => setModalFor(s)} className="text-blue-600 hover:text-blue-800" title="Edit"><Pencil className="w-4 h-4" /></button>
+                      <button onClick={() => setConfirmDelete(s)} className="text-rose-500 hover:text-rose-700" title="Remove"><Trash2 className="w-4 h-4" /></button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+              {filtered.length === 0 && (
+                <tr><td colSpan={6} className="px-6 py-10 text-center text-sm text-gray-400">No floor staff yet.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {modalFor && (
+        <FloorStaffModal
+          onClose={() => setModalFor(null)}
+          onSaved={fetchStaff}
+          existing={modalFor === "new" ? null : modalFor}
+          ownStoreId={ownStoreId || (modalFor !== "new" ? modalFor.store_id : "")}
+          employees={staff}
+        />
+      )}
+      {confirmDelete && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4" style={{ zIndex: 99999 }}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6">
+            <h3 className="text-base font-black text-slate-900 mb-2">Remove {confirmDelete.name}?</h3>
+            <p className="text-xs text-red-500 mb-5">This cannot be undone.</p>
+            <div className="flex gap-3">
+              <button onClick={() => setConfirmDelete(null)} className="flex-1 py-2.5 border border-slate-200 rounded-xl text-sm font-bold text-slate-600 hover:bg-slate-50 transition">Cancel</button>
+              <button onClick={doDelete} className="flex-1 py-2.5 bg-red-600 hover:bg-red-700 rounded-xl text-sm font-bold text-white transition">Yes, Remove</button>
+            </div>
+          </div>
         </div>
       )}
     </div>
@@ -668,6 +1092,7 @@ export default function HR() {
     switch (activeSection) {
       case "dashboard": return <DashboardView />;
       case "employees": return <EmployeesView />;
+      case "floor-staff": return <FloorStaffView />;
       case "attendance": return <AttendanceView />;
       case "leaves": return <LeavesView />;
       case "salary": return <SalaryView />;
