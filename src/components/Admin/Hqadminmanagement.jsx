@@ -5,7 +5,8 @@ import { createPortal } from "react-dom";
 import {
   Plus, Eye, Trash2, Lock, Unlock, Search,
   CheckCircle, XCircle, Clock, X, AlertCircle,
-  Users, Shield, UserPlus, Pencil, CreditCard, CalendarClock, ArrowUpRight, UploadCloud
+  Users, Shield, UserPlus, Pencil, CreditCard, CalendarClock, ArrowUpRight, UploadCloud,
+  ShieldCheck, ShieldAlert, ShieldQuestion, Upload, ExternalLink,
 } from "lucide-react";
 import toast from "react-hot-toast";
 import BulkStaffImportModal from "../../utils/BulkStaffImportModal.jsx";
@@ -811,6 +812,199 @@ function SubscriptionBanner() {
   );
 }
 
+const KYB_BANNER_CFG = {
+  "Not started": { bg: "border-slate-200 bg-slate-50", icon: ShieldQuestion, iconBg: "bg-slate-500", label: "Business verification needed", cta: "Complete verification" },
+  "Submitted":   { bg: "border-amber-200 bg-amber-50", icon: ShieldAlert,    iconBg: "bg-amber-500", label: "Business verification pending review", cta: "View submission" },
+  "Rejected":    { bg: "border-rose-200 bg-rose-50",   icon: ShieldAlert,    iconBg: "bg-rose-600",  label: "Business verification was rejected", cta: "Resubmit" },
+};
+
+function BusinessVerificationModal({ status, onClose, onSubmitted }) {
+  const [form, setForm] = useState({ legal_name: "", business_address: "", pan: "", gstin: "", gst_certificate_url: "", pan_document_url: "" });
+  const [note, setNote] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [uploading, setUploading] = useState("");
+
+  useEffect(() => {
+    api("/hq/kyb")
+      .then((res) => {
+        const data = res.data || {};
+        setForm({
+          legal_name: data.legal_name || "", business_address: data.business_address || "",
+          pan: data.pan || "", gstin: data.gstin || "",
+          gst_certificate_url: data.gst_certificate_url || "", pan_document_url: data.pan_document_url || "",
+        });
+        setNote(data.note || "");
+      })
+      .catch(() => toast.error("Could not load business verification"))
+      .finally(() => setLoading(false));
+  }, []);
+
+  const uploadDoc = async (documentType, file) => {
+    setUploading(documentType);
+    try {
+      const body = new FormData();
+      body.append("file", file);
+      const token = localStorage.getItem("admin_token") || "";
+      const res = await fetch(`${API}/hq/kyb/documents/${documentType}`, { method: "POST", headers: { Authorization: `Bearer ${token}` }, body });
+      const result = await res.json();
+      if (!res.ok) throw new Error(result.detail || "Upload failed");
+      setForm((p) => ({ ...p, [documentType === "gst_certificate" ? "gst_certificate_url" : "pan_document_url"]: result.url }));
+      toast.success(`${file.name} uploaded`);
+    } catch (e) { toast.error(e.message || "Upload failed"); }
+    finally { setUploading(""); }
+  };
+
+  const submit = async () => {
+    setSaving(true);
+    try {
+      await api("/hq/kyb", { method: "PATCH", body: JSON.stringify(form) });
+      toast.success("Business verification submitted for SuperAdmin review.");
+      onSubmitted();
+      onClose();
+    } catch (e) { toast.error(e.message || "Could not submit."); }
+    finally { setSaving(false); }
+  };
+
+  const readOnly = status === "Submitted" || status === "Verified";
+
+  return createPortal(
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4" style={{ zIndex: 99999 }}>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[92vh] flex flex-col overflow-hidden">
+        <div className="bg-gradient-to-r from-indigo-600 to-indigo-700 px-6 py-5 flex items-center justify-between shrink-0">
+          <div>
+            <h2 className="text-lg font-bold text-white">Business Verification (KYB)</h2>
+            <p className="text-indigo-100 text-xs mt-0.5">Prove your business is legitimate to unlock uninterrupted purchasing</p>
+          </div>
+          <button onClick={onClose} className="text-white/80 hover:text-white"><X className="w-5 h-5" /></button>
+        </div>
+        <div className="flex-1 overflow-y-auto p-6 space-y-4">
+          {loading ? (
+            <p className="text-sm text-slate-400 text-center py-8">Loading…</p>
+          ) : (
+            <>
+              {!readOnly && (
+                <div className="rounded-xl border border-indigo-100 bg-indigo-50/60 p-4 text-xs text-slate-700 space-y-1.5">
+                  <p className="font-black text-indigo-900">Why we ask</p>
+                  <p>RMS confirms every retailer is a real, registered business before it can keep dealing with vendors — this protects vendors from fake or fraudulent buyers.</p>
+                  <p className="font-black text-indigo-900 pt-1">What you'll need</p>
+                  <ol className="list-decimal list-inside space-y-0.5">
+                    <li>Your registered legal business name and address</li>
+                    <li>Your business PAN (format: AAAAA9999A)</li>
+                    <li>Your business GSTIN (15 characters)</li>
+                    <li>A clear photo or PDF of your GST certificate</li>
+                    <li>A clear photo or PDF of your PAN card</li>
+                  </ol>
+                  <p className="font-black text-indigo-900 pt-1">What happens next</p>
+                  <p>Fill the details below, upload both documents, then submit. A SuperAdmin reviews it — you'll see the result here once it's checked.</p>
+                </div>
+              )}
+              {status === "Rejected" && note && (
+                <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-700">Rejected: {note}</div>
+              )}
+              {readOnly && (
+                <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-xs text-emerald-700">
+                  {status === "Verified" ? "Your business is verified." : "Submitted — awaiting SuperAdmin review."}
+                </div>
+              )}
+              <div className="grid grid-cols-2 gap-4">
+                <div className="col-span-2">
+                  <label className="block text-xs font-bold text-slate-600 uppercase tracking-widest mb-1.5">Legal business name *</label>
+                  <input disabled={readOnly} className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-indigo-400 disabled:bg-slate-50 disabled:text-slate-500" value={form.legal_name} onChange={(e) => setForm((p) => ({ ...p, legal_name: e.target.value }))} placeholder="As per GST/PAN records" />
+                </div>
+                <div className="col-span-2">
+                  <label className="block text-xs font-bold text-slate-600 uppercase tracking-widest mb-1.5">Business address *</label>
+                  <input disabled={readOnly} className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-indigo-400 disabled:bg-slate-50 disabled:text-slate-500" value={form.business_address} onChange={(e) => setForm((p) => ({ ...p, business_address: e.target.value }))} placeholder="Registered address" />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-600 uppercase tracking-widest mb-1.5">PAN *</label>
+                  <input disabled={readOnly} className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm font-mono uppercase outline-none focus:ring-2 focus:ring-indigo-400 disabled:bg-slate-50 disabled:text-slate-500" value={form.pan} onChange={(e) => setForm((p) => ({ ...p, pan: e.target.value.toUpperCase() }))} maxLength={10} placeholder="AAAAA9999A" />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-600 uppercase tracking-widest mb-1.5">GSTIN *</label>
+                  <input disabled={readOnly} className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm font-mono uppercase outline-none focus:ring-2 focus:ring-indigo-400 disabled:bg-slate-50 disabled:text-slate-500" value={form.gstin} onChange={(e) => setForm((p) => ({ ...p, gstin: e.target.value.toUpperCase() }))} maxLength={15} placeholder="27AAAZUD..." />
+                </div>
+              </div>
+              {[
+                { label: "GST certificate", type: "gst_certificate", url: form.gst_certificate_url },
+                { label: "PAN document", type: "pan_document", url: form.pan_document_url },
+              ].map(({ label, type, url }) => (
+                <div key={type} className="rounded-2xl border border-dashed border-indigo-200 bg-indigo-50/40 p-3.5">
+                  <p className="text-xs font-extrabold uppercase tracking-[0.12em] text-slate-500">{label} *</p>
+                  <p className="mt-1 text-[11px] leading-4 text-slate-500">Upload JPG, PNG, WEBP or PDF up to 10 MB.</p>
+                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                    {!readOnly && (
+                      <label className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-indigo-200 bg-white px-3 py-2 text-xs font-extrabold text-indigo-700 transition hover:bg-indigo-50">
+                        <Upload className="h-3.5 w-3.5" />{uploading === type ? "Uploading…" : url ? "Replace file" : "Upload file"}
+                        <input type="file" accept="image/jpeg,image/png,image/webp,application/pdf" className="hidden" disabled={Boolean(uploading)} onChange={(e) => { const file = e.target.files?.[0]; if (file) uploadDoc(type, file); e.target.value = ""; }} />
+                      </label>
+                    )}
+                    {url && <a href={url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 rounded-xl px-2.5 py-2 text-xs font-bold text-indigo-700 hover:bg-indigo-100"><ExternalLink className="h-3.5 w-3.5" /> Preview</a>}
+                  </div>
+                </div>
+              ))}
+            </>
+          )}
+        </div>
+        {!readOnly && !loading && (
+          <div className="px-6 py-4 border-t border-slate-100 flex gap-3 shrink-0">
+            <button onClick={onClose} className="flex-1 py-2.5 border border-slate-200 rounded-xl text-sm font-bold text-slate-600 hover:bg-slate-50 transition">Cancel</button>
+            <button onClick={submit} disabled={saving} className="flex-1 py-2.5 bg-gradient-to-r from-indigo-600 to-indigo-700 text-white rounded-xl text-sm font-bold hover:opacity-90 transition disabled:opacity-50">
+              {saving ? "Submitting…" : "Submit for review"}
+            </button>
+          </div>
+        )}
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+function BusinessVerificationBanner() {
+  const [kyb, setKyb] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [showModal, setShowModal] = useState(false);
+
+  const load = useCallback(() => {
+    api("/hq/kyb").then((res) => setKyb(res.data)).catch(() => setKyb(null)).finally(() => setLoading(false));
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  if (loading || !kyb || kyb.status === "Verified") return null;
+  const cfg = KYB_BANNER_CFG[kyb.status] || KYB_BANNER_CFG["Not started"];
+  const Icon = cfg.icon;
+  const daysLeft = kyb.required_after ? Math.ceil((new Date(kyb.required_after) - new Date()) / 86400000) : null;
+  const deadlineText = kyb.status === "Submitted"
+    ? "Our team is reviewing your submission — no action needed right now."
+    : daysLeft === null ? null
+    : daysLeft > 0 ? `You have ${daysLeft} day${daysLeft !== 1 ? "s" : ""} left before new purchase orders and vendor payments are paused.`
+    : "New purchase orders and vendor payments are paused until this is completed.";
+
+  return (
+    <section className={`flex flex-wrap items-center justify-between gap-4 rounded-2xl border p-4 shadow-sm ${cfg.bg}`}>
+      <div className="flex min-w-0 items-center gap-3">
+        <div className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl ${cfg.iconBg} text-white`}><Icon className="h-5 w-5" /></div>
+        <div>
+          <p className="text-xs font-black uppercase tracking-[.12em] text-slate-500">RMS business verification</p>
+          <h2 className="text-sm font-black text-slate-950">{cfg.label}</h2>
+          <p className="text-xs text-slate-600">
+            {kyb.status === "Rejected"
+              ? "Your last submission was rejected — open it to see why and resubmit."
+              : "We need proof this is a real registered business: your legal name, address, PAN, GSTIN, and a copy of your GST certificate and PAN card."}
+            {deadlineText && <span className="font-bold"> {deadlineText}</span>}
+          </p>
+        </div>
+      </div>
+      <button type="button" onClick={() => setShowModal(true)}
+        className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 px-4 text-sm font-black text-white transition">
+        <ShieldCheck className="h-4 w-4" /> {cfg.cta}
+      </button>
+      {showModal && <BusinessVerificationModal status={kyb.status} onClose={() => setShowModal(false)} onSubmitted={load} />}
+    </section>
+  );
+}
+
 function BuySeatsModal({ onClose, onPurchased }) {
   const [status, setStatus] = useState(null);
   const [quantity, setQuantity] = useState(1);
@@ -1007,6 +1201,7 @@ export default function HQAdminManagement() {
     <div className="min-h-full p-4 sm:p-6 space-y-5">
 
       <SubscriptionBanner />
+      <BusinessVerificationBanner />
 
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">

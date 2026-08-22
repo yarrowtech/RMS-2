@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, status, Depends
 from pydantic import BaseModel, EmailStr
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Dict, List, Literal, Optional
 from bson import ObjectId
 
@@ -111,6 +111,7 @@ async def list_tenants(
             "subscription_status": t.get("subscription_status", "active"),
             "hq_admin_email": t.get("hq_admin_email", ""),
             "hq_admin_name":  t.get("hq_admin_name", ""),
+            "kyb_status":   t.get("kyb_status", "Not started"),
             "created_at":   created.isoformat()[:10] if isinstance(created, datetime) else None,
         })
     return {"count": len(tenants), "tenants": tenants}
@@ -171,6 +172,8 @@ async def create_tenant(
         "hq_admin_email":  payload.hq_admin_email,
         "created_at":      datetime.utcnow(),
         "created_by":      _str(current_admin["_id"]),
+        "kyb_status":      "Not started",
+        "kyb_required_after": datetime.utcnow() + timedelta(days=30),
     }
     tenant_res = await tenants_collection.insert_one(tenant_doc)
 
@@ -421,3 +424,53 @@ async def get_tenant_summary(
         "stores":       stores,
         "addon_payments": addon_payments,
     }
+
+
+# ── Business Verification (KYB) review ───────────────────────────────────────
+
+class TenantKybReview(BaseModel):
+    status: Literal["Verified", "Rejected"]
+    note: Optional[str] = ""
+
+
+@router.get("/{tenant_id}/kyb")
+async def get_tenant_kyb_for_review(tenant_id: str, current_admin: CurrentAdmin = Depends(get_current_superadmin)):
+    """SuperAdmin-facing view of a retailer's submitted business verification."""
+    tenant = await tenants_collection.find_one({"tenant_id": tenant_id})
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant not found.")
+    kyb = dict(tenant.get("kyb") or {})
+    return {"data": {
+        "tenant_id": tenant_id, "company_name": tenant.get("company_name", ""),
+        "status": tenant.get("kyb_status", "Not started"), "note": tenant.get("kyb_note", ""),
+        "reviewed_at": tenant.get("kyb_reviewed_at"), "reviewed_by": tenant.get("kyb_reviewed_by", ""),
+        "required_after": tenant.get("kyb_required_after"),
+        "legal_name": kyb.get("legal_name", ""), "business_address": kyb.get("business_address", ""),
+        "pan": kyb.get("pan", ""), "gstin": kyb.get("gstin", ""),
+        "gst_certificate_url": kyb.get("gst_certificate_url", ""), "pan_document_url": kyb.get("pan_document_url", ""),
+        "submitted_at": kyb.get("submitted_at"),
+    }}
+
+
+@router.patch("/{tenant_id}/kyb/review")
+async def review_tenant_kyb(tenant_id: str, payload: TenantKybReview, current_admin: CurrentAdmin = Depends(get_current_superadmin)):
+    """SuperAdmin verifies or rejects a retailer's submitted business verification."""
+    tenant = await tenants_collection.find_one({"tenant_id": tenant_id})
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant not found.")
+    if tenant.get("kyb_status") not in ("Submitted", "Rejected"):
+        raise HTTPException(status_code=409, detail="This retailer has not submitted business verification yet.")
+    now = datetime.utcnow()
+    await tenants_collection.update_one(
+        {"_id": tenant["_id"]},
+        {"$set": {
+            "kyb_status": payload.status, "kyb_note": (payload.note or "").strip(),
+            "kyb_reviewed_at": now, "kyb_reviewed_by": current_admin.get("email", "Super Admin"),
+        }},
+    )
+    await log_activity(
+        current_admin.get("name") or current_admin.get("email", ""),
+        f"{payload.status} business verification for {tenant.get('company_name', tenant_id)}",
+        type="update" if payload.status == "Verified" else "warning",
+    )
+    return {"message": f"Business verification {payload.status.lower()}.", "status": payload.status}

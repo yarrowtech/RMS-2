@@ -4,6 +4,7 @@ import {
   Building2, Plus, Search, Eye, Pencil, Trash2, X,
   CheckCircle, XCircle, AlertCircle, Store, Users,
   Crown, Zap, Rocket, ChevronDown, ChevronUp, CreditCard, Gift,
+  ShieldCheck, ShieldAlert, ShieldQuestion,
 } from "lucide-react";
 import toast from "react-hot-toast";
 
@@ -64,6 +65,13 @@ const PLAN_CFG = {
 const STATUS_CFG = {
   active:    { bg: "bg-emerald-50", text: "text-emerald-700", border: "border-emerald-200", dot: "bg-emerald-500" },
   suspended: { bg: "bg-rose-50",    text: "text-rose-700",    border: "border-rose-200",    dot: "bg-rose-500"    },
+};
+
+const KYB_STATUS_CFG = {
+  "Not started": { bg: "bg-slate-100",  text: "text-slate-500",  border: "border-slate-200",  icon: ShieldQuestion },
+  "Submitted":   { bg: "bg-amber-50",   text: "text-amber-700",  border: "border-amber-200",  icon: ShieldAlert },
+  "Verified":    { bg: "bg-emerald-50", text: "text-emerald-700", border: "border-emerald-200", icon: ShieldCheck },
+  "Rejected":    { bg: "bg-rose-50",    text: "text-rose-700",   border: "border-rose-200",   icon: ShieldAlert },
 };
 
 const INP = "w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm text-slate-800 placeholder-slate-400 outline-none focus:ring-2 focus:ring-amber-400 focus:border-amber-400 transition bg-white";
@@ -371,6 +379,103 @@ function AddRetailerModal({ onClose, onCreated, onboardingRequest }) {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
+// BUSINESS VERIFICATION (KYB) REVIEW MODAL
+// ══════════════════════════════════════════════════════════════════════════════
+function KybReviewModal({ tenant, onClose, onReviewed }) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [note, setNote] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    apiFetch(`/superadmin/tenants/${tenant.tenant_id}/kyb`)
+      .then((res) => { setData(res.data); setNote(res.data?.note || ""); })
+      .catch(() => toast.error("Failed to load business verification"))
+      .finally(() => setLoading(false));
+  }, [tenant.tenant_id]);
+
+  const review = async (status) => {
+    setSaving(true);
+    try {
+      await apiFetch(`/superadmin/tenants/${tenant.tenant_id}/kyb/review`, {
+        method: "PATCH",
+        body: JSON.stringify({ status, note }),
+      });
+      toast.success(`Business verification ${status.toLowerCase()}.`);
+      onReviewed();
+      onClose();
+    } catch (e) { toast.error(e.message); }
+    finally { setSaving(false); }
+  };
+
+  const canReview = data && ["Submitted", "Rejected"].includes(data.status);
+
+  return (
+    <div className="fixed inset-0 z-[999] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[92vh] flex flex-col overflow-hidden">
+        <div className="bg-gradient-to-r from-slate-800 to-slate-900 px-6 py-5 flex items-center justify-between shrink-0">
+          <div>
+            <h2 className="text-lg font-bold text-white">Business Verification</h2>
+            <p className="text-xs text-slate-400">{tenant.company_name}</p>
+          </div>
+          <button onClick={onClose} className="text-slate-400 hover:text-white p-2 rounded-lg hover:bg-white/10 transition"><X className="w-5 h-5" /></button>
+        </div>
+        <div className="flex-1 overflow-y-auto p-6 space-y-4">
+          {loading ? (
+            <p className="text-sm text-slate-400 text-center py-8">Loading…</p>
+          ) : !data || data.status === "Not started" ? (
+            <p className="text-sm text-slate-500 text-center py-8">This retailer hasn't submitted business verification yet.</p>
+          ) : (
+            <>
+              <div className="grid grid-cols-2 gap-3 text-sm">
+                {[
+                  ["Legal name", data.legal_name],
+                  ["GSTIN", data.gstin],
+                  ["PAN", data.pan],
+                  ["Business address", data.business_address],
+                ].map(([label, value]) => (
+                  <div key={label} className={label === "Business address" ? "col-span-2" : ""}>
+                    <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">{label}</p>
+                    <p className="text-slate-800 font-semibold mt-0.5">{value || "—"}</p>
+                  </div>
+                ))}
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                {[["GST certificate", data.gst_certificate_url], ["PAN document", data.pan_document_url]].map(([label, url]) => (
+                  <a key={label} href={url} target="_blank" rel="noreferrer"
+                    className={`block rounded-xl border p-3 text-xs font-bold text-center transition ${url ? "border-indigo-200 text-indigo-700 hover:bg-indigo-50" : "border-slate-100 text-slate-300 pointer-events-none"}`}>
+                    {label} {url ? "→" : "(not uploaded)"}
+                  </a>
+                ))}
+              </div>
+              {data.status === "Rejected" && data.note && (
+                <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-700">Previous rejection note: {data.note}</div>
+              )}
+              {canReview && (
+                <div>
+                  <label className={LBL}>Review note {"(shown to the retailer)"}</label>
+                  <textarea className={INP} rows={2} value={note} onChange={(e) => setNote(e.target.value)} placeholder="Optional note" />
+                </div>
+              )}
+            </>
+          )}
+        </div>
+        {canReview && (
+          <div className="px-6 py-4 border-t border-slate-100 flex gap-3 shrink-0">
+            <button onClick={() => review("Rejected")} disabled={saving}
+              className="flex-1 py-2.5 border border-rose-200 text-rose-700 rounded-xl text-sm font-bold hover:bg-rose-50 transition disabled:opacity-50">Reject</button>
+            <button onClick={() => review("Verified")} disabled={saving}
+              className="flex-1 py-2.5 bg-gradient-to-r from-emerald-500 to-teal-600 text-white rounded-xl text-sm font-bold hover:opacity-90 transition disabled:opacity-50">
+              {saving ? "Saving…" : "Verify"}
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
 // RETAILER DETAIL PANEL (expandable row)
 // ══════════════════════════════════════════════════════════════════════════════
 function RetailerDetail({ tenant, onClose }) {
@@ -458,6 +563,7 @@ export default function RetailersTab({ pendingOnboarding, onConsumeOnboarding })
   const [search,     setSearch]     = useState("");
   const [showAdd,    setShowAdd]    = useState(false);
   const [expandedId, setExpandedId] = useState(null);
+  const [kybTenant,  setKybTenant]  = useState(null);
   const [upgradeRequests, setUpgradeRequests] = useState([]);
   const [upgradeLoading, setUpgradeLoading] = useState(false);
   const [upgradeDepartmentCatalog, setUpgradeDepartmentCatalog] = useState([]);
@@ -686,25 +792,27 @@ export default function RetailersTab({ pendingOnboarding, onConsumeOnboarding })
           <table className="w-full text-sm">
             <thead className="bg-slate-50 border-b border-slate-100">
               <tr>
-                {["Retailer","Tenant ID","Plan","Stores","Admins","Status","Actions"].map(h => (
+                {["Retailer","Tenant ID","Plan","Stores","Admins","Status","KYB","Actions"].map(h => (
                   <th key={h} className="px-5 py-3 text-left text-xs font-bold text-slate-500 uppercase tracking-wider whitespace-nowrap">{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-50">
               {loading ? (
-                <tr><td colSpan={7} className="py-14 text-center text-slate-400">
+                <tr><td colSpan={8} className="py-14 text-center text-slate-400">
                   <div className="flex items-center justify-center gap-2">
                     <div className="w-5 h-5 border-2 border-slate-200 border-t-amber-500 rounded-full animate-spin"/> Loading retailers…
                   </div>
                 </td></tr>
               ) : filtered.length === 0 ? (
-                <tr><td colSpan={7} className="py-14 text-center text-slate-400 text-sm">
+                <tr><td colSpan={8} className="py-14 text-center text-slate-400 text-sm">
                   {search ? "No retailers match your search." : "No retailers yet. Click \"Add Retailer\" to onboard the first one."}
                 </td></tr>
               ) : filtered.map(t => {
                 const plan      = PLAN_CFG[t.plan]    || PLAN_CFG.basic;
                 const statusCfg = STATUS_CFG[t.status] || STATUS_CFG.active;
+                const kybCfg    = KYB_STATUS_CFG[t.kyb_status] || KYB_STATUS_CFG["Not started"];
+                const KybIcon   = kybCfg.icon;
                 const expanded  = expandedId === t.tenant_id;
                 return (
                   <React.Fragment key={t.tenant_id}>
@@ -754,6 +862,13 @@ export default function RetailersTab({ pendingOnboarding, onConsumeOnboarding })
                           {t.status}
                         </span>
                       </td>
+                      {/* KYB */}
+                      <td className="px-5 py-4">
+                        <button onClick={() => setKybTenant(t)}
+                          className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold border transition hover:opacity-80 ${kybCfg.bg} ${kybCfg.text} ${kybCfg.border}`}>
+                          <KybIcon className="w-3.5 h-3.5" /> {t.kyb_status || "Not started"}
+                        </button>
+                      </td>
                       {/* Actions */}
                       <td className="px-5 py-4">
                         <div className="flex items-center gap-1">
@@ -780,7 +895,7 @@ export default function RetailersTab({ pendingOnboarding, onConsumeOnboarding })
                     {/* Expanded detail row */}
                     {expanded && (
                       <tr>
-                        <td colSpan={7} className="p-0">
+                        <td colSpan={8} className="p-0">
                           <RetailerDetail tenant={t} onClose={() => setExpandedId(null)} />
                         </td>
                       </tr>
@@ -799,6 +914,10 @@ export default function RetailersTab({ pendingOnboarding, onConsumeOnboarding })
           onClose={() => { setShowAdd(false); onConsumeOnboarding?.(); }}
           onCreated={() => { fetchTenants(); onConsumeOnboarding?.(); }}
         />
+      )}
+
+      {kybTenant && (
+        <KybReviewModal tenant={kybTenant} onClose={() => setKybTenant(null)} onReviewed={fetchTenants} />
       )}
     </div>
   );

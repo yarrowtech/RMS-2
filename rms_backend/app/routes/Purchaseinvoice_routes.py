@@ -16,6 +16,7 @@ from app.db import (
 
 from .deps import get_tenant
 from .vendor_routes import decode_token
+from .purchaseorder_routes import require_tenant_kyb_for_vendor_dealings
 
 _invoice_scope: ContextVar[dict] = ContextVar("purchase_invoice_scope", default={})
 _raw_purchase_invoice_collection = purchase_invoice_collection
@@ -1412,6 +1413,9 @@ async def record_payment(inv_id: str, payment: PaymentModel):
             status_code=400,
             detail=f"Payments can only be recorded against Approved invoices. Status: '{doc.get('status')}'."
         )
+
+    if doc.get("tenant_id"):
+        await require_tenant_kyb_for_vendor_dealings(doc["tenant_id"])
 
     if payment.paymentMode not in PAYMENT_MODES:
         raise HTTPException(

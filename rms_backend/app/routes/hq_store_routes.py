@@ -10,12 +10,15 @@ Add to main.py:
     app.include_router(hq_store_router)
 """
 
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Request, UploadFile, File
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, EmailStr
 from typing import Any, Dict, List, Optional
-from datetime import datetime
+from datetime import datetime, timedelta
 from bson import ObjectId
+import re
+import cloudinary
+import cloudinary.uploader
 
 from .deps import get_hq_tenant, get_hq_or_store_hr_tenant
 from ..db import stores_collection, admins_collection, tenants_collection, retailer_store_addons_collection
@@ -24,7 +27,18 @@ from ..email_utils import send_password_setup_email
 from ..config import settings
 from ..retailer_plans import retailer_plan_config
 
+cloudinary.config(
+    cloud_name=settings.cloudinary_cloud_name,
+    api_key=settings.cloudinary_api_key,
+    api_secret=settings.cloudinary_api_secret,
+    secure=True,
+)
+
 router = APIRouter(prefix="/hq", tags=["HQ Store Management"])
+
+KYB_GRACE_PERIOD_DAYS = 30
+PAN_RE = re.compile(r"[A-Z]{5}[0-9]{4}[A-Z]")
+GSTIN_RE = re.compile(r"\d{2}[A-Z]{5}\d{4}[A-Z][A-Z\d]Z[A-Z\d]")
 
 TenantCtx = Dict[str, Any]
 
@@ -898,4 +912,111 @@ async def hq_delete_admin(
         raise HTTPException(status_code=400, detail="You cannot delete your own account.")
 
     await admins_collection.delete_one({"_id": oid})
+    return JSONResponse({"status": "success", "message": "Admin deleted."})
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# BUSINESS VERIFICATION (KYB) — retailer's own tenant, reviewed by SuperAdmin
+# ══════════════════════════════════════════════════════════════════════════
+
+@router.get("/kyb")
+async def get_tenant_kyb(ctx: TenantCtx = Depends(get_hq_tenant)):
+    """HQ-facing view of this retailer's own business verification."""
+    tenant = await tenants_collection.find_one(
+        {"tenant_id": ctx["tenant_id"]},
+        {"kyb": 1, "kyb_status": 1, "kyb_note": 1, "kyb_reviewed_at": 1, "kyb_required_after": 1},
+    )
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant not found.")
+    kyb = dict(tenant.get("kyb") or {})
+    return {"data": {
+        "status": tenant.get("kyb_status", "Not started"),
+        "note": tenant.get("kyb_note", ""),
+        "reviewed_at": tenant.get("kyb_reviewed_at"),
+        "required_after": tenant.get("kyb_required_after"),
+        "legal_name": kyb.get("legal_name", ""),
+        "business_address": kyb.get("business_address", ""),
+        "pan": kyb.get("pan", ""),
+        "gstin": kyb.get("gstin", ""),
+        "gst_certificate_url": kyb.get("gst_certificate_url", ""),
+        "pan_document_url": kyb.get("pan_document_url", ""),
+        "submitted_at": kyb.get("submitted_at"),
+    }}
+
+
+@router.post("/kyb/documents/{document_type}")
+async def upload_tenant_kyb_document(
+    document_type: str,
+    file: UploadFile = File(...),
+    ctx: TenantCtx = Depends(get_hq_tenant),
+):
+    """Upload a retailer business-verification document and return its HTTPS storage URL."""
+    field_by_type = {
+        "gst_certificate": "gst_certificate_url",
+        "pan_document": "pan_document_url",
+    }
+    if document_type not in field_by_type:
+        raise HTTPException(status_code=400, detail="Choose a valid business verification document type.")
+    allowed_types = {"image/jpeg", "image/png", "image/webp", "application/pdf"}
+    if file.content_type not in allowed_types:
+        raise HTTPException(status_code=400, detail="Upload JPG, PNG, WEBP or PDF only.")
+    raw = await file.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail="The selected file is empty.")
+    if len(raw) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Business verification documents must be 10 MB or smaller.")
+    try:
+        result = cloudinary.uploader.upload(
+            raw,
+            folder=f"rms/retailer-kyb/{ctx['tenant_id']}",
+            resource_type="auto",
+            public_id=f"{document_type}_{datetime.utcnow().strftime('%Y%m%d%H%M%S')}",
+            use_filename=True,
+            unique_filename=True,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="Could not upload the document. Please try again.") from exc
+    url = result.get("secure_url")
+    if not url:
+        raise HTTPException(status_code=502, detail="Document storage did not return a secure URL.")
+    await tenants_collection.update_one(
+        {"tenant_id": ctx["tenant_id"]},
+        {"$set": {f"kyb.{field_by_type[document_type]}": url, "kyb.updated_at": datetime.utcnow()}},
+    )
+    return {"url": url, "name": file.filename, "content_type": file.content_type}
+
+
+@router.patch("/kyb")
+async def submit_tenant_kyb(request: Request, ctx: TenantCtx = Depends(get_hq_tenant)):
+    """Submit this retailer's business verification for SuperAdmin review."""
+    body = await request.json()
+    required = ("legal_name", "business_address", "pan", "gstin")
+    values = {key: str(body.get(key) or "").strip() for key in required}
+    missing = [key.replace("_", " ") for key, value in values.items() if not value]
+    if missing:
+        raise HTTPException(status_code=400, detail=f"Complete: {', '.join(missing)}.")
+    pan = values["pan"].upper()
+    if not PAN_RE.fullmatch(pan):
+        raise HTTPException(status_code=400, detail="PAN must be in the format AAAAA9999A.")
+    gstin = values["gstin"].upper()
+    if not GSTIN_RE.fullmatch(gstin):
+        raise HTTPException(status_code=400, detail="GSTIN must be a valid 15-character GST number.")
+    urls = {}
+    for key in ("gst_certificate_url", "pan_document_url"):
+        value = str(body.get(key) or "").strip()
+        if value and not re.match(r"^https://", value, re.I):
+            raise HTTPException(status_code=400, detail=f"{key.replace('_', ' ')} must be a secure https link.")
+        urls[key] = value
+    if not urls.get("gst_certificate_url") or not urls.get("pan_document_url"):
+        raise HTTPException(status_code=400, detail="Upload both the GST certificate and PAN document before submitting.")
+    kyb = {
+        "legal_name": values["legal_name"][:200], "business_address": values["business_address"][:600],
+        "pan": pan, "gstin": gstin, **urls,
+        "submitted_at": datetime.utcnow(), "updated_at": datetime.utcnow(),
+    }
+    await tenants_collection.update_one(
+        {"tenant_id": ctx["tenant_id"]},
+        {"$set": {"kyb": kyb, "gstin": gstin, "kyb_status": "Submitted", "kyb_note": "Awaiting SuperAdmin verification."}},
+    )
+    return {"message": "Business verification submitted for review.", "status": "Submitted"}
     return JSONResponse({"status": "success", "message": f"Admin '{admin.get('name')}' deleted."})
