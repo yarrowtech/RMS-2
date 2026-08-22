@@ -158,6 +158,11 @@ usage_events_collection = db["usage_events"]
 # Marketing department campaign planning and redemption impact tracking.
 marketing_campaigns_collection = db["marketing_campaigns"]
 marketing_offer_redemptions_collection = db["marketing_offer_redemptions"]
+# Reach/click/share logs and sentiment feedback per campaign — no ad-platform
+# integration exists, so these are staff-logged (like redemptions already
+# are), not auto-tracked from a live banner.
+marketing_campaign_engagement_collection = db["marketing_campaign_engagement"]
+marketing_campaign_feedback_collection   = db["marketing_campaign_feedback"]
 
 async def ensure_procurement_indexes():
     """Create the indexes required by catalogue/RFQ hot paths and idempotency."""
