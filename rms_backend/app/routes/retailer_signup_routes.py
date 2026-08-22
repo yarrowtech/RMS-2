@@ -305,6 +305,7 @@ async def _activate_captured_retailer(signup: dict, payment_id: str, created_by:
         "address": signup.get("address", ""), "city": signup.get("city", ""), "state": signup.get("state", ""),
         "hq_admin_name": signup["hq_admin_name"], "hq_admin_email": signup["hq_admin_email"],
         "created_at": now, "created_by": created_by, "signup_id": str(signup["_id"]),
+        "kyb_status": "Not started", "kyb_required_after": now + timedelta(days=30),
     }
     tenant_res = await tenants_collection.insert_one(tenant_doc)
 

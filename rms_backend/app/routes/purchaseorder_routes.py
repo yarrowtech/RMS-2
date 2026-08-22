@@ -12,7 +12,7 @@ from urllib.parse import quote
 import cloudinary
 import cloudinary.uploader
 
-from app.db import purchaseorders_collection, vendors_collection, product_collection, vendor_tenant_links_collection, vendor_catalogue_collection
+from app.db import purchaseorders_collection, vendors_collection, product_collection, vendor_tenant_links_collection, vendor_catalogue_collection, tenants_collection
 from .deps import get_hq_tenant
 from .procurement_notification_routes import notify_vendor
 from ..email_utils import send_purchase_order_created_email
@@ -40,6 +40,22 @@ async def require_vendor_kyb_for_new_po(link: dict) -> None:
         return
     if datetime.utcnow() >= required_after:
         raise HTTPException(status_code=403, detail="This vendor's KYB must be verified before a new purchase order can be assigned.")
+
+
+async def require_tenant_kyb_for_vendor_dealings(tenant_id: str) -> None:
+    """Mirror of require_vendor_kyb_for_new_po, but for the retailer's own
+    business verification — a retailer that never proves who they are
+    shouldn't be able to keep raising new POs or paying vendors indefinitely."""
+    tenant = await tenants_collection.find_one({"tenant_id": tenant_id}, {"kyb_status": 1, "kyb_required_after": 1})
+    if not tenant or tenant.get("kyb_status") == "Verified":
+        return
+    required_after = tenant.get("kyb_required_after")
+    if not required_after:
+        required_after = datetime.utcnow() + timedelta(days=30)
+        await tenants_collection.update_one({"tenant_id": tenant_id}, {"$set": {"kyb_status": tenant.get("kyb_status") or "Not started", "kyb_required_after": required_after}})
+        return
+    if datetime.utcnow() >= required_after:
+        raise HTTPException(status_code=403, detail="Your retailer business verification (KYB) must be completed before raising new purchase orders or paying vendors. Go to Admin Management to submit it.")
 
 
 # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
@@ -678,6 +694,7 @@ async def create_po(po: PurchaseOrderModel, ctx: dict = Depends(get_hq_tenant)):
 '''
 @router.post("/", status_code=status.HTTP_201_CREATED)
 async def create_po(po: PurchaseOrderModel, ctx: dict = Depends(get_hq_tenant)):
+    await require_tenant_kyb_for_vendor_dealings(ctx["tenant_id"])
     po_dict = po.dict()
     po_dict["tenant_id"] = ctx["tenant_id"]
     # Immutable audit identity: always use the authenticated HQ buyer,
