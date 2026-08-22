@@ -3,18 +3,25 @@ import {
   BarChart3,
   CalendarDays,
   CheckCircle2,
+  Eye,
   LogOut,
   Mail,
   Megaphone,
   MessageCircle,
+  MinusCircle,
+  MousePointerClick,
   PauseCircle,
   Plus,
   RefreshCw,
   Send,
+  Share2,
   Smartphone,
   Store,
   Target,
+  ThumbsDown,
+  ThumbsUp,
   Wallet,
+  X,
 } from "lucide-react";
 import { API_BASE_URL } from "../../config/api.js";
 import { getAdminName, logoutOrReturnToDepartmentSelector } from "../../utils/authRedirect.js";
@@ -114,6 +121,11 @@ export default function Marketing() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const [engagementFormFor, setEngagementFormFor] = useState(null);
+  const [feedbackFormFor, setFeedbackFormFor] = useState(null);
+  const [engagementDraft, setEngagementDraft] = useState({ impressions: "", clicks: "", shares: "", source: "" });
+  const [feedbackDraft, setFeedbackDraft] = useState({ sentiment: "Positive", source: "", comment: "" });
+  const [loggingId, setLoggingId] = useState("");
 
   const adminName = getAdminName() || "Marketing team";
 
@@ -182,6 +194,47 @@ export default function Marketing() {
     }
   };
 
+  const submitEngagement = async (campaign) => {
+    setError(""); setSuccess(""); setLoggingId(campaign.id);
+    try {
+      const res = await marketingFetch(`/api/marketing/campaigns/${campaign.id}/engagement`, {
+        method: "POST",
+        body: JSON.stringify({
+          impressions: Number(engagementDraft.impressions || 0),
+          clicks: Number(engagementDraft.clicks || 0),
+          shares: Number(engagementDraft.shares || 0),
+          source: engagementDraft.source,
+        }),
+      });
+      setSuccess(res.message || "Engagement logged.");
+      setEngagementFormFor(null);
+      setEngagementDraft({ impressions: "", clicks: "", shares: "", source: "" });
+      await load();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoggingId("");
+    }
+  };
+
+  const submitFeedback = async (campaign) => {
+    setError(""); setSuccess(""); setLoggingId(campaign.id);
+    try {
+      const res = await marketingFetch(`/api/marketing/campaigns/${campaign.id}/feedback`, {
+        method: "POST",
+        body: JSON.stringify(feedbackDraft),
+      });
+      setSuccess(res.message || "Feedback logged.");
+      setFeedbackFormFor(null);
+      setFeedbackDraft({ sentiment: "Positive", source: "", comment: "" });
+      await load();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoggingId("");
+    }
+  };
+
   return (
     <div className="marketing-shell flex min-h-screen">
       <style>{marketingStyles}</style>
@@ -229,11 +282,13 @@ export default function Marketing() {
         {error && <div className="mb-4 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-bold text-rose-700">{error}</div>}
         {success && <div className="mb-4 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-700">{success}</div>}
 
-        <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           <StatCard label="Campaigns" value={overview?.total_campaigns ?? 0} helper="All tenant campaigns" icon={Megaphone} tone="bg-teal-50 text-teal-600" />
           <StatCard label="Active now" value={overview?.active_campaigns ?? 0} helper={`${overview?.scheduled_campaigns ?? 0} scheduled next`} icon={CheckCircle2} tone="bg-emerald-50 text-emerald-600" />
           <StatCard label="Budget" value={formatMoney(overview?.total_budget)} helper="Planned spend" icon={Wallet} tone="bg-blue-50 text-blue-600" />
           <StatCard label="Tracked sales" value={formatMoney(overview?.redeemed_value)} helper={`${overview?.roi_hint ?? 0}% budget ROI hint`} icon={BarChart3} tone="bg-violet-50 text-violet-600" />
+          <StatCard label="Reach" value={Math.round(overview?.engagement?.impressions ?? 0).toLocaleString("en-IN")} helper={`${Math.round(overview?.engagement?.clicks ?? 0).toLocaleString("en-IN")} clicks · ${Math.round(overview?.engagement?.shares ?? 0).toLocaleString("en-IN")} shares`} icon={Eye} tone="bg-sky-50 text-sky-600" />
+          <StatCard label="Feedback" value={(overview?.feedback?.Positive ?? 0) + (overview?.feedback?.Negative ?? 0) + (overview?.feedback?.Neutral ?? 0)} helper={`${overview?.feedback?.Positive ?? 0} positive · ${overview?.feedback?.Negative ?? 0} negative`} icon={ThumbsUp} tone="bg-rose-50 text-rose-600" />
         </section>
 
         <section className="mt-6 grid gap-6 xl:grid-cols-[1.2fr_.8fr]">
@@ -282,6 +337,54 @@ export default function Marketing() {
                         {campaign.status !== "Completed" && <button onClick={() => setStatus(campaign, "Completed")} className="rounded-xl bg-violet-100 px-3 py-2 text-sm font-black text-violet-700">Complete</button>}
                       </div>
                     </div>
+
+                    <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3">
+                      <span className="inline-flex items-center gap-1 rounded-full bg-sky-50 px-3 py-1 text-xs font-bold text-sky-700"><Eye size={13} /> {Math.round(campaign.engagement?.impressions || 0).toLocaleString("en-IN")}</span>
+                      <span className="inline-flex items-center gap-1 rounded-full bg-sky-50 px-3 py-1 text-xs font-bold text-sky-700"><MousePointerClick size={13} /> {Math.round(campaign.engagement?.clicks || 0).toLocaleString("en-IN")}</span>
+                      <span className="inline-flex items-center gap-1 rounded-full bg-sky-50 px-3 py-1 text-xs font-bold text-sky-700"><Share2 size={13} /> {Math.round(campaign.engagement?.shares || 0).toLocaleString("en-IN")}</span>
+                      <button onClick={() => { setEngagementFormFor(engagementFormFor === campaign.id ? null : campaign.id); setFeedbackFormFor(null); }} className="inline-flex items-center gap-1 rounded-full border border-sky-200 px-3 py-1 text-xs font-black text-sky-700 hover:bg-sky-50"><Plus size={13} /> Log reach</button>
+
+                      <span className="ml-2 inline-flex items-center gap-1 rounded-full bg-emerald-50 px-3 py-1 text-xs font-bold text-emerald-700"><ThumbsUp size={13} /> {campaign.feedback?.Positive || 0}</span>
+                      <span className="inline-flex items-center gap-1 rounded-full bg-rose-50 px-3 py-1 text-xs font-bold text-rose-700"><ThumbsDown size={13} /> {campaign.feedback?.Negative || 0}</span>
+                      <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-600"><MinusCircle size={13} /> {campaign.feedback?.Neutral || 0}</span>
+                      <button onClick={() => { setFeedbackFormFor(feedbackFormFor === campaign.id ? null : campaign.id); setEngagementFormFor(null); }} className="inline-flex items-center gap-1 rounded-full border border-emerald-200 px-3 py-1 text-xs font-black text-emerald-700 hover:bg-emerald-50"><Plus size={13} /> Log feedback</button>
+                    </div>
+
+                    {engagementFormFor === campaign.id && (
+                      <div className="mt-3 rounded-2xl border border-sky-200 bg-sky-50/60 p-4">
+                        <div className="mb-2 flex items-center justify-between">
+                          <p className="text-sm font-black text-sky-900">Log reach for this campaign</p>
+                          <button onClick={() => setEngagementFormFor(null)} className="text-sky-500 hover:text-sky-700"><X size={16} /></button>
+                        </div>
+                        <div className="grid gap-3 sm:grid-cols-3">
+                          <div><label className="marketing-label">Impressions</label><input type="number" min="0" className="marketing-input" value={engagementDraft.impressions} onChange={(e) => setEngagementDraft((d) => ({ ...d, impressions: e.target.value }))} placeholder="0" /></div>
+                          <div><label className="marketing-label">Clicks</label><input type="number" min="0" className="marketing-input" value={engagementDraft.clicks} onChange={(e) => setEngagementDraft((d) => ({ ...d, clicks: e.target.value }))} placeholder="0" /></div>
+                          <div><label className="marketing-label">Shares</label><input type="number" min="0" className="marketing-input" value={engagementDraft.shares} onChange={(e) => setEngagementDraft((d) => ({ ...d, shares: e.target.value }))} placeholder="0" /></div>
+                        </div>
+                        <div className="mt-3"><label className="marketing-label">Source</label><input className="marketing-input" value={engagementDraft.source} onChange={(e) => setEngagementDraft((d) => ({ ...d, source: e.target.value }))} placeholder="e.g. WhatsApp Business report, social insights" /></div>
+                        <button onClick={() => submitEngagement(campaign)} disabled={loggingId === campaign.id} className="mt-3 rounded-xl bg-sky-600 px-4 py-2 text-sm font-black text-white disabled:opacity-60">{loggingId === campaign.id ? "Saving..." : "Save reach"}</button>
+                      </div>
+                    )}
+
+                    {feedbackFormFor === campaign.id && (
+                      <div className="mt-3 rounded-2xl border border-emerald-200 bg-emerald-50/60 p-4">
+                        <div className="mb-2 flex items-center justify-between">
+                          <p className="text-sm font-black text-emerald-900">Log feedback for this campaign</p>
+                          <button onClick={() => setFeedbackFormFor(null)} className="text-emerald-500 hover:text-emerald-700"><X size={16} /></button>
+                        </div>
+                        <div className="grid gap-3 sm:grid-cols-2">
+                          <div>
+                            <label className="marketing-label">Sentiment</label>
+                            <select className="marketing-input" value={feedbackDraft.sentiment} onChange={(e) => setFeedbackDraft((d) => ({ ...d, sentiment: e.target.value }))}>
+                              {["Positive", "Negative", "Neutral"].map((s) => <option key={s}>{s}</option>)}
+                            </select>
+                          </div>
+                          <div><label className="marketing-label">Source</label><input className="marketing-input" value={feedbackDraft.source} onChange={(e) => setFeedbackDraft((d) => ({ ...d, source: e.target.value }))} placeholder="e.g. Customer call, WhatsApp reply, in-store" /></div>
+                        </div>
+                        <div className="mt-3"><label className="marketing-label">Comment</label><textarea className="marketing-input min-h-[70px]" value={feedbackDraft.comment} onChange={(e) => setFeedbackDraft((d) => ({ ...d, comment: e.target.value }))} placeholder="What did they say?" /></div>
+                        <button onClick={() => submitFeedback(campaign)} disabled={loggingId === campaign.id} className="mt-3 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-black text-white disabled:opacity-60">{loggingId === campaign.id ? "Saving..." : "Save feedback"}</button>
+                      </div>
+                    )}
                   </div>
                 );
               })}

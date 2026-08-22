@@ -676,6 +676,17 @@ export default function QuickOrderFromCatalogue() {
 
   const updateItem = (idx, key, val) => setOrderItems(prev => prev.map((it, i) => i === idx ? { ...it, [key]: val } : it));
   const addItem = () => setOrderItems(prev => [...prev, EMPTY_ITEM()]);
+  // Direct-order cart review: a vendor lists sizes/colours as two separate
+  // lists with one total MOQ/stock, not stock per exact combination — so
+  // the buyer splits one catalogue item into several rows themselves,
+  // picking size/colour from what the vendor actually offers and their
+  // own quantity per combination. Duplicating keeps the same catalogue
+  // item/description/rate; only size, colour and quantity reset.
+  const duplicateItem = (idx) => setOrderItems(prev => {
+    const source = prev[idx];
+    const copy = { ...source, size: "", color: "", quantity: "" };
+    return [...prev.slice(0, idx + 1), copy, ...prev.slice(idx + 1)];
+  });
   const directSizes = variantValues(directCatalogueItem?.available_sizes, "Standard");
   const directColors = variantValues(directCatalogueItem?.available_colors, "Default");
   const configuredDirectVariants = (directCatalogueItem?.variants || []).filter((variant) => String(variant?.label || "").trim());
@@ -1272,18 +1283,39 @@ export default function QuickOrderFromCatalogue() {
                     <div className="mt-3 flex flex-wrap items-center justify-between gap-2"><p className="text-[11px] text-slate-600">Enter only the available combinations you want. RMS creates a separate PO line for each one.</p><button type="button" onClick={addDirectVariants} className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-black text-white hover:bg-emerald-700">Add selected variants</button></div>
                   </section>}
 
-                  <div className="space-y-2">
-                    {orderItems.map((it, idx) => (
-                      <div key={`${it.catalogue_item_id || "manual"}-${idx}`} className="grid grid-cols-1 gap-2 rounded-xl border border-slate-100 p-2 sm:grid-cols-[1.25fr_110px_110px_75px_75px_1fr_28px]">
+                  <div className="space-y-2 overflow-x-auto">
+                    {orderItems.map((it, idx) => {
+                      const sizeOptions = catalogueSizeValues(it);
+                      const colorOptions = catalogueColorValues(it);
+                      return (
+                      <div key={`${it.catalogue_item_id || "manual"}-${idx}`} className="grid grid-cols-1 gap-2 rounded-xl border border-slate-100 p-2 sm:min-w-[760px] sm:grid-cols-[1.1fr_100px_100px_70px_70px_1fr_72px]">
                         <input placeholder="Description" value={it.description} readOnly={directOrderMode} onChange={e => updateItem(idx, "description", e.target.value)} className="h-9 rounded-lg border border-slate-200 px-2 text-xs read-only:bg-slate-50" />
-                        <input placeholder="Size e.g. S, M, XL" title={catalogueSizeValues(it).length ? `Vendor sizes: ${catalogueSizeValues(it).join(", ")}` : "Enter size manually"} value={it.size || ""} readOnly={directOrderMode && !cartReviewMode} onChange={e => updateItem(idx, "size", e.target.value)} className="h-9 rounded-lg border border-slate-200 px-2 text-xs read-only:bg-slate-50" />
-                        <input placeholder="Color e.g. Red, Green" title={catalogueColorValues(it).length ? `Vendor colours: ${catalogueColorValues(it).join(", ")}` : "Enter colour manually"} value={it.color || ""} readOnly={directOrderMode && !cartReviewMode} onChange={e => updateItem(idx, "color", e.target.value)} className="h-9 rounded-lg border border-slate-200 px-2 text-xs read-only:bg-slate-50" />
+                        {cartReviewMode && sizeOptions.length ? (
+                          <select value={it.size || ""} onChange={e => updateItem(idx, "size", e.target.value)} className="h-9 rounded-lg border border-slate-200 px-2 text-xs bg-white">
+                            <option value="">Size</option>
+                            {sizeOptions.map(s => <option key={s} value={s}>{s}</option>)}
+                          </select>
+                        ) : (
+                          <input placeholder="Size e.g. S, M, XL" title={sizeOptions.length ? `Vendor sizes: ${sizeOptions.join(", ")}` : "Enter size manually"} value={it.size || ""} readOnly={directOrderMode && !cartReviewMode} onChange={e => updateItem(idx, "size", e.target.value)} className="h-9 rounded-lg border border-slate-200 px-2 text-xs read-only:bg-slate-50" />
+                        )}
+                        {cartReviewMode && colorOptions.length ? (
+                          <select value={it.color || ""} onChange={e => updateItem(idx, "color", e.target.value)} className="h-9 rounded-lg border border-slate-200 px-2 text-xs bg-white">
+                            <option value="">Colour</option>
+                            {colorOptions.map(c => <option key={c} value={c}>{c}</option>)}
+                          </select>
+                        ) : (
+                          <input placeholder="Color e.g. Red, Green" title={colorOptions.length ? `Vendor colours: ${colorOptions.join(", ")}` : "Enter colour manually"} value={it.color || ""} readOnly={directOrderMode && !cartReviewMode} onChange={e => updateItem(idx, "color", e.target.value)} className="h-9 rounded-lg border border-slate-200 px-2 text-xs read-only:bg-slate-50" />
+                        )}
                         <input type="number" min="1" placeholder="Qty" value={it.quantity} readOnly={directOrderMode && !cartReviewMode} onChange={e => updateItem(idx, "quantity", e.target.value)} className="h-9 rounded-lg border border-slate-200 px-2 text-xs read-only:bg-slate-50" />
                         <input type="number" placeholder="Rate" value={it.rate} readOnly={directOrderMode} onChange={e => updateItem(idx, "rate", e.target.value)} className="h-9 rounded-lg border border-slate-200 px-2 text-xs read-only:bg-slate-50" />
                         <input placeholder="Remarks" value={it.remarks} readOnly={directOrderMode} onChange={e => updateItem(idx, "remarks", e.target.value)} className="h-9 rounded-lg border border-slate-200 px-2 text-xs read-only:bg-slate-50" />
-                        {!directOrderMode && <button onClick={() => removeItem(idx)} disabled={orderItems.length === 1} className="flex h-9 w-9 items-center justify-center text-rose-500 disabled:opacity-30"><Trash2 className="w-3.5 h-3.5" /></button>}
+                        <div className="flex h-9 items-center justify-end gap-0.5">
+                          {cartReviewMode && <button type="button" onClick={() => duplicateItem(idx)} title="Add another size/colour row for this item" className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-indigo-600 hover:bg-indigo-50"><Plus className="w-3.5 h-3.5" /></button>}
+                          {(!directOrderMode || cartReviewMode) && <button onClick={() => removeItem(idx)} disabled={orderItems.length === 1} className="flex h-8 w-8 shrink-0 items-center justify-center text-rose-500 disabled:opacity-30"><Trash2 className="w-3.5 h-3.5" /></button>}
+                        </div>
                       </div>
-                    ))}
+                      );
+                    })}
                     {directOrderMode && !orderItems.length && <p className="rounded-lg border border-dashed border-emerald-200 bg-white px-3 py-2 text-xs text-slate-500">Choose quantities above, then select “Add selected variants” to create the PO lines.</p>}
                   </div>
                 </div>

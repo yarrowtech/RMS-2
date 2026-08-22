@@ -7,6 +7,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
 from ..db import (
+    marketing_campaign_engagement_collection,
+    marketing_campaign_feedback_collection,
     marketing_campaigns_collection,
     marketing_offer_redemptions_collection,
     tenants_collection,
@@ -19,6 +21,7 @@ superadmin_router = APIRouter(prefix="/superadmin/marketing", tags=["Super Admin
 
 CAMPAIGN_STATUSES = {"Draft", "Scheduled", "Active", "Paused", "Completed"}
 CHANNELS = {"WhatsApp", "Email", "SMS", "In-store", "Social", "Marketplace"}
+SENTIMENTS = {"Positive", "Negative", "Neutral"}
 
 
 def now_utc() -> datetime:
@@ -92,6 +95,20 @@ class RedemptionPayload(BaseModel):
     note: str = ""
 
 
+class EngagementPayload(BaseModel):
+    impressions: float = 0
+    clicks: float = 0
+    shares: float = 0
+    source: str = ""   # e.g. "WhatsApp Business report", "Social insights screenshot"
+    note: str = ""
+
+
+class FeedbackPayload(BaseModel):
+    sentiment: str
+    source: str = ""   # e.g. "Customer call", "WhatsApp reply", "In-store"
+    comment: str = ""
+
+
 def campaign_payload_doc(payload: CampaignPayload) -> Dict[str, Any]:
     channel = payload.channel if payload.channel in CHANNELS else "WhatsApp"
     status_value = payload.status if payload.status in CAMPAIGN_STATUSES else "Draft"
@@ -111,9 +128,28 @@ def campaign_payload_doc(payload: CampaignPayload) -> Dict[str, Any]:
     }
 
 
+def _engagement_totals(rows: List[Dict[str, Any]]) -> Dict[str, float]:
+    return {
+        "impressions": sum(money(r.get("impressions")) for r in rows),
+        "clicks": sum(money(r.get("clicks")) for r in rows),
+        "shares": sum(money(r.get("shares")) for r in rows),
+    }
+
+
+def _feedback_totals(rows: List[Dict[str, Any]]) -> Dict[str, int]:
+    counts = {"Positive": 0, "Negative": 0, "Neutral": 0}
+    for row in rows:
+        sentiment = row.get("sentiment")
+        if sentiment in counts:
+            counts[sentiment] += 1
+    return counts
+
+
 async def campaign_summary(tenant_id: str) -> Dict[str, Any]:
     campaigns = await marketing_campaigns_collection.find({"tenant_id": tenant_id}).to_list(500)
     redemptions = await marketing_offer_redemptions_collection.find({"tenant_id": tenant_id}).to_list(1000)
+    engagement_rows = await marketing_campaign_engagement_collection.find({"tenant_id": tenant_id}).to_list(2000)
+    feedback_rows = await marketing_campaign_feedback_collection.find({"tenant_id": tenant_id}).to_list(2000)
     active = [c for c in campaigns if c.get("status") == "Active"]
     scheduled = [c for c in campaigns if c.get("status") == "Scheduled"]
     draft = [c for c in campaigns if c.get("status") == "Draft"]
@@ -131,6 +167,8 @@ async def campaign_summary(tenant_id: str) -> Dict[str, Any]:
         "total_budget": total_budget,
         "redeemed_value": redeemed_value,
         "roi_hint": round((redeemed_value / total_budget) * 100, 2) if total_budget else 0,
+        "engagement": _engagement_totals(engagement_rows),
+        "feedback": _feedback_totals(feedback_rows),
         "upcoming": upcoming,
     }
 
@@ -151,7 +189,17 @@ async def list_campaigns(
     if status_filter and status_filter != "All":
         query["status"] = status_filter
     rows = await marketing_campaigns_collection.find(query).sort("created_at", -1).to_list(300)
-    return {"data": [serialize_doc(row) for row in rows]}
+    campaign_ids = [str(row["_id"]) for row in rows]
+    engagement_rows = await marketing_campaign_engagement_collection.find({"tenant_id": ctx["tenant_id"], "campaign_id": {"$in": campaign_ids}}).to_list(5000)
+    feedback_rows = await marketing_campaign_feedback_collection.find({"tenant_id": ctx["tenant_id"], "campaign_id": {"$in": campaign_ids}}).to_list(5000)
+    out = []
+    for row in rows:
+        cid = str(row["_id"])
+        doc = serialize_doc(row)
+        doc["engagement"] = _engagement_totals([r for r in engagement_rows if r.get("campaign_id") == cid])
+        doc["feedback"] = _feedback_totals([r for r in feedback_rows if r.get("campaign_id") == cid])
+        out.append(doc)
+    return {"data": out}
 
 
 @router.post("/campaigns", status_code=201)
@@ -241,6 +289,83 @@ async def record_redemption(campaign_id: str, payload: RedemptionPayload, ctx: D
     result = await marketing_offer_redemptions_collection.insert_one(doc)
     saved = await marketing_offer_redemptions_collection.find_one({"_id": result.inserted_id})
     return {"message": "Redemption recorded.", "data": serialize_doc(saved)}
+
+
+@router.post("/campaigns/{campaign_id}/engagement", status_code=201)
+async def log_engagement(campaign_id: str, payload: EngagementPayload, ctx: Dict[str, Any] = Depends(get_tenant)):
+    """Staff-logged reach/click/share numbers for a campaign — pulled from
+    WhatsApp Business reports, social insights, etc. There's no ad-platform
+    integration here, so this is a manual entry, same as redemptions."""
+    ctx = require_marketing_access(ctx)
+    try:
+        oid = ObjectId(campaign_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid campaign id.")
+    campaign = await marketing_campaigns_collection.find_one({"_id": oid, "tenant_id": ctx["tenant_id"]})
+    if not campaign:
+        raise HTTPException(status_code=404, detail="Campaign not found.")
+    doc = {
+        "tenant_id": ctx["tenant_id"],
+        "campaign_id": campaign_id,
+        "campaign_name": campaign.get("name"),
+        "impressions": money(payload.impressions),
+        "clicks": money(payload.clicks),
+        "shares": money(payload.shares),
+        "source": clean_text(payload.source),
+        "note": clean_text(payload.note),
+        "created_by": ctx.get("admin_id"),
+        "created_at": now_utc(),
+    }
+    result = await marketing_campaign_engagement_collection.insert_one(doc)
+    saved = await marketing_campaign_engagement_collection.find_one({"_id": result.inserted_id})
+    return {"message": "Engagement logged.", "data": serialize_doc(saved)}
+
+
+@router.get("/campaigns/{campaign_id}/engagement")
+async def list_engagement(campaign_id: str, ctx: Dict[str, Any] = Depends(get_tenant)):
+    ctx = require_marketing_access(ctx)
+    rows = await marketing_campaign_engagement_collection.find(
+        {"tenant_id": ctx["tenant_id"], "campaign_id": campaign_id}
+    ).sort("created_at", -1).to_list(500)
+    return {"data": [serialize_doc(row) for row in rows], "totals": _engagement_totals(rows)}
+
+
+@router.post("/campaigns/{campaign_id}/feedback", status_code=201)
+async def log_feedback(campaign_id: str, payload: FeedbackPayload, ctx: Dict[str, Any] = Depends(get_tenant)):
+    """A short sentiment-tagged note about how a campaign landed — customer
+    reaction, staff observation, WhatsApp reply tone, etc."""
+    ctx = require_marketing_access(ctx)
+    if payload.sentiment not in SENTIMENTS:
+        raise HTTPException(status_code=400, detail="sentiment must be Positive, Negative or Neutral.")
+    try:
+        oid = ObjectId(campaign_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid campaign id.")
+    campaign = await marketing_campaigns_collection.find_one({"_id": oid, "tenant_id": ctx["tenant_id"]})
+    if not campaign:
+        raise HTTPException(status_code=404, detail="Campaign not found.")
+    doc = {
+        "tenant_id": ctx["tenant_id"],
+        "campaign_id": campaign_id,
+        "campaign_name": campaign.get("name"),
+        "sentiment": payload.sentiment,
+        "source": clean_text(payload.source),
+        "comment": clean_text(payload.comment),
+        "created_by": ctx.get("admin_id"),
+        "created_at": now_utc(),
+    }
+    result = await marketing_campaign_feedback_collection.insert_one(doc)
+    saved = await marketing_campaign_feedback_collection.find_one({"_id": result.inserted_id})
+    return {"message": "Feedback logged.", "data": serialize_doc(saved)}
+
+
+@router.get("/campaigns/{campaign_id}/feedback")
+async def list_feedback(campaign_id: str, ctx: Dict[str, Any] = Depends(get_tenant)):
+    ctx = require_marketing_access(ctx)
+    rows = await marketing_campaign_feedback_collection.find(
+        {"tenant_id": ctx["tenant_id"], "campaign_id": campaign_id}
+    ).sort("created_at", -1).to_list(500)
+    return {"data": [serialize_doc(row) for row in rows], "totals": _feedback_totals(rows)}
 
 
 @superadmin_router.get("/overview")
