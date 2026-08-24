@@ -18,6 +18,7 @@ const DEPARTMENT_PATHS = {
   "Third Party": "/dashboard/third-party",
   "Production & Job Work": "/dashboard/production",
   "Merchandiser Buyer": "/dashboard/merchandiser-buyer",
+  "Marketing": "/dashboard/marketing",
   "Store Owner": "/dashboard/store-owner",
 };
 

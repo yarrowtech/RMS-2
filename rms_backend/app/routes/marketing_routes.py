@@ -80,6 +80,18 @@ class CampaignPayload(BaseModel):
     offer_type: str = ""
     offer_value: float = 0
     notes: str = ""
+    imc_goal: str = ""
+    brand_message: str = ""
+    whatsapp_message: str = ""
+    email_message: str = ""
+    sms_message: str = ""
+    social_message: str = ""
+    creative_checklist: str = ""
+    approval_status: str = "Draft"
+    budget_whatsapp: float = 0
+    budget_email: float = 0
+    budget_social: float = 0
+    budget_instore: float = 0
 
 
 class StatusPayload(BaseModel):
@@ -125,6 +137,22 @@ def campaign_payload_doc(payload: CampaignPayload) -> Dict[str, Any]:
         "offer_type": clean_text(payload.offer_type),
         "offer_value": money(payload.offer_value),
         "notes": clean_text(payload.notes),
+        "imc_goal": clean_text(payload.imc_goal),
+        "brand_message": clean_text(payload.brand_message),
+        "channel_messages": {
+            "whatsapp": clean_text(payload.whatsapp_message),
+            "email": clean_text(payload.email_message),
+            "sms": clean_text(payload.sms_message),
+            "social": clean_text(payload.social_message),
+        },
+        "creative_checklist": clean_text(payload.creative_checklist),
+        "approval_status": clean_text(payload.approval_status, "Draft") or "Draft",
+        "budget_split": {
+            "whatsapp": money(payload.budget_whatsapp),
+            "email": money(payload.budget_email),
+            "social": money(payload.budget_social),
+            "instore": money(payload.budget_instore),
+        },
     }
 
 
@@ -370,7 +398,7 @@ async def list_feedback(campaign_id: str, ctx: Dict[str, Any] = Depends(get_tena
 
 @superadmin_router.get("/overview")
 async def superadmin_marketing_overview(_admin: Dict[str, Any] = Depends(get_current_superadmin)):
-    tenants = await tenants_collection.find({}, {"tenant_id": 1, "business_name": 1, "name": 1}).to_list(200)
+    tenants = await tenants_collection.find({}, {"tenant_id": 1, "company_name": 1}).to_list(200)
     rows: List[Dict[str, Any]] = []
     for tenant in tenants:
         tenant_id = tenant.get("tenant_id")
@@ -379,7 +407,7 @@ async def superadmin_marketing_overview(_admin: Dict[str, Any] = Depends(get_cur
         summary = await campaign_summary(tenant_id)
         rows.append({
             "tenant_id": tenant_id,
-            "tenant_name": tenant.get("business_name") or tenant.get("name") or tenant_id,
+            "tenant_name": tenant.get("company_name") or tenant_id,
             **summary,
         })
     totals = {
