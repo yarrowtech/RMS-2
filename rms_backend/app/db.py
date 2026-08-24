@@ -130,6 +130,7 @@ hr_attendance_collection        = db["hr_attendance"]
 hr_leave_requests_collection    = db["hr_leave_requests"]
 hr_salary_records_collection    = db["hr_salary_records"]
 hr_holidays_collection          = db["hr_holidays"]
+hr_employee_transfers_collection = db["hr_employee_transfers"]
 
 # The one deliberate exception to "no parallel employee list" above: floor
 # staff (e.g. salespeople) who need HR tracking (division/section/floor)
@@ -240,6 +241,8 @@ async def ensure_procurement_indexes():
     await hr_salary_records_collection.create_index([("tenant_id", 1), ("admin_id", 1), ("month", 1)], unique=True, name="hr_salary_tenant_admin_month")
     await hr_salary_records_collection.create_index([("tenant_id", 1), ("store_id", 1), ("month", -1)], name="hr_salary_store_month")
     await hr_holidays_collection.create_index([("tenant_id", 1), ("date", 1)], name="hr_holidays_tenant_date")
+    await hr_employee_transfers_collection.create_index([("tenant_id", 1), ("admin_id", 1), ("created_at", -1)], name="hr_transfer_employee_created")
+    await hr_employee_transfers_collection.create_index([("tenant_id", 1), ("to_store_id", 1), ("effective_date", -1)], name="hr_transfer_to_store_effective")
     await email_failures_collection.create_index([("resolved", 1), ("created_at", -1)], name="email_failures_resolved_created")
     await support_tickets_collection.create_index([("vendor_id", 1), ("updated_at", -1)], name="support_tickets_vendor_updated")
     await support_tickets_collection.create_index([("actor_type", 1), ("tenant_id", 1), ("updated_at", -1)], name="support_tickets_tenant_updated")

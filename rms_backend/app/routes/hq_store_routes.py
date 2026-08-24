@@ -579,6 +579,7 @@ class HQAdminUpdate(BaseModel):
     permissions:        Optional[List[str]] = None
     managedDepartments: Optional[List[str]] = None
     status:             Optional[str] = None   # "ACTIVE" | "SUSPENDED"
+    store_department:   Optional[str] = None
     division:           Optional[str] = None
     section:            Optional[str] = None
     floor:              Optional[str] = None
@@ -644,6 +645,7 @@ async def hq_list_admins(ctx: TenantCtx = Depends(get_hq_or_store_hr_tenant)):
             "department":         a.get("department", ""),
             "managedDepartments": a.get("managedDepartments", []),
             "permissions":        a.get("permissions", []),
+            "store_department":   a.get("store_department", ""),
             "division":           a.get("division", ""),
             "section":            a.get("section", ""),
             "floor":              a.get("floor", ""),
@@ -773,6 +775,7 @@ async def hq_create_admin(
         "store_id":           store_id,
         "store_name":         store_name,
         "store_type":         store_type,
+        "store_department":   (payload.store_department or "").strip(),
         "division":           (payload.division or "").strip(),
         "section":            (payload.section or "").strip(),
         "floor":              (payload.floor or "").strip(),
@@ -871,6 +874,7 @@ async def hq_update_admin(
         if payload.status not in ("ACTIVE", "SUSPENDED"):
             raise HTTPException(status_code=400, detail="status must be ACTIVE or SUSPENDED")
         patch["status"] = payload.status
+    if payload.store_department   is not None: patch["store_department"] = payload.store_department.strip()
     if payload.division           is not None: patch["division"] = payload.division.strip()
     if payload.section            is not None: patch["section"]  = payload.section.strip()
     if payload.floor              is not None: patch["floor"]    = payload.floor.strip()

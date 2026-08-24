@@ -72,6 +72,147 @@ function ErrorBanner({ message }) {
 }
 
 /* ── Dashboard ── */
+
+function HRWorkflowGuide({ tab }) {
+  const isStore = getAdminScope() === "store";
+  const storeName = getStoreName() || "this store";
+  const copy = {
+    dashboard: {
+      title: isStore ? "Store HR workflow" : "HQ HR workflow",
+      steps: isStore
+        ? [
+            `Review ${storeName}'s people count, attendance, leave and pending actions every day.`,
+            "Use People and Floor Staff to keep the store team structure clean before tracking attendance/payroll.",
+            "Escalate missing staff, leave conflicts or payroll issues to HQ HR when they affect company policy.",
+          ]
+        : [
+            "Use this overview to monitor people operations across the tenant/company.",
+            "Create HQ HR or Store HR users from admin management, then let HR maintain people, attendance, leave and payroll.",
+            "Use the counts here as a quick health check before reviewing detailed tabs.",
+          ],
+    },
+    employees: {
+      title: isStore ? "How Store HR uses People" : "How HQ HR uses People",
+      steps: isStore
+        ? [
+            "Add store login staff such as Store Manager, Cashier Head, Inventory Head or Department Head.",
+            "Assign store department, division, section and floor so responsibility is clear on the store floor.",
+            "Use Bulk Import when many store employees need login accounts at once.",
+          ]
+        : [
+            "Maintain company-wide HR/admin staff and create store-scoped HR or department admins when needed.",
+            "For store employees, select the correct store first so access stays branch-specific.",
+            "Department head marking helps the right person assign and review staff tasks.",
+          ],
+    },
+    "floor-staff": {
+      title: isStore ? "How Store HR manages Floor Staff" : "How HQ HR reviews Floor Staff",
+      steps: isStore
+        ? [
+            "Add salespeople, promoters, helpers and floor team members who do not need RMS login.",
+            "Place them by store department, division, section and floor, for example Men's - Jeans - Flared - Ground Floor.",
+            "Keep status updated so attendance, floor coverage and supervisor responsibility stay clean.",
+          ]
+        : [
+            "Review non-login floor manpower across stores without giving everyone system access.",
+            "Use this as the master manpower view for sales floor coverage, sections and roles.",
+            "Store HR should maintain daily floor staff details; HQ should audit structure and gaps.",
+          ],
+    },
+    tasks: {
+      title: isStore ? "How Store HR uses Tasks" : "How HQ HR uses Tasks",
+      steps: isStore
+        ? [
+            "Department heads or Store HR assign operational tasks to store staff with due dates and priority.",
+            "Staff can update their own task status from Open to In progress to Done.",
+            "Use this for joining formalities, roster corrections, floor audits and daily HR follow-ups.",
+          ]
+        : [
+            "HQ HR can assign and monitor HR tasks across eligible staff and departments.",
+            "Use tasks for policy rollouts, document collection, payroll corrections and store follow-ups.",
+            "Store-scoped users remain limited to their own store so enterprise control stays safe.",
+          ],
+    },
+    attendance: {
+      title: isStore ? "Store attendance workflow" : "HQ attendance workflow",
+      steps: isStore
+        ? [
+            "Staff can check in and check out; Store HR can correct Present, Late, Absent or On Leave for the selected date.",
+            "Use the date picker to audit today's shift or any previous day.",
+            "Attendance records feed HR review and payroll calculation, so fix exceptions before month closing.",
+          ]
+        : [
+            "HQ HR can review attendance across the tenant, with store scope applied where relevant.",
+            "Use manual correction only for approved exceptions like missed punch, leave approval or store duty changes.",
+            "Check attendance before payroll so salary records do not depend on wrong presence data.",
+          ],
+    },
+    leaves: {
+      title: isStore ? "Store leave workflow" : "HQ leave workflow",
+      steps: isStore
+        ? [
+            "Employees submit leave with dates and reason; Store HR reviews pending requests for store coverage.",
+            "Approve only when staffing is enough for that day/shift, otherwise reject or ask for change.",
+            "Approved leave appears in HR counts and can be reflected in attendance/payroll review.",
+          ]
+        : [
+            "HQ HR reviews leave policy and high-level leave activity across stores/departments.",
+            "Use approval/rejection to keep leave records official before attendance and payroll are finalised.",
+            "For enterprise use, store managers handle local coverage while HQ keeps policy control.",
+          ],
+    },
+    salary: {
+      title: isStore ? "Store payroll workflow" : "HQ payroll workflow",
+      steps: isStore
+        ? [
+            "Enter basic salary, allowances and deductions for the selected employee and month if store payroll is delegated.",
+            "Confirm attendance and approved leaves first, then save salary records.",
+            "Net salary is calculated from Basic + Allowances - Deductions.",
+          ]
+        : [
+            "HQ HR/payroll maintains monthly salary records after attendance and leave checks are complete.",
+            "Use salary records as HR payroll preparation; finance payout integration can come later.",
+            "Keep sensitive salary changes limited to authorised HR users only.",
+          ],
+    },
+    holidays: {
+      title: isStore ? "Store holiday workflow" : "HQ holiday workflow",
+      steps: isStore
+        ? [
+            "Store HR can view company holidays but cannot change them here.",
+            "Use this calendar while planning rosters, weekly offs and store coverage.",
+            "If a local holiday is missing, request HQ HR to add it officially.",
+          ]
+        : [
+            "HQ HR creates company-wide, national, optional or special holidays for the tenant.",
+            "These dates guide attendance, leave planning, rosters and payroll review.",
+            "Keep holidays updated before publishing monthly schedules to stores.",
+          ],
+    },
+  };
+  const guide = copy[tab] || copy.dashboard;
+  return (
+    <div className="mb-5 rounded-2xl border border-teal-100 bg-gradient-to-br from-teal-50 via-white to-indigo-50 p-4 shadow-sm">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <p className="text-[10px] font-black uppercase tracking-[.18em] text-teal-700">Workflow guide</p>
+          <h3 className="mt-1 text-sm font-black text-slate-900">{guide.title}</h3>
+        </div>
+        <span className="w-fit rounded-full border border-teal-200 bg-white px-3 py-1 text-[11px] font-bold text-teal-700">
+          {isStore ? "Store level" : "HQ level"}
+        </span>
+      </div>
+      <div className="mt-3 grid gap-2 md:grid-cols-3">
+        {guide.steps.map((step, idx) => (
+          <div key={idx} className="rounded-xl border border-white/70 bg-white/75 px-3 py-2 text-xs leading-relaxed text-slate-600 shadow-sm">
+            <span className="mr-1 font-black text-teal-700">{idx + 1}.</span>{step}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function DashboardView() {
   const [stats, setStats] = useState(null);
   const [error, setError] = useState(null);
@@ -90,6 +231,7 @@ function DashboardView() {
   return (
     <div className="space-y-6">
       <ErrorBanner message={error} />
+      <HRWorkflowGuide tab="dashboard" />
       <section className="overflow-hidden rounded-[22px] border border-slate-200 bg-gradient-to-br from-slate-900 via-slate-800 to-teal-900 px-6 py-7 text-white shadow-[0_16px_35px_rgba(15,23,42,.14)] sm:px-8">
         <p className="text-[11px] font-bold uppercase tracking-[.18em] text-teal-200">Workforce pulse</p>
         <div className="mt-2 flex flex-wrap items-end justify-between gap-4">
@@ -146,10 +288,11 @@ function AddStaffModal({ onClose, onCreated, employees = [] }) {
     scope: isStoreScope ? "store" : "hq",
     store_id: isStoreScope ? ownStoreId : "",
     managedDepartments: [],
-    division: "", section: "", floor: "", is_department_head: false,
+    store_department: "", division: "", section: "", floor: "", is_department_head: false,
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const storeDepartmentOptions = orgValuesForStore(employees, form.store_id, "store_department");
   const divisionOptions = orgValuesForStore(employees, form.store_id, "division");
   const sectionOptions  = orgValuesForStore(employees, form.store_id, "section");
   const floorOptions    = orgValuesForStore(employees, form.store_id, "floor");
@@ -183,7 +326,7 @@ function AddStaffModal({ onClose, onCreated, employees = [] }) {
           name: form.name.trim(), email: form.email.trim(), phone: form.phone.trim(),
           scope: form.scope, managedDepartments: form.managedDepartments, permissions,
           store_id: formScopeIsStore ? form.store_id : null,
-          division: form.division.trim(), section: form.section.trim(), floor: form.floor.trim(),
+          store_department: form.store_department.trim(), division: form.division.trim(), section: form.section.trim(), floor: form.floor.trim(),
           is_department_head: form.is_department_head,
         }),
       });
@@ -282,7 +425,7 @@ function AddStaffModal({ onClose, onCreated, employees = [] }) {
               </div>
               <label className="flex items-center gap-2.5 cursor-pointer">
                 <input type="checkbox" checked={form.is_department_head} onChange={(e) => setForm((f) => ({ ...f, is_department_head: e.target.checked }))} className="w-4 h-4 rounded border-slate-300 text-teal-600 focus:ring-teal-400" />
-                <span className="text-sm font-semibold text-slate-700">Make head of {form.managedDepartments[0] || "this department"}</span>
+                <span className="text-sm font-semibold text-slate-700">Make reporting head for this RMS access role</span>
               </label>
             </div>
           )}
@@ -302,6 +445,8 @@ function AddStaffModal({ onClose, onCreated, employees = [] }) {
 /* ── Employees ── */
 function EmployeesView() {
   const [employees, setEmployees] = useState([]);
+  const [floorStaff, setFloorStaff] = useState([]);
+  const [stores, setStores] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [search, setSearch] = useState("");
@@ -309,13 +454,26 @@ function EmployeesView() {
   const [form, setForm] = useState({ join_date: "", employment_type: "Full-time", notes: "" });
   const [saving, setSaving] = useState(false);
   const [showAdd, setShowAdd] = useState(false);
+  const [storeEntryModal, setStoreEntryModal] = useState(null);
+  const [transferFor, setTransferFor] = useState(null);
   const [showBulkImport, setShowBulkImport] = useState(false);
+  const isStoreHr = getAdminScope() === "store";
+  const ownStoreId = isStoreHr ? getStoreId() : "";
 
   const fetchEmployees = useCallback(async () => {
     setLoading(true);
     try {
       const res = await hrFetch("/api/hr/employees");
       setEmployees(res.data || []);
+      if (getAdminScope() === "store") {
+        const floorRes = await hrFetch("/api/hr/floor-staff");
+        setFloorStaff(res.data ? (floorRes.data || []) : []);
+        setStores([]);
+      } else {
+        setFloorStaff([]);
+        const storeRes = await hrFetch("/hq/stores").catch(() => ({ data: [] }));
+        setStores(storeRes.data || []);
+      }
     } catch (err) {
       setError(err.message);
     } finally {
@@ -343,29 +501,64 @@ function EmployeesView() {
     }
   };
 
-  const filtered = employees.filter((e) => e.name.toLowerCase().includes(search.toLowerCase()) || e.email.toLowerCase().includes(search.toLowerCase()));
+  const loginRows = employees.map((e) => ({ ...e, record_type: "login" }));
+  const floorRows = floorStaff.map((s) => ({
+    ...s,
+    record_type: "entry",
+    email: s.phone || "No RMS login",
+    department: s.role || "Store staff",
+    scope: "store",
+    status: s.status || "Active",
+    employment_type: "Store entry",
+    join_date: s.created_at ? String(s.created_at).slice(0, 10) : "",
+  }));
+  const peopleRows = isStoreHr ? [...loginRows, ...floorRows] : loginRows;
+  const filtered = peopleRows.filter((e) =>
+    (e.name || "").toLowerCase().includes(search.toLowerCase()) ||
+    (e.email || "").toLowerCase().includes(search.toLowerCase()) ||
+    (e.phone || "").toLowerCase().includes(search.toLowerCase()) ||
+    (e.department || "").toLowerCase().includes(search.toLowerCase())
+  );
 
   return (
     <div className="hr-panel overflow-hidden">
       <ErrorBanner message={error} />
       <div className="p-6 border-b">
+        <HRWorkflowGuide tab="employees" />
         <div className="flex items-center justify-between mb-4 gap-3">
           <div>
             <h2 className="text-2xl font-semibold">Employee Directory</h2>
-            <p className="text-xs text-slate-400">Pulled from your admin & store staff accounts.</p>
+            <p className="text-xs text-slate-400">{isStoreHr ? "Store employee entries live here; HQ controls RMS login accounts." : "HQ HR creates login staff and store-scoped HR/admin accounts."}</p>
           </div>
           <div className="flex items-center gap-2 shrink-0">
             <button onClick={() => setShowBulkImport(true)}
               className="inline-flex items-center gap-2 px-4 py-2 border border-teal-200 bg-teal-50 text-teal-700 rounded-xl text-sm font-bold hover:bg-teal-100 transition">
-              <UploadCloud className="w-4 h-4" /> Bulk Import
+              <UploadCloud className="w-4 h-4" /> {isStoreHr ? "Bulk Employee Entries" : "Bulk Login Staff"}
             </button>
-            <button onClick={() => setShowAdd(true)}
+            <button onClick={() => isStoreHr ? setStoreEntryModal("new") : setShowAdd(true)}
               className="inline-flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-teal-600 to-teal-700 text-white rounded-xl text-sm font-bold hover:opacity-90 transition">
-              <UserPlus className="w-4 h-4" /> Add Staff
+              <UserPlus className="w-4 h-4" /> {isStoreHr ? "Add Employee Entry" : "Add Login Staff"}
             </button>
           </div>
         </div>
         {showAdd && <AddStaffModal onClose={() => setShowAdd(false)} onCreated={fetchEmployees} employees={employees} />}
+        {transferFor && (
+          <TransferEmployeeModal
+            employee={transferFor}
+            stores={stores}
+            onClose={() => setTransferFor(null)}
+            onTransferred={fetchEmployees}
+          />
+        )}
+        {storeEntryModal && (
+          <FloorStaffModal
+            onClose={() => setStoreEntryModal(null)}
+            onSaved={fetchEmployees}
+            existing={storeEntryModal === "new" ? null : storeEntryModal}
+            ownStoreId={ownStoreId}
+            employees={[...employees, ...floorStaff]}
+          />
+        )}
         {showBulkImport && (
           <BulkStaffImportModal
             onClose={() => setShowBulkImport(false)}
@@ -389,7 +582,7 @@ function EmployeesView() {
             <thead className="bg-gray-50">
               <tr>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Name</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Department</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Role / Access</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Store</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Join date</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Type</th>
@@ -400,7 +593,11 @@ function EmployeesView() {
             <tbody className="divide-y divide-gray-200">
               {filtered.map((emp) => (
                 <tr key={emp.id} className="hover:bg-gray-50">
-                  <td className="px-6 py-4"><div className="font-medium">{emp.name}</div><div className="text-sm text-gray-500">{emp.email}</div></td>
+                  <td className="px-6 py-4">
+                    <div className="font-medium">{emp.name}</div>
+                    <div className="text-sm text-gray-500">{emp.record_type === "entry" ? (emp.phone || "No login account") : emp.email}</div>
+                    {emp.record_type === "entry" && <span className="mt-1 inline-flex rounded-full bg-teal-50 px-2 py-0.5 text-[10px] font-bold text-teal-700">Employee entry only</span>}
+                  </td>
                   <td className="px-6 py-4">
                     <div className="flex items-center gap-1.5">
                       {emp.is_department_head && <span className="px-1.5 py-0.5 bg-indigo-600 text-white rounded-full text-[10px] font-bold">★</span>}
@@ -426,7 +623,7 @@ function EmployeesView() {
                     ) : emp.employment_type}
                   </td>
                   <td className="px-6 py-4">
-                    <span className={`px-2 py-1 rounded-full text-xs ${emp.status === "ACTIVE" ? "bg-green-100 text-green-800" : "bg-yellow-100 text-yellow-800"}`}>{emp.status}</span>
+                    <span className={`px-2 py-1 rounded-full text-xs ${emp.status === "ACTIVE" || emp.status === "Active" ? "bg-green-100 text-green-800" : "bg-yellow-100 text-yellow-800"}`}>{emp.status}</span>
                   </td>
                   <td className="px-6 py-4">
                     {editing === emp.id ? (
@@ -457,10 +654,11 @@ function FloorStaffModal({ onClose, onSaved, existing, ownStoreId, employees }) 
   const isStoreScope = Boolean(ownStoreId);
   const [form, setForm] = useState({
     name: existing?.name || "", phone: existing?.phone || "", role: existing?.role || "",
-    division: existing?.division || "", section: existing?.section || "", floor: existing?.floor || "",
+    store_department: existing?.store_department || "", division: existing?.division || "", section: existing?.section || "", floor: existing?.floor || "",
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const storeDepartmentOptions = orgValuesForStore(employees, ownStoreId, "store_department");
   const divisionOptions = orgValuesForStore(employees, ownStoreId, "division");
   const sectionOptions  = orgValuesForStore(employees, ownStoreId, "section");
   const floorOptions    = orgValuesForStore(employees, ownStoreId, "floor");
@@ -510,21 +708,29 @@ function FloorStaffModal({ onClose, onSaved, existing, ownStoreId, employees }) 
               <input className={INP2} value={form.role} onChange={(e) => setForm((f) => ({ ...f, role: e.target.value }))} placeholder="e.g. Sales Associate" />
             </div>
           </div>
-          <div className="grid grid-cols-3 gap-3">
-            <div>
-              <label className={LBL2}>Division</label>
-              <input className={INP2} list="floor-division-options" value={form.division} onChange={(e) => setForm((f) => ({ ...f, division: e.target.value }))} placeholder="e.g. Menswear" />
-              <datalist id="floor-division-options">{divisionOptions.map((v) => <option key={v} value={v} />)}</datalist>
-            </div>
-            <div>
-              <label className={LBL2}>Section</label>
-              <input className={INP2} list="floor-section-options" value={form.section} onChange={(e) => setForm((f) => ({ ...f, section: e.target.value }))} placeholder="e.g. Billing" />
-              <datalist id="floor-section-options">{sectionOptions.map((v) => <option key={v} value={v} />)}</datalist>
-            </div>
-            <div>
-              <label className={LBL2}>Floor</label>
-              <input className={INP2} list="floor-floor-options" value={form.floor} onChange={(e) => setForm((f) => ({ ...f, floor: e.target.value }))} placeholder="e.g. Ground Floor" />
-              <datalist id="floor-floor-options">{floorOptions.map((v) => <option key={v} value={v} />)}</datalist>
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+            <p className="mb-3 text-[11px] font-bold text-slate-500">Store placement example: Department = Men's, Division = Jeans, Section = Flared, Floor = Ground Floor.</p>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className={LBL2}>Store Department</label>
+                <input className={INP2} list="floor-store-department-options" value={form.store_department} onChange={(e) => setForm((f) => ({ ...f, store_department: e.target.value }))} placeholder="e.g. Men's" />
+                <datalist id="floor-store-department-options">{storeDepartmentOptions.map((v) => <option key={v} value={v} />)}</datalist>
+              </div>
+              <div>
+                <label className={LBL2}>Division</label>
+                <input className={INP2} list="floor-division-options" value={form.division} onChange={(e) => setForm((f) => ({ ...f, division: e.target.value }))} placeholder="e.g. Jeans" />
+                <datalist id="floor-division-options">{divisionOptions.map((v) => <option key={v} value={v} />)}</datalist>
+              </div>
+              <div>
+                <label className={LBL2}>Section</label>
+                <input className={INP2} list="floor-section-options" value={form.section} onChange={(e) => setForm((f) => ({ ...f, section: e.target.value }))} placeholder="e.g. Flared / Long" />
+                <datalist id="floor-section-options">{sectionOptions.map((v) => <option key={v} value={v} />)}</datalist>
+              </div>
+              <div>
+                <label className={LBL2}>Floor</label>
+                <input className={INP2} list="floor-floor-options" value={form.floor} onChange={(e) => setForm((f) => ({ ...f, floor: e.target.value }))} placeholder="e.g. Ground Floor" />
+                <datalist id="floor-floor-options">{floorOptions.map((v) => <option key={v} value={v} />)}</datalist>
+              </div>
             </div>
           </div>
         </div>
@@ -580,32 +786,16 @@ function FloorStaffView() {
     <div className="hr-panel overflow-hidden">
       <ErrorBanner message={error} />
       <div className="p-6 border-b">
+        <HRWorkflowGuide tab="floor-staff" />
         <div className="flex items-center justify-between mb-4 gap-3">
           <div>
             <h2 className="text-2xl font-semibold">Floor Staff</h2>
             <p className="text-xs text-slate-400">Salespeople and other floor staff — tracked here, no system login needed.</p>
           </div>
-          <div className="flex items-center gap-2 shrink-0">
-            {ownStoreId && (
-              <button onClick={() => setShowBulkImport(true)}
-                className="inline-flex items-center gap-2 px-4 py-2 border border-teal-200 bg-teal-50 text-teal-700 rounded-xl text-sm font-bold hover:bg-teal-100 transition">
-                <UploadCloud className="w-4 h-4" /> Bulk Import
-              </button>
-            )}
-            <button onClick={() => setModalFor("new")}
-              className="inline-flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-teal-600 to-teal-700 text-white rounded-xl text-sm font-bold hover:opacity-90 transition">
-              <UserPlus className="w-4 h-4" /> Add Floor Staff
-            </button>
+          <div className="hidden sm:block rounded-xl border border-teal-100 bg-teal-50 px-3 py-2 text-xs font-semibold text-teal-700">
+            Add new employees from People tab
           </div>
         </div>
-        {showBulkImport && (
-          <BulkFloorStaffImportModal
-            onClose={() => setShowBulkImport(false)}
-            onImported={fetchStaff}
-            storeId={ownStoreId}
-            postJson={(path, body) => hrFetch(path, { method: "POST", body: JSON.stringify(body) })}
-          />
-        )}
         <div className="relative">
           <Search className="w-5 h-5 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
           <input type="text" placeholder="Search floor staff…" value={search} onChange={(e) => setSearch(e.target.value)}
@@ -656,8 +846,8 @@ function FloorStaffView() {
         <FloorStaffModal
           onClose={() => setModalFor(null)}
           onSaved={fetchStaff}
-          existing={modalFor === "new" ? null : modalFor}
-          ownStoreId={ownStoreId || (modalFor !== "new" ? modalFor.store_id : "")}
+          existing={modalFor}
+          ownStoreId={ownStoreId || modalFor.store_id}
           employees={staff}
         />
       )}
@@ -800,6 +990,7 @@ function TasksView() {
 
   return (
     <div className="space-y-5">
+      <HRWorkflowGuide tab="tasks" />
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-xl font-black text-slate-900">Staff Tasks</h1>
@@ -921,12 +1112,15 @@ function AttendanceView() {
   return (
     <div className="hr-panel overflow-hidden">
       <ErrorBanner message={error} />
-      <div className="p-6 border-b flex flex-wrap items-center justify-between gap-4">
-        <h2 className="text-2xl font-semibold">Attendance</h2>
+      <div className="p-6 border-b">
+        <HRWorkflowGuide tab="attendance" />
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <h2 className="text-2xl font-semibold">Attendance</h2>
         <div className="flex items-center gap-3">
           <button onClick={doCheckIn} className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded-lg text-xs font-bold"><LogIn className="w-4 h-4" /> Check in</button>
           <button onClick={doCheckOut} className="flex items-center gap-1.5 bg-slate-600 hover:bg-slate-700 text-white px-3 py-2 rounded-lg text-xs font-bold"><LogOut className="w-4 h-4" /> Check out</button>
           <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="border border-gray-300 rounded-lg px-3 py-2 text-sm" />
+          </div>
         </div>
       </div>
       {selfState && <p className="px-6 pt-3 text-xs font-semibold text-emerald-600">{selfState}</p>}
@@ -1029,11 +1223,14 @@ function LeavesView() {
   return (
     <div className="hr-panel overflow-hidden">
       <ErrorBanner message={error} />
-      <div className="p-6 border-b flex items-center justify-between">
-        <h2 className="text-2xl font-semibold">Leave Requests</h2>
+      <div className="p-6 border-b">
+        <HRWorkflowGuide tab="leaves" />
+        <div className="flex items-center justify-between">
+          <h2 className="text-2xl font-semibold">Leave Requests</h2>
         <button onClick={() => setShowRequest(true)} className="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600 flex items-center space-x-2 text-sm font-bold">
           <Plus className="w-4 h-4" /><span>Request Leave</span>
         </button>
+        </div>
       </div>
 
       {showRequest && (
@@ -1154,6 +1351,7 @@ function SalaryView() {
     <div className="hr-panel overflow-hidden">
       <ErrorBanner message={error} />
       <div className="p-6 border-b space-y-3">
+        <HRWorkflowGuide tab="salary" />
         <h2 className="text-2xl font-semibold">Salary Records</h2>
         <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
           <select value={form.admin_id} onChange={(e) => setForm((f) => ({ ...f, admin_id: e.target.value }))} className="border border-gray-300 rounded-lg px-2 py-2 text-sm col-span-2">
@@ -1248,6 +1446,7 @@ function HolidaysView({ canManageHolidays }) {
   return (
     <div className="space-y-6">
       <ErrorBanner message={error} />
+      <HRWorkflowGuide tab="holidays" />
       <div className="flex justify-between items-center">
         <h2 className="text-2xl font-semibold">Holiday Calendar</h2>
         {canManageHolidays ? (

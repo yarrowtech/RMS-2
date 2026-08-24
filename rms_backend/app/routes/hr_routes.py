@@ -20,6 +20,7 @@ from ..db import (
     admins_collection,
     hr_attendance_collection,
     hr_employee_profiles_collection,
+    hr_employee_transfers_collection,
     hr_floor_staff_collection,
     hr_holidays_collection,
     hr_leave_requests_collection,
@@ -111,6 +112,7 @@ async def list_employees(ctx: TenantCtx = Depends(get_hr_context)):
             "email": admin.get("email", ""),
             "phone": admin.get("phone", ""),
             "department": admin.get("department", ""),
+            "store_department": admin.get("store_department", ""),
             "division": admin.get("division", ""),
             "section": admin.get("section", ""),
             "floor": admin.get("floor", ""),
@@ -132,6 +134,70 @@ class EmployeeProfileUpdate(BaseModel):
     join_date: Optional[str] = None
     employment_type: Optional[str] = None
     notes: Optional[str] = Field(default=None, max_length=1000)
+
+
+class EmployeeTransferCreate(BaseModel):
+    to_store_id: str
+    effective_date: Optional[str] = None
+    reason: Optional[str] = Field(default="", max_length=1000)
+
+
+def _require_hq_level_hr(ctx: TenantCtx) -> None:
+    if _is_store_scoped(ctx):
+        raise HTTPException(status_code=403, detail="Only HQ HR can transfer employees between stores.")
+
+
+@router.get("/employee-transfers")
+async def list_employee_transfers(ctx: TenantCtx = Depends(get_hr_context)):
+    _require_hq_level_hr(ctx)
+    rows = []
+    async for doc in hr_employee_transfers_collection.find({"tenant_id": ctx["tenant_id"]}).sort("created_at", -1).limit(200):
+        rows.append(_serialize(doc))
+    return {"status": "success", "data": rows}
+
+
+@router.post("/employees/{admin_id}/transfer")
+async def transfer_employee(admin_id: str, payload: EmployeeTransferCreate, ctx: TenantCtx = Depends(get_hr_context)):
+    _require_hq_level_hr(ctx)
+    employee = await admins_collection.find_one({"_id": _oid(admin_id, "employee id"), "tenant_id": ctx["tenant_id"], "department": {"$ne": "SUPERADMIN"}})
+    if not employee:
+        raise HTTPException(status_code=404, detail="Employee not found under this tenant.")
+    if employee.get("scope") != "store":
+        raise HTTPException(status_code=400, detail="Only store-scoped employees can be transferred between stores.")
+    if not ObjectId.is_valid(payload.to_store_id):
+        raise HTTPException(status_code=400, detail="Invalid destination store.")
+    store = await stores_collection.find_one({"_id": ObjectId(payload.to_store_id), "tenant_id": ctx["tenant_id"]})
+    if not store:
+        raise HTTPException(status_code=404, detail="Destination store not found under your tenant.")
+    from_store_id = employee.get("store_id")
+    if from_store_id == payload.to_store_id:
+        raise HTTPException(status_code=400, detail="Employee is already assigned to this store.")
+
+    now = datetime.utcnow()
+    transfer_doc = {
+        "tenant_id": ctx["tenant_id"],
+        "admin_id": str(employee["_id"]),
+        "employee_name": employee.get("name", ""),
+        "employee_email": employee.get("email", ""),
+        "from_store_id": from_store_id,
+        "from_store_name": employee.get("store_name", ""),
+        "to_store_id": payload.to_store_id,
+        "to_store_name": store.get("name", ""),
+        "effective_date": (payload.effective_date or datetime.utcnow().strftime("%Y-%m-%d")).strip(),
+        "reason": (payload.reason or "").strip(),
+        "approved_by": ctx.get("admin_id"),
+        "approved_by_name": ctx.get("admin_name", ""),
+        "created_at": now,
+    }
+    await hr_employee_transfers_collection.insert_one(transfer_doc)
+    await admins_collection.update_one({"_id": employee["_id"]}, {"$set": {
+        "store_id": payload.to_store_id,
+        "store_name": store.get("name", ""),
+        "store_type": store.get("type", "store"),
+        "updated_at": now,
+        "last_transfer_at": now,
+    }})
+    return {"status": "success", "message": f"{employee.get('name', 'Employee')} transferred to {store.get('name', 'selected store')}.", "data": _serialize(transfer_doc)}
 
 
 @router.patch("/employees/{admin_id}/profile")
@@ -177,6 +243,7 @@ class FloorStaffUpdate(BaseModel):
     name:     Optional[str] = None
     phone:    Optional[str] = None
     role:     Optional[str] = None
+    store_department: Optional[str] = None
     division: Optional[str] = None
     section:  Optional[str] = None
     floor:    Optional[str] = None
@@ -223,6 +290,7 @@ async def create_floor_staff(payload: FloorStaffCreate, ctx: TenantCtx = Depends
         "name":        name,
         "phone":       (payload.phone or "").strip(),
         "role":        (payload.role or "").strip(),
+        "store_department": (payload.store_department or "").strip(),
         "division":    (payload.division or "").strip(),
         "section":     (payload.section or "").strip(),
         "floor":       (payload.floor or "").strip(),
@@ -245,7 +313,7 @@ async def update_floor_staff(staff_id: str, payload: FloorStaffUpdate, ctx: Tena
         raise HTTPException(status_code=404, detail="Floor staff record not found in your assigned scope.")
 
     patch: dict = {"updated_at": datetime.utcnow()}
-    for field in ("name", "phone", "role", "division", "section", "floor"):
+    for field in ("name", "phone", "role", "store_department", "division", "section", "floor"):
         value = getattr(payload, field)
         if value is not None:
             patch[field] = value.strip()
