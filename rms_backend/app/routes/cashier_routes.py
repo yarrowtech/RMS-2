@@ -9,6 +9,7 @@ import secrets
 
 from ..db import db, product_collection, inventory_collection, sales_collection, store_stock_collection
 from .store_helper import get_store_context
+from ..error_log import log_error
 
 router = APIRouter(prefix="/cashier", tags=["Cashier POS"])
 
@@ -22,6 +23,10 @@ def _public_invoice_url(token: str) -> str:
 
 
 async def _audit_pos(ctx: dict, action: str, details: dict = None):
+    """Best-effort, but a failure here must not vanish silently — a missed
+    POS audit entry is exactly the kind of gap that let the Petpooja-style
+    under-reporting go undetected, so it gets escalated to error_logs_collection
+    instead of being swallowed."""
     try:
         await cashier_audit_collection.insert_one({
             "tenant_id": ctx.get("tenant_id"),
@@ -32,8 +37,13 @@ async def _audit_pos(ctx: dict, action: str, details: dict = None):
             "details": details or {},
             "created_at": datetime.utcnow(),
         })
-    except Exception:
-        pass
+    except Exception as exc:
+        await log_error(
+            source="cashier_routes._audit_pos",
+            message=f"Failed to write POS audit entry for action '{action}'",
+            exc=exc,
+            context={"tenant_id": ctx.get("tenant_id"), "store_id": ctx.get("store_id"), "action": action},
+        )
 
 
 async def _require_store_context(authorization: str = None) -> dict:

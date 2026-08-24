@@ -43,6 +43,7 @@ from .routes.analytics_routes import router as analytics_router
 from .routes.retailer_seat_addon_routes import router as retailer_seat_addon_router
 from .routes.retailer_store_addon_routes import router as retailer_store_addon_router
 from .routes.marketing_routes import router as marketing_router, superadmin_router as superadmin_marketing_router
+from .routes.staff_task_routes import router as staff_task_router
    
 
 
@@ -140,6 +141,7 @@ app.include_router(retailer_seat_addon_router)
 app.include_router(retailer_store_addon_router)
 app.include_router(marketing_router)
 app.include_router(superadmin_marketing_router)
+app.include_router(staff_task_router)
 
 
 

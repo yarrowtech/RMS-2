@@ -155,6 +155,12 @@ forecast_restock_drafts_collection   = db["forecast_restock_drafts"]
 # anyone has a login token.
 usage_events_collection = db["usage_events"]
 
+# General staff task assignment — a department head or HQ admin hands a
+# task to a specific admin (never floor staff, who have no login to see
+# it). Separate from tasklist_collection above, which is the Merchandiser
+# Buyer module's own purchasing-workflow to-do list, not a general one.
+staff_tasks_collection = db["staff_tasks"]
+
 # Marketing department campaign planning and redemption impact tracking.
 marketing_campaigns_collection = db["marketing_campaigns"]
 marketing_offer_redemptions_collection = db["marketing_offer_redemptions"]
@@ -256,3 +262,6 @@ async def ensure_procurement_indexes():
     await error_logs_collection.create_index([("resolved", 1), ("created_at", -1)], name="error_logs_resolved_created")
     await error_logs_collection.create_index([("source", 1), ("created_at", -1)], name="error_logs_source_created")
     await email_failures_collection.create_index([("created_at", -1)], name="email_failures_created")
+    await staff_tasks_collection.create_index([("tenant_id", 1), ("assigned_to", 1), ("status", 1)], name="staff_task_assignee_status")
+    await staff_tasks_collection.create_index([("tenant_id", 1), ("assigned_by", 1), ("created_at", -1)], name="staff_task_assigner_created")
+    await staff_tasks_collection.create_index([("tenant_id", 1), ("store_id", 1), ("status", 1)], name="staff_task_store_status")

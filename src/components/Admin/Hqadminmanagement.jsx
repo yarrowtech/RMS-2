@@ -6,7 +6,7 @@ import {
   Plus, Eye, Trash2, Lock, Unlock, Search,
   CheckCircle, XCircle, Clock, X, AlertCircle,
   Users, Shield, UserPlus, Pencil, CreditCard, CalendarClock, ArrowUpRight, UploadCloud,
-  ShieldCheck, ShieldAlert, ShieldQuestion, Upload, ExternalLink,
+  ShieldCheck, ShieldAlert, ShieldQuestion, Upload, ExternalLink, ListChecks,
 } from "lucide-react";
 import toast from "react-hot-toast";
 import BulkStaffImportModal from "../../utils/BulkStaffImportModal.jsx";
@@ -77,6 +77,7 @@ const PERMISSIONS = [
   { id:"logistics",       label:"Logistics",         group:"Admin"      },
   { id:"reports",         label:"Reports",           group:"Admin"      },
   { id:"user_management", label:"User Management",   group:"Admin"      },
+  { id:"assign_tasks",    label:"Assign Tasks to Team", group:"Admin"  },
   { id:"marketing",       label:"Marketing",         group:"Growth"     },
 ];
 
@@ -1127,6 +1128,207 @@ function BuySeatsModal({ onClose, onPurchased }) {
   );
 }
 
+const TASK_PRIORITY_CFG = {
+  low: "bg-slate-100 text-slate-600", medium: "bg-blue-50 text-blue-700",
+  high: "bg-amber-50 text-amber-700", urgent: "bg-rose-50 text-rose-700",
+};
+const TASK_STATUS_CFG = {
+  open: "bg-slate-50 border-slate-200 text-slate-700",
+  in_progress: "bg-blue-50 border-blue-200 text-blue-700",
+  done: "bg-emerald-50 border-emerald-200 text-emerald-700",
+};
+
+function AssignTaskModal({ admins, onClose, onAssigned }) {
+  const [form, setForm] = useState({ title: "", details: "", assigned_to: "", priority: "medium", due_date: "" });
+  const [saving, setSaving] = useState(false);
+
+  const submit = async () => {
+    if (!form.title.trim()) { toast.error("Title is required"); return; }
+    if (!form.assigned_to) { toast.error("Pick who this task is for"); return; }
+    setSaving(true);
+    try {
+      await api("/staff-tasks", { method: "POST", body: JSON.stringify(form) });
+      toast.success("Task assigned.");
+      onAssigned();
+      onClose();
+    } catch (e) { toast.error(e.message || "Could not assign task."); }
+    finally { setSaving(false); }
+  };
+
+  return createPortal(
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4" style={{ zIndex: 99999 }}>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
+        <div className="bg-gradient-to-r from-indigo-600 to-indigo-700 px-6 py-5 flex items-center justify-between">
+          <h2 className="text-lg font-bold text-white">Assign Task</h2>
+          <button onClick={onClose} className="text-white/80 hover:text-white"><X className="w-5 h-5" /></button>
+        </div>
+        <div className="p-6 space-y-4">
+          <div>
+            <label className="block text-xs font-bold text-slate-600 uppercase tracking-widest mb-1.5">Assign to *</label>
+            <select className="w-full h-11 px-3 border border-slate-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-indigo-400"
+              value={form.assigned_to} onChange={(e) => setForm((p) => ({ ...p, assigned_to: e.target.value }))}>
+              <option value="">Select staff…</option>
+              {admins.map((a) => (
+                <option key={a.id} value={a.id}>{a.name} — {a.managedDepartments?.[0] || a.department}{a.store_name ? ` · ${a.store_name}` : ""}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-bold text-slate-600 uppercase tracking-widest mb-1.5">Title *</label>
+            <input className="w-full h-11 px-3 border border-slate-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-indigo-400"
+              value={form.title} onChange={(e) => setForm((p) => ({ ...p, title: e.target.value }))} placeholder="e.g. Clear pending GRN backlog" />
+          </div>
+          <div>
+            <label className="block text-xs font-bold text-slate-600 uppercase tracking-widest mb-1.5">Details</label>
+            <textarea className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-indigo-400"
+              rows={3} value={form.details} onChange={(e) => setForm((p) => ({ ...p, details: e.target.value }))} placeholder="Optional context" />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-bold text-slate-600 uppercase tracking-widest mb-1.5">Priority</label>
+              <select className="w-full h-11 px-3 border border-slate-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-indigo-400"
+                value={form.priority} onChange={(e) => setForm((p) => ({ ...p, priority: e.target.value }))}>
+                <option value="low">Low</option>
+                <option value="medium">Medium</option>
+                <option value="high">High</option>
+                <option value="urgent">Urgent</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-slate-600 uppercase tracking-widest mb-1.5">Due date</label>
+              <input type="date" className="w-full h-11 px-3 border border-slate-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-indigo-400"
+                value={form.due_date} onChange={(e) => setForm((p) => ({ ...p, due_date: e.target.value }))} />
+            </div>
+          </div>
+        </div>
+        <div className="px-6 py-4 border-t border-slate-100 flex gap-3">
+          <button onClick={onClose} className="flex-1 py-2.5 border border-slate-200 rounded-xl text-sm font-bold text-slate-600 hover:bg-slate-50 transition">Cancel</button>
+          <button onClick={submit} disabled={saving} className="flex-1 py-2.5 bg-gradient-to-r from-indigo-600 to-indigo-700 text-white rounded-xl text-sm font-bold hover:opacity-90 transition disabled:opacity-50">
+            {saving ? "Assigning…" : "Assign"}
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+function StaffTasksPanel({ admins }) {
+  const [view, setView] = useState("mine"); // "mine" | "managed"
+  const [tasks, setTasks] = useState([]);
+  const [canManage, setCanManage] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [showAssign, setShowAssign] = useState(false);
+  const [filter, setFilter] = useState("all");
+
+  // One-time permission probe, independent of which tab is showing.
+  useEffect(() => {
+    api("/staff-tasks").then(() => setCanManage(true)).catch(() => setCanManage(false));
+  }, []);
+
+  const load = useCallback((activeView) => {
+    setLoading(true);
+    api(activeView === "mine" ? "/staff-tasks/mine" : "/staff-tasks")
+      .then((res) => setTasks(res.data || []))
+      .catch(() => setTasks([]))
+      .finally(() => setLoading(false));
+  }, []);
+
+  useEffect(() => { load(view); }, [load, view]);
+
+  const updateStatus = async (task, status) => {
+    try {
+      await api(`/staff-tasks/${task.id}`, { method: "PATCH", body: JSON.stringify({ status }) });
+      load(view);
+    } catch (e) { toast.error(e.message || "Could not update task."); }
+  };
+
+  const remove = async (task) => {
+    try {
+      await api(`/staff-tasks/${task.id}`, { method: "DELETE" });
+      toast.success("Task deleted");
+      load(view);
+    } catch (e) { toast.error(e.message || "Could not delete task."); }
+  };
+
+  const filtered = filter === "all" ? tasks : tasks.filter((t) => t.status === filter);
+
+  return (
+    <section className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">
+      <div className="p-5 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 className="text-base font-black text-slate-900 flex items-center gap-2"><ListChecks className="w-4.5 h-4.5 text-indigo-500" /> Staff Tasks</h2>
+          <p className="text-xs text-slate-500 mt-0.5">{view === "mine" ? "Tasks assigned to you" : "Tasks you've assigned"}</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <select value={filter} onChange={(e) => setFilter(e.target.value)} className="h-9 px-3 rounded-lg border border-slate-200 text-xs font-bold text-slate-600">
+            <option value="all">All</option>
+            <option value="open">Open</option>
+            <option value="in_progress">In progress</option>
+            <option value="done">Done</option>
+          </select>
+          {canManage && (
+            <button onClick={() => setShowAssign(true)} className="inline-flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-sm font-bold transition">
+              <Plus className="w-4 h-4" /> Assign Task
+            </button>
+          )}
+        </div>
+      </div>
+      <div className="px-5 pt-4">
+        <div className="inline-flex rounded-xl border border-slate-200 bg-slate-50 p-1">
+          <button onClick={() => setView("mine")}
+            className={`px-4 py-1.5 rounded-lg text-xs font-bold transition ${view === "mine" ? "bg-white text-indigo-700 shadow-sm" : "text-slate-500 hover:text-slate-700"}`}>
+            My Tasks
+          </button>
+          {canManage && (
+            <button onClick={() => setView("managed")}
+              className={`px-4 py-1.5 rounded-lg text-xs font-bold transition ${view === "managed" ? "bg-white text-indigo-700 shadow-sm" : "text-slate-500 hover:text-slate-700"}`}>
+              Assigned by me
+            </button>
+          )}
+        </div>
+      </div>
+      <div className="divide-y divide-slate-50 mt-2">
+        {loading ? (
+          <p className="p-6 text-center text-sm text-slate-400">Loading…</p>
+        ) : filtered.length === 0 ? (
+          <p className="p-6 text-center text-sm text-slate-400">
+            {view === "mine" ? "No tasks assigned to you " : "No tasks "}{filter !== "all" ? `with status "${filter}"` : "yet"}.
+          </p>
+        ) : filtered.map((t) => (
+          <div key={t.id} className="p-4 flex flex-wrap items-start justify-between gap-3">
+            <div className="min-w-[220px] flex-1">
+              <div className="flex items-center gap-2 flex-wrap">
+                <p className="font-bold text-slate-900 text-sm">{t.title}</p>
+                <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${TASK_PRIORITY_CFG[t.priority] || "bg-slate-100 text-slate-600"}`}>{t.priority}</span>
+              </div>
+              {t.details && <p className="text-xs text-slate-500 mt-1">{t.details}</p>}
+              <p className="text-xs text-slate-400 mt-1">
+                {view === "mine" ? <>From <b className="text-slate-600">{t.assigned_by_name}</b></> : <>Assigned to <b className="text-slate-600">{t.assigned_to_name}</b></>}
+                {t.due_date && <> · Due {t.due_date}</>}
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <select value={t.status} onChange={(e) => updateStatus(t, e.target.value)}
+                className={`h-8 px-2 rounded-lg border text-xs font-bold ${TASK_STATUS_CFG[t.status] || ""}`}>
+                <option value="open">Open</option>
+                <option value="in_progress">In progress</option>
+                <option value="done">Done</option>
+              </select>
+              {view === "managed" && (
+                <button onClick={() => remove(t)} className="p-1.5 hover:bg-red-50 rounded-lg text-red-400 transition" title="Delete">
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+      {showAssign && <AssignTaskModal admins={admins} onClose={() => setShowAssign(false)} onAssigned={() => { setView("managed"); load("managed"); }} />}
+    </section>
+  );
+}
+
 // ══════════════════════════════════════════════════════════════════════════════
 // MAIN EXPORT
 // ══════════════════════════════════════════════════════════════════════════════
@@ -1373,6 +1575,8 @@ export default function HQAdminManagement() {
           </table>
         </div>
       </div>
+
+      <StaffTasksPanel admins={admins} />
 
       {confirmDelete && createPortal((
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4" style={{zIndex:99999}}>
