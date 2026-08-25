@@ -20,6 +20,7 @@ const DEPT_ROUTES = {
   "Production & Job Work":          "/dashboard/production",
   "Merchandiser Buyer":             "/dashboard/merchandiser-buyer",
   "Marketing":                       "/dashboard/marketing",
+  "Customer CRM":                    "/dashboard/customer-crm",
   "Vendor":                         "/dashboard/vendor",
 };
 

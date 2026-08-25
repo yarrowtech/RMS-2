@@ -188,6 +188,121 @@ async def approved_job_work_vendors(ctx: dict = Depends(_require_job_work)):
     return {"data": rows}
 
 
+def _fabric_specs_from_item(item: dict) -> str:
+    parts = []
+    for label, key in (("Type", "fabric_type"), ("GSM", "gsm"), ("Width", "width"), ("Colour", "color")):
+        value = str(item.get(key) or "").strip()
+        if value:
+            parts.append(f"{label}: {value}")
+    extra = str(item.get("specification") or item.get("remarks") or "").strip()
+    if extra:
+        parts.append(extra)
+    return " | ".join(parts)
+
+
+async def _create_fabric_po_document(ctx: dict, payload: dict, plan: dict | None = None) -> dict:
+    vendor_id = str(payload.get("vendor_id") or "").strip()
+    vendor, _link = await _approved_vendor(ctx["tenant_id"], vendor_id)
+    vendor_name = vendor.get("name") or vendor.get("vendor_name") or "Fabric supplier"
+    tenant = await tenants_collection.find_one({"tenant_id": ctx["tenant_id"]}, {"company_name": 1, "name": 1})
+    owner_name = (tenant or {}).get("company_name") or (tenant or {}).get("name") or ctx["tenant_id"]
+
+    source_items = payload.get("items") or []
+    if plan and not source_items:
+        source_items = plan.get("materials") or []
+    if not source_items:
+        raise HTTPException(status_code=400, detail="Add at least one fabric/material line before creating the PO.")
+
+    items = []
+    sheet_rows = []
+    for index, material in enumerate(source_items, start=1):
+        name = str(material.get("material_name") or material.get("fabric_name") or material.get("description") or "").strip()
+        if not name:
+            raise HTTPException(status_code=400, detail=f"Fabric/material name is required on line {index}.")
+        quantity = _number(material.get("required_quantity", material.get("total_quantity", material.get("quantity"))))
+        if quantity <= 0:
+            raise HTTPException(status_code=400, detail=f"Total fabric quantity is required on line {index}.")
+        unit = str(material.get("unit") or "m").strip() or "m"
+        rate = _number(material.get("rate"))
+        specs = _fabric_specs_from_item(material)
+        description = f"{name} | {specs}" if specs else name
+        remarks = str(material.get("remarks") or "").strip()
+        if plan and not remarks:
+            remarks = f"{unit} required for {plan.get('style_name')}"
+        item = {
+            "description": description,
+            "quantity": quantity,
+            "originalQty": quantity,
+            "pendingQty": quantity,
+            "receivedQty": 0,
+            "cancelledQty": 0,
+            "rate": rate,
+            "amount": round(quantity * rate, 2),
+            "remarks": remarks,
+            "fabric_type": str(material.get("fabric_type") or "").strip(),
+            "gsm": str(material.get("gsm") or "").strip(),
+            "width": str(material.get("width") or "").strip(),
+            "color": str(material.get("color") or "").strip(),
+            "unit": unit,
+        }
+        item["barcode"] = await resolve_real_barcode(item)
+        items.append(item)
+        sheet_rows.append({
+            "sl_no": index,
+            "fabric_material": name,
+            "fabric_type": item["fabric_type"],
+            "gsm": item["gsm"],
+            "width": item["width"],
+            "color": item["color"],
+            "quantity": quantity,
+            "unit": unit,
+            "rate": rate,
+            "amount": item["amount"],
+            "remarks": remarks,
+        })
+
+    now = datetime.utcnow()
+    source_note = f" from material plan {plan.get('plan_no')} for style {plan.get('style_name')}" if plan else " from manual fabric cart"
+    po = {
+        "_id": ObjectId(),
+        "tenant_id": ctx["tenant_id"],
+        "orderNo": await generate_po_number(ctx["tenant_id"]),
+        "orderDate": str(payload.get("order_date") or now.date().isoformat()),
+        "expectedDeliveryDate": str(payload.get("expected_delivery_date") or ""),
+        "vendorName": vendor_name,
+        "vendor_id": ObjectId(vendor_id),
+        "vendor_type": "registered",
+        "status": "Draft",
+        "orderType": "Fabric / Raw Material",
+        "purchaseType": "Fabric / Raw Material",
+        "ownerSite": owner_name,
+        "ownerSiteShortName": owner_name[:20],
+        "currency": str(payload.get("currency") or "INR"),
+        "exchangeRate": 1,
+        "paymentTerms": str(payload.get("payment_terms") or "").strip(),
+        "notes": str(payload.get("notes") or f"Fabric PO created{source_note}. Review tax, freight and terms before sending.").strip(),
+        "fabric_po_sheet": sheet_rows,
+        "items": items,
+        "createdAt": now,
+        "updatedAt": now,
+    }
+    calculate_po_totals(po)
+    await purchaseorders_collection.insert_one(po)
+    if plan:
+        await style_bom_plans_collection.update_one(
+            {"_id": plan["_id"], "tenant_id": ctx["tenant_id"]},
+            {"$set": {"purchase_order_id": str(po["_id"]), "purchase_order_no": po["orderNo"], "updated_at": now}},
+        )
+    return {
+        "message": f"Fabric PO {po['orderNo']} created as Draft. Download the sheet here, then review it in Purchase Order before sending.",
+        "purchase_order_id": str(po["_id"]),
+        "purchase_order_no": po["orderNo"],
+        "sheet": sheet_rows,
+        "vendor_name": vendor_name,
+        "order_date": po["orderDate"],
+    }
+
+
 @router.get("/material-plans")
 async def list_material_plans(ctx: dict = Depends(_require_job_work)):
     """Style BOMs with calculated fabric/material quantities for a planned run."""
@@ -262,62 +377,13 @@ async def create_fabric_purchase_order(plan_id: str, payload: dict, ctx: dict = 
         raise HTTPException(status_code=404, detail="Material plan not found.")
     if plan.get("purchase_order_id"):
         raise HTTPException(status_code=400, detail=f"This plan already created PO {plan.get('purchase_order_no') or ''}.".strip())
+    return await _create_fabric_po_document(ctx, payload, plan=plan)
 
-    vendor_id = str(payload.get("vendor_id") or "").strip()
-    vendor, _link = await _approved_vendor(ctx["tenant_id"], vendor_id)
-    vendor_name = vendor.get("name") or vendor.get("vendor_name") or "Fabric supplier"
-    tenant = await tenants_collection.find_one({"tenant_id": ctx["tenant_id"]}, {"company_name": 1, "name": 1})
-    owner_name = (tenant or {}).get("company_name") or (tenant or {}).get("name") or ctx["tenant_id"]
 
-    items = []
-    for material in plan.get("materials") or []:
-        description = material["material_name"]
-        if material.get("specification"):
-            description = f"{description} | {material['specification']}"
-        quantity = _number(material.get("required_quantity"))
-        rate = _number(material.get("rate"))
-        item = {
-            "description": description,
-            "quantity": quantity,
-            "originalQty": quantity,
-            "pendingQty": quantity,
-            "receivedQty": 0,
-            "cancelledQty": 0,
-            "rate": rate,
-            "amount": round(quantity * rate, 2),
-            "remarks": f"{material.get('unit', 'm')} required for {plan.get('style_name')}",
-        }
-        item["barcode"] = await resolve_real_barcode(item)
-        items.append(item)
-
-    now = datetime.utcnow()
-    po = {
-        "_id": ObjectId(),
-        "tenant_id": ctx["tenant_id"],
-        "orderNo": await generate_po_number(ctx["tenant_id"]),
-        "orderDate": str(payload.get("order_date") or now.date().isoformat()),
-        "vendorName": vendor_name,
-        "vendor_id": ObjectId(vendor_id),
-        "vendor_type": "registered",
-        "status": "Draft",
-        "orderType": "Fabric / Raw Material",
-        "purchaseType": "Fabric / Raw Material",
-        "ownerSite": owner_name,
-        "ownerSiteShortName": owner_name[:20],
-        "currency": str(payload.get("currency") or "INR"),
-        "exchangeRate": 1,
-        "notes": f"Auto-created from material plan {plan['plan_no']} for style {plan['style_name']}.",
-        "items": items,
-        "createdAt": now,
-        "updatedAt": now,
-    }
-    calculate_po_totals(po)
-    await purchaseorders_collection.insert_one(po)
-    await style_bom_plans_collection.update_one(
-        {"_id": plan["_id"], "tenant_id": ctx["tenant_id"]},
-        {"$set": {"purchase_order_id": str(po["_id"]), "purchase_order_no": po["orderNo"], "updated_at": now}},
-    )
-    return {"message": f"Fabric PO {po['orderNo']} created as Draft. Review it in Merchandiser Buyer before sending.", "purchase_order_id": str(po["_id"]), "purchase_order_no": po["orderNo"]}
+@router.post("/fabric-purchase-orders", status_code=201)
+async def create_manual_fabric_purchase_order(payload: dict, ctx: dict = Depends(_require_job_work)):
+    """Create a draft Fabric PO from the new fabric cart without touching job-work orders."""
+    return await _create_fabric_po_document(ctx, payload, plan=None)
 
 
 @router.get("/orders")

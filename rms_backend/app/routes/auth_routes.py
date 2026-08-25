@@ -33,6 +33,7 @@ DEPARTMENT_ROUTES: Dict[str, str] = {
     "Production & Job Work":          "/production",
     "Merchandiser Buyer":             "/merchandiser-buyer",
     "Marketing":                       "/marketing",
+    "Customer CRM":                    "/dashboard/customer-crm",
     "Vendor":                         "/merchandiser-seller",
     "Store Owner":                    "/dashboard/store-owner",
 }

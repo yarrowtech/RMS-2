@@ -19,6 +19,7 @@ const DEPARTMENT_PATHS = {
   "Production & Job Work": "/dashboard/production",
   "Merchandiser Buyer": "/dashboard/merchandiser-buyer",
   "Marketing": "/dashboard/marketing",
+  "Customer CRM": "/dashboard/customer-crm",
   "Store Owner": "/dashboard/store-owner",
 };
 

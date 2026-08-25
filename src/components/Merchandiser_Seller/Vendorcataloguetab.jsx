@@ -35,8 +35,8 @@ import DocumentConversation from "../DocumentConversation.jsx";
 //   images: [],
 // };
 
-// function AddItemModal({ onClose, onAdded }) {
-//   const [form, setForm] = useState(EMPTY_ITEM_FORM);
+// function AddItemModal({ onClose, onAdded, businessTypes = [] }) {
+//   const [form, setForm] = useState(() => ({ ...EMPTY_ITEM_FORM, catalogue_kind: suggestedCatalogueKind(businessTypes) }));
 //   const [saving, setSaving] = useState(false);
 //   const [error, setError] = useState(null);
 
@@ -518,7 +518,7 @@ import DocumentConversation from "../DocumentConversation.jsx";
 //       )}
 
 //       {shareItem && <ShareCatalogueItemModal item={shareItem} onClose={() => setShareItem(null)} />}
-//       {showAdd && <AddItemModal onClose={() => setShowAdd(false)} onAdded={fetchItems} />}
+//       {showAdd && <AddItemModal onClose={() => setShowAdd(false)} onAdded={fetchItems} businessTypes={vendorProfile?.business_type || []} />}
 //       {manageItem && (
 //         <ManageImagesModal
 //           item={manageItem}
@@ -834,6 +834,21 @@ const LISTING_ESSENTIALS = [
   { key: "description", label: "Description", ready: (item) => String(item.description || "").trim().length >= 20 },
 ];
 
+
+function CatalogueKindSummary({ item }) {
+  if (item.catalogue_kind === "fabric_material") {
+    const specs = item.fabric_specs || {};
+    const details = [specs.fabric_type, specs.composition, specs.gsm ? `${specs.gsm} GSM` : "", specs.width, specs.rate_unit].filter(Boolean).join(" ? ");
+    return <div className="rounded-lg border border-cyan-100 bg-cyan-50 px-2 py-1.5"><p className="text-[10px] font-black uppercase tracking-wide text-cyan-700">Fabric / raw material</p>{details && <p className="mt-0.5 line-clamp-2 text-[10px] leading-4 text-cyan-900">{details}</p>}</div>;
+  }
+  if (item.catalogue_kind === "job_work_service") {
+    const specs = item.service_specs || {};
+    const details = [specs.service_type, specs.rate_basis, specs.capacity_per_day, specs.lead_time].filter(Boolean).join(" ? ");
+    return <div className="rounded-lg border border-amber-100 bg-amber-50 px-2 py-1.5"><p className="text-[10px] font-black uppercase tracking-wide text-amber-700">Job-work service</p>{details && <p className="mt-0.5 line-clamp-2 text-[10px] leading-4 text-amber-900">{details}</p>}</div>;
+  }
+  return null;
+}
+
 function ListingProgress({ item }) {
   const checks = LISTING_ESSENTIALS.map((entry) => ({ ...entry, done: entry.ready(item) }));
   const completed = checks.filter((entry) => entry.done).length;
@@ -860,15 +875,63 @@ function VariantMatrix({ variants = [], onChange }) {
     </section>
   );
 }
+
+const FABRIC_SPEC_FIELDS = [
+  ["fabric_type", "Fabric type", "e.g. Cotton knit / viscose woven"],
+  ["composition", "Composition", "e.g. 100% cotton / 60-40 poly cotton"],
+  ["gsm", "GSM", "e.g. 180"],
+  ["width", "Width", "e.g. 58 inch"],
+  ["weave", "Weave / construction", "e.g. Single jersey, twill"],
+  ["finish", "Finish", "e.g. Dyed, printed, enzyme wash"],
+  ["shade", "Shade / colour family", "e.g. Navy, wine, custom dye"],
+  ["roll_length", "Roll length", "e.g. 80-100 m per roll"],
+  ["rate_unit", "Rate unit", "e.g. per metre / per kg"],
+  ["lead_time", "Lead time", "e.g. 7 days after approval"],
+  ["testing_notes", "Testing notes", "e.g. shrinkage, colour fastness"],
+];
+
+const SERVICE_SPEC_FIELDS = [
+  ["service_type", "Service type", "e.g. Cutting / stitching / embroidery"],
+  ["rate_basis", "Rate basis", "e.g. per piece / per panel"],
+  ["capacity_per_day", "Capacity per day", "e.g. 500 pcs/day"],
+  ["machine_type", "Machine / setup", "e.g. Flatlock, overlock, embroidery head"],
+  ["accepted_materials", "Accepted materials", "e.g. woven cotton, denim"],
+  ["lead_time", "Lead time", "e.g. 5 days after material issue"],
+  ["quality_notes", "Quality notes", "e.g. trims needed, measurement tolerance"],
+];
+
+function suggestedCatalogueKind(businessTypes = []) {
+  const types = new Set((businessTypes || []).map((type) => String(type).toLowerCase()));
+  if (types.has("fabric_supplier")) return "fabric_material";
+  if (types.has("job_worker")) return "job_work_service";
+  return "finished_goods";
+}
+
+function SpecsPanel({ kind, form, setForm }) {
+  const fields = kind === "fabric_material" ? FABRIC_SPEC_FIELDS : kind === "job_work_service" ? SERVICE_SPEC_FIELDS : [];
+  if (!fields.length) return null;
+  const key = kind === "fabric_material" ? "fabric_specs" : "service_specs";
+  const tone = kind === "fabric_material" ? "cyan" : "amber";
+  const title = kind === "fabric_material" ? "Fabric supplier specifications" : "Job-work service rate card";
+  const subtitle = kind === "fabric_material"
+    ? "Use real fabric buying details so production can create a fabric PO without guessing GSM, width or rate basis."
+    : "Use service details so buyers know what work you can accept before sending material.";
+  const update = (field, value) => setForm((current) => ({ ...current, [key]: { ...(current[key] || {}), [field]: value } }));
+  return <section className={`rounded-xl border ${tone === "cyan" ? "border-cyan-100 bg-cyan-50/70" : "border-amber-100 bg-amber-50/70"} p-3`}><p className="text-xs font-black text-slate-900">{title}</p><p className="mt-1 text-[10px] leading-4 text-slate-600">{subtitle}</p><div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">{fields.map(([field, label, placeholder]) => <label key={field} className="block"><span className="mb-1 block text-[10px] font-bold uppercase tracking-wide text-slate-500">{label}</span><input value={(form[key] || {})[field] || ""} onChange={(event) => update(field, event.target.value)} placeholder={placeholder} className="h-9 w-full rounded-lg border border-slate-200 bg-white px-2.5 text-xs outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100" /></label>)}</div></section>;
+}
+
 const EMPTY_ITEM_FORM = {
   item_name: "", category: "", description: "",
   price_range_min: "", price_range_max: "",
   price: "", direct_purchase_enabled: false, stock: "",
   available_sizes: "", available_colors: "", moq: "",
   variants: [], images: [],
+  catalogue_kind: "finished_goods",
+  fabric_specs: {},
+  service_specs: {},
 };
 
-function AddItemModal({ onClose, onAdded }) {
+function AddItemModal({ onClose, onAdded, businessTypes = [] }) {
   const [form, setForm] = useState(EMPTY_ITEM_FORM);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
@@ -932,6 +995,9 @@ const askCatalogueAssistant = async () => {
       fd.append("available_colors", form.available_colors);
       fd.append("moq", form.moq || 0);
       fd.append("variants", JSON.stringify(form.variants.filter((variant) => variant.label.trim())));
+      fd.append("catalogue_kind", form.catalogue_kind || "finished_goods");
+      fd.append("fabric_specs", JSON.stringify(form.fabric_specs || {}));
+      fd.append("service_specs", JSON.stringify(form.service_specs || {}));
       form.images.forEach(img => fd.append("images", img));
 
       const res = await vendorFetch("/api/catalogue/my-catalogue", { method: "POST", body: fd });
@@ -1027,6 +1093,19 @@ const askCatalogueAssistant = async () => {
               </div>
             )}
           </div>
+
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+            <label className="text-xs font-bold text-slate-600 uppercase tracking-wide block mb-1">Catalogue type</label>
+            <select value={form.catalogue_kind} onChange={e => setForm(f => ({ ...f, catalogue_kind: e.target.value }))}
+              className="w-full h-10 px-3 border border-slate-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-indigo-400 bg-white">
+              <option value="finished_goods">Finished goods / product catalogue</option>
+              <option value="fabric_material">Fabric / raw material catalogue</option>
+              <option value="job_work_service">Job-work service / rate card</option>
+            </select>
+            <p className="mt-1 text-[11px] leading-4 text-slate-500">RMS suggests this from your business type, but you can change it if this listing is different.</p>
+          </div>
+
+          <SpecsPanel kind={form.catalogue_kind} form={form} setForm={setForm} />
 
           <div>
             <label className="text-xs font-bold text-slate-600 uppercase tracking-wide block mb-1">Available Sizes</label>
@@ -1188,6 +1267,9 @@ function EditDetailsModal({ item, onClose, onSaved }) {
     available_colors: (item.available_colors || []).join(", "),
     moq:              item.moq || "",
     variants:         Array.isArray(item.variants) ? item.variants : [],
+    catalogue_kind:   item.catalogue_kind || suggestedCatalogueKind(item.business_type || []),
+    fabric_specs:     item.fabric_specs || {},
+    service_specs:    item.service_specs || {},
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
@@ -1214,6 +1296,9 @@ function EditDetailsModal({ item, onClose, onSaved }) {
           available_colors: form.available_colors.split(",").map(c => c.trim()).filter(Boolean),
           moq:              Number(form.moq) || 0,
           variants:         form.variants.filter((variant) => variant.label.trim()),
+          catalogue_kind:   form.catalogue_kind || "finished_goods",
+          fabric_specs:     form.fabric_specs || {},
+          service_specs:    form.service_specs || {},
         }),
       });
       const data = await res.json();
@@ -1361,18 +1446,22 @@ function CataloguePanel() {
   const [editItem, setEditItem] = useState(null);
   const [error, setError] = useState(null);
   const [shareItem, setShareItem] = useState(null);
+  const [vendorProfile, setVendorProfile] = useState(null);
 
   const fetchItems = useCallback(async () => {
     setLoading(true);
     try {
-      const [itemsRes, subRes] = await Promise.all([
+      const [itemsRes, subRes, profileRes] = await Promise.all([
         vendorFetch("/api/catalogue/my-catalogue"),
         vendorFetch("/api/subscriptions/me"),
+        vendorFetch("/api/vendors/me"),
       ]);
       const itemsJson = await itemsRes.json();
       const subJson = await subRes.json();
+      const profileJson = await profileRes.json().catch(() => ({}));
       setItems(itemsJson.data || []);
       setSub(subJson.data || null);
+      if (profileRes.ok) setVendorProfile(profileJson);
     } catch { /* noop */ }
     finally { setLoading(false); }
   }, []);
@@ -1425,6 +1514,7 @@ function CataloguePanel() {
         <div className="flex gap-3"><span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-white text-indigo-600 shadow-sm"><CircleHelp className="h-4 w-4" /></span><div><h2 className="text-sm font-black text-slate-900">Create a retailer-ready catalogue</h2><p className="mt-1 text-xs leading-5 text-slate-600">Add the basics first, then improve your listing anytime from Edit and Images.</p></div></div>
         <div className="mt-3 grid gap-2 text-xs text-slate-700 sm:grid-cols-3"><p><span className="font-black text-indigo-600">1.</span> Add a clear product name and photo.</p><p><span className="font-black text-indigo-600">2.</span> Set price, MOQ and description.</p><p><span className="font-black text-indigo-600">3.</span> Add sizes and colours if applicable.</p></div>
         <p className="mt-3 border-t border-indigo-100 pt-3 text-[11px] leading-5 text-slate-500"><strong className="text-slate-700">Need detailed SKU or variant stock?</strong> Use Product List for operational product data; keep My Catalogue focused on what retailers should discover and inquire about.</p>
+        {vendorProfile?.business_type?.length ? <p className="mt-2 text-[11px] font-bold text-indigo-700">Your vendor type: {vendorProfile.business_type.join(", ")}. RMS will suggest fabric/service fields when relevant.</p> : null}
       </section>
 
       {sub && (
@@ -1509,6 +1599,7 @@ function CataloguePanel() {
                     <span key={s} className="px-1.5 py-0.5 bg-slate-100 text-slate-600 rounded text-[10px] font-bold">{s}</span>
                   ))}
                 </div>
+                <CatalogueKindSummary item={item} />
                 <ListingProgress item={item} />
                 {Array.isArray(item.variants) && item.variants.length > 0 && <p className="text-[10px] font-semibold text-violet-700">{item.variants.length} variant{item.variants.length !== 1 ? "s" : ""} available</p>}
                 <div className="flex gap-1.5 pt-1">
@@ -1537,7 +1628,7 @@ function CataloguePanel() {
       )}
 
       {shareItem && <ShareCatalogueItemModal item={shareItem} onClose={() => setShareItem(null)} />}
-      {showAdd && <AddItemModal onClose={() => setShowAdd(false)} onAdded={fetchItems} />}
+      {showAdd && <AddItemModal onClose={() => setShowAdd(false)} onAdded={fetchItems} businessTypes={vendorProfile?.business_type || []} />}
       {manageItem && (
         <ManageImagesModal
           item={manageItem}

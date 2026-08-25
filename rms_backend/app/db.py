@@ -171,6 +171,12 @@ marketing_offer_redemptions_collection = db["marketing_offer_redemptions"]
 marketing_campaign_engagement_collection = db["marketing_campaign_engagement"]
 marketing_campaign_feedback_collection   = db["marketing_campaign_feedback"]
 
+# Customer CRM - separate from POS bills. POS sales remain the transaction source;
+# these collections hold enriched profiles, reminders and relationship notes.
+customer_crm_profiles_collection = db["customer_crm_profiles"]
+customer_crm_followups_collection = db["customer_crm_followups"]
+customer_crm_feedback_collection  = db["customer_crm_feedback"]
+
 async def ensure_procurement_indexes():
     """Create the indexes required by catalogue/RFQ hot paths and idempotency."""
     await purchaseorders_collection.create_index([("tenant_id", 1), ("orderNo", 1)], name="po_tenant_number")
@@ -261,6 +267,10 @@ async def ensure_procurement_indexes():
     await usage_events_collection.create_index([("role", 1), ("vendor_id", 1), ("created_at", -1)], name="usage_events_role_vendor_created")
     await marketing_campaigns_collection.create_index([("tenant_id", 1), ("status", 1), ("start_date", -1)], name="marketing_campaign_tenant_status")
     await marketing_offer_redemptions_collection.create_index([("tenant_id", 1), ("campaign_id", 1), ("created_at", -1)], name="marketing_redemption_campaign")
+    await customer_crm_profiles_collection.create_index([("tenant_id", 1), ("mobile", 1)], name="crm_profile_tenant_mobile")
+    await customer_crm_profiles_collection.create_index([("tenant_id", 1), ("email", 1)], name="crm_profile_tenant_email")
+    await customer_crm_followups_collection.create_index([("tenant_id", 1), ("status", 1), ("due_date", 1)], name="crm_followups_status_due")
+    await customer_crm_feedback_collection.create_index([("tenant_id", 1), ("created_at", -1)], name="crm_feedback_tenant_created")
     await error_logs_collection.create_index([("created_at", -1)], name="error_logs_created")
     await error_logs_collection.create_index([("resolved", 1), ("created_at", -1)], name="error_logs_resolved_created")
     await error_logs_collection.create_index([("source", 1), ("created_at", -1)], name="error_logs_source_created")

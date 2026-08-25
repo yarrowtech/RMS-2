@@ -159,6 +159,25 @@ async def get_my_catalogue(authorization: str = Header(None)):
     return {"status": "success", "data": items}
 
 
+
+def _normalise_catalogue_specs(raw, allowed_keys: set[str]) -> dict:
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw or "{}")
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=400, detail="Catalogue specifications must be valid JSON.")
+    if not isinstance(raw, dict):
+        return {}
+    cleaned = {}
+    for key in allowed_keys:
+        value = raw.get(key)
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text:
+            cleaned[key] = text[:500]
+    return cleaned
+
 def _normalise_catalogue_variants(raw) -> list:
     """Accept a small, buyer-facing variant matrix without trusting client values."""
     if isinstance(raw, str):
@@ -297,6 +316,9 @@ async def add_catalogue_item(
     available_colors:     str            = Form(""),   # comma-separated
     moq:                  int            = Form(0),
     variants:             str            = Form("[]"),
+    catalogue_kind:       str            = Form("finished_goods"),
+    fabric_specs:         str            = Form("{}"),
+    service_specs:        str            = Form("{}"),
     images:                List[UploadFile] = File([]),
 ):
     """
@@ -367,6 +389,10 @@ async def add_catalogue_item(
         raise HTTPException(status_code=400, detail="At least one image is required.")
 
     normalised_variants = _normalise_catalogue_variants(variants)
+    allowed_kinds = {"finished_goods", "fabric_material", "job_work_service"}
+    catalogue_kind = catalogue_kind if catalogue_kind in allowed_kinds else "finished_goods"
+    fabric_specs_clean = _normalise_catalogue_specs(fabric_specs, {"fabric_type", "composition", "gsm", "width", "weave", "finish", "shade", "roll_length", "rate_unit", "lead_time", "testing_notes"})
+    service_specs_clean = _normalise_catalogue_specs(service_specs, {"service_type", "rate_basis", "capacity_per_day", "machine_type", "accepted_materials", "lead_time", "quality_notes"})
 
     now = datetime.utcnow()
     doc = {
@@ -384,6 +410,9 @@ async def add_catalogue_item(
         "available_colors":  [c.strip() for c in available_colors.split(",") if c.strip()],
         "moq":               max(0, moq),
         "variants":          normalised_variants,
+        "catalogue_kind":    catalogue_kind,
+        "fabric_specs":      fabric_specs_clean,
+        "service_specs":     service_specs_clean,
         "active":            True,
         "tier_at_upload":    tier["tier"],
         "created_at":        now,
@@ -704,7 +733,8 @@ async def update_catalogue_item(item_id: str, payload: dict, authorization: str 
 
     allowed = {"item_name", "category", "description", "price_range_min", "price_range_max",
                "price", "direct_purchase_enabled", "stock",
-               "available_sizes", "available_colors", "moq", "variants", "active"}
+               "available_sizes", "available_colors", "moq", "variants", "active",
+               "catalogue_kind", "fabric_specs", "service_specs"}
     patch = {k: v for k, v in payload.items() if k in allowed}
     if "price" in patch or "direct_purchase_enabled" in patch:
         try:
@@ -714,6 +744,12 @@ async def update_catalogue_item(item_id: str, payload: dict, authorization: str 
         patch["direct_purchase_enabled"] = effective_price > 0
     if "variants" in patch:
         patch["variants"] = _normalise_catalogue_variants(patch["variants"])
+    if "catalogue_kind" in patch and patch["catalogue_kind"] not in {"finished_goods", "fabric_material", "job_work_service"}:
+        patch["catalogue_kind"] = item.get("catalogue_kind") or "finished_goods"
+    if "fabric_specs" in patch:
+        patch["fabric_specs"] = _normalise_catalogue_specs(patch["fabric_specs"], {"fabric_type", "composition", "gsm", "width", "weave", "finish", "shade", "roll_length", "rate_unit", "lead_time", "testing_notes"})
+    if "service_specs" in patch:
+        patch["service_specs"] = _normalise_catalogue_specs(patch["service_specs"], {"service_type", "rate_basis", "capacity_per_day", "machine_type", "accepted_materials", "lead_time", "quality_notes"})
     patch["updated_at"] = datetime.utcnow()
 
     # Reactivating a previously-expired item ("active": False -> True) must

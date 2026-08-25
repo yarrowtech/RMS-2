@@ -46,6 +46,7 @@ const DEPT_COLOR_BY_ID = {
   "Third Party":                  "slate",
   "Production & Job Work":        "fuchsia",
   "Marketing":                    "teal",
+  "Customer CRM":                 "cyan",
   "Cashier":                      "orange",
   "Inventory (Store)":            "indigo",
   "Finance (Store)":              "emerald",
@@ -79,6 +80,7 @@ const PERMISSIONS = [
   { id:"user_management", label:"User Management",   group:"Admin"      },
   { id:"assign_tasks",    label:"Assign Tasks to Team", group:"Admin"  },
   { id:"marketing",       label:"Marketing",         group:"Growth"     },
+  { id:"customer_crm",    label:"Customer CRM",      group:"Growth"     },
 ];
 
 // Quick permission presets — still a frontend-only UX convenience; the
@@ -92,6 +94,7 @@ const PRESETS = {
   "Store Manager":     ["cashier","store_stock","sales","reports"],
   "Finance":           ["finance","reports"],
   "Marketing Lead":    ["marketing","sales","reports"],
+  "CRM Lead":          ["customer_crm","marketing","sales","reports"],
   "Full HQ Access":    ["inventory","purchase_orders","grn","grc","vendors","stock_allocation","stock_transfer","job_work","mbuyer","hr","finance","logistics","marketing","reports","user_management"],
 };
 

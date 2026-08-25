@@ -24,6 +24,7 @@ import StockPlanForecasting from "./components/StockPlanForecastingDepartment/St
 import ForecastAnalytics from "./components/ForecastAnalytics.jsx";
 import ProductionJobWork from "./components/Production/ProductionJobWork.jsx";
 import Marketing from "./components/Marketing/Marketing.jsx";
+import CustomerCRM from "./components/CustomerCRM/CustomerCRM.jsx";
 import Admin from "./components/Admin/Admin";
 import GRRC from "./components/InventoryManagement/GRRC.jsx";
 import GRN from "./components/InventoryManagement/GRN.jsx";
@@ -121,6 +122,7 @@ export default function App() {
         <Route path="/dashboard/production"         element={<DepartmentRouteGuard department="Production & Job Work"><ProductionJobWork /></DepartmentRouteGuard>} />
         <Route path="/dashboard/merchandiser-buyer" element={<DepartmentRouteGuard department="Merchandiser Buyer"><Mbuyer /></DepartmentRouteGuard>} />
         <Route path="/dashboard/marketing"          element={<DepartmentRouteGuard department="Marketing"><Marketing /></DepartmentRouteGuard>} />
+        <Route path="/dashboard/customer-crm"      element={<DepartmentRouteGuard department={["HQ", "Marketing", "Cashier", "Store Owner", "Customer CRM"]}><CustomerCRM /></DepartmentRouteGuard>} />
         <Route path="/dashboard/vendor"             element={<VendorRouteGuard><MSeller /></VendorRouteGuard>} />
         <Route path="/dashboard/store-owner"        element={<DepartmentRouteGuard department="Store Owner"><StoreOwnerDashboard /></DepartmentRouteGuard>} />
         <Route path="/dashboard/store-owner/purchasing" element={<DepartmentRouteGuard department="Store Owner"><StorePurchasing /></DepartmentRouteGuard>} />
@@ -136,6 +138,7 @@ export default function App() {
         <Route path="/third-party"        element={<DepartmentRouteGuard department="Third Party"><ThirdPartyDept /></DepartmentRouteGuard>} />
         <Route path="/production"         element={<DepartmentRouteGuard department="Production & Job Work"><ProductionJobWork /></DepartmentRouteGuard>} />
         <Route path="/marketing"          element={<DepartmentRouteGuard department="Marketing"><Marketing /></DepartmentRouteGuard>} />
+        <Route path="/customer-crm"       element={<DepartmentRouteGuard department={["HQ", "Marketing", "Cashier", "Store Owner", "Customer CRM"]}><CustomerCRM /></DepartmentRouteGuard>} />
 
         {/* Merchandiser-Seller */}
         <Route path="/merchandiser-seller/login"          element={<MSellerLogin />} />
