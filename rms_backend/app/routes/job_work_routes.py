@@ -5,11 +5,13 @@ to a cutter or stitcher remains retailer-owned material, so it is moved into a
 job-work order balance and reconciled when panels/finished goods return.
 """
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
+import uuid
+from urllib.parse import quote
 
 from bson import ObjectId
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 
 from ..db import (
     inventory_collection,
@@ -23,7 +25,7 @@ from ..db import (
 )
 from .deps import get_hq_tenant
 from .vendor_routes import decode_token
-from .purchaseorder_routes import calculate_po_totals, generate_po_number, resolve_real_barcode
+from .purchaseorder_routes import TOKEN_EXPIRY_DAYS, _clean_whatsapp_mobile, _make_share_link, calculate_po_totals, generate_po_number, resolve_real_barcode
 
 router = APIRouter(prefix="/api/job-work", tags=["Production & Job Work"])
 
@@ -105,8 +107,12 @@ async def _approved_vendor(tenant_id: str, vendor_id: str) -> tuple[dict, dict]:
 
 async def _job_work_enabled_vendor(vendor: dict) -> bool:
     """Job Work is a business capability, independent of subscription tier."""
+    return _vendor_has_business_type(vendor, "job_worker")
+
+
+def _vendor_has_business_type(vendor: dict, business_type: str) -> bool:
     business_types = {str(item).strip().lower() for item in (vendor.get("business_type") or [])}
-    return "job_worker" in business_types
+    return business_type in business_types
 
 
 async def _require_vendor_job_work_access(vendor_id: str) -> dict:
@@ -169,14 +175,22 @@ async def material_stock(ctx: dict = Depends(_require_job_work)):
 
 
 @router.get("/vendors")
-async def approved_job_work_vendors(ctx: dict = Depends(_require_job_work)):
-    """Approved RMS vendors available as registered job-work partners."""
+async def approved_job_work_vendors(
+    kind: str = Query("job_worker", description="job_worker (stitching/cutting partners) or fabric_supplier (fabric/raw-material vendors) — two distinct business types, never conflated."),
+    ctx: dict = Depends(_require_job_work),
+):
+    """Approved RMS vendors available for this module — job-work partners by
+    default, or fabric/raw-material suppliers when kind=fabric_supplier.
+    These were previously the same hardcoded job_worker-only list, which
+    silently hid every registered fabric supplier from the Fabric buying
+    cart's "Approved fabric supplier" dropdown."""
+    business_type = "fabric_supplier" if kind == "fabric_supplier" else "job_worker"
     rows = []
     async for link in vendor_tenant_links_collection.find({
         "tenant_id": ctx["tenant_id"], "status": "Approved",
     }).sort("created_at", -1):
         vendor = await vendors_collection.find_one({"_id": link.get("vendor_id")})
-        if not vendor or not await _job_work_enabled_vendor(vendor):
+        if not vendor or not _vendor_has_business_type(vendor, business_type):
             continue
         rows.append({
             "id": str(vendor["_id"]),
@@ -202,8 +216,26 @@ def _fabric_specs_from_item(item: dict) -> str:
 
 async def _create_fabric_po_document(ctx: dict, payload: dict, plan: dict | None = None) -> dict:
     vendor_id = str(payload.get("vendor_id") or "").strip()
-    vendor, _link = await _approved_vendor(ctx["tenant_id"], vendor_id)
-    vendor_name = vendor.get("name") or vendor.get("vendor_name") or "Fabric supplier"
+    vendor_type = "registered" if vendor_id else "walkin"
+    vendor = None
+    walkin_vendor = {}
+    if vendor_id:
+        vendor, _link = await _approved_vendor(ctx["tenant_id"], vendor_id)
+        vendor_name = vendor.get("name") or vendor.get("vendor_name") or "Fabric supplier"
+    else:
+        walkin_vendor = dict(payload.get("walkin_vendor") or {})
+        vendor_name = str(walkin_vendor.get("name") or payload.get("vendor_name") or "").strip()
+        if not vendor_name:
+            raise HTTPException(status_code=400, detail="Enter walk-in fabric supplier name or choose an approved supplier.")
+        walkin_vendor = {
+            "name": vendor_name,
+            "mobile": str(walkin_vendor.get("mobile") or "").strip(),
+            "email": str(walkin_vendor.get("email") or "").strip(),
+            "address": str(walkin_vendor.get("address") or "").strip(),
+            "gstin": str(walkin_vendor.get("gstin") or "").strip(),
+            "contact_person": str(walkin_vendor.get("contact_person") or "").strip(),
+            "business_type": "fabric_supplier",
+        }
     tenant = await tenants_collection.find_one({"tenant_id": ctx["tenant_id"]}, {"company_name": 1, "name": 1})
     owner_name = (tenant or {}).get("company_name") or (tenant or {}).get("name") or ctx["tenant_id"]
 
@@ -227,6 +259,7 @@ async def _create_fabric_po_document(ctx: dict, payload: dict, plan: dict | None
         specs = _fabric_specs_from_item(material)
         description = f"{name} | {specs}" if specs else name
         remarks = str(material.get("remarks") or "").strip()
+        image_url = str(material.get("image_url") or material.get("image") or material.get("catalogue_image") or "").strip()
         if plan and not remarks:
             remarks = f"{unit} required for {plan.get('style_name')}"
         item = {
@@ -244,6 +277,8 @@ async def _create_fabric_po_document(ctx: dict, payload: dict, plan: dict | None
             "width": str(material.get("width") or "").strip(),
             "color": str(material.get("color") or "").strip(),
             "unit": unit,
+            "image_url": image_url,
+            "catalogue_item_id": str(material.get("catalogue_item_id") or "").strip(),
         }
         item["barcode"] = await resolve_real_barcode(item)
         items.append(item)
@@ -259,6 +294,7 @@ async def _create_fabric_po_document(ctx: dict, payload: dict, plan: dict | None
             "rate": rate,
             "amount": item["amount"],
             "remarks": remarks,
+            "image_url": image_url,
         })
 
     now = datetime.utcnow()
@@ -270,8 +306,9 @@ async def _create_fabric_po_document(ctx: dict, payload: dict, plan: dict | None
         "orderDate": str(payload.get("order_date") or now.date().isoformat()),
         "expectedDeliveryDate": str(payload.get("expected_delivery_date") or ""),
         "vendorName": vendor_name,
-        "vendor_id": ObjectId(vendor_id),
-        "vendor_type": "registered",
+        "vendor_id": ObjectId(vendor_id) if vendor_id else None,
+        "vendor_type": vendor_type,
+        "walkin_vendor": walkin_vendor if vendor_type == "walkin" else None,
         "status": "Draft",
         "orderType": "Fabric / Raw Material",
         "purchaseType": "Fabric / Raw Material",
@@ -287,6 +324,28 @@ async def _create_fabric_po_document(ctx: dict, payload: dict, plan: dict | None
         "updatedAt": now,
     }
     calculate_po_totals(po)
+    share_link = ""
+    whatsapp_message = ""
+    whatsapp_url = ""
+    if vendor_type == "walkin":
+        token = str(uuid.uuid4())
+        expires_at = now + timedelta(days=TOKEN_EXPIRY_DAYS)
+        po["share_token"] = token
+        po["token_expires_at"] = expires_at
+        po["po_viewed_at"] = None
+        po["vendor_accepted_at"] = None
+        share_link = _make_share_link(token)
+        whatsapp_message = (
+            f"Dear {vendor_name},\n\n"
+            f"A Fabric Purchase Order {po['orderNo']} has been raised for you from {owner_name}.\n\n"
+            f"Total Value: {po.get('currency', 'INR')} {po.get('netAmount', 0):,.2f}\n\n"
+            f"Please view/accept the PO and register with RMS here:\n{share_link}\n\n"
+            f"Link valid for {TOKEN_EXPIRY_DAYS} days.\nRegards,\n{owner_name}"
+        )
+        mobile = _clean_whatsapp_mobile(walkin_vendor.get("mobile", ""))
+        if mobile:
+            whatsapp_url = f"https://wa.me/{mobile}?text={quote(whatsapp_message)}"
+
     await purchaseorders_collection.insert_one(po)
     if plan:
         await style_bom_plans_collection.update_one(
@@ -300,6 +359,11 @@ async def _create_fabric_po_document(ctx: dict, payload: dict, plan: dict | None
         "sheet": sheet_rows,
         "vendor_name": vendor_name,
         "order_date": po["orderDate"],
+        "vendor_type": vendor_type,
+        "share_link": share_link,
+        "whatsapp_message": whatsapp_message,
+        "whatsapp_url": whatsapp_url,
+        "whatsapp_mobile": walkin_vendor.get("mobile", "") if vendor_type == "walkin" else "",
     }
 
 

@@ -1,4 +1,7 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import * as XLSX from "xlsx";
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
 import { API_BASE_URL } from "../../config/api.js";
 import { logoutOrReturnToDepartmentSelector } from "../../utils/authRedirect.js";
 
@@ -46,8 +49,10 @@ function csvValue(value) {
   return /[",\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
 }
 
-function downloadFabricPOSheet({ purchase_order_no, vendor_name, order_date, sheet }, fallbackItems = []) {
-  const rows = sheet?.length ? sheet : fallbackItems.map((item, index) => ({
+const FABRIC_SHEET_HEADERS = ["Sl No", "Fabric / Material", "Fabric Type", "GSM", "Width", "Colour", "Total Fabric", "Unit", "Rate", "Amount", "Remarks", "Image Link"];
+
+function buildFabricSheetRows(sheet, fallbackItems = []) {
+  const source = sheet?.length ? sheet : fallbackItems.map((item, index) => ({
     sl_no: index + 1,
     fabric_material: item.fabric_name || item.material_name || "",
     fabric_type: item.fabric_type || "",
@@ -59,24 +64,122 @@ function downloadFabricPOSheet({ purchase_order_no, vendor_name, order_date, she
     rate: item.rate || 0,
     amount: (Number(item.total_quantity || item.required_quantity || item.quantity || 0) * Number(item.rate || 0)).toFixed(2),
     remarks: item.remarks || item.specification || "",
+    image_url: item.image_url || item.image || item.catalogue_image || "",
   }));
-  const headers = ["Sl No", "Fabric / Material", "Fabric Type", "GSM", "Width", "Colour", "Total Fabric", "Unit", "Rate", "Amount", "Remarks"];
+  return source.map((row) => [row.sl_no, row.fabric_material, row.fabric_type, row.gsm, row.width, row.color, row.quantity, row.unit, row.rate, row.amount, row.remarks, row.image_url || ""]);
+}
+
+function fabricSheetFileBase(purchase_order_no) {
+  return purchase_order_no ? `${purchase_order_no}-fabric-po-sheet` : "fabric-po-draft-sheet";
+}
+
+function downloadFabricSheetCsv({ purchase_order_no, vendor_name, order_date, sheet }, fallbackItems = []) {
+  const rows = buildFabricSheetRows(sheet, fallbackItems);
   const lines = [
-    ["Fabric PO Sheet", purchase_order_no || "Draft", "Vendor", vendor_name || "", "Order Date", order_date || ""],
+    ["Fabric PO Sheet"],
+    ["PO No.", purchase_order_no || "Draft"],
+    ["Vendor", vendor_name || ""],
+    ["Order Date", order_date || ""],
     [],
-    headers,
-    ...rows.map((row) => [row.sl_no, row.fabric_material, row.fabric_type, row.gsm, row.width, row.color, row.quantity, row.unit, row.rate, row.amount, row.remarks]),
+    FABRIC_SHEET_HEADERS,
+    ...rows,
   ];
   const csv = lines.map((line) => line.map(csvValue).join(",")).join("\n");
   const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
-  link.download = `${purchase_order_no || "fabric-po-draft"}-sheet.csv`;
+  link.download = `${fabricSheetFileBase(purchase_order_no)}.csv`;
   document.body.appendChild(link);
   link.click();
   link.remove();
   URL.revokeObjectURL(url);
+}
+
+function downloadFabricSheetExcel({ purchase_order_no, vendor_name, order_date, sheet }, fallbackItems = []) {
+  const rows = buildFabricSheetRows(sheet, fallbackItems);
+  const aoa = [
+    ["Fabric PO Sheet"],
+    ["PO No.", purchase_order_no || "Draft"],
+    ["Vendor", vendor_name || ""],
+    ["Order Date", order_date || ""],
+    [],
+    FABRIC_SHEET_HEADERS,
+    ...rows,
+  ];
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  ws["!cols"] = [
+    { wch: 6 }, { wch: 24 }, { wch: 14 }, { wch: 8 }, { wch: 10 }, { wch: 14 },
+    { wch: 12 }, { wch: 8 }, { wch: 10 }, { wch: 12 }, { wch: 28 }, { wch: 30 },
+  ];
+  ws["!merges"] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: FABRIC_SHEET_HEADERS.length - 1 } }];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Fabric PO Sheet");
+  XLSX.writeFile(wb, `${fabricSheetFileBase(purchase_order_no)}.xlsx`);
+}
+
+async function fetchImageAsDataUrl(url) {
+  if (!url) return null;
+  try {
+    const response = await fetch(url);
+    if (!response.ok) return null;
+    const blob = await response.blob();
+    return await new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(typeof reader.result === "string" ? reader.result : null);
+      reader.onerror = () => resolve(null);
+      reader.readAsDataURL(blob);
+    });
+  } catch {
+    return null;
+  }
+}
+
+function dataUrlImageFormat(dataUrl) {
+  const match = /^data:image\/(\w+);base64,/i.exec(dataUrl || "");
+  const type = (match?.[1] || "jpeg").toLowerCase();
+  return type === "jpg" ? "JPEG" : type.toUpperCase();
+}
+
+const PDF_IMAGE_COL_INDEX = FABRIC_SHEET_HEADERS.length - 1;
+const PDF_COLUMN_WIDTHS = [26, 96, 62, 30, 40, 52, 48, 26, 36, 46, 130, 48];
+
+async function downloadFabricSheetPdf({ purchase_order_no, vendor_name, order_date, sheet }, fallbackItems = []) {
+  const rows = buildFabricSheetRows(sheet, fallbackItems);
+  const imageUrls = rows.map((row) => row[PDF_IMAGE_COL_INDEX]);
+  const images = await Promise.all(imageUrls.map(fetchImageAsDataUrl));
+  const tableRows = rows.map((row) => { const copy = [...row]; copy[PDF_IMAGE_COL_INDEX] = ""; return copy; });
+  const headers = [...FABRIC_SHEET_HEADERS]; headers[PDF_IMAGE_COL_INDEX] = "Image";
+
+  const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
+  doc.setFont("helvetica", "bold"); doc.setFontSize(16); doc.text("Fabric PO Sheet", 40, 40);
+  doc.setFont("helvetica", "normal"); doc.setFontSize(10);
+  doc.text(`PO No.: ${purchase_order_no || "Draft"}`, 40, 58);
+  doc.text(`Vendor: ${vendor_name || "-"}`, 260, 58);
+  doc.text(`Order Date: ${order_date || "-"}`, 480, 58);
+  autoTable(doc, {
+    head: [headers],
+    body: tableRows,
+    startY: 74,
+    styles: { font: "helvetica", fontSize: 8.5, cellPadding: 5, overflow: "linebreak", minCellHeight: 44, valign: "middle" },
+    headStyles: { fillColor: [226, 232, 240], textColor: [15, 23, 42] },
+    alternateRowStyles: { fillColor: [248, 250, 252] },
+    columnStyles: PDF_COLUMN_WIDTHS.reduce((acc, width, index) => {
+      acc[index] = { cellWidth: width, ...(index === 0 || index === 8 || index === 9 ? { halign: "right" } : {}) };
+      return acc;
+    }, {}),
+    margin: { left: 40, right: 40 },
+    didDrawCell: (data) => {
+      if (data.section !== "body" || data.column.index !== PDF_IMAGE_COL_INDEX) return;
+      const dataUrl = images[data.row.index];
+      if (!dataUrl) return;
+      const size = Math.min(data.cell.height - 8, data.cell.width - 8);
+      const x = data.cell.x + (data.cell.width - size) / 2;
+      const y = data.cell.y + (data.cell.height - size) / 2;
+      try { doc.addImage(dataUrl, dataUrlImageFormat(dataUrl), x, y, size, size); } catch { /* skip a broken image rather than failing the whole PDF */ }
+    },
+  });
+  doc.save(`${fabricSheetFileBase(purchase_order_no)}.pdf`);
 }
 
 const statusStyle = {
@@ -86,10 +189,10 @@ const statusStyle = {
   COMPLETED: "bg-emerald-50 text-emerald-700 ring-emerald-200",
 };
 
-function Modal({ title, children, onClose }) {
+function Modal({ title, children, onClose, wide = false }) {
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/45 p-4 backdrop-blur-sm">
-      <section className="max-h-[92vh] w-full max-w-4xl overflow-y-auto rounded-3xl border border-slate-200 bg-white shadow-2xl">
+      <section className={`${wide ? "max-w-6xl" : "max-w-4xl"} max-h-[92vh] w-full overflow-y-auto rounded-3xl border border-slate-200 bg-white shadow-2xl`}>
         <header className="sticky top-0 z-10 flex items-center justify-between border-b border-slate-100 bg-white/95 px-6 py-4 backdrop-blur">
           <div>
             <p className="text-xs font-bold uppercase tracking-[0.18em] text-violet-600">Production control</p>
@@ -107,6 +210,7 @@ export default function ProductionJobWork() {
   const [orders, setOrders] = useState([]);
   const [stock, setStock] = useState([]);
   const [vendors, setVendors] = useState([]);
+  const [fabricSuppliers, setFabricSuppliers] = useState([]);
   const [plans, setPlans] = useState([]);
   const [dashboard, setDashboard] = useState({ active_orders: 0, with_job_workers: 0, completed_orders: 0, recorded_wastage: 0 });
   const [loading, setLoading] = useState(true);
@@ -116,18 +220,20 @@ export default function ProductionJobWork() {
   const [orderForm, setOrderForm] = useState(emptyOrder);
   const [planForm, setPlanForm] = useState(emptyPlan);
   const [saving, setSaving] = useState(false);
+  const [sheetDownload, setSheetDownload] = useState(null); // { meta, items } once a Fabric PO is created
 
   const refresh = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
-      const [orderData, stockData, dashboardData, vendorData, planData] = await Promise.all([
-        request("/orders"), request("/material-stock"), request("/dashboard"), request("/vendors"), request("/material-plans"),
+      const [orderData, stockData, dashboardData, vendorData, fabricSupplierData, planData] = await Promise.all([
+        request("/orders"), request("/material-stock"), request("/dashboard"), request("/vendors"), request("/vendors?kind=fabric_supplier"), request("/material-plans"),
       ]);
       setOrders(orderData.data || []);
       setStock(stockData.data || []);
       setDashboard(dashboardData || {});
       setVendors(vendorData.data || []);
+      setFabricSuppliers(fabricSupplierData.data || []);
       setPlans(planData.data || []);
     } catch (err) {
       setError(err.message || "Could not load production and job-work data.");
@@ -175,8 +281,9 @@ export default function ProductionJobWork() {
     setSaving(true);
     try {
       const result = await request(`/material-plans/${plan.id}/purchase-order`, { method: "POST", body: JSON.stringify(payload) });
-      showNotice(result.message);
-      downloadFabricPOSheet(result, payload.items);
+      showNotice(result.share_link ? `${result.message} Walk-in share link generated.` : result.message);
+      if (result.whatsapp_url) window.open(result.whatsapp_url, "_blank", "noopener,noreferrer");
+      setSheetDownload({ meta: result, items: payload.items });
       closeModal();
       await refresh();
     } catch (err) {
@@ -188,8 +295,9 @@ export default function ProductionJobWork() {
     setSaving(true);
     try {
       const result = await request("/fabric-purchase-orders", { method: "POST", body: JSON.stringify(payload) });
-      showNotice(result.message);
-      downloadFabricPOSheet(result, payload.items);
+      showNotice(result.share_link ? `${result.message} Walk-in share link generated.` : result.message);
+      if (result.whatsapp_url) window.open(result.whatsapp_url, "_blank", "noopener,noreferrer");
+      setSheetDownload({ meta: result, items: payload.items });
       closeModal();
       await refresh();
     } catch (err) {
@@ -219,7 +327,7 @@ export default function ProductionJobWork() {
           ].map(([label, value, caption, color]) => <article key={label} className="group relative overflow-hidden rounded-2xl border border-white/80 bg-white/80 p-5 shadow-lg shadow-indigo-100/40 backdrop-blur transition duration-200 hover:-translate-y-0.5 hover:shadow-xl"><div className={`absolute right-0 top-0 h-20 w-20 rounded-bl-[48px] opacity-10 ${color}`} /><span className={`mb-4 block h-1.5 w-12 rounded-full ${color}`} /><p className="text-sm font-bold text-slate-500">{label}</p><p className="mt-1 text-3xl font-black tracking-tight text-slate-900">{value}</p><p className="mt-1 text-xs font-medium text-slate-400">{caption}</p></article>)}
         </section>
 
-        <MaterialPlanList plans={plans} vendors={vendors} onCreatePO={(plan) => setModal({ type: "purchase-plan", plan })} onStartJob={(plan) => { setOrderForm({ ...emptyOrder, material_plan_id: plan.id, finished_product: plan.style_name || "", expected_quantity: String(plan.planned_quantity || ""), unit: plan.finished_unit || "pcs" }); setModal({ type: "create" }); }} />
+        <MaterialPlanList plans={plans} onCreatePO={(plan) => setModal({ type: "purchase-plan", plan })} onStartJob={(plan) => { setOrderForm({ ...emptyOrder, material_plan_id: plan.id, finished_product: plan.style_name || "", expected_quantity: String(plan.planned_quantity || ""), unit: plan.finished_unit || "pcs" }); setModal({ type: "create" }); }} />
 
         <section className="overflow-hidden rounded-3xl border border-white bg-white/90 shadow-xl shadow-indigo-100/40 backdrop-blur">
           <div className="flex flex-col justify-between gap-2 border-b border-indigo-100/80 bg-gradient-to-r from-white via-indigo-50/60 to-cyan-50/70 px-6 py-5 sm:flex-row sm:items-center">
@@ -244,16 +352,48 @@ export default function ProductionJobWork() {
 
       {modal?.type === "create" && <CreateOrderModal form={orderForm} setForm={setOrderForm} vendors={vendors} plans={plans} stock={stock} onClose={closeModal} onSubmit={createOrder} saving={saving} />}
       {modal?.type === "plan" && <CreateMaterialPlanModal form={planForm} setForm={setPlanForm} onClose={closeModal} onSubmit={createPlan} saving={saving} />}
-      {modal?.type === "purchase-plan" && <CreateFabricPOModal plan={modal.plan} vendors={vendors} onClose={closeModal} onSubmit={createFabricPO} saving={saving} />}
-      {modal?.type === "fabric-cart" && <CreateFabricPOModal vendors={vendors} onClose={closeModal} onSubmit={(_, payload) => createManualFabricPO(payload)} saving={saving} />}
+      {modal?.type === "purchase-plan" && <CreateFabricPOModal plan={modal.plan} vendors={fabricSuppliers} onClose={closeModal} onSubmit={createFabricPO} saving={saving} />}
+      {modal?.type === "fabric-cart" && <CreateFabricPOModal vendors={fabricSuppliers} onClose={closeModal} onSubmit={(_, payload) => createManualFabricPO(payload)} saving={saving} />}
       {modal?.type === "issue" && <IssueMaterialModal order={modal.order} stock={stock} onClose={closeModal} onSaved={async (message) => { closeModal(); showNotice(message); await refresh(); }} setError={setError} />}
       {modal?.type === "receive" && <ReceiveWorkModal order={modal.order} onClose={closeModal} onSaved={async (message) => { closeModal(); showNotice(message); await refresh(); }} setError={setError} />}
+      {sheetDownload && <DownloadSheetModal sheetDownload={sheetDownload} onClose={() => setSheetDownload(null)} />}
     </main>
   );
 }
 
-function MaterialPlanList({ plans, vendors, onCreatePO, onStartJob }) {
-  return <section className="mb-6 overflow-hidden rounded-3xl border border-white bg-white/90 shadow-xl shadow-indigo-100/40 backdrop-blur"><div className="flex flex-col justify-between gap-2 border-b border-indigo-100/80 bg-gradient-to-r from-white via-indigo-50/60 to-cyan-50/70 px-6 py-5 sm:flex-row sm:items-center"><div><p className="text-xs font-bold uppercase tracking-[0.15em] text-violet-600">Before buying fabric</p><h2 className="mt-1 font-black text-slate-900">Style BOM & material plans</h2><p className="mt-1 text-sm text-slate-500">Calculate metres from garment consumption, planned quantity and wastage, then create a normal Fabric PO draft.</p></div><span className="rounded-full bg-violet-50 px-3 py-1.5 text-xs font-bold text-violet-700">{plans.length} plan{plans.length === 1 ? "" : "s"}</span></div>{plans.length === 0 ? <div className="px-6 py-10 text-center text-sm text-slate-400">No material plans yet. Create a Style BOM & fabric plan to calculate your fabric requirement.</div> : <div className="divide-y divide-slate-100">{plans.slice(0, 8).map((plan) => <article key={plan.id} className="flex flex-col gap-4 px-6 py-5 lg:flex-row lg:items-center lg:justify-between"><div><div className="flex flex-wrap items-center gap-2"><p className="font-black text-slate-900">{plan.style_name}</p><span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-bold text-slate-600">{plan.plan_no}</span>{plan.purchase_order_no && <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-bold text-emerald-700">PO {plan.purchase_order_no}</span>}</div><p className="mt-1 text-sm text-slate-500">{plan.planned_quantity} {plan.finished_unit} planned · {plan.wastage_pct}% wastage · {plan.materials?.length || 0} material line(s)</p><div className="mt-2 flex flex-wrap gap-2">{(plan.materials || []).map((material) => <span key={`${plan.id}-${material.material_name}`} className="rounded-lg bg-slate-50 px-2 py-1 text-xs text-slate-600"><b>{material.required_quantity} {material.unit}</b> {material.material_name}</span>)}</div></div><div className="flex flex-wrap items-center gap-2"><button onClick={() => onStartJob(plan)} className="rounded-xl border border-violet-200 bg-violet-50 px-4 py-2.5 text-sm font-bold text-violet-700 hover:bg-violet-100">Start production job</button>{plan.purchase_order_no ? <span className="text-sm font-bold text-emerald-700">Fabric PO created</span> : <button onClick={() => onCreatePO(plan)} disabled={!vendors.length} className="rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-bold text-white disabled:opacity-50">Create Fabric PO</button>}</div></article>)}</div>}</section>;
+function DownloadSheetModal({ sheetDownload, onClose }) {
+  const { meta, items } = sheetDownload;
+  const [busy, setBusy] = useState("");
+  const options = [
+    { label: "PDF", hint: "Best for sharing or printing — includes fabric photos", run: () => downloadFabricSheetPdf(meta, items) },
+    { label: "Excel (.xlsx)", hint: "Best for editing rates before sending", run: () => downloadFabricSheetExcel(meta, items) },
+    { label: "CSV", hint: "Best for importing elsewhere", run: () => downloadFabricSheetCsv(meta, items) },
+  ];
+  const runOption = async (option) => {
+    setBusy(option.label);
+    try { await option.run(); } finally { setBusy(""); }
+  };
+  return <Modal title={`Fabric PO ${meta.purchase_order_no || "Draft"} created`} onClose={onClose}>
+    <div className="p-6">
+      <p className="text-sm text-slate-600">Download the sheet in whichever format you need — you can come back and download it again later from Purchase Order.</p>
+      <div className="mt-5 grid gap-3 sm:grid-cols-3">
+        {options.map((option) => (
+          <button key={option.label} type="button" disabled={Boolean(busy)} onClick={() => runOption(option)}
+            className="rounded-2xl border border-slate-200 bg-white p-4 text-left transition hover:border-violet-300 hover:bg-violet-50/40 disabled:opacity-60">
+            <p className="font-black text-slate-900">{busy === option.label ? "Preparing…" : option.label}</p>
+            <p className="mt-1 text-xs text-slate-500">{option.hint}</p>
+          </button>
+        ))}
+      </div>
+      <div className="mt-6 flex justify-end">
+        <button type="button" onClick={onClose} className="rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-bold text-slate-600">Done</button>
+      </div>
+    </div>
+  </Modal>;
+}
+
+function MaterialPlanList({ plans, onCreatePO, onStartJob }) {
+  return <section className="mb-6 overflow-hidden rounded-3xl border border-white bg-white/90 shadow-xl shadow-indigo-100/40 backdrop-blur"><div className="flex flex-col justify-between gap-2 border-b border-indigo-100/80 bg-gradient-to-r from-white via-indigo-50/60 to-cyan-50/70 px-6 py-5 sm:flex-row sm:items-center"><div><p className="text-xs font-bold uppercase tracking-[0.15em] text-violet-600">Before buying fabric</p><h2 className="mt-1 font-black text-slate-900">Style BOM & material plans</h2><p className="mt-1 text-sm text-slate-500">Calculate metres from garment consumption, planned quantity and wastage, then create a normal Fabric PO draft.</p></div><span className="rounded-full bg-violet-50 px-3 py-1.5 text-xs font-bold text-violet-700">{plans.length} plan{plans.length === 1 ? "" : "s"}</span></div>{plans.length === 0 ? <div className="px-6 py-10 text-center text-sm text-slate-400">No material plans yet. Create a Style BOM & fabric plan to calculate your fabric requirement.</div> : <div className="divide-y divide-slate-100">{plans.slice(0, 8).map((plan) => <article key={plan.id} className="flex flex-col gap-4 px-6 py-5 lg:flex-row lg:items-center lg:justify-between"><div><div className="flex flex-wrap items-center gap-2"><p className="font-black text-slate-900">{plan.style_name}</p><span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-bold text-slate-600">{plan.plan_no}</span>{plan.purchase_order_no && <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-bold text-emerald-700">PO {plan.purchase_order_no}</span>}</div><p className="mt-1 text-sm text-slate-500">{plan.planned_quantity} {plan.finished_unit} planned · {plan.wastage_pct}% wastage · {plan.materials?.length || 0} material line(s)</p><div className="mt-2 flex flex-wrap gap-2">{(plan.materials || []).map((material) => <span key={`${plan.id}-${material.material_name}`} className="rounded-lg bg-slate-50 px-2 py-1 text-xs text-slate-600"><b>{material.required_quantity} {material.unit}</b> {material.material_name}</span>)}</div></div><div className="flex flex-wrap items-center gap-2"><button onClick={() => onStartJob(plan)} className="rounded-xl border border-violet-200 bg-violet-50 px-4 py-2.5 text-sm font-bold text-violet-700 hover:bg-violet-100">Start production job</button>{plan.purchase_order_no ? <span className="text-sm font-bold text-emerald-700">Fabric PO created</span> : <button onClick={() => onCreatePO(plan)} className="rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-bold text-white">Create Fabric PO</button>}</div></article>)}</div>}</section>;
 }
 
 function CreateMaterialPlanModal({ form, setForm, onClose, onSubmit, saving }) {
@@ -277,18 +417,176 @@ function CreateFabricPOModal({ plan, vendors, onClose, onSubmit, saving }) {
     rate: material.rate || "",
     remarks: material.specification || material.remarks || "",
   }));
-  const [form, setForm] = useState({ vendor_id: "", order_date: today, expected_delivery_date: "", payment_terms: "", notes: "", items: initialItems });
+  const [form, setForm] = useState({
+    supplier_mode: vendors.length ? "registered" : "walkin",
+    vendor_id: "",
+    walkin_vendor: { name: "", mobile: "", email: "", contact_person: "", gstin: "", address: "" },
+    order_date: today,
+    expected_delivery_date: "",
+    payment_terms: "",
+    notes: "",
+    items: initialItems,
+  });
+  const [storefront, setStorefront] = useState(null);
+  const [storefrontLoading, setStorefrontLoading] = useState(false);
+  const [storefrontError, setStorefrontError] = useState("");
+  const [addedToCart, setAddedToCart] = useState("");
+  const cartLinesRef = useRef(null);
+
+  const supplierMode = form.supplier_mode || "registered";
+  const isWalkin = supplierMode === "walkin";
+  const vendor = vendors.find((item) => item.id === form.vendor_id);
+  const selectedVendorName = isWalkin ? form.walkin_vendor.name : vendor?.name;
+  const total = form.items.reduce((sum, item) => sum + (Number(item.total_quantity || 0) * Number(item.rate || 0)), 0);
+
   const update = (key, value) => setForm((current) => ({ ...current, [key]: value }));
+  const updateWalkin = (key, value) => setForm((current) => ({ ...current, walkin_vendor: { ...current.walkin_vendor, [key]: value } }));
   const changeItem = (index, key, value) => setForm((current) => ({ ...current, items: current.items.map((line, lineIndex) => lineIndex === index ? { ...line, [key]: value } : line) }));
   const addLine = () => setForm((current) => ({ ...current, items: [...current.items, { fabric_name: "", fabric_type: "", gsm: "", width: "", color: "", total_quantity: "", unit: "m", rate: "", remarks: "" }] }));
   const removeLine = (index) => setForm((current) => ({ ...current, items: current.items.filter((_, lineIndex) => lineIndex !== index) }));
-  const vendor = vendors.find((item) => item.id === form.vendor_id);
-  const total = form.items.reduce((sum, item) => sum + (Number(item.total_quantity || 0) * Number(item.rate || 0)), 0);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (isWalkin || !form.vendor_id) { setStorefront(null); setStorefrontError(""); return undefined; }
+    setStorefrontLoading(true);
+    setStorefrontError("");
+    fetch(`${API_BASE_URL}/api/catalogue/vendor/${form.vendor_id}/storefront`, { headers: authHeaders() })
+      .then(async (response) => {
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(body.detail || "Could not load supplier catalogue.");
+        if (!cancelled) setStorefront(body.data || null);
+      })
+      .catch((err) => { if (!cancelled) { setStorefront(null); setStorefrontError(err.message || "Could not load supplier catalogue."); } })
+      .finally(() => { if (!cancelled) setStorefrontLoading(false); });
+    return () => { cancelled = true; };
+  }, [form.vendor_id, isWalkin]);
+
+  const fabricCatalogueItems = (storefront?.items || []).filter((item) => item.catalogue_kind === "fabric_material" || (item.fabric_specs && Object.keys(item.fabric_specs).length));
+  const addCatalogueFabric = (item) => {
+    const specs = item.fabric_specs || {};
+    const nextLine = {
+      fabric_name: item.item_name || "",
+      fabric_type: specs.fabric_type || item.category || "",
+      gsm: specs.gsm || "",
+      width: specs.width || "",
+      color: specs.shade || (item.available_colors || []).join(", "),
+      total_quantity: item.moq || "",
+      unit: String(specs.rate_unit || "m").toLowerCase().includes("kg") ? "kg" : "m",
+      rate: item.price || item.price_range_min || "",
+      remarks: [specs.composition, specs.weave, specs.finish, specs.roll_length, specs.testing_notes].filter(Boolean).join(" | "),
+      image_url: item.images?.[0] || "",
+      catalogue_item_id: item._id || "",
+    };
+    setForm((current) => {
+      const firstBlank = current.items.findIndex((line) => !String(line.fabric_name || "").trim());
+      if (firstBlank >= 0) return { ...current, items: current.items.map((line, index) => index === firstBlank ? nextLine : line) };
+      return { ...current, items: [...current.items, nextLine] };
+    });
+    setAddedToCart(item.item_name || "Fabric");
+    window.setTimeout(() => setAddedToCart(""), 2500);
+    cartLinesRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
   const submit = (event) => {
     event.preventDefault();
-    onSubmit(plan || null, form);
+    const payload = {
+      ...form,
+      vendor_id: isWalkin ? "" : form.vendor_id,
+      vendor_name: selectedVendorName || "",
+      walkin_vendor: isWalkin ? form.walkin_vendor : undefined,
+    };
+    onSubmit(plan || null, payload);
   };
-  return <Modal title={plan ? `Fabric cart PO from ${plan.plan_no}` : "Fabric buying cart"} onClose={onClose}><form onSubmit={submit} className="p-6"><div className="mb-5 rounded-2xl border border-cyan-200 bg-cyan-50 p-4 text-sm leading-6 text-cyan-950"><b>Use this like Quick Order for fabric:</b> choose an approved fabric supplier, add every fabric/trim line with type, GSM, width, total quantity and rate, then RMS creates a normal draft Fabric PO and downloads a sheet for sharing or filing. Existing BOM and job-work flows stay unchanged.</div><div className="grid gap-4 md:grid-cols-3"><Field label="Approved fabric supplier *"><select required value={form.vendor_id} onChange={(e) => update("vendor_id", e.target.value)}><option value="">Select supplier</option>{vendors.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field><Field label="Order date"><input type="date" value={form.order_date} onChange={(e) => update("order_date", e.target.value)} /></Field><Field label="Expected delivery"><input type="date" value={form.expected_delivery_date} onChange={(e) => update("expected_delivery_date", e.target.value)} /></Field></div><div className="mt-6 overflow-x-auto rounded-2xl border border-slate-200"><div className="min-w-[1080px]"><div className="grid grid-cols-[1.2fr_0.8fr_90px_110px_110px_110px_75px_105px_1fr_36px] gap-2 bg-slate-50 px-3 py-3 text-[10px] font-bold uppercase tracking-wide text-slate-500"><span>Fabric / trim</span><span>Fabric type</span><span>GSM</span><span>Width</span><span>Colour</span><span>Total fabric</span><span>Unit</span><span>Rate</span><span>Remarks</span><span /></div>{form.items.map((line, index) => <div key={index} className="grid grid-cols-[1.2fr_0.8fr_90px_110px_110px_110px_75px_105px_1fr_36px] items-center gap-2 border-t border-slate-100 px-3 py-3"><input required value={line.fabric_name} onChange={(e) => changeItem(index, "fabric_name", e.target.value)} placeholder="Cotton viscose" className="rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-violet-400" /><input value={line.fabric_type} onChange={(e) => changeItem(index, "fabric_type", e.target.value)} placeholder="Woven/knit" className="rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-violet-400" /><input value={line.gsm} onChange={(e) => changeItem(index, "gsm", e.target.value)} placeholder="180" className="rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-violet-400" /><input value={line.width} onChange={(e) => changeItem(index, "width", e.target.value)} placeholder="58 inch" className="rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-violet-400" /><input value={line.color} onChange={(e) => changeItem(index, "color", e.target.value)} placeholder="Navy" className="rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-violet-400" /><input required min="0.001" step="any" type="number" value={line.total_quantity} onChange={(e) => changeItem(index, "total_quantity", e.target.value)} placeholder="168" className="rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-violet-400" /><input value={line.unit} onChange={(e) => changeItem(index, "unit", e.target.value)} placeholder="m" className="rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-violet-400" /><input min="0" step="any" type="number" value={line.rate} onChange={(e) => changeItem(index, "rate", e.target.value)} placeholder="Rate" className="rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-violet-400" /><input value={line.remarks} onChange={(e) => changeItem(index, "remarks", e.target.value)} placeholder="Dye lot, shrinkage, shade" className="rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-violet-400" /><button type="button" disabled={form.items.length === 1} onClick={() => removeLine(index)} className="text-lg font-bold text-rose-500 disabled:text-slate-300">x</button></div>)}</div></div><div className="mt-3 flex flex-wrap items-center justify-between gap-3"><button type="button" onClick={addLine} className="rounded-xl border border-violet-200 bg-violet-50 px-4 py-2 text-sm font-bold text-violet-700 hover:bg-violet-100">+ Add fabric line</button><div className="rounded-2xl bg-slate-50 px-4 py-3 text-right"><p className="text-xs font-bold uppercase tracking-wide text-slate-500">Estimated fabric value</p><p className="text-xl font-black text-slate-900">Rs {total.toLocaleString("en-IN", { maximumFractionDigits: 2 })}</p></div></div><div className="mt-5 grid gap-4 md:grid-cols-2"><Field label="Payment terms"><input value={form.payment_terms} onChange={(e) => update("payment_terms", e.target.value)} placeholder="e.g. 30% advance, balance on delivery" /></Field><Field label="PO notes"><input value={form.notes} onChange={(e) => update("notes", e.target.value)} placeholder="Shade approval, test report, delivery instruction" /></Field></div><div className="mt-6 flex flex-wrap justify-end gap-3"><button type="button" onClick={() => downloadFabricPOSheet({ purchase_order_no: "fabric-po-draft", vendor_name: vendor?.name, order_date: form.order_date, sheet: [] }, form.items)} className="rounded-xl border border-cyan-200 bg-cyan-50 px-4 py-2.5 text-sm font-bold text-cyan-700 hover:bg-cyan-100">Download draft sheet</button><button type="button" onClick={onClose} className="rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-bold text-slate-600">Cancel</button><button disabled={saving || !form.vendor_id} className="rounded-xl bg-violet-600 px-5 py-2.5 text-sm font-bold text-white disabled:opacity-60">{saving ? "Creating..." : "Create Fabric PO + sheet"}</button></div></form></Modal>;
+
+  const canCreate = isWalkin ? Boolean(form.walkin_vendor.name.trim()) : Boolean(form.vendor_id);
+
+  return <Modal wide title={plan ? `Fabric cart PO from ${plan.plan_no}` : "Fabric buying cart"} onClose={onClose}>
+    {addedToCart && <div className="pointer-events-none fixed left-1/2 top-6 z-[200] -translate-x-1/2 rounded-full bg-slate-900 px-5 py-2.5 text-sm font-bold text-white shadow-xl">✓ Added "{addedToCart}" to fabric cart — see below</div>}
+    <form onSubmit={submit} className="p-6">
+      <div className="mb-5 rounded-2xl border border-cyan-200 bg-cyan-50 p-4 text-sm leading-6 text-cyan-950">
+        <b>Use this like Quick Order for fabric:</b> choose a registered fabric supplier or enter a walk-in supplier, add fabric/trim lines, then RMS creates a draft Fabric PO and downloadable sheet. Walk-in suppliers get a public PO link they can accept/register from.
+      </div>
+
+      <div className="mb-4 grid gap-3 sm:grid-cols-2">
+        <button type="button" onClick={() => update("supplier_mode", "registered")} className={`rounded-2xl border px-4 py-3 text-left transition ${!isWalkin ? "border-cyan-400 bg-cyan-50 shadow-sm" : "border-slate-200 bg-white hover:bg-slate-50"}`}>
+          <p className="font-black text-slate-900">Registered fabric supplier</p>
+          <p className="mt-1 text-xs font-semibold text-slate-500">Supplier already approved in RMS; catalogue can load below.</p>
+        </button>
+        <button type="button" onClick={() => update("supplier_mode", "walkin")} className={`rounded-2xl border px-4 py-3 text-left transition ${isWalkin ? "border-amber-400 bg-amber-50 shadow-sm" : "border-slate-200 bg-white hover:bg-slate-50"}`}>
+          <p className="font-black text-slate-900">Walk-in / new supplier</p>
+          <p className="mt-1 text-xs font-semibold text-slate-500">Create PO now; share link by WhatsApp/email so supplier can accept/register.</p>
+        </button>
+      </div>
+
+      {!isWalkin ? <div className="grid gap-4 md:grid-cols-3">
+        <Field label="Approved fabric supplier *"><select required={!isWalkin} value={form.vendor_id} onChange={(e) => update("vendor_id", e.target.value)}><option value="">Select supplier</option>{vendors.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
+        <Field label="Order date"><input type="date" value={form.order_date} onChange={(e) => update("order_date", e.target.value)} /></Field>
+        <Field label="Expected delivery"><input type="date" value={form.expected_delivery_date} onChange={(e) => update("expected_delivery_date", e.target.value)} /></Field>
+      </div> : <div className="rounded-3xl border border-amber-100 bg-amber-50/60 p-4">
+        <p className="mb-3 text-xs font-black uppercase tracking-[0.16em] text-amber-700">Walk-in fabric supplier details</p>
+        <div className="grid gap-4 md:grid-cols-3">
+          <Field label="Supplier name *"><input required={isWalkin} value={form.walkin_vendor.name} onChange={(e) => updateWalkin("name", e.target.value)} placeholder="e.g. ABC Fabrics" /></Field>
+          <Field label="WhatsApp / mobile"><input value={form.walkin_vendor.mobile} onChange={(e) => updateWalkin("mobile", e.target.value)} placeholder="9876543210" /></Field>
+          <Field label="Email"><input type="email" value={form.walkin_vendor.email} onChange={(e) => updateWalkin("email", e.target.value)} placeholder="supplier@example.com" /></Field>
+          <Field label="Contact person"><input value={form.walkin_vendor.contact_person} onChange={(e) => updateWalkin("contact_person", e.target.value)} placeholder="Owner / sales person" /></Field>
+          <Field label="GSTIN"><input value={form.walkin_vendor.gstin} onChange={(e) => updateWalkin("gstin", e.target.value)} placeholder="Optional" /></Field>
+          <Field label="Address"><input value={form.walkin_vendor.address} onChange={(e) => updateWalkin("address", e.target.value)} placeholder="Optional" /></Field>
+          <Field label="Order date"><input type="date" value={form.order_date} onChange={(e) => update("order_date", e.target.value)} /></Field>
+          <Field label="Expected delivery"><input type="date" value={form.expected_delivery_date} onChange={(e) => update("expected_delivery_date", e.target.value)} /></Field>
+        </div>
+      </div>}
+
+      {!isWalkin && form.vendor_id && <section className="mt-6 overflow-hidden rounded-[2rem] border border-cyan-100 bg-white shadow-xl shadow-cyan-100/40">
+        <div className="bg-gradient-to-r from-teal-700 via-cyan-700 to-blue-700 px-5 py-5 text-white">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <p className="text-xs font-black uppercase tracking-[0.18em] text-cyan-100">Fabric supplier storefront</p>
+              <h3 className="mt-1 text-2xl font-black">{vendor?.name || "Supplier catalogue"}</h3>
+              <p className="mt-2 max-w-2xl text-sm leading-6 text-cyan-50">Pick fabric like a catalogue: view image/specs, add it to the cart, edit quantity/rate below, then create the Fabric PO.</p>
+            </div>
+            <div className="grid grid-cols-2 gap-2 text-center sm:grid-cols-3">
+              <div className="rounded-2xl bg-white/12 px-4 py-3 backdrop-blur"><p className="text-xl font-black">{fabricCatalogueItems.length}</p><p className="text-[10px] font-bold uppercase tracking-wide text-cyan-100">Fabric SKUs</p></div>
+              <div className="rounded-2xl bg-white/12 px-4 py-3 backdrop-blur"><p className="text-xl font-black">{form.items.filter((line) => String(line.fabric_name || "").trim()).length}</p><p className="text-[10px] font-bold uppercase tracking-wide text-cyan-100">Cart lines</p></div>
+              <div className="rounded-2xl bg-white/12 px-4 py-3 backdrop-blur"><p className="text-xl font-black">Rs {total.toLocaleString("en-IN", { maximumFractionDigits: 0 })}</p><p className="text-[10px] font-bold uppercase tracking-wide text-cyan-100">Est. value</p></div>
+            </div>
+          </div>
+        </div>
+        <div className="p-5">
+          {storefrontLoading ? <div className="rounded-2xl border border-dashed border-cyan-200 bg-cyan-50/70 p-8 text-center text-sm font-semibold text-cyan-700">Loading supplier catalogue...</div> : storefrontError ? <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-xs font-bold text-amber-800">{storefrontError}</div> : fabricCatalogueItems.length ? <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">{fabricCatalogueItems.slice(0, 9).map((item) => { const specs = item.fabric_specs || {}; const rate = Number(item.price || item.price_range_min || 0); const specChips = [specs.fabric_type, specs.gsm ? `${specs.gsm} GSM` : "", specs.width, specs.shade, specs.rate_unit].filter(Boolean); return <article key={item._id} className="group overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm transition hover:-translate-y-0.5 hover:border-cyan-200 hover:shadow-xl hover:shadow-cyan-100/50"><div className="relative aspect-[4/3] bg-slate-100">{item.images?.[0] ? <img src={item.images[0]} alt={item.item_name} className="h-full w-full object-cover transition duration-300 group-hover:scale-[1.03]" /> : <div className="grid h-full place-items-center text-xs font-bold text-slate-400">No fabric image</div>}<span className="absolute left-3 top-3 rounded-full bg-cyan-600 px-2.5 py-1 text-[10px] font-black text-white shadow">Fabric</span>{rate > 0 && <span className="absolute bottom-3 right-3 rounded-2xl bg-white/95 px-3 py-1.5 text-sm font-black text-slate-900 shadow">Rs {rate.toLocaleString("en-IN")}</span>}</div><div className="p-4"><div className="flex items-start justify-between gap-3"><div><h4 className="text-base font-black text-slate-900">{item.item_name}</h4><p className="mt-1 text-xs font-semibold text-slate-500">MOQ {item.moq || "to confirm"}</p></div></div><div className="mt-3 flex flex-wrap gap-1.5">{specChips.length ? specChips.slice(0, 5).map((chip) => <span key={chip} className="rounded-full bg-cyan-50 px-2 py-1 text-[10px] font-bold text-cyan-700">{chip}</span>) : <span className="text-xs text-slate-400">Specs available after supplier update</span>}</div><p className="mt-3 line-clamp-2 min-h-[2.5rem] text-xs leading-5 text-slate-500">{item.description || [specs.composition, specs.weave, specs.finish, specs.testing_notes].filter(Boolean).join(" / ") || "Add this fabric to the PO cart and edit quantity, shade or rate before creating the PO."}</p><button type="button" onClick={() => addCatalogueFabric(item)} className="mt-4 w-full rounded-2xl bg-gradient-to-r from-teal-600 to-cyan-600 px-4 py-3 text-sm font-black text-white shadow-lg shadow-cyan-100 hover:from-teal-700 hover:to-cyan-700">Add to fabric cart</button></div></article>; })}</div> : <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50/80 p-8 text-center"><p className="text-sm font-black text-slate-700">No fabric catalogue from this supplier yet.</p><p className="mt-1 text-xs text-slate-500">Use manual fabric cart lines below, or ask the supplier to add fabric catalogue items from vendor portal.</p></div>}
+        </div>
+      </section>}
+
+      <div ref={cartLinesRef} className="mt-6 space-y-3 scroll-mt-24">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <p className="text-sm font-black text-slate-900">Fabric cart lines</p>
+            <p className="text-xs font-semibold text-slate-500">Add one card per fabric, trim, shade or width. Every value can be edited before PO creation.</p>
+          </div>
+          <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-black text-slate-600">{form.items.length} line{form.items.length === 1 ? "" : "s"}</span>
+        </div>
+        {form.items.map((line, index) => <section key={index} className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <span className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-cyan-50 text-sm font-black text-cyan-700">{index + 1}</span>
+            <button type="button" disabled={form.items.length === 1} onClick={() => removeLine(index)} className="rounded-xl border border-rose-100 bg-rose-50 px-3 py-1.5 text-xs font-black text-rose-600 disabled:border-slate-100 disabled:bg-slate-50 disabled:text-slate-300">Remove</button>
+          </div>
+          <div className="grid gap-3 md:grid-cols-12">
+            <label className="md:col-span-4 text-xs font-black uppercase tracking-wide text-slate-500">Fabric / trim<input required value={line.fabric_name} onChange={(e) => changeItem(index, "fabric_name", e.target.value)} placeholder="Cotton viscose" className="mt-1.5 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm font-semibold normal-case tracking-normal text-slate-800 outline-none focus:border-violet-400" /></label>
+            <label className="md:col-span-3 text-xs font-black uppercase tracking-wide text-slate-500">Fabric type<input value={line.fabric_type} onChange={(e) => changeItem(index, "fabric_type", e.target.value)} placeholder="Woven / knit" className="mt-1.5 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm font-semibold normal-case tracking-normal text-slate-800 outline-none focus:border-violet-400" /></label>
+            <label className="md:col-span-2 text-xs font-black uppercase tracking-wide text-slate-500">GSM<input value={line.gsm} onChange={(e) => changeItem(index, "gsm", e.target.value)} placeholder="180" className="mt-1.5 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm font-semibold normal-case tracking-normal text-slate-800 outline-none focus:border-violet-400" /></label>
+            <label className="md:col-span-3 text-xs font-black uppercase tracking-wide text-slate-500">Width<input value={line.width} onChange={(e) => changeItem(index, "width", e.target.value)} placeholder="58 inch" className="mt-1.5 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm font-semibold normal-case tracking-normal text-slate-800 outline-none focus:border-violet-400" /></label>
+            <label className="md:col-span-3 text-xs font-black uppercase tracking-wide text-slate-500">Colour / shade<input value={line.color} onChange={(e) => changeItem(index, "color", e.target.value)} placeholder="Navy" className="mt-1.5 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm font-semibold normal-case tracking-normal text-slate-800 outline-none focus:border-violet-400" /></label>
+            <label className="md:col-span-3 text-xs font-black uppercase tracking-wide text-slate-500">Total fabric<input required min="0.001" step="any" type="number" value={line.total_quantity} onChange={(e) => changeItem(index, "total_quantity", e.target.value)} placeholder="168" className="mt-1.5 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm font-semibold normal-case tracking-normal text-slate-800 outline-none focus:border-violet-400" /></label>
+            <label className="md:col-span-2 text-xs font-black uppercase tracking-wide text-slate-500">Unit<input value={line.unit} onChange={(e) => changeItem(index, "unit", e.target.value)} placeholder="m" className="mt-1.5 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm font-semibold normal-case tracking-normal text-slate-800 outline-none focus:border-violet-400" /></label>
+            <label className="md:col-span-2 text-xs font-black uppercase tracking-wide text-slate-500">Rate<input min="0" step="any" type="number" value={line.rate} onChange={(e) => changeItem(index, "rate", e.target.value)} placeholder="Rate" className="mt-1.5 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm font-semibold normal-case tracking-normal text-slate-800 outline-none focus:border-violet-400" /></label>
+            <label className="md:col-span-12 text-xs font-black uppercase tracking-wide text-slate-500">Remarks<input value={line.remarks} onChange={(e) => changeItem(index, "remarks", e.target.value)} placeholder="Dye lot, shrinkage, shade, test report or delivery instruction" className="mt-1.5 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm font-semibold normal-case tracking-normal text-slate-800 outline-none focus:border-violet-400" /></label>
+          </div>
+        </section>)}
+      </div>
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-3"><button type="button" onClick={addLine} className="rounded-xl border border-violet-200 bg-violet-50 px-4 py-2 text-sm font-bold text-violet-700 hover:bg-violet-100">+ Add fabric line</button><div className="rounded-2xl bg-slate-50 px-4 py-3 text-right"><p className="text-xs font-bold uppercase tracking-wide text-slate-500">Estimated fabric value</p><p className="text-xl font-black text-slate-900">Rs {total.toLocaleString("en-IN", { maximumFractionDigits: 2 })}</p></div></div>
+      <div className="mt-5 grid gap-4 md:grid-cols-2"><Field label="Payment terms"><input value={form.payment_terms} onChange={(e) => update("payment_terms", e.target.value)} placeholder="e.g. 30% advance, balance on delivery" /></Field><Field label="PO notes"><input value={form.notes} onChange={(e) => update("notes", e.target.value)} placeholder="Shade approval, test report, delivery instruction" /></Field></div>
+      <div className="mt-6 flex flex-wrap justify-end gap-3"><button type="button" onClick={() => downloadFabricSheetCsv({ purchase_order_no: "fabric-po-draft", vendor_name: selectedVendorName, order_date: form.order_date, sheet: [] }, form.items)} className="rounded-xl border border-cyan-200 bg-cyan-50 px-4 py-2.5 text-sm font-bold text-cyan-700 hover:bg-cyan-100">Download draft sheet</button><button type="button" onClick={onClose} className="rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-bold text-slate-600">Cancel</button><button disabled={saving || !canCreate} className="rounded-xl bg-violet-600 px-5 py-2.5 text-sm font-bold text-white disabled:opacity-60">{saving ? "Creating..." : isWalkin ? "Create Walk-in Fabric PO + link" : "Create Fabric PO + sheet"}</button></div>
+    </form>
+  </Modal>;
 }
 
 function CreateOrderModal({ form, setForm, vendors, plans, stock, onClose, onSubmit, saving }) {

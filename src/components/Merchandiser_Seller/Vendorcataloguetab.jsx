@@ -88,7 +88,7 @@ import DocumentConversation from "../DocumentConversation.jsx";
 //           {error && <div className="bg-rose-50 border border-rose-200 text-rose-700 text-xs font-semibold px-3 py-2 rounded-lg">{error}</div>}
 
 //           <div>
-//             <label className="text-xs font-bold text-slate-600 uppercase tracking-wide block mb-1">Item Name *</label>
+//             <label className="text-xs font-bold text-slate-600 uppercase tracking-wide block mb-1">{copy.nameLabel}</label>
 //             <input value={form.item_name} onChange={e => setForm(f => ({ ...f, item_name: e.target.value }))}
 //               className="w-full h-10 px-3 border border-slate-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-indigo-400"
 //               placeholder="e.g. Cotton Kurti — Floral Print" />
@@ -99,13 +99,13 @@ import DocumentConversation from "../DocumentConversation.jsx";
 //               <label className="text-xs font-bold text-slate-600 uppercase tracking-wide block mb-1">Category</label>
 //               <input value={form.category} onChange={e => setForm(f => ({ ...f, category: e.target.value }))}
 //                 className="w-full h-10 px-3 border border-slate-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-indigo-400"
-//                 placeholder="Apparel" />
+//                 placeholder={copy.categoryPlaceholder} />
 //             </div>
 //             <div>
-//               <label className="text-xs font-bold text-slate-600 uppercase tracking-wide block mb-1">MOQ</label>
+//               <label className="text-xs font-bold text-slate-600 uppercase tracking-wide block mb-1">{copy.moqLabel}</label>
 //               <input type="number" min="0" value={form.moq} onChange={e => setForm(f => ({ ...f, moq: e.target.value }))}
 //                 className="w-full h-10 px-3 border border-slate-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-indigo-400"
-//                 placeholder="Minimum order qty" />
+//                 placeholder={copy.moqPlaceholder} />
 //             </div>
 //           </div>
 
@@ -139,7 +139,8 @@ import DocumentConversation from "../DocumentConversation.jsx";
 //           <div>
 //             <label className="text-xs font-bold text-slate-600 uppercase tracking-wide block mb-1">Description</label>
 //             <textarea rows={3} value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
-//               className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-indigo-400 resize-none" />
+//               className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-indigo-400 resize-none"
+//               placeholder={copy.descriptionPlaceholder} />
 //           </div>
 
 //           <div>
@@ -322,7 +323,7 @@ import DocumentConversation from "../DocumentConversation.jsx";
 //           {error && <div className="text-xs font-semibold text-rose-600 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2">⚠ {error}</div>}
 
 //           <div>
-//             <label className="text-xs font-bold text-slate-600 block mb-1">Item name *</label>
+//             <label className="text-xs font-bold text-slate-600 block mb-1">{copy.nameLabel}</label>
 //             <input value={form.item_name} onChange={e => setForm(f => ({ ...f, item_name: e.target.value }))}
 //               className="w-full h-9 px-3 border border-slate-200 rounded-lg text-sm" />
 //           </div>
@@ -838,12 +839,12 @@ const LISTING_ESSENTIALS = [
 function CatalogueKindSummary({ item }) {
   if (item.catalogue_kind === "fabric_material") {
     const specs = item.fabric_specs || {};
-    const details = [specs.fabric_type, specs.composition, specs.gsm ? `${specs.gsm} GSM` : "", specs.width, specs.rate_unit].filter(Boolean).join(" ? ");
+    const details = [specs.fabric_type, specs.composition, specs.gsm ? `${specs.gsm} GSM` : "", specs.width, specs.rate_unit].filter(Boolean).join(" · ");
     return <div className="rounded-lg border border-cyan-100 bg-cyan-50 px-2 py-1.5"><p className="text-[10px] font-black uppercase tracking-wide text-cyan-700">Fabric / raw material</p>{details && <p className="mt-0.5 line-clamp-2 text-[10px] leading-4 text-cyan-900">{details}</p>}</div>;
   }
   if (item.catalogue_kind === "job_work_service") {
     const specs = item.service_specs || {};
-    const details = [specs.service_type, specs.rate_basis, specs.capacity_per_day, specs.lead_time].filter(Boolean).join(" ? ");
+    const details = [specs.service_type, specs.rate_basis, specs.capacity_per_day, specs.lead_time].filter(Boolean).join(" · ");
     return <div className="rounded-lg border border-amber-100 bg-amber-50 px-2 py-1.5"><p className="text-[10px] font-black uppercase tracking-wide text-amber-700">Job-work service</p>{details && <p className="mt-0.5 line-clamp-2 text-[10px] leading-4 text-amber-900">{details}</p>}</div>;
   }
   return null;
@@ -907,6 +908,61 @@ function suggestedCatalogueKind(businessTypes = []) {
   return "finished_goods";
 }
 
+function catalogueFieldCopy(kind) {
+  if (kind === "fabric_material") {
+    return {
+      nameLabel: "Fabric / material name *",
+      namePlaceholder: "e.g. 180 GSM Cotton Poplin - Navy",
+      categoryPlaceholder: "Cotton, denim, lining, trim...",
+      moqLabel: "MOQ / minimum fabric",
+      moqPlaceholder: "e.g. 100 metres / 2 rolls",
+      priceFromLabel: "Rate from",
+      priceToLabel: "Rate to",
+      firmPriceLabel: "Firm rate",
+      stockLabel: "Ready stock",
+      stockPlaceholder: "Metres / rolls you can fulfil",
+      descriptionPlaceholder: "Mention usage, shrinkage, wash care, testing, dye lot or shade notes...",
+      assistantPlaceholder: "Example: 180 GSM cotton poplin, 58 inch width, navy shade, dyed finish, rate per metre, MOQ 100 metres.",
+      helpTitle: "Fabric catalogue mode",
+      helpText: "Use GSM, width, composition, weave, shade and rate unit. Buyers can create a fabric PO without treating it like a finished garment.",
+    };
+  }
+  if (kind === "job_work_service") {
+    return {
+      nameLabel: "Service / operation name *",
+      namePlaceholder: "e.g. Kurti stitching - per piece",
+      categoryPlaceholder: "Cutting, stitching, embroidery...",
+      moqLabel: "Minimum job quantity",
+      moqPlaceholder: "e.g. 100 pcs",
+      priceFromLabel: "Rate from",
+      priceToLabel: "Rate to",
+      firmPriceLabel: "Firm service rate",
+      stockLabel: "Daily capacity",
+      stockPlaceholder: "Pcs/day you can accept",
+      descriptionPlaceholder: "Mention machine setup, accepted materials, trims needed, tolerance and lead time...",
+      assistantPlaceholder: "Example: Stitching job work for cotton kurti, per piece rate, 500 pcs/day capacity, 5 day lead time.",
+      helpTitle: "Job-work service mode",
+      helpText: "Use service rate and capacity details. This is not a finished product listing.",
+    };
+  }
+  return {
+    nameLabel: "Item name *",
+    namePlaceholder: "e.g. Cotton Kurti - Floral Print",
+    categoryPlaceholder: "Apparel",
+    moqLabel: "MOQ",
+    moqPlaceholder: "Minimum order qty",
+    priceFromLabel: "Price from",
+    priceToLabel: "Price to",
+    firmPriceLabel: "Firm price",
+    stockLabel: "Available stock",
+    stockPlaceholder: "Units you can fulfil now",
+    descriptionPlaceholder: "",
+    assistantPlaceholder: "Example: Women's cotton kurti, floral print, sizes S to XL, navy and maroon, sold in packs of 6.",
+    helpTitle: "Finished goods catalogue mode",
+    helpText: "Use sizes, colours and variants for ready products buyers can inquire or purchase.",
+  };
+}
+
 function SpecsPanel({ kind, form, setForm }) {
   const fields = kind === "fabric_material" ? FABRIC_SPEC_FIELDS : kind === "job_work_service" ? SERVICE_SPEC_FIELDS : [];
   if (!fields.length) return null;
@@ -932,11 +988,13 @@ const EMPTY_ITEM_FORM = {
 };
 
 function AddItemModal({ onClose, onAdded, businessTypes = [] }) {
-  const [form, setForm] = useState(EMPTY_ITEM_FORM);
+  const [form, setForm] = useState(() => ({ ...EMPTY_ITEM_FORM, catalogue_kind: suggestedCatalogueKind(businessTypes) }));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
   const [assistantPrompt, setAssistantPrompt] = useState("");
   const [assisting, setAssisting] = useState(false);
+  const copy = catalogueFieldCopy(form.catalogue_kind);
+  const isFinishedGoods = form.catalogue_kind === "finished_goods";
 
   const handleFiles = (e) => {
     const files = Array.from(e.target.files || []);
@@ -954,7 +1012,7 @@ const askCatalogueAssistant = async () => {
       const res = await vendorFetch("/api/catalogue/my-catalogue/assistant", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt: assistantPrompt, item_name: form.item_name, category: form.category, available_sizes: form.available_sizes, available_colors: form.available_colors }),
+        body: JSON.stringify({ prompt: assistantPrompt, item_name: form.item_name, category: form.category, available_sizes: form.available_sizes, available_colors: form.available_colors, catalogue_kind: form.catalogue_kind }),
       });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body.detail || "Catalogue Assistant could not create a draft.");
@@ -1030,15 +1088,15 @@ const askCatalogueAssistant = async () => {
           </div>
           <div className="rounded-xl border border-violet-100 bg-gradient-to-r from-violet-50 to-indigo-50 p-3">
             <div className="flex items-start gap-2"><Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-violet-600" /><div><p className="text-xs font-bold text-violet-950">Catalogue Assistant</p><p className="mt-0.5 text-[10px] leading-4 text-violet-700">Describe the product in your own words. RMS will draft fields for you to review before saving.</p></div></div>
-            <textarea rows={2} value={assistantPrompt} onChange={(event) => setAssistantPrompt(event.target.value)} placeholder="Example: Women's cotton kurti, floral print, sizes S to XL, navy and maroon, sold in packs of 6." className="mt-2 w-full resize-none rounded-lg border border-violet-100 bg-white px-2.5 py-2 text-xs outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100" />
+            <textarea rows={2} value={assistantPrompt} onChange={(event) => setAssistantPrompt(event.target.value)} placeholder={copy.assistantPlaceholder} className="mt-2 w-full resize-none rounded-lg border border-violet-100 bg-white px-2.5 py-2 text-xs outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100" />
             <button type="button" onClick={askCatalogueAssistant} disabled={assisting} className="mt-2 inline-flex items-center gap-1.5 rounded-lg bg-violet-600 px-3 py-2 text-[11px] font-bold text-white hover:bg-violet-700 disabled:opacity-60">{assisting ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}{assisting ? "Creating draft..." : "Create draft"}</button>
           </div>
 
           <div>
-            <label className="text-xs font-bold text-slate-600 uppercase tracking-wide block mb-1">Item Name *</label>
+            <label className="text-xs font-bold text-slate-600 uppercase tracking-wide block mb-1">{copy.nameLabel}</label>
             <input value={form.item_name} onChange={e => setForm(f => ({ ...f, item_name: e.target.value }))}
               className="w-full h-10 px-3 border border-slate-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-indigo-400"
-              placeholder="e.g. Cotton Kurti — Floral Print" />
+              placeholder={copy.namePlaceholder} />
           </div>
 
           <div className="grid grid-cols-2 gap-3">
@@ -1046,24 +1104,24 @@ const askCatalogueAssistant = async () => {
               <label className="text-xs font-bold text-slate-600 uppercase tracking-wide block mb-1">Category</label>
               <input value={form.category} onChange={e => setForm(f => ({ ...f, category: e.target.value }))}
                 className="w-full h-10 px-3 border border-slate-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-indigo-400"
-                placeholder="Apparel" />
+                placeholder={copy.categoryPlaceholder} />
             </div>
             <div>
-              <label className="text-xs font-bold text-slate-600 uppercase tracking-wide block mb-1">MOQ</label>
+              <label className="text-xs font-bold text-slate-600 uppercase tracking-wide block mb-1">{copy.moqLabel}</label>
               <input type="number" min="0" value={form.moq} onChange={e => setForm(f => ({ ...f, moq: e.target.value }))}
                 className="w-full h-10 px-3 border border-slate-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-indigo-400"
-                placeholder="Minimum order qty" />
+                placeholder={copy.moqPlaceholder} />
             </div>
           </div>
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="text-xs font-bold text-slate-600 uppercase tracking-wide block mb-1">Price From (₹)</label>
+              <label className="text-xs font-bold text-slate-600 uppercase tracking-wide block mb-1">{copy.priceFromLabel} (&#8377;)</label>
               <input type="number" min="0" value={form.price_range_min} onChange={e => setForm(f => ({ ...f, price_range_min: e.target.value }))}
                 className="w-full h-10 px-3 border border-slate-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-indigo-400" />
             </div>
             <div>
-              <label className="text-xs font-bold text-slate-600 uppercase tracking-wide block mb-1">Price To (₹)</label>
+              <label className="text-xs font-bold text-slate-600 uppercase tracking-wide block mb-1">{copy.priceToLabel} (&#8377;)</label>
               <input type="number" min="0" value={form.price_range_max} onChange={e => setForm(f => ({ ...f, price_range_max: e.target.value }))}
                 className="w-full h-10 px-3 border border-slate-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-indigo-400" />
             </div>
@@ -1079,16 +1137,16 @@ const askCatalogueAssistant = async () => {
             {form.direct_purchase_enabled && (
               <div className="mt-2.5 grid grid-cols-2 gap-2.5">
                 <div>
-                  <label className="text-xs font-bold text-slate-600 uppercase tracking-wide block mb-1">Firm Price (₹) *</label>
+                  <label className="text-xs font-bold text-slate-600 uppercase tracking-wide block mb-1">{copy.firmPriceLabel} (&#8377;) *</label>
                   <input type="number" min="0" value={form.price} onChange={e => setForm(f => ({ ...f, price: e.target.value }))}
                     className="w-full h-10 px-3 border border-slate-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-emerald-400"
-                    placeholder="Fixed price, no negotiation" />
+                    placeholder={form.catalogue_kind === "fabric_material" ? "Fixed rate per selected unit" : "Fixed price, no negotiation"} />
                 </div>
                 <div>
-                  <label className="text-xs font-bold text-slate-600 uppercase tracking-wide block mb-1">Available Stock *</label>
+                  <label className="text-xs font-bold text-slate-600 uppercase tracking-wide block mb-1">{copy.stockLabel} *</label>
                   <input type="number" min="0" value={form.stock} onChange={e => setForm(f => ({ ...f, stock: e.target.value }))}
                     className="w-full h-10 px-3 border border-slate-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-emerald-400"
-                    placeholder="Units you can fulfil now" />
+                    placeholder={copy.stockPlaceholder} />
                 </div>
               </div>
             )}
@@ -1103,30 +1161,39 @@ const askCatalogueAssistant = async () => {
               <option value="job_work_service">Job-work service / rate card</option>
             </select>
             <p className="mt-1 text-[11px] leading-4 text-slate-500">RMS suggests this from your business type, but you can change it if this listing is different.</p>
+            <div className="mt-2 rounded-lg border border-white/70 bg-white px-3 py-2">
+              <p className="text-[11px] font-black text-slate-900">{copy.helpTitle}</p>
+              <p className="mt-0.5 text-[10px] leading-4 text-slate-500">{copy.helpText}</p>
+            </div>
           </div>
 
           <SpecsPanel kind={form.catalogue_kind} form={form} setForm={setForm} />
 
-          <div>
-            <label className="text-xs font-bold text-slate-600 uppercase tracking-wide block mb-1">Available Sizes</label>
-            <input value={form.available_sizes} onChange={e => setForm(f => ({ ...f, available_sizes: e.target.value }))}
-              className="w-full h-10 px-3 border border-slate-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-indigo-400"
-              placeholder="S, M, L, XL (comma separated)" />
-          </div>
+          {isFinishedGoods && (
+            <>
+              <div>
+                <label className="text-xs font-bold text-slate-600 uppercase tracking-wide block mb-1">Available Sizes</label>
+                <input value={form.available_sizes} onChange={e => setForm(f => ({ ...f, available_sizes: e.target.value }))}
+                  className="w-full h-10 px-3 border border-slate-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-indigo-400"
+                  placeholder="S, M, L, XL (comma separated)" />
+              </div>
 
-          <div>
-            <label className="text-xs font-bold text-slate-600 uppercase tracking-wide block mb-1">Available Colors</label>
-            <input value={form.available_colors} onChange={e => setForm(f => ({ ...f, available_colors: e.target.value }))}
-              className="w-full h-10 px-3 border border-slate-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-indigo-400"
-              placeholder="Red, Navy, Black (comma separated)" />
-          </div>
+              <div>
+                <label className="text-xs font-bold text-slate-600 uppercase tracking-wide block mb-1">Available Colors</label>
+                <input value={form.available_colors} onChange={e => setForm(f => ({ ...f, available_colors: e.target.value }))}
+                  className="w-full h-10 px-3 border border-slate-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-indigo-400"
+                  placeholder="Red, Navy, Black (comma separated)" />
+              </div>
 
-          <VariantMatrix variants={form.variants} onChange={(variants) => setForm((current) => ({ ...current, variants }))} />
+              <VariantMatrix variants={form.variants} onChange={(variants) => setForm((current) => ({ ...current, variants }))} />
+            </>
+          )}
 
           <div>
             <label className="text-xs font-bold text-slate-600 uppercase tracking-wide block mb-1">Description</label>
             <textarea rows={3} value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
-              className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-indigo-400 resize-none" />
+              className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-indigo-400 resize-none"
+              placeholder={copy.descriptionPlaceholder} />
           </div>
 
           <div>
@@ -1273,6 +1340,8 @@ function EditDetailsModal({ item, onClose, onSaved }) {
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
+  const copy = catalogueFieldCopy(form.catalogue_kind);
+  const isFinishedGoods = form.catalogue_kind === "finished_goods";
 
   const handleSave = async () => {
     if (!form.item_name.trim()) { setError("Item name is required."); return; }
@@ -1324,7 +1393,7 @@ function EditDetailsModal({ item, onClose, onSaved }) {
           {error && <div className="text-xs font-semibold text-rose-600 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2">⚠ {error}</div>}
 
           <div>
-            <label className="text-xs font-bold text-slate-600 block mb-1">Item name *</label>
+            <label className="text-xs font-bold text-slate-600 block mb-1">{copy.nameLabel}</label>
             <input value={form.item_name} onChange={e => setForm(f => ({ ...f, item_name: e.target.value }))}
               className="w-full h-9 px-3 border border-slate-200 rounded-lg text-sm" />
           </div>
@@ -1335,12 +1404,12 @@ function EditDetailsModal({ item, onClose, onSaved }) {
           </div>
           <div className="grid grid-cols-2 gap-2">
             <div>
-              <label className="text-xs font-bold text-slate-600 block mb-1">Price from (₹)</label>
+              <label className="text-xs font-bold text-slate-600 block mb-1">{copy.priceFromLabel} (&#8377;)</label>
               <input type="number" value={form.price_range_min} onChange={e => setForm(f => ({ ...f, price_range_min: e.target.value }))}
                 className="w-full h-9 px-3 border border-slate-200 rounded-lg text-sm" />
             </div>
             <div>
-              <label className="text-xs font-bold text-slate-600 block mb-1">Price to (₹)</label>
+              <label className="text-xs font-bold text-slate-600 block mb-1">{copy.priceToLabel} (&#8377;)</label>
               <input type="number" value={form.price_range_max} onChange={e => setForm(f => ({ ...f, price_range_max: e.target.value }))}
                 className="w-full h-9 px-3 border border-slate-200 rounded-lg text-sm" />
             </div>
@@ -1355,20 +1424,38 @@ function EditDetailsModal({ item, onClose, onSaved }) {
             {form.direct_purchase_enabled && (
               <div className="mt-2.5 grid grid-cols-2 gap-2.5">
                 <div>
-                  <label className="text-xs font-bold text-slate-600 uppercase tracking-wide block mb-1">Firm Price (₹) *</label>
+                  <label className="text-xs font-bold text-slate-600 uppercase tracking-wide block mb-1">{copy.firmPriceLabel} (&#8377;) *</label>
                   <input type="number" min="0" value={form.price} onChange={e => setForm(f => ({ ...f, price: e.target.value }))}
                     className="w-full h-9 px-3 border border-slate-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-emerald-400"
-                    placeholder="Fixed price, no negotiation" />
+                    placeholder={form.catalogue_kind === "fabric_material" ? "Fixed rate per selected unit" : "Fixed price, no negotiation"} />
                 </div>
                 <div>
-                  <label className="text-xs font-bold text-slate-600 uppercase tracking-wide block mb-1">Available Stock *</label>
+                  <label className="text-xs font-bold text-slate-600 uppercase tracking-wide block mb-1">{copy.stockLabel} *</label>
                   <input type="number" min="0" value={form.stock} onChange={e => setForm(f => ({ ...f, stock: e.target.value }))}
                     className="w-full h-9 px-3 border border-slate-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-emerald-400"
-                    placeholder="Units you can fulfil now" />
+                    placeholder={copy.stockPlaceholder} />
                 </div>
               </div>
             )}
           </div>
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+            <label className="text-xs font-bold text-slate-600 uppercase tracking-wide block mb-1">Catalogue type</label>
+            <select value={form.catalogue_kind} onChange={e => setForm(f => ({ ...f, catalogue_kind: e.target.value }))}
+              className="w-full h-9 px-3 border border-slate-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-indigo-400 bg-white">
+              <option value="finished_goods">Finished goods / product catalogue</option>
+              <option value="fabric_material">Fabric / raw material catalogue</option>
+              <option value="job_work_service">Job-work service / rate card</option>
+            </select>
+            <div className="mt-2 rounded-lg border border-white/70 bg-white px-3 py-2">
+              <p className="text-[11px] font-black text-slate-900">{copy.helpTitle}</p>
+              <p className="mt-0.5 text-[10px] leading-4 text-slate-500">{copy.helpText}</p>
+            </div>
+          </div>
+
+          <SpecsPanel kind={form.catalogue_kind} form={form} setForm={setForm} />
+
+          {isFinishedGoods && (
+            <>
           <div>
             <label className="text-xs font-bold text-slate-600 block mb-1">Sizes (comma separated)</label>
             <input value={form.available_sizes} onChange={e => setForm(f => ({ ...f, available_sizes: e.target.value }))}
@@ -1380,15 +1467,18 @@ function EditDetailsModal({ item, onClose, onSaved }) {
               placeholder="Red, Navy, Black" className="w-full h-9 px-3 border border-slate-200 rounded-lg text-sm" />
           </div>
           <VariantMatrix variants={form.variants} onChange={(variants) => setForm((current) => ({ ...current, variants }))} />
+            </>
+          )}
           <div>
-            <label className="text-xs font-bold text-slate-600 block mb-1">MOQ</label>
+            <label className="text-xs font-bold text-slate-600 block mb-1">{copy.moqLabel}</label>
             <input type="number" value={form.moq} onChange={e => setForm(f => ({ ...f, moq: e.target.value }))}
               className="w-full h-9 px-3 border border-slate-200 rounded-lg text-sm" />
           </div>
           <div>
             <label className="text-xs font-bold text-slate-600 block mb-1">Description</label>
             <textarea rows={3} value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
-              className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm resize-none" />
+              className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm resize-none"
+              placeholder={copy.descriptionPlaceholder} />
           </div>
         </div>
 
