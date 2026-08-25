@@ -43,10 +43,10 @@ const partners = [
 ];
 
 const steps = [
-  ["01", "Configure the business", "Create the retailer, HQ, stores or branches and core product structure."],
-  ["02", "Assign teams securely", "Give each administrator only the departments, store and permissions they manage."],
-  ["03", "Run daily operations", "Teams work in connected buying, inventory, finance, cashier and planning workflows."],
-  ["04", "Track and improve", "Management reviews live operational data, exceptions and performance from one system."],
+  ["01", "Configure the business", "Create the retailer, HQ, stores or branches and core product structure.", Building2, "from-indigo-500 to-violet-600", "bg-indigo-50 text-indigo-700 ring-indigo-100"],
+  ["02", "Assign teams securely", "Give each administrator only the departments, store and permissions they manage.", ShieldCheck, "from-emerald-500 to-teal-600", "bg-emerald-50 text-emerald-700 ring-emerald-100"],
+  ["03", "Run daily operations", "Teams work in connected buying, inventory, finance, cashier and planning workflows.", Workflow, "from-cyan-500 to-blue-600", "bg-cyan-50 text-cyan-700 ring-cyan-100"],
+  ["04", "Track and improve", "Management reviews live operational data, exceptions and performance from one system.", TrendingUp, "from-amber-400 to-orange-500", "bg-amber-50 text-amber-700 ring-amber-100"],
 ];
 
 const tone = {
@@ -289,17 +289,23 @@ export default function ProfessionalRoleSelector() {
           </div>
         </section>
 
-        <section id="workflow" className="py-20">
-          <div className="mx-auto max-w-7xl px-5 sm:px-8 lg:px-10">
-            <div className="max-w-2xl"><p className="text-xs font-extrabold uppercase tracking-[0.2em] text-emerald-600">Retailer workflow</p><h2 className="mt-4 text-3xl font-black tracking-tight text-slate-950 sm:text-4xl">From setup to daily execution.</h2><p className="mt-4 leading-7 text-slate-600">RMS follows the way a retailer actually operates, while keeping access controlled by tenant, store and department.</p></div>
-            <div className="mt-10 grid gap-4 md:grid-cols-2 xl:grid-cols-4">{steps.map(([number,title,text]) => <div key={number} className="relative rounded-2xl border border-slate-200 bg-white p-6 shadow-sm"><span className="text-3xl font-black text-slate-200">{number}</span><h3 className="mt-5 font-extrabold text-slate-900">{title}</h3><p className="mt-3 text-sm leading-6 text-slate-600">{text}</p></div>)}</div>
+        <section id="workflow" className="relative overflow-hidden py-20">
+          <div className="pointer-events-none absolute inset-x-0 top-8 h-80 bg-[radial-gradient(circle_at_18%_25%,rgba(99,102,241,0.13),transparent_34%),radial-gradient(circle_at_78%_20%,rgba(16,185,129,0.14),transparent_30%),radial-gradient(circle_at_52%_88%,rgba(245,158,11,0.10),transparent_34%)]" />
+          <div className="relative mx-auto max-w-7xl px-5 sm:px-8 lg:px-10">
+            <div className="grid gap-6 lg:grid-cols-[1fr_auto] lg:items-end">
+              <div className="max-w-2xl"><p className="text-xs font-extrabold uppercase tracking-[0.2em] text-emerald-600">Retailer workflow</p><h2 className="mt-4 text-3xl font-black tracking-tight text-slate-950 sm:text-4xl">From setup to daily execution.</h2><p className="mt-4 leading-7 text-slate-600">RMS follows the way a retailer actually operates, while keeping access controlled by tenant, store and department.</p></div>
+              <div className="hidden rounded-3xl border border-white bg-white/80 p-4 shadow-[0_20px_55px_rgba(15,23,42,0.09)] ring-1 ring-slate-200/70 lg:block"><p className="text-xs font-black uppercase tracking-widest text-slate-400">Connected flow</p><p className="mt-1 text-sm font-bold text-slate-700">Setup / access / operations / insights</p></div>
+            </div>
+            <div className="mt-10 grid gap-5 md:grid-cols-2 xl:grid-cols-4">{steps.map(([number,title,text,Icon,accent,soft]) => <div key={number} className="group relative overflow-hidden rounded-3xl border border-white bg-white p-6 shadow-[0_18px_55px_rgba(15,23,42,0.08)] ring-1 ring-slate-200/70 transition duration-300 hover:-translate-y-1 hover:shadow-[0_26px_70px_rgba(15,23,42,0.13)]"><span className={`absolute inset-x-0 top-0 h-1.5 bg-gradient-to-r ${accent}`} /><div className="flex items-start justify-between gap-4"><span className={`grid h-12 w-12 place-items-center rounded-2xl ring-1 ${soft}`}><Icon size={21}/></span><span className="text-4xl font-black text-slate-100 transition group-hover:text-slate-200">{number}</span></div><h3 className="mt-6 font-extrabold text-slate-950">{title}</h3><p className="mt-3 text-sm leading-6 text-slate-600">{text}</p><span className="mt-5 inline-flex items-center gap-1.5 text-xs font-black text-indigo-600">Step {number}<ArrowRight size={13}/></span></div>)}</div>
           </div>
         </section>
 
-        <section id="departments" className="border-y border-slate-200 bg-slate-950 py-20 text-white">
-          <div className="mx-auto max-w-7xl px-5 sm:px-8 lg:px-10">
-            <div className="grid gap-8 lg:grid-cols-[1fr_auto] lg:items-end"><div className="max-w-3xl"><p className="text-xs font-extrabold uppercase tracking-[0.2em] text-cyan-400">Retail capabilities</p><h2 className="mt-4 text-3xl font-black tracking-tight sm:text-4xl">Departments work independently, data works together.</h2><p className="mt-4 leading-7 text-slate-400">These are platform capabilities—not public login options. After authentication, a user sees only the departments assigned by their retailer administrator.</p></div><span className="inline-flex h-fit items-center gap-2 rounded-full border border-emerald-400/20 bg-emerald-400/10 px-3 py-2 text-xs font-bold text-emerald-300"><ShieldCheck size={15}/> Access controlled</span></div>
-            <div className="mt-10 grid gap-4 md:grid-cols-2 xl:grid-cols-4">{capabilities.map(([title,text,Icon,color]) => <div key={title} className="rounded-2xl border border-white/10 bg-white/[0.045] p-5"><span className={`grid h-10 w-10 place-items-center rounded-xl ring-1 ${tone[color]}`}><Icon size={19}/></span><h3 className="mt-4 font-extrabold">{title}</h3><p className="mt-2 text-sm leading-6 text-slate-400">{text}</p></div>)}</div>
+        <section id="departments" className="relative overflow-hidden border-y border-slate-200 bg-slate-950 py-20 text-white">
+          <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_12%_15%,rgba(34,211,238,0.18),transparent_30%),radial-gradient(circle_at_85%_18%,rgba(168,85,247,0.18),transparent_32%),radial-gradient(circle_at_55%_95%,rgba(16,185,129,0.16),transparent_34%)]" />
+          <div className="pointer-events-none absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-cyan-400 via-violet-500 to-emerald-400" />
+          <div className="relative mx-auto max-w-7xl px-5 sm:px-8 lg:px-10">
+            <div className="grid gap-8 lg:grid-cols-[1fr_auto] lg:items-end"><div className="max-w-3xl"><p className="text-xs font-extrabold uppercase tracking-[0.2em] text-cyan-300">Retail capabilities</p><h2 className="mt-4 text-3xl font-black tracking-tight sm:text-4xl">Departments work independently, data works together.</h2><p className="mt-4 leading-7 text-slate-300">These are platform capabilities - not public login options. After authentication, a user sees only the departments assigned by their retailer administrator.</p></div><span className="inline-flex h-fit items-center gap-2 rounded-full border border-emerald-300/30 bg-emerald-300/10 px-4 py-2 text-xs font-bold text-emerald-200 shadow-lg shadow-emerald-950/20"><ShieldCheck size={15}/> Access controlled</span></div>
+            <div className="mt-10 grid gap-5 md:grid-cols-2 xl:grid-cols-4">{capabilities.map(([title,text,Icon,color], index) => <div key={title} className="group relative overflow-hidden rounded-3xl border border-white/10 bg-white/[0.07] p-5 shadow-[0_20px_70px_rgba(0,0,0,0.18)] backdrop-blur transition duration-300 hover:-translate-y-1 hover:bg-white/[0.11]"><span className={`absolute inset-x-0 top-0 h-1 bg-gradient-to-r ${index % 4 === 0 ? "from-indigo-400 to-violet-400" : index % 4 === 1 ? "from-violet-400 to-fuchsia-400" : index % 4 === 2 ? "from-emerald-400 to-teal-400" : "from-amber-300 to-orange-400"}`} /><span className={`grid h-12 w-12 place-items-center rounded-2xl bg-white text-slate-900 ring-1 ${tone[color]}`}><Icon size={20}/></span><h3 className="mt-5 font-extrabold text-white">{title}</h3><p className="mt-2 text-sm leading-6 text-slate-300">{text}</p><div className="mt-5 flex items-center justify-between border-t border-white/10 pt-4"><span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Module {String(index + 1).padStart(2, "0")}</span><span className="grid h-7 w-7 place-items-center rounded-full bg-white/10 text-cyan-200 transition group-hover:translate-x-1"><ArrowRight size={13}/></span></div></div>)}</div>
           </div>
         </section>
 
