@@ -69,6 +69,22 @@ function buildFabricSheetRows(sheet, fallbackItems = []) {
   return source.map((row) => [row.sl_no, row.fabric_material, row.fabric_type, row.gsm, row.width, row.color, row.quantity, row.unit, row.rate, row.amount, row.remarks, row.image_url || ""]);
 }
 
+function fabricSheetTotalAmount(rows) {
+  return rows.reduce((sum, row) => sum + Number(row[9] || 0), 0);
+}
+
+function fabricSheetTotalRow(rows) {
+  return ["", "", "", "", "", "", "", "", "TOTAL", fabricSheetTotalAmount(rows).toFixed(2), "", ""];
+}
+
+function pdfFabricSheetFootRow(rows) {
+  return [[
+    { content: "TOTAL", colSpan: 9, styles: { halign: "right", fontStyle: "bold" } },
+    { content: fabricSheetTotalAmount(rows).toFixed(2), styles: { halign: "right", fontStyle: "bold" } },
+    { content: "", colSpan: 2 },
+  ]];
+}
+
 function fabricSheetFileBase(purchase_order_no) {
   return purchase_order_no ? `${purchase_order_no}-fabric-po-sheet` : "fabric-po-draft-sheet";
 }
@@ -83,6 +99,7 @@ function downloadFabricSheetCsv({ purchase_order_no, vendor_name, order_date, sh
     [],
     FABRIC_SHEET_HEADERS,
     ...rows,
+    fabricSheetTotalRow(rows),
   ];
   const csv = lines.map((line) => line.map(csvValue).join(",")).join("\n");
   const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
@@ -106,6 +123,7 @@ function downloadFabricSheetExcel({ purchase_order_no, vendor_name, order_date, 
     [],
     FABRIC_SHEET_HEADERS,
     ...rows,
+    fabricSheetTotalRow(rows),
   ];
   const ws = XLSX.utils.aoa_to_sheet(aoa);
   ws["!cols"] = [
@@ -160,9 +178,11 @@ async function downloadFabricSheetPdf({ purchase_order_no, vendor_name, order_da
   autoTable(doc, {
     head: [headers],
     body: tableRows,
+    foot: pdfFabricSheetFootRow(rows),
     startY: 74,
     styles: { font: "helvetica", fontSize: 8.5, cellPadding: 5, overflow: "linebreak", minCellHeight: 44, valign: "middle" },
     headStyles: { fillColor: [226, 232, 240], textColor: [15, 23, 42] },
+    footStyles: { fillColor: [241, 245, 249], textColor: [15, 23, 42], fontStyle: "bold" },
     alternateRowStyles: { fillColor: [248, 250, 252] },
     columnStyles: PDF_COLUMN_WIDTHS.reduce((acc, width, index) => {
       acc[index] = { cellWidth: width, ...(index === 0 || index === 8 || index === 9 ? { halign: "right" } : {}) };
