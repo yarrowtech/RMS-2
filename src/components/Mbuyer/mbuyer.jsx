@@ -268,6 +268,7 @@ import CheckList from "./CheckList";
 import Reports from "./Reports";
 import Settings from "./Settings";
 import QuickOrderFromCatalogue from "./Quickorderfromcatalogue.jsx";
+import FabricPurchasing from "./FabricPurchasing.jsx";
 import PurchaseInvoice from "../PurchaseInvoice.jsx";
 import RetailerWhatsAppConnect from "./Retailerwhatsappconnect.jsx";
 import Mbuyer1GRUpdateReturn from "./Mbuyer1grupdatereturn.jsx";
@@ -301,6 +302,7 @@ function labelFromKey(key) {
     case "next-plan":          return "Next Plan";
     case "debit-note":         return "Debit Note";
     case "quick-order":         return "Quick Order";
+    case "fabric-purchasing":   return "Fabric Purchasing";
     case "purchase-plan":      return "Purchase Plan";
     case "purchase-invoice":    return "Purchase Invoice";
     case "order-details":       return "Order Details";
@@ -415,6 +417,7 @@ export default function Mbuyer() {
       case "next-plan":         return <Mbuyer1NextPlan onNavigate={setActive} />;
       case "debit-note":        return <Mbuyer1DebitNote />;
       case "quick-order":        return <QuickOrderFromCatalogue />;
+      case "fabric-purchasing":  return <FabricPurchasing onNavigate={setActive} />;
       case "purchase-plan":     return <PurchasePlan onNavigate={setActive} />;
       case "purchase-invoice":   return <PurchaseInvoice />;
       case "task-list":          return <TaskList />;

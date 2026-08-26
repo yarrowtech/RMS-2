@@ -95,6 +95,40 @@ function flattenVendorProducts(products) {
   return items;
 }
 
+/* ─────────── flattenFabricCatalogue ───────────
+   Vendor's own Fabric Supply catalogue (added under "Fabric Supply
+   Operations" → catalogue_kind fabric_material, stored separately from the
+   generic finished-goods /api/products/ collection). Fabric POs
+   (orderType "Fabric / Raw Material") are only ever raised against
+   fabric_supplier-type vendors, so only fabric_material items belong here
+   — job_work_service items are a different business type (stitching/
+   cutting partners) with their own separate order flow, and must NOT be
+   mixed in just because one vendor account happens to hold both kinds of
+   catalogue entries. */
+function flattenFabricCatalogue(items) {
+  return (items || [])
+    .filter(it => it.catalogue_kind === "fabric_material")
+    .map(it => {
+      const specs = it.fabric_specs || {};
+      const specParts = [specs.fabric_type, specs.composition, specs.gsm ? `${specs.gsm} GSM` : "", specs.width ? `Width ${specs.width}` : "", specs.shade];
+      const sublabel = [...specParts.filter(Boolean), `Stock: ${it.stock ?? 0}`].join(" · ");
+
+      return {
+        sku:         `fab_${it._id}`,
+        barcode:     "",
+        description: it.item_name,
+        rate:        it.price || 0,
+        color:       "",
+        size_label:  "",
+        size_value:  "",
+        stock:       it.stock ?? 0,
+        label:       it.item_name,
+        sublabel,
+        isFabricCatalogueItem: true,
+      };
+    });
+}
+
 /* ─────────── DescriptionCell ─────────── */
 function DescriptionCell({ text }) {
   if (!text) return <span style={{ fontSize: 12, color: T.muted, fontStyle: "italic" }}>—</span>;
@@ -954,6 +988,8 @@ function POCard({
                                     </span>
                                     <div style={{ fontSize: 10, color: T.emerald, marginTop: 2 }}>✓ Barcode assigned</div>
                                   </div>
+                                ) : selectedProduct?.isFabricCatalogueItem ? (
+                                  <span style={{ fontSize: 11, color: T.emerald, fontStyle: "italic" }}>✓ Fabric catalogue item</span>
                                 ) : (
                                   <span style={{ fontSize: 11, color: T.amber, fontStyle: "italic" }}>⚠ Select product →</span>
                                 )}
@@ -1058,6 +1094,7 @@ function POCard({
 export default function VendorPurchaseOrders({ vendorName }) {
   const [orders,     setOrders]     = useState([]);
   const [flatItems,  setFlatItems]  = useState([]);
+  const [fabricFlatItems, setFabricFlatItems] = useState([]);
   const [loading,    setLoading]    = useState(false);
   const [expanded,   setExpanded]   = useState(null);
   const [itemsDraft, setItemsDraft] = useState({});
@@ -1094,6 +1131,18 @@ export default function VendorPurchaseOrders({ vendorName }) {
         } catch (e) {
           console.error("[VendorPO] Failed to load products:", e);
           setFlatItems([]);
+        }
+
+        try {
+          const catRes = await axios.get(
+            `${APP_API_URL}/api/catalogue/my-catalogue`,
+            { headers: { Authorization: `Bearer ${token}` } }
+          );
+          const rawCat = catRes.data?.data || [];
+          setFabricFlatItems(flattenFabricCatalogue(Array.isArray(rawCat) ? rawCat : []));
+        } catch (e) {
+          console.error("[VendorPO] Failed to load fabric catalogue:", e);
+          setFabricFlatItems([]);
         }
       } catch (err) {
         console.error("Failed to load purchase orders:", err);
@@ -1132,6 +1181,7 @@ export default function VendorPurchaseOrders({ vendorName }) {
       console.error("[VendorPO] Failed to refresh products:", e);
     }
   };
+
 
   const downloadPurchaseOrder = async (poId, format) => {
     const token = getToken();
@@ -1209,7 +1259,7 @@ export default function VendorPurchaseOrders({ vendorName }) {
       if (!sku) {
         updated[index] = { ...updated[index], product_sku: "", barcode: "" };
       } else {
-        const item = flatItems.find(f => (f.sku || "").trim() === sku.trim());
+        const item = [...flatItems, ...fabricFlatItems].find(f => (f.sku || "").trim() === sku.trim());
         updated[index] = {
           ...updated[index],
           product_sku: sku,
@@ -1473,7 +1523,7 @@ export default function VendorPurchaseOrders({ vendorName }) {
                   <POCard
                     key={poKey}
                     po={{ ...po, _id: poKey }}
-                    flatItems={flatItems}
+                    flatItems={po.orderType === "Fabric / Raw Material" ? fabricFlatItems : flatItems}
                     expanded={expanded === poKey}
                     onToggle={() => toggleExpand(poKey)}
                     itemsDraft={itemsDraft}

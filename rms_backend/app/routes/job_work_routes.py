@@ -72,6 +72,25 @@ async def _require_job_work(ctx: dict = Depends(get_hq_tenant)) -> dict:
     return ctx
 
 
+async def _require_job_work_or_buyer(ctx: dict = Depends(get_hq_tenant)) -> dict:
+    """Same as _require_job_work, but also lets a Merchandiser Buyer through —
+    used only for the fabric-supplier list and manual fabric PO creation, so
+    a buyer can raise a Fabric PO directly without needing the rest of the
+    Production & Job Work workflow (material stock, job orders, receipts)."""
+    permissions = set(ctx.get("_permissions") or [])
+    departments = set(ctx.get("_managed_departments") or [])
+    allowed = (
+        "job_work" in permissions or "Production & Job Work" in departments
+        or "mbuyer" in permissions or "Merchandiser Buyer" in departments
+    )
+    if not allowed:
+        raise HTTPException(
+            status_code=403,
+            detail="Production & Job Work or Merchandiser Buyer permission is required.",
+        )
+    return ctx
+
+
 async def _get_order(order_id: str, tenant_id: str) -> dict:
     if not ObjectId.is_valid(order_id):
         raise HTTPException(status_code=400, detail="Invalid job work order ID.")
@@ -177,7 +196,7 @@ async def material_stock(ctx: dict = Depends(_require_job_work)):
 @router.get("/vendors")
 async def approved_job_work_vendors(
     kind: str = Query("job_worker", description="job_worker (stitching/cutting partners) or fabric_supplier (fabric/raw-material vendors) — two distinct business types, never conflated."),
-    ctx: dict = Depends(_require_job_work),
+    ctx: dict = Depends(_require_job_work_or_buyer),
 ):
     """Approved RMS vendors available for this module — job-work partners by
     default, or fabric/raw-material suppliers when kind=fabric_supplier.
@@ -309,7 +328,12 @@ async def _create_fabric_po_document(ctx: dict, payload: dict, plan: dict | None
         "vendor_id": ObjectId(vendor_id) if vendor_id else None,
         "vendor_type": vendor_type,
         "walkin_vendor": walkin_vendor if vendor_type == "walkin" else None,
-        "status": "Draft",
+        # Matches the regular PO flow's default (PurchaseOrderModel.status =
+        # "Pending") — this used to be hard-coded to "Draft" with no code
+        # path anywhere that ever advanced it, so the buyer's "Send to
+        # Vendor" button (gated on status == "Pending") could never fire
+        # while the vendor could already see the full PO regardless.
+        "status": "Pending",
         "orderType": "Fabric / Raw Material",
         "purchaseType": "Fabric / Raw Material",
         "ownerSite": owner_name,
@@ -353,7 +377,7 @@ async def _create_fabric_po_document(ctx: dict, payload: dict, plan: dict | None
             {"$set": {"purchase_order_id": str(po["_id"]), "purchase_order_no": po["orderNo"], "updated_at": now}},
         )
     return {
-        "message": f"Fabric PO {po['orderNo']} created as Draft. Download the sheet here, then review it in Purchase Order before sending.",
+        "message": f"Fabric PO {po['orderNo']} created. Download the sheet here, then go to Purchase Order to send it to the vendor.",
         "purchase_order_id": str(po["_id"]),
         "purchase_order_no": po["orderNo"],
         "sheet": sheet_rows,
@@ -445,8 +469,9 @@ async def create_fabric_purchase_order(plan_id: str, payload: dict, ctx: dict = 
 
 
 @router.post("/fabric-purchase-orders", status_code=201)
-async def create_manual_fabric_purchase_order(payload: dict, ctx: dict = Depends(_require_job_work)):
-    """Create a draft Fabric PO from the new fabric cart without touching job-work orders."""
+async def create_manual_fabric_purchase_order(payload: dict, ctx: dict = Depends(_require_job_work_or_buyer)):
+    """Create a Fabric PO from the fabric cart without touching job-work orders — reachable from both
+    Production & Job Work and the Merchandiser Buyer's own Fabric Purchasing tab."""
     return await _create_fabric_po_document(ctx, payload, plan=None)
 
 

@@ -5,6 +5,7 @@ import React, { useMemo, useState, useEffect, useRef, useCallback } from "react"
 import { createPortal } from "react-dom";
 import VendorCatalogueBrowserModal from "./Vendorcataloguebrowsermodal.jsx";
 import VendorCompareSearch from "./Vendorcomparesearch.jsx";
+import { downloadFabricSheetCsv, downloadFabricSheetExcel, downloadFabricSheetPdf } from "../../utils/fabricSheetExport.js";
 
 const API_BASE = `${APP_API_URL}/purchaseorders`;
 
@@ -153,7 +154,7 @@ function SharePOModal({ po, onClose }) {
 
   const wv = po.walkin_vendor || {};
 
-  return (
+  return createPortal(
     <div className="fixed inset-0 z-[99999] bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
       <div className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white shadow-2xl overflow-hidden">
         <div className="px-5 py-4" style={{ background: "linear-gradient(135deg,#059669,#047857)" }}>
@@ -232,7 +233,48 @@ function SharePOModal({ po, onClose }) {
           )}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
+  );
+}
+
+function DownloadFabricSheetModal({ po, onClose }) {
+  const [busy, setBusy] = useState("");
+  const meta = { purchase_order_no: po.orderNo, vendor_name: po.vendorName, order_date: po.orderDate, sheet: po.fabric_po_sheet || [] };
+  const options = [
+    { label: "PDF", hint: "Best for sharing or printing — includes fabric photos", run: () => downloadFabricSheetPdf(meta) },
+    { label: "Excel (.xlsx)", hint: "Best for editing rates before sending", run: () => downloadFabricSheetExcel(meta) },
+    { label: "CSV", hint: "Best for importing elsewhere", run: () => downloadFabricSheetCsv(meta) },
+  ];
+  const runOption = async (option) => {
+    setBusy(option.label);
+    try { await option.run(); } finally { setBusy(""); }
+  };
+  return createPortal(
+    <div className="fixed inset-0 z-[99999] bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
+      <div className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white shadow-2xl overflow-hidden">
+        <div className="px-5 py-4" style={{ background: "linear-gradient(135deg,#0891b2,#0e7490)" }}>
+          <div className="flex items-start justify-between">
+            <div>
+              <p className="text-[10px] font-bold text-cyan-200 uppercase tracking-widest mb-1">Download Fabric PO Sheet</p>
+              <p className="text-xl font-black text-white">{po.orderNo}</p>
+              <p className="text-xs text-cyan-100 mt-1">{po.vendorName} · {po.orderDate}</p>
+            </div>
+            <button onClick={onClose} className="h-8 w-8 rounded-lg flex items-center justify-center text-white hover:bg-white/20 transition text-xl font-bold">×</button>
+          </div>
+        </div>
+        <div className="p-5 space-y-3">
+          {options.map((option) => (
+            <button key={option.label} type="button" disabled={Boolean(busy)} onClick={() => runOption(option)}
+              className="w-full rounded-xl border border-slate-200 bg-white p-4 text-left transition hover:border-cyan-300 hover:bg-cyan-50/40 disabled:opacity-60">
+              <p className="font-black text-slate-900">{busy === option.label ? "Preparing…" : option.label}</p>
+              <p className="mt-1 text-xs text-slate-500">{option.hint}</p>
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>,
+    document.body
   );
 }
 
@@ -248,6 +290,7 @@ export default function PurchaseOrderManager() {
   const [loading,      setLoading]      = useState(false);
   const [reviewOrder,  setReviewOrder]  = useState(null);
   const [shareOrder,   setShareOrder]   = useState(null);
+  const [downloadOrder, setDownloadOrder] = useState(null);
 
   useEffect(() => { fetchOrders(); }, []);
 
@@ -483,6 +526,9 @@ export default function PurchaseOrderManager() {
                       <div className="flex flex-wrap justify-end gap-1.5">
                         <ActionBtn color="sky" onClick={() => openEdit(o)}>Edit</ActionBtn>
                         <ActionBtn color="rose" onClick={() => openDelete(o)}>Delete</ActionBtn>
+                        {o.orderType === "Fabric / Raw Material" && (
+                          <ActionBtn color="sky" onClick={() => setDownloadOrder(o)}>Download</ActionBtn>
+                        )}
 
                         {o.vendor_type !== "walkin" && (
                           <ActionBtn color="emerald" disabled={o.status !== "Pending"} onClick={() => sendToVendor(o)}>
@@ -540,6 +586,9 @@ export default function PurchaseOrderManager() {
       {shareOrder && (
         <SharePOModal po={shareOrder} onClose={() => setShareOrder(null)} />
       )}
+      {downloadOrder && (
+        <DownloadFabricSheetModal po={downloadOrder} onClose={() => setDownloadOrder(null)} />
+      )}
     </div>
   );
 }
@@ -594,7 +643,7 @@ function ReviewModal({ order, onClose, onApprove, onReject }) {
     onReject(rejectReason.trim());
   };
 
-  return (
+  return createPortal(
     <div className="fixed inset-0 z-[99999] bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
       <div className="w-full max-w-5xl rounded-2xl border border-slate-200 bg-white shadow-2xl overflow-hidden flex flex-col max-h-[92vh]">
 
@@ -795,7 +844,8 @@ function ReviewModal({ order, onClose, onApprove, onReject }) {
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 
@@ -1708,7 +1758,7 @@ function ModalShell({ children, onClose }) {
    CONFIRM DELETE MODAL — unchanged
 ================================================================ */
 function ConfirmDeleteModal({ title, message, onClose, onConfirm }) {
-  return (
+  return createPortal(
     <div className="fixed inset-0 z-[99999] bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
       <div className="w-full max-w-md rounded-xl border border-slate-200 bg-white shadow-xl overflow-hidden">
         <div className="px-4 py-3 border-b border-slate-200 flex items-center justify-between">
@@ -1740,7 +1790,8 @@ function ConfirmDeleteModal({ title, message, onClose, onConfirm }) {
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 
@@ -1748,7 +1799,7 @@ function ConfirmDeleteModal({ title, message, onClose, onConfirm }) {
    CHARGES MODAL — unchanged
 ================================================================ */
 function ChargesModal({ charges, setCharges, totals, onClose }) {
-  return (
+  return createPortal(
     <div className="fixed inset-0 z-[99999] bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
       <div className="w-full max-w-xl rounded-xl border border-slate-200 bg-white shadow-xl overflow-hidden">
         <div className="px-4 py-3 border-b border-slate-200 flex items-center justify-between">
@@ -1790,7 +1841,8 @@ function ChargesModal({ charges, setCharges, totals, onClose }) {
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 
@@ -1798,7 +1850,7 @@ function ChargesModal({ charges, setCharges, totals, onClose }) {
    RECEIVE SCHEDULE MODAL — unchanged
 ================================================================ */
 function ReceiveScheduleModal({ totalQty, rows, onChangeRow, onAdd, onRemove, onClose, onOk, sumQty }) {
-  return (
+  return createPortal(
     <div className="fixed inset-0 z-[99999] bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
       <div className="w-full max-w-3xl rounded-xl border border-slate-200 bg-white shadow-xl overflow-hidden">
         <div className="px-4 py-3 border-b border-slate-200 flex items-center justify-between">
@@ -1863,7 +1915,8 @@ function ReceiveScheduleModal({ totalQty, rows, onChangeRow, onAdd, onRemove, on
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 
