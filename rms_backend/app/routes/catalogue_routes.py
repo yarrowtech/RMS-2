@@ -48,6 +48,7 @@ from typing import Optional, List, Dict
 from bson import ObjectId
 from io import BytesIO
 import re
+import statistics
 import uuid
 import json
 import os
@@ -1114,6 +1115,237 @@ async def get_vendor_catalogue(vendor_id: str, ctx: dict = Depends(get_hq_tenant
         items.append(_serialize_item(item))
 
     return {"status": "success", "count": len(items), "data": items}
+
+
+def _parse_leading_number(value) -> Optional[float]:
+    """Pulls the first numeric token out of a free-text spec field like
+    '180' or '180 gsm' or '180-200'. fabric_specs.gsm is stored as
+    whatever string the vendor typed, not a validated number."""
+    match = re.search(r"\d+(\.\d+)?", str(value or ""))
+    return float(match.group()) if match else None
+
+
+FABRIC_GSM_BAND_WIDTH = 50
+FABRIC_BENCHMARK_MIN_SAMPLE = 3
+
+# Indian state/UT canonical names + common aliases/abbreviations. Vendor and
+# tenant "state" fields are free text with no dropdown/validation anywhere
+# in the codebase (registration, self-edit and superadmin edit all accept
+# whatever string is typed) — this map normalizes at READ time only, so a
+# regional benchmark can still group "MH" / "Maharashtra" / "maharashtra"
+# together without needing a data migration or a schema change.
+_INDIAN_STATE_ALIASES = {
+    "andhra pradesh": ["ap", "andhra"],
+    "arunachal pradesh": ["ar"],
+    "assam": ["as"],
+    "bihar": ["br"],
+    "chhattisgarh": ["cg", "chattisgarh"],
+    "goa": ["ga"],
+    "gujarat": ["gj"],
+    "haryana": ["hr"],
+    "himachal pradesh": ["hp"],
+    "jharkhand": ["jh"],
+    "karnataka": ["ka"],
+    "kerala": ["kl"],
+    "madhya pradesh": ["mp"],
+    "maharashtra": ["mh"],
+    "manipur": ["mn"],
+    "meghalaya": ["ml"],
+    "mizoram": ["mz"],
+    "nagaland": ["nl"],
+    "odisha": ["or", "orissa"],
+    "punjab": ["pb"],
+    "rajasthan": ["rj"],
+    "sikkim": ["sk"],
+    "tamil nadu": ["tn", "tamilnadu"],
+    "telangana": ["tg", "ts"],
+    "tripura": ["tr"],
+    "uttar pradesh": ["up"],
+    "uttarakhand": ["uk", "uttaranchal"],
+    "west bengal": ["wb"],
+    "delhi": ["dl", "new delhi", "ncr"],
+    "jammu and kashmir": ["jk", "j&k", "jammu & kashmir"],
+    "ladakh": ["la"],
+    "chandigarh": ["ch"],
+    "puducherry": ["py", "pondicherry"],
+    "andaman and nicobar islands": ["an"],
+    "dadra and nagar haveli and daman and diu": ["dn", "dd"],
+    "lakshadweep": ["ld"],
+}
+_STATE_ALIAS_TO_CANONICAL: Dict[str, str] = {}
+for _canonical, _aliases in _INDIAN_STATE_ALIASES.items():
+    _STATE_ALIAS_TO_CANONICAL[_canonical] = _canonical
+    for _alias in _aliases:
+        _STATE_ALIAS_TO_CANONICAL[_alias] = _canonical
+
+
+def _normalize_state(raw) -> str:
+    cleaned = str(raw or "").strip().lower()
+    if not cleaned:
+        return ""
+    # Falls back to the cleaned free text itself when unrecognized — still
+    # groups repeated identical spellings together, just without an alias.
+    return _STATE_ALIAS_TO_CANONICAL.get(cleaned, cleaned)
+
+
+def _gsm_band_label(gsm: float) -> str:
+    lower = int(gsm // FABRIC_GSM_BAND_WIDTH) * FABRIC_GSM_BAND_WIDTH
+    return f"{lower}-{lower + FABRIC_GSM_BAND_WIDTH}"
+
+
+def _rate_stats(rates: List[float]) -> dict:
+    return {
+        "sample_size":  len(rates),
+        "avg_rate":     round(sum(rates) / len(rates), 2),
+        "median_rate":  round(statistics.median(rates), 2),
+        "min_rate":     round(min(rates), 2),
+        "max_rate":     round(max(rates), 2),
+    }
+
+
+@router.get("/fabric-rate-benchmarks")
+async def get_fabric_rate_benchmarks(ctx: dict = Depends(get_hq_tenant)):
+    """
+    Marketplace-wide fabric rate benchmark, grouped by (fabric_type, GSM
+    band) across every vendor's active fabric_material catalogue items —
+    deliberately NOT scoped to this tenant's own approved vendors, since a
+    useful "is this rate fair" signal needs the widest sample available,
+    not just the handful of suppliers one retailer happens to work with.
+
+    Also attaches a "regional" figure per group — the same stats computed
+    ONLY from vendors in the buyer's own tenant state — whenever that
+    narrower slice still clears FABRIC_BENCHMARK_MIN_SAMPLE. Never REPLACES
+    the marketplace figure with the regional one: with few vendors on the
+    platform today, most groups won't have enough same-state listings yet,
+    so this degrades gracefully back to marketplace-only rather than going
+    silent. State matching is normalized (see _normalize_state) since
+    vendor/tenant "state" fields are free text with no dropdown anywhere.
+
+    Purely advisory: lets a buyer see roughly what similar fabric goes for
+    elsewhere before committing to a PO at a vendor's quoted rate. Groups
+    with fewer than FABRIC_BENCHMARK_MIN_SAMPLE items are dropped — too
+    thin a sample to call it an "average" of anything.
+    """
+    tenant = await tenants_collection.find_one({"tenant_id": ctx["tenant_id"]}, {"state": 1})
+    buyer_state = _normalize_state((tenant or {}).get("state"))
+
+    items = []
+    async for item in vendor_catalogue_collection.find(
+        {"catalogue_kind": "fabric_material", "active": True, "price": {"$gt": 0}},
+        {"vendor_id": 1, "fabric_specs": 1, "price": 1},
+    ):
+        items.append(item)
+
+    vendor_states: Dict[ObjectId, str] = {}
+    if buyer_state:
+        vendor_ids = {item["vendor_id"] for item in items}
+        async for vendor in vendors_collection.find({"_id": {"$in": list(vendor_ids)}}, {"state": 1}):
+            vendor_states[vendor["_id"]] = _normalize_state(vendor.get("state"))
+
+    groups: Dict[tuple, List[float]] = {}
+    state_groups: Dict[tuple, List[float]] = {}
+    for item in items:
+        specs = item.get("fabric_specs") or {}
+        fabric_type = str(specs.get("fabric_type") or "").strip().lower()
+        gsm = _parse_leading_number(specs.get("gsm"))
+        if not fabric_type or gsm is None:
+            continue
+        key = (fabric_type, _gsm_band_label(gsm))
+        groups.setdefault(key, []).append(float(item["price"]))
+        if buyer_state and vendor_states.get(item["vendor_id"]) == buyer_state:
+            state_groups.setdefault(key, []).append(float(item["price"]))
+
+    benchmarks = []
+    for key, rates in groups.items():
+        if len(rates) < FABRIC_BENCHMARK_MIN_SAMPLE:
+            continue
+        fabric_type, gsm_band = key
+        row = {"fabric_type": fabric_type, "gsm_band": gsm_band, **_rate_stats(rates)}
+        state_rates = state_groups.get(key) or []
+        if len(state_rates) >= FABRIC_BENCHMARK_MIN_SAMPLE:
+            row["regional"] = {"state": buyer_state, **_rate_stats(state_rates)}
+        benchmarks.append(row)
+    return {"status": "success", "data": benchmarks, "buyer_state": buyer_state or None}
+
+
+@router.get("/fabric-rate-benchmarks/compare")
+async def compare_fabric_rate_benchmark(fabric_type: str, gsm: str, ctx: dict = Depends(get_hq_tenant)):
+    """
+    Named, actionable vendor-vs-vendor comparison for one fabric_type + GSM
+    band — the counterpart to /fabric-rate-benchmarks above.
+
+    That endpoint is deliberately marketplace-wide but exposes ONLY
+    aggregate numbers (median/avg/min/max), never a vendor's identity —
+    this one is the opposite: it names vendors and their exact rate, so it
+    stays scoped to vendors THIS tenant already has an Approved
+    relationship with, matching the same visibility boundary every other
+    catalogue endpoint in this module enforces (a vendor's catalogue is
+    only ever shown by name to a retailer that vendor has approved — see
+    /search and /vendor/{vendor_id} above). Marketplace-wide + named would
+    leak one vendor's pricing to a retailer that vendor never agreed to
+    work with.
+    """
+    fabric_type_norm = fabric_type.strip().lower()
+    gsm_value = _parse_leading_number(gsm)
+    if not fabric_type_norm or gsm_value is None:
+        raise HTTPException(status_code=400, detail="A fabric_type and a numeric gsm are required.")
+    band = _gsm_band_label(gsm_value)
+
+    tenant = await tenants_collection.find_one({"tenant_id": ctx["tenant_id"]}, {"state": 1})
+    buyer_state = _normalize_state((tenant or {}).get("state"))
+
+    approved_vendor_ids = [
+        link["vendor_id"] async for link in vendor_tenant_links_collection.find(
+            {"tenant_id": ctx["tenant_id"], "status": "Approved"}, {"vendor_id": 1}
+        )
+    ]
+    if not approved_vendor_ids:
+        return {"status": "success", "data": {"fabric_type": fabric_type_norm, "gsm_band": band, "buyer_state": buyer_state or None, "listings": []}}
+
+    listings = []
+    async for item in vendor_catalogue_collection.find({
+        "catalogue_kind": "fabric_material",
+        "active": True,
+        "price": {"$gt": 0},
+        "vendor_id": {"$in": approved_vendor_ids},
+    }):
+        specs = item.get("fabric_specs") or {}
+        item_type = str(specs.get("fabric_type") or "").strip().lower()
+        item_gsm = _parse_leading_number(specs.get("gsm"))
+        if item_type != fabric_type_norm or item_gsm is None or _gsm_band_label(item_gsm) != band:
+            continue
+        listings.append({
+            "vendor_id":  str(item["vendor_id"]),
+            "item_id":    str(item["_id"]),
+            "item_name":  item.get("item_name"),
+            "gsm":        specs.get("gsm"),
+            "width":      specs.get("width"),
+            "shade":      specs.get("shade"),
+            "rate":       float(item["price"]),
+            "image_url":  (item.get("images") or [None])[0],
+        })
+
+    vendor_ids = {ObjectId(listing["vendor_id"]) for listing in listings}
+    vendor_names: Dict[str, str] = {}
+    vendor_states: Dict[str, str] = {}
+    async for vendor in vendors_collection.find({"_id": {"$in": list(vendor_ids)}}, {"name": 1, "vendor_name": 1, "state": 1}):
+        vid = str(vendor["_id"])
+        vendor_names[vid] = vendor.get("name") or vendor.get("vendor_name") or "Vendor"
+        vendor_states[vid] = _normalize_state(vendor.get("state"))
+    for listing in listings:
+        listing["vendor_name"] = vendor_names.get(listing["vendor_id"], "Vendor")
+        listing["same_state"] = bool(buyer_state) and vendor_states.get(listing["vendor_id"]) == buyer_state
+    # Same-state vendors first (cheapest first within that group), then
+    # everyone else (cheapest first) — same-state is a proxy for lower
+    # freight/lead time, worth surfacing before pure price ranking.
+    listings.sort(key=lambda listing: (not listing["same_state"], listing["rate"]))
+
+    return {"status": "success", "data": {
+        "fabric_type": fabric_type_norm,
+        "gsm_band":    band,
+        "buyer_state": buyer_state or None,
+        "listings":    listings,
+    }}
 
 
 @router.get("/search")

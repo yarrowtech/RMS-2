@@ -45,6 +45,16 @@ class GRNItemModel(BaseModel):
     batchNo:      str            = ""
     expiryDate:   Optional[str]  = None
     remarks:      str            = ""
+    # ⚠️ NEW — carried through from the GRC item (see create_grn below),
+    # itself carried from a linked Fabric PO item. Blank/unused for a
+    # normal finished-goods GRN item.
+    fabric_type:       str = ""
+    gsm:               str = ""
+    width:             str = ""
+    color:             str = ""
+    unit:              str = ""
+    image_url:         str = ""
+    catalogue_item_id: str = ""
 
 
 class GRNModel(BaseModel):
@@ -240,6 +250,8 @@ async def ensure_product_exists(item: dict, grn_dict: dict, initial_quantity: fl
     inward_qty = float(item.get("inwardQty", 0)) if initial_quantity is None else float(initial_quantity)
     vendor     = (grn_dict.get("vendorName") or "").strip()
     grn_no     = grn_dict.get("grnNo", "")
+    is_fabric  = bool(item.get("fabric_type") or item.get("gsm"))
+    image_url  = (item.get("image_url") or "").strip()
 
     await product_collection.insert_one({
         "product_name":    desc,
@@ -260,13 +272,22 @@ async def ensure_product_exists(item: dict, grn_dict: dict, initial_quantity: fl
         "mrp":             rate,
         "selling_price":   rate,
         "quantity":        inward_qty,
-        "unit":            "pcs",
+        "unit":            (item.get("unit") or "").strip() or "pcs",
         "description":     f"Auto-created from GRN {grn_no}",
         "specification":   "",
         "has_variants":    False,
         "variant_type":    "none",
         "variants":        [],
-        "images":          [],
+        "images":          [image_url] if image_url else [],
+        # ⚠️ NEW — fabric identity preserved past receipt instead of
+        # dissolving into a generic, indistinguishable SKU. is_fabric is a
+        # simple flag so any inventory/product view can filter it.
+        "is_fabric":       is_fabric,
+        "fabric_type":     item.get("fabric_type") or "",
+        "gsm":             item.get("gsm") or "",
+        "width":           item.get("width") or "",
+        "color":           item.get("color") or "",
+        "catalogue_item_id": item.get("catalogue_item_id") or "",
         "created_at":      datetime.utcnow(),
         "created_by":      "GRN",
         "source":          "grn",
@@ -453,6 +474,19 @@ async def update_inventory(grn_dict: dict, reverse: bool = False) -> None:
                     "source":      inv_source,
                     "vendor_name": inv_vendor_name,
                     "grn_no":      grn_no,
+                    # ⚠️ NEW — fabric identity preserved past receipt.
+                    # Sourced from the GRN item (re-derived from the GRC/PO
+                    # chain on every save — see create_grc/create_grn), not
+                    # from `meta`, since get_product_meta() doesn't carry
+                    # these fields and a fresh barcode has no product yet.
+                    "unit":        (item.get("unit") or "").strip(),
+                    "is_fabric":   bool(item.get("fabric_type") or item.get("gsm")),
+                    "fabric_type": item.get("fabric_type") or "",
+                    "gsm":         item.get("gsm") or "",
+                    "width":       item.get("width") or "",
+                    "color":       item.get("color") or "",
+                    "image_url":   item.get("image_url") or "",
+                    "catalogue_item_id": item.get("catalogue_item_id") or "",
                     "grn_date":    grn_dict.get("grnDate", ""),
                     "flow_type":   "po_linked" if is_po_linked else "direct",
                 },
@@ -583,6 +617,16 @@ async def update_single_store_stock(grn_dict: dict, destination: dict, reverse: 
                 "grn_no": grn_no,
                 "grn_date": grn_dict.get("grnDate", ""),
                 "updatedAt": datetime.utcnow(),
+                # ⚠️ NEW — same fabric identity carried through as the
+                # multi-store update_inventory() path above.
+                "unit":        (item.get("unit") or "").strip(),
+                "is_fabric":   bool(item.get("fabric_type") or item.get("gsm")),
+                "fabric_type": item.get("fabric_type") or "",
+                "gsm":         item.get("gsm") or "",
+                "width":       item.get("width") or "",
+                "color":       item.get("color") or "",
+                "image_url":   item.get("image_url") or "",
+                "catalogue_item_id": item.get("catalogue_item_id") or "",
             },
             "$setOnInsert": {"createdAt": datetime.utcnow()},
         }
@@ -619,6 +663,8 @@ async def create_grn(grn: GRNModel, ctx: dict = Depends(get_receiving_tenant)):
     grn_dict["po_id"]      = str(grc.get("po_id", "")) if grc.get("po_id") else ""
     grn_dict["vendorName"] = grc.get("vendorName", "")
 
+    _fabric_fields = ("fabric_type", "gsm", "width", "color", "unit", "image_url", "catalogue_item_id")
+
     if not grn_dict.get("items"):
         grn_dict["items"] = [
             {
@@ -633,21 +679,23 @@ async def create_grn(grn: GRNModel, ctx: dict = Depends(get_receiving_tenant)):
                 "batchNo":     "",
                 "expiryDate":  None,
                 "remarks":     "",
+                **{field: it.get(field, "") for field in _fabric_fields},
             }
             for it in grc.get("items", [])
             if float(it.get("acceptedQty", 0)) > 0
         ]
     else:
         grc_item_map = {
-            (it.get("barcode") or "").strip(): float(it.get("acceptedQty", 0))
+            (it.get("barcode") or "").strip(): it
             for it in grc.get("items", [])
         }
         for item in grn_dict["items"]:
             bc = (item.get("barcode") or "").strip()
             item["barcode"] = bc
             item["vendorBarcode"] = (item.get("vendorBarcode") or "").strip()
-            if bc in grc_item_map:
-                max_qty = grc_item_map[bc]
+            grc_item = grc_item_map.get(bc)
+            if grc_item:
+                max_qty = float(grc_item.get("acceptedQty", 0))
                 inward  = float(item.get("inwardQty", 0))
                 if inward > max_qty:
                     raise HTTPException(
@@ -655,6 +703,11 @@ async def create_grn(grn: GRNModel, ctx: dict = Depends(get_receiving_tenant)):
                         detail=f"Item '{bc}': inwardQty ({inward}) exceeds GRC acceptedQty ({max_qty})."
                     )
                 item["acceptedQty"] = max_qty
+                # Re-derive fabric spec fields from the GRC item on every
+                # save, same reasoning as grc_routes.py's update_grc.
+                for field in _fabric_fields:
+                    if grc_item.get(field):
+                        item[field] = grc_item[field]
             else:
                 # Walk-in item (not in GRC map): set acceptedQty = inwardQty
                 # so compute_grn_totals won't clamp to 0

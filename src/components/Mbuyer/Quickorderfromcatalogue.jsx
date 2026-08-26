@@ -200,6 +200,7 @@ function VendorStorefronts({ onChooseForQuote, onDirectOrder, onCartCheckout }) 
         sku: item.sku || "",
         barcode: item.barcode || "",
         catalogue_item_id: item._id,
+        catalogue_kind: item.catalogue_kind || "",
         available_sizes: sizeOptions,
         available_colors: colorOptions,
         size: sizeOptions.join(", "),
@@ -475,6 +476,7 @@ export default function QuickOrderFromCatalogue() {
       sku: item.sku || "",
       barcode: item.barcode || "",
       catalogue_item_id: item._id,
+      catalogue_kind: item.catalogue_kind || "",
       available_sizes: sizeOptions,
       available_colors: colorOptions,
       size: sizeOptions.join(", "),
@@ -660,7 +662,7 @@ export default function QuickOrderFromCatalogue() {
         const requested = itemRequests[sourceItem?._id] || {};
         const size = response.confirmed_size || requested.requested_size || "";
         const color = response.confirmed_color || requested.requested_color || "";
-        return { description: quote.item_name || json.po_item_prefill.description, sku: sourceItem?.sku || "", barcode: sourceItem?.barcode || "", catalogue_item_id: sourceItem?._id || "", size, color, quantity: String(response.confirmed_qty || requested.requested_qty || 1), rate: String(response.confirmed_price || requested.requested_price || 0), remarks: [size && `Size: ${size}`, color && `Color: ${color}`, response.note].filter(Boolean).join(" · ") };
+        return { description: quote.item_name || json.po_item_prefill.description, sku: sourceItem?.sku || "", barcode: sourceItem?.barcode || "", catalogue_item_id: sourceItem?._id || "", catalogue_kind: sourceItem?.catalogue_kind || "", size, color, quantity: String(response.confirmed_qty || requested.requested_qty || 1), rate: String(response.confirmed_price || requested.requested_price || 0), remarks: [size && `Size: ${size}`, color && `Color: ${color}`, response.note].filter(Boolean).join(" · ") };
       });
       const uniqueLines = consolidatedLines.filter((line, index, all) => all.findIndex((other) => `${other.description}|${other.size}|${other.color}` === `${line.description}|${line.size}|${line.color}`) === index);
       setOrderVendorName(chosenVendor);
@@ -718,6 +720,7 @@ export default function QuickOrderFromCatalogue() {
       sku: directCatalogueItem.sku || "",
       barcode: directCatalogueItem.barcode || "",
       catalogue_item_id: directCatalogueItem._id,
+      catalogue_kind: directCatalogueItem.catalogue_kind || "",
       size,
       color,
       quantity: String(variantQuantities[key]),
@@ -1130,49 +1133,72 @@ export default function QuickOrderFromCatalogue() {
                             <p className="text-[11px] text-slate-500 truncate">{item.vendor_name}</p>
                           </div>
                         </div>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-2">
-                          <div className="rounded-lg border border-slate-200 bg-white px-2.5 py-2">
-                            <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400 mb-1.5">Available sizes</p>
-                            <div className="flex flex-wrap gap-1">
-                              {item.available_sizes?.length > 0 ? item.available_sizes.map(size => (
-                                <button key={size} type="button" onClick={() => updateItemRequest(item._id, "requested_size", size)}
-                                  className={`px-2 py-1 rounded-md border text-[10px] font-bold transition ${form.requested_size === size ? "border-indigo-500 bg-indigo-600 text-white" : "border-slate-200 bg-slate-50 text-slate-600 hover:border-indigo-300"}`}>
-                                  {size}
-                                </button>
-                              )) : <span className="text-[10px] text-slate-400">Not specified by vendor</span>}
-                            </div>
-                          </div>
-                          <div className="rounded-lg border border-slate-200 bg-white px-2.5 py-2">
-                            <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400 mb-1.5">Available colors</p>
-                            <div className="flex flex-wrap gap-1">
-                              {item.available_colors?.length > 0 ? item.available_colors.map(color => (
-                                <button key={color} type="button" onClick={() => updateItemRequest(item._id, "requested_color", color)}
-                                  className={`px-2 py-1 rounded-md border text-[10px] font-bold transition ${form.requested_color === color ? "border-indigo-500 bg-indigo-600 text-white" : "border-slate-200 bg-slate-50 text-slate-600 hover:border-indigo-300"}`}>
-                                  {color}
-                                </button>
-                              )) : <span className="text-[10px] text-slate-400">Not specified by vendor</span>}
-                            </div>
-                          </div>
-                        </div>
-                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                          <div>
-                            <input list={`quote-sizes-${item._id}`} placeholder="Select or type custom size" value={form.requested_size}
-                              onChange={e => updateItemRequest(item._id, "requested_size", e.target.value)}
-                              className="w-full h-9 px-2 border border-slate-200 bg-white rounded-lg text-xs" />
-                            <datalist id={`quote-sizes-${item._id}`}>
-                              {(item.available_sizes || []).map(size => <option key={size} value={size} />)}
-                            </datalist>
-                          </div>
-                          <div>
-                            <input list={`quote-colors-${item._id}`} placeholder="Select or type custom color" value={form.requested_color}
-                              onChange={e => updateItemRequest(item._id, "requested_color", e.target.value)}
-                              className="w-full h-9 px-2 border border-slate-200 bg-white rounded-lg text-xs" />
-                            <datalist id={`quote-colors-${item._id}`}>
-                              {(item.available_colors || []).map(color => <option key={color} value={color} />)}
-                            </datalist>
-                          </div>
-                          <input type="number" min="1" placeholder="Quantity" value={form.requested_qty} onChange={e => updateItemRequest(item._id, "requested_qty", e.target.value)} className="h-9 px-2 border border-slate-200 bg-white rounded-lg text-xs" />
-                        </div>
+                        {(() => {
+                          const isFabric = item.catalogue_kind === "fabric_material";
+                          const specs = item.fabric_specs || {};
+                          const specChips = [specs.fabric_type, specs.gsm ? `${specs.gsm} GSM` : "", specs.width ? `Width ${specs.width}` : "", specs.composition, specs.weave].filter(Boolean);
+                          const shadeOptions = [specs.shade, ...(item.available_colors || [])].filter(Boolean);
+                          return (
+                            <>
+                              <div className={`grid grid-cols-1 gap-2 mb-2 ${isFabric ? "" : "sm:grid-cols-2"}`}>
+                                {isFabric ? (
+                                  <div className="rounded-lg border border-slate-200 bg-white px-2.5 py-2">
+                                    <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400 mb-1.5">Fabric specs (from vendor)</p>
+                                    <div className="flex flex-wrap gap-1">
+                                      {specChips.length > 0 ? specChips.map(chip => (
+                                        <span key={chip} className="px-2 py-1 rounded-md border border-slate-200 bg-slate-50 text-[10px] font-bold text-slate-600">{chip}</span>
+                                      )) : <span className="text-[10px] text-slate-400">Not specified by vendor</span>}
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <div className="rounded-lg border border-slate-200 bg-white px-2.5 py-2">
+                                    <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400 mb-1.5">Available sizes</p>
+                                    <div className="flex flex-wrap gap-1">
+                                      {item.available_sizes?.length > 0 ? item.available_sizes.map(size => (
+                                        <button key={size} type="button" onClick={() => updateItemRequest(item._id, "requested_size", size)}
+                                          className={`px-2 py-1 rounded-md border text-[10px] font-bold transition ${form.requested_size === size ? "border-indigo-500 bg-indigo-600 text-white" : "border-slate-200 bg-slate-50 text-slate-600 hover:border-indigo-300"}`}>
+                                          {size}
+                                        </button>
+                                      )) : <span className="text-[10px] text-slate-400">Not specified by vendor</span>}
+                                    </div>
+                                  </div>
+                                )}
+                                <div className="rounded-lg border border-slate-200 bg-white px-2.5 py-2">
+                                  <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400 mb-1.5">{isFabric ? "Shade" : "Available colors"}</p>
+                                  <div className="flex flex-wrap gap-1">
+                                    {shadeOptions.length > 0 ? shadeOptions.map(color => (
+                                      <button key={color} type="button" onClick={() => updateItemRequest(item._id, "requested_color", color)}
+                                        className={`px-2 py-1 rounded-md border text-[10px] font-bold transition ${form.requested_color === color ? "border-indigo-500 bg-indigo-600 text-white" : "border-slate-200 bg-slate-50 text-slate-600 hover:border-indigo-300"}`}>
+                                        {color}
+                                      </button>
+                                    )) : <span className="text-[10px] text-slate-400">Not specified by vendor</span>}
+                                  </div>
+                                </div>
+                              </div>
+                              <div className={`grid grid-cols-1 gap-2 ${isFabric ? "sm:grid-cols-2" : "sm:grid-cols-3"}`}>
+                                {!isFabric && (
+                                  <div>
+                                    <input list={`quote-sizes-${item._id}`} placeholder="Select or type custom size" value={form.requested_size}
+                                      onChange={e => updateItemRequest(item._id, "requested_size", e.target.value)}
+                                      className="w-full h-9 px-2 border border-slate-200 bg-white rounded-lg text-xs" />
+                                    <datalist id={`quote-sizes-${item._id}`}>
+                                      {(item.available_sizes || []).map(size => <option key={size} value={size} />)}
+                                    </datalist>
+                                  </div>
+                                )}
+                                <div>
+                                  <input list={`quote-colors-${item._id}`} placeholder={isFabric ? "Select or type custom shade" : "Select or type custom color"} value={form.requested_color}
+                                    onChange={e => updateItemRequest(item._id, "requested_color", e.target.value)}
+                                    className="w-full h-9 px-2 border border-slate-200 bg-white rounded-lg text-xs" />
+                                  <datalist id={`quote-colors-${item._id}`}>
+                                    {shadeOptions.map(color => <option key={color} value={color} />)}
+                                  </datalist>
+                                </div>
+                                <input type="number" min="1" placeholder={isFabric ? "Quantity (m / kg)" : "Quantity"} value={form.requested_qty} onChange={e => updateItemRequest(item._id, "requested_qty", e.target.value)} className="h-9 px-2 border border-slate-200 bg-white rounded-lg text-xs" />
+                              </div>
+                            </>
+                          );
+                        })()}
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-2">
                           <input type="number" min="0" placeholder="Target price (?)" value={form.requested_price} onChange={e => updateItemRequest(item._id, "requested_price", e.target.value)} className="h-9 px-2 border border-slate-200 bg-white rounded-lg text-xs" />
                           <input type="date" title="Response deadline" value={form.response_deadline} onChange={e => updateItemRequest(item._id, "response_deadline", e.target.value)} className="h-9 px-2 border border-slate-200 bg-white rounded-lg text-xs" />
@@ -1287,10 +1313,13 @@ export default function QuickOrderFromCatalogue() {
                     {orderItems.map((it, idx) => {
                       const sizeOptions = catalogueSizeValues(it);
                       const colorOptions = catalogueColorValues(it);
+                      const isFabric = it.catalogue_kind === "fabric_material";
                       return (
                       <div key={`${it.catalogue_item_id || "manual"}-${idx}`} className="grid grid-cols-1 gap-2 rounded-xl border border-slate-100 p-2 sm:min-w-[760px] sm:grid-cols-[1.1fr_100px_100px_70px_70px_1fr_72px]">
                         <input placeholder="Description" value={it.description} readOnly={directOrderMode} onChange={e => updateItem(idx, "description", e.target.value)} className="h-9 rounded-lg border border-slate-200 px-2 text-xs read-only:bg-slate-50" />
-                        {cartReviewMode && sizeOptions.length ? (
+                        {isFabric ? (
+                          <input value="—" disabled title="Fabric items are not sized" className="h-9 rounded-lg border border-slate-200 bg-slate-50 px-2 text-xs text-slate-300" />
+                        ) : cartReviewMode && sizeOptions.length ? (
                           <select value={it.size || ""} onChange={e => updateItem(idx, "size", e.target.value)} className="h-9 rounded-lg border border-slate-200 px-2 text-xs bg-white">
                             <option value="">Size</option>
                             {sizeOptions.map(s => <option key={s} value={s}>{s}</option>)}
@@ -1300,13 +1329,13 @@ export default function QuickOrderFromCatalogue() {
                         )}
                         {cartReviewMode && colorOptions.length ? (
                           <select value={it.color || ""} onChange={e => updateItem(idx, "color", e.target.value)} className="h-9 rounded-lg border border-slate-200 px-2 text-xs bg-white">
-                            <option value="">Colour</option>
+                            <option value="">{isFabric ? "Shade" : "Colour"}</option>
                             {colorOptions.map(c => <option key={c} value={c}>{c}</option>)}
                           </select>
                         ) : (
-                          <input placeholder="Color e.g. Red, Green" title={colorOptions.length ? `Vendor colours: ${colorOptions.join(", ")}` : "Enter colour manually"} value={it.color || ""} readOnly={directOrderMode && !cartReviewMode} onChange={e => updateItem(idx, "color", e.target.value)} className="h-9 rounded-lg border border-slate-200 px-2 text-xs read-only:bg-slate-50" />
+                          <input placeholder={isFabric ? "Shade e.g. Navy" : "Color e.g. Red, Green"} title={colorOptions.length ? `Vendor ${isFabric ? "shades" : "colours"}: ${colorOptions.join(", ")}` : `Enter ${isFabric ? "shade" : "colour"} manually`} value={it.color || ""} readOnly={directOrderMode && !cartReviewMode} onChange={e => updateItem(idx, "color", e.target.value)} className="h-9 rounded-lg border border-slate-200 px-2 text-xs read-only:bg-slate-50" />
                         )}
-                        <input type="number" min="1" placeholder="Qty" value={it.quantity} readOnly={directOrderMode && !cartReviewMode} onChange={e => updateItem(idx, "quantity", e.target.value)} className="h-9 rounded-lg border border-slate-200 px-2 text-xs read-only:bg-slate-50" />
+                        <input type="number" min="1" placeholder={isFabric ? "Qty (m/kg)" : "Qty"} value={it.quantity} readOnly={directOrderMode && !cartReviewMode} onChange={e => updateItem(idx, "quantity", e.target.value)} className="h-9 rounded-lg border border-slate-200 px-2 text-xs read-only:bg-slate-50" />
                         <input type="number" placeholder="Rate" value={it.rate} readOnly={directOrderMode} onChange={e => updateItem(idx, "rate", e.target.value)} className="h-9 rounded-lg border border-slate-200 px-2 text-xs read-only:bg-slate-50" />
                         <input placeholder="Remarks" value={it.remarks} readOnly={directOrderMode} onChange={e => updateItem(idx, "remarks", e.target.value)} className="h-9 rounded-lg border border-slate-200 px-2 text-xs read-only:bg-slate-50" />
                         <div className="flex h-9 items-center justify-end gap-0.5">

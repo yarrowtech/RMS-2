@@ -809,6 +809,30 @@ async def create_po(po: PurchaseOrderModel, ctx: dict = Depends(get_hq_tenant)):
         po_dict["direct_catalogue_reservations_consumed"] = False
         po_dict["status"] = "SentToVendor"
         po_dict["vendor_response"] = {"status": "Draft", "items": [dict(item) for item in po_dict["items"]], "createdAt": datetime.utcnow().isoformat()}
+
+    # Quick Order (and any other flow) can create a PO containing a
+    # fabric_material catalogue item — direct-purchase or negotiated via an
+    # inquiry — without ever declaring orderType. Detect that here so the
+    # resulting PO still plugs into the same downstream fabric pipeline
+    # (fabric sheet export, the vendor's fabric-catalogue item picker, the
+    # buyer's "Recent fabric POs" list) as a PO created through the
+    # dedicated Fabric buying cart. Never overrides an orderType a caller
+    # already set explicitly.
+    if not po_dict.get("orderType"):
+        catalogue_item_ids = [
+            ObjectId(item["catalogue_item_id"])
+            for item in (po_dict.get("items") or [])
+            if ObjectId.is_valid(str(item.get("catalogue_item_id") or ""))
+        ]
+        if catalogue_item_ids:
+            fabric_match = await vendor_catalogue_collection.find_one({
+                "_id": {"$in": catalogue_item_ids},
+                "catalogue_kind": "fabric_material",
+            })
+            if fabric_match:
+                po_dict["orderType"] = "Fabric / Raw Material"
+                po_dict["purchaseType"] = "Fabric / Raw Material"
+
     calculate_po_totals(po_dict)
     po_dict["_id"]       = ObjectId()
     po_dict["createdAt"] = datetime.utcnow()

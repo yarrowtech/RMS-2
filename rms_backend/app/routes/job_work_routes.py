@@ -14,6 +14,7 @@ from bson import ObjectId
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 
 from ..db import (
+    fabric_themes_collection,
     inventory_collection,
     job_work_orders_collection,
     job_work_receipts_collection,
@@ -30,6 +31,7 @@ from .purchaseorder_routes import TOKEN_EXPIRY_DAYS, _clean_whatsapp_mobile, _ma
 router = APIRouter(prefix="/api/job-work", tags=["Production & Job Work"])
 
 JOB_WORK_TYPES = {"Cutting", "Stitching", "Finishing", "Embroidery", "Washing", "Packing", "Other"}
+CONSUMPTION_OVERAGE_WARNING_PCT = 10
 
 
 def _number(value: Any, default: float = 0.0) -> float:
@@ -146,6 +148,43 @@ async def _require_vendor_job_work_access(vendor_id: str) -> dict:
     return vendor
 
 
+LEFTOVER_BARCODE_SUFFIX = "-LEFTOVER"
+
+
+async def _add_leftover_stock(tenant_id: str, parent_barcode: str, quantity: float, product: str, rate: float, reason: str) -> None:
+    """A reusable fabric remnant — NOT the same as job-work waste_qty, which
+    is a true write-off that never touches inventory. This is recorded as
+    its own inventory line, one running pool per source material (not one
+    row per order), so it stays distinctly visible/searchable in material
+    stock — a job worker can consciously draw down a leftover pool for a
+    small job instead of issuing fresh fabric for it."""
+    leftover_barcode = f"{parent_barcode}{LEFTOVER_BARCODE_SUFFIX}"
+    existing = await inventory_collection.find_one({"tenant_id": tenant_id, "barcode": leftover_barcode})
+    adjustment = {
+        "qty_change": quantity, "reason": reason,
+        "adjustedAt": datetime.utcnow().isoformat(), "source": "job_work_leftover",
+    }
+    if existing:
+        await inventory_collection.update_one(
+            {"_id": existing["_id"], "tenant_id": tenant_id},
+            {"$inc": {"stockQty": quantity}, "$set": {"updatedAt": datetime.utcnow()}, "$push": {"adjustments": adjustment}},
+        )
+        return
+    await inventory_collection.insert_one({
+        "tenant_id": tenant_id,
+        "barcode": leftover_barcode,
+        "stockQty": quantity,
+        "rate": rate, "mrp": rate,
+        "description": f"{product} — leftover remnant",
+        "is_leftover": True,
+        "parent_barcode": parent_barcode,
+        "source": "job_work_leftover",
+        "createdAt": datetime.utcnow(),
+        "updatedAt": datetime.utcnow(),
+        "adjustments": [adjustment],
+    })
+
+
 async def _increase_central_stock(tenant_id: str, barcode: str, quantity: float, product: str, rate: float, reason: str) -> None:
     existing = await inventory_collection.find_one({"tenant_id": tenant_id, "barcode": barcode})
     adjustment = {
@@ -180,7 +219,10 @@ async def material_stock(ctx: dict = Depends(_require_job_work)):
     rows = []
     cursor = inventory_collection.find(
         {"tenant_id": ctx["tenant_id"], "stockQty": {"$gt": 0}},
-        {"barcode": 1, "sku": 1, "description": 1, "product": 1, "stockQty": 1, "rate": 1, "mrp": 1, "unit": 1},
+        {
+            "barcode": 1, "sku": 1, "description": 1, "product": 1, "stockQty": 1, "rate": 1, "mrp": 1, "unit": 1,
+            "is_leftover": 1, "is_fabric": 1, "fabric_type": 1, "gsm": 1, "width": 1, "color": 1,
+        },
     ).sort("description", 1).limit(1000)
     async for item in cursor:
         rows.append({
@@ -189,6 +231,16 @@ async def material_stock(ctx: dict = Depends(_require_job_work)):
             "available_qty": _number(item.get("stockQty")),
             "rate": _number(item.get("rate") or item.get("mrp")),
             "unit": item.get("unit") or "units",
+            "is_leftover": bool(item.get("is_leftover")),
+            # ⚠️ NEW — now that GRC/GRN receipt preserves fabric identity
+            # (see grc_routes.py/grn_routes.py), surface it here too so the
+            # job-work material picker can show real fabric detail instead
+            # of a bare description string.
+            "is_fabric": bool(item.get("is_fabric")),
+            "fabric_type": item.get("fabric_type") or "",
+            "gsm": item.get("gsm") or "",
+            "width": item.get("width") or "",
+            "color": item.get("color") or "",
         })
     return {"data": rows}
 
@@ -391,6 +443,262 @@ async def _create_fabric_po_document(ctx: dict, payload: dict, plan: dict | None
     }
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# FABRIC THEMES — group fabric selections from several vendors under one
+# named requirement (e.g. "Summer 2026"), then finalize into one Fabric PO
+# PER VENDOR at once. purchaseorders_collection is always single-vendor per
+# document, so a theme is the layer that lets a buyer shop fabric across
+# several suppliers for one seasonal/collection requirement and still end
+# up with clean per-vendor POs, plus a combined view of what the theme cost
+# across all of them.
+# ═══════════════════════════════════════════════════════════════════════════
+
+def _serialize_theme(doc: dict) -> dict:
+    row = dict(doc)
+    row["id"] = str(row.pop("_id"))
+    for key in ("created_at", "updated_at"):
+        if isinstance(row.get(key), datetime):
+            row[key] = row[key].isoformat()
+    for line in row.get("lines") or []:
+        if isinstance(line.get("added_at"), datetime):
+            line["added_at"] = line["added_at"].isoformat()
+    return row
+
+
+async def _get_theme(theme_id: str, tenant_id: str) -> dict:
+    if not ObjectId.is_valid(theme_id):
+        raise HTTPException(status_code=400, detail="Invalid fabric theme ID.")
+    theme = await fabric_themes_collection.find_one({"_id": ObjectId(theme_id), "tenant_id": tenant_id})
+    if not theme:
+        raise HTTPException(status_code=404, detail="Fabric theme not found.")
+    return theme
+
+
+@router.get("/fabric-themes")
+async def list_fabric_themes(ctx: dict = Depends(_require_job_work_or_buyer)):
+    rows = []
+    async for theme in fabric_themes_collection.find({"tenant_id": ctx["tenant_id"]}).sort("created_at", -1).limit(200):
+        rows.append(_serialize_theme(theme))
+    return {"data": rows}
+
+
+@router.post("/fabric-themes", status_code=201)
+async def create_fabric_theme(payload: dict, ctx: dict = Depends(_require_job_work_or_buyer)):
+    theme_name = str(payload.get("theme_name") or "").strip()
+    if not theme_name:
+        raise HTTPException(status_code=400, detail="Theme name is required.")
+    now = datetime.utcnow()
+    doc = {
+        "tenant_id": ctx["tenant_id"],
+        "theme_name": theme_name,
+        "target_date": str(payload.get("target_date") or "").strip(),
+        "notes": str(payload.get("notes") or "").strip(),
+        "status": "draft",   # draft | ordered
+        "lines": [],
+        "purchase_orders": [],
+        "created_by": ctx.get("admin_id"),
+        "created_at": now,
+        "updated_at": now,
+    }
+    result = await fabric_themes_collection.insert_one(doc)
+    doc["_id"] = result.inserted_id
+    return {
+        "message": f'Theme "{theme_name}" created. Add fabric selections from any approved supplier, then finalize to create purchase orders.',
+        "data": _serialize_theme(doc),
+    }
+
+
+@router.get("/fabric-themes/{theme_id}")
+async def get_fabric_theme(theme_id: str, ctx: dict = Depends(_require_job_work_or_buyer)):
+    theme = await _get_theme(theme_id, ctx["tenant_id"])
+    return {"data": _serialize_theme(theme)}
+
+
+@router.delete("/fabric-themes/{theme_id}")
+async def delete_fabric_theme(theme_id: str, ctx: dict = Depends(_require_job_work_or_buyer)):
+    theme = await _get_theme(theme_id, ctx["tenant_id"])
+    if theme.get("status") != "draft":
+        raise HTTPException(status_code=400, detail="Only a draft theme (not yet finalized into POs) can be deleted.")
+    await fabric_themes_collection.delete_one({"_id": theme["_id"]})
+    return {"message": "Theme deleted."}
+
+
+@router.post("/fabric-themes/{theme_id}/lines", status_code=201)
+async def add_fabric_theme_line(theme_id: str, payload: dict, ctx: dict = Depends(_require_job_work_or_buyer)):
+    theme = await _get_theme(theme_id, ctx["tenant_id"])
+    if theme.get("status") != "draft":
+        raise HTTPException(status_code=400, detail="This theme is already finalized into POs — create a new theme for further fabric.")
+
+    vendor_id = str(payload.get("vendor_id") or "").strip()
+    fabric_name = str(payload.get("fabric_name") or "").strip()
+    quantity = _number(payload.get("quantity"))
+    if not fabric_name:
+        raise HTTPException(status_code=400, detail="Fabric/material name is required.")
+    if quantity <= 0:
+        raise HTTPException(status_code=400, detail="Quantity is required.")
+
+    walkin_vendor = None
+    if vendor_id:
+        vendor, _link = await _approved_vendor(ctx["tenant_id"], vendor_id)
+        vendor_name = vendor.get("name") or vendor.get("vendor_name") or "Fabric supplier"
+        group_key = vendor_id
+    else:
+        raw_walkin = payload.get("walkin_vendor") or {}
+        vendor_name = str(raw_walkin.get("name") or "").strip()
+        if not vendor_name:
+            raise HTTPException(status_code=400, detail="Enter a walk-in supplier name or choose an approved supplier.")
+        walkin_vendor = {
+            "name": vendor_name,
+            "mobile": str(raw_walkin.get("mobile") or "").strip(),
+            "email": str(raw_walkin.get("email") or "").strip(),
+            "address": str(raw_walkin.get("address") or "").strip(),
+            "gstin": str(raw_walkin.get("gstin") or "").strip(),
+            "contact_person": str(raw_walkin.get("contact_person") or "").strip(),
+            "business_type": "fabric_supplier",
+        }
+        group_key = f"walkin::{vendor_name.strip().lower()}"
+
+    line = {
+        "line_id": str(uuid.uuid4()),
+        "group_key": group_key,
+        "vendor_id": vendor_id or None,
+        "vendor_name": vendor_name,
+        "walkin_vendor": walkin_vendor,
+        "catalogue_item_id": str(payload.get("catalogue_item_id") or "").strip(),
+        "fabric_name": fabric_name,
+        "fabric_type": str(payload.get("fabric_type") or "").strip(),
+        "gsm": str(payload.get("gsm") or "").strip(),
+        "width": str(payload.get("width") or "").strip(),
+        "color": str(payload.get("color") or "").strip(),
+        "quantity": quantity,
+        "unit": str(payload.get("unit") or "m").strip() or "m",
+        "rate": _number(payload.get("rate")),
+        "remarks": str(payload.get("remarks") or "").strip(),
+        "image_url": str(payload.get("image_url") or "").strip(),
+        "added_at": datetime.utcnow(),
+    }
+    await fabric_themes_collection.update_one(
+        {"_id": theme["_id"]},
+        {"$push": {"lines": line}, "$set": {"updated_at": datetime.utcnow()}},
+    )
+    theme = await _get_theme(theme_id, ctx["tenant_id"])
+    return {"message": f"Added {fabric_name} to the theme.", "data": _serialize_theme(theme)}
+
+
+@router.patch("/fabric-themes/{theme_id}/lines/{line_id}")
+async def update_fabric_theme_line(theme_id: str, line_id: str, payload: dict, ctx: dict = Depends(_require_job_work_or_buyer)):
+    theme = await _get_theme(theme_id, ctx["tenant_id"])
+    if theme.get("status") != "draft":
+        raise HTTPException(status_code=400, detail="This theme is already finalized into POs.")
+    if not any(line.get("line_id") == line_id for line in (theme.get("lines") or [])):
+        raise HTTPException(status_code=404, detail="Line not found on this theme.")
+
+    editable_numeric = {"quantity", "rate"}
+    editable_text = {"unit", "remarks", "color", "width", "gsm"}
+    updates = {}
+    for key in editable_numeric | editable_text:
+        if key in payload:
+            value = payload[key]
+            updates[f"lines.$.{key}"] = _number(value) if key in editable_numeric else str(value or "").strip()
+    if updates:
+        updates["updated_at"] = datetime.utcnow()
+        await fabric_themes_collection.update_one(
+            {"_id": theme["_id"], "lines.line_id": line_id},
+            {"$set": updates},
+        )
+    theme = await _get_theme(theme_id, ctx["tenant_id"])
+    return {"message": "Line updated.", "data": _serialize_theme(theme)}
+
+
+@router.delete("/fabric-themes/{theme_id}/lines/{line_id}")
+async def remove_fabric_theme_line(theme_id: str, line_id: str, ctx: dict = Depends(_require_job_work_or_buyer)):
+    theme = await _get_theme(theme_id, ctx["tenant_id"])
+    if theme.get("status") != "draft":
+        raise HTTPException(status_code=400, detail="This theme is already finalized into POs.")
+    await fabric_themes_collection.update_one(
+        {"_id": theme["_id"]},
+        {"$pull": {"lines": {"line_id": line_id}}, "$set": {"updated_at": datetime.utcnow()}},
+    )
+    theme = await _get_theme(theme_id, ctx["tenant_id"])
+    return {"message": "Line removed.", "data": _serialize_theme(theme)}
+
+
+@router.post("/fabric-themes/{theme_id}/finalize", status_code=201)
+async def finalize_fabric_theme(theme_id: str, payload: dict, ctx: dict = Depends(_require_job_work_or_buyer)):
+    """Groups this theme's lines by vendor and creates one Fabric PO per
+    vendor group via the same _create_fabric_po_document the regular fabric
+    cart uses — a PO is always single-vendor, so a multi-vendor theme
+    naturally splits into several POs here, all recorded back onto the
+    theme for a combined view of what it cost across every supplier."""
+    theme = await _get_theme(theme_id, ctx["tenant_id"])
+    if theme.get("status") != "draft":
+        raise HTTPException(status_code=400, detail="This theme has already been finalized.")
+    lines = theme.get("lines") or []
+    if not lines:
+        raise HTTPException(status_code=400, detail="Add at least one fabric selection before finalizing this theme.")
+
+    groups: dict = {}
+    group_vendor_meta: dict = {}
+    for line in lines:
+        key = line.get("group_key") or line.get("vendor_id") or f"walkin::{(line.get('vendor_name') or '').strip().lower()}"
+        groups.setdefault(key, []).append(line)
+        group_vendor_meta.setdefault(key, {
+            "vendor_id": line.get("vendor_id"),
+            "vendor_name": line.get("vendor_name"),
+            "walkin_vendor": line.get("walkin_vendor"),
+        })
+
+    order_date = str(payload.get("order_date") or datetime.utcnow().date().isoformat())
+    expected_delivery_date = str(payload.get("expected_delivery_date") or "")
+    payment_terms = str(payload.get("payment_terms") or "")
+
+    results = []
+    for key, group_lines in groups.items():
+        meta = group_vendor_meta[key]
+        items = [{
+            "material_name": line.get("fabric_name"),
+            "fabric_type": line.get("fabric_type"),
+            "gsm": line.get("gsm"),
+            "width": line.get("width"),
+            "color": line.get("color"),
+            "required_quantity": line.get("quantity"),
+            "unit": line.get("unit"),
+            "rate": line.get("rate"),
+            "remarks": line.get("remarks"),
+            "image_url": line.get("image_url"),
+            "catalogue_item_id": line.get("catalogue_item_id"),
+        } for line in group_lines]
+        po_payload = {
+            "vendor_id": meta.get("vendor_id") or "",
+            "walkin_vendor": meta.get("walkin_vendor") or {},
+            "vendor_name": meta.get("vendor_name") or "",
+            "order_date": order_date,
+            "expected_delivery_date": expected_delivery_date,
+            "payment_terms": payment_terms,
+            "notes": f'Fabric PO created from theme "{theme.get("theme_name")}".',
+            "items": items,
+        }
+        result = await _create_fabric_po_document(ctx, po_payload)
+        results.append({
+            "vendor_name": meta.get("vendor_name"),
+            "purchase_order_id": result["purchase_order_id"],
+            "purchase_order_no": result["purchase_order_no"],
+            "share_link": result.get("share_link", ""),
+            "whatsapp_url": result.get("whatsapp_url", ""),
+        })
+
+    await fabric_themes_collection.update_one(
+        {"_id": theme["_id"]},
+        {"$set": {"status": "ordered", "purchase_orders": results, "updated_at": datetime.utcnow()}},
+    )
+    theme = await _get_theme(theme_id, ctx["tenant_id"])
+    return {
+        "message": f"Theme finalized into {len(results)} purchase order(s), one per supplier.",
+        "purchase_orders": results,
+        "data": _serialize_theme(theme),
+    }
+
+
 @router.get("/material-plans")
 async def list_material_plans(ctx: dict = Depends(_require_job_work)):
     """Style BOMs with calculated fabric/material quantities for a planned run."""
@@ -495,13 +803,14 @@ async def dashboard(ctx: dict = Depends(_require_job_work)):
     waste_rows = await job_work_receipts_collection.aggregate([
         {"$match": {"tenant_id": tenant_id}},
         {"$unwind": "$materials"},
-        {"$group": {"_id": None, "waste": {"$sum": "$materials.waste_qty"}}},
+        {"$group": {"_id": None, "waste": {"$sum": "$materials.waste_qty"}, "leftover": {"$sum": "$materials.leftover_qty"}}},
     ]).to_list(length=1)
     return {
         "active_orders": active,
         "with_job_workers": issued,
         "completed_orders": completed,
         "recorded_wastage": round(_number((waste_rows[0] if waste_rows else {}).get("waste")), 3),
+        "recorded_leftover": round(_number((waste_rows[0] if waste_rows else {}).get("leftover")), 3),
     }
 
 
@@ -604,7 +913,7 @@ async def issue_material(order_id: str, payload: dict, ctx: dict = Depends(_requ
         )
         materials.append({
             "barcode": barcode, "product": product, "unit": str(line.get("unit") or stock.get("unit") or "units"),
-            "rate": rate, "issued_qty": quantity, "used_qty": 0.0, "returned_qty": 0.0, "waste_qty": 0.0,
+            "rate": rate, "issued_qty": quantity, "used_qty": 0.0, "returned_qty": 0.0, "leftover_qty": 0.0, "waste_qty": 0.0,
         })
 
     now = datetime.utcnow()
@@ -725,16 +1034,24 @@ async def receive_job_work(order_id: str, payload: dict, ctx: dict = Depends(_re
         entry = received_map.get(material["barcode"], {})
         used = _number(entry.get("used_qty"))
         returned = _number(entry.get("returned_qty"))
+        leftover = _number(entry.get("leftover_qty"))
         waste = _number(entry.get("waste_qty"))
-        outstanding = _number(material.get("issued_qty")) - _number(material.get("used_qty")) - _number(material.get("returned_qty")) - _number(material.get("waste_qty"))
-        if used + returned + waste > outstanding + 0.000001:
+        outstanding = (
+            _number(material.get("issued_qty")) - _number(material.get("used_qty"))
+            - _number(material.get("returned_qty")) - _number(material.get("leftover_qty"))
+            - _number(material.get("waste_qty"))
+        )
+        if used + returned + leftover + waste > outstanding + 0.000001:
             raise HTTPException(status_code=400, detail=f"Reconciliation exceeds material outstanding balance for {material['product']}.")
         material["used_qty"] = round(_number(material.get("used_qty")) + used, 3)
         material["returned_qty"] = round(_number(material.get("returned_qty")) + returned, 3)
+        material["leftover_qty"] = round(_number(material.get("leftover_qty")) + leftover, 3)
         material["waste_qty"] = round(_number(material.get("waste_qty")) + waste, 3)
         if returned:
             await _increase_central_stock(tenant_id, material["barcode"], returned, material["product"], _number(material.get("rate")), f"Job work material return {order['order_no']}")
-        receipt_materials.append({"barcode": material["barcode"], "product": material["product"], "used_qty": used, "returned_qty": returned, "waste_qty": waste})
+        if leftover:
+            await _add_leftover_stock(tenant_id, material["barcode"], leftover, material["product"], _number(material.get("rate")), f"Job work leftover from {order['order_no']}")
+        receipt_materials.append({"barcode": material["barcode"], "product": material["product"], "used_qty": used, "returned_qty": returned, "leftover_qty": leftover, "waste_qty": waste})
 
     output = payload.get("output") or {}
     output_barcode = str(output.get("barcode") or "").strip()
@@ -746,9 +1063,41 @@ async def receive_job_work(order_id: str, payload: dict, ctx: dict = Depends(_re
     if output_qty:
         await _increase_central_stock(tenant_id, output_barcode, output_qty, output_product, output_rate, f"Job work output receipt {order['order_no']}")
 
+    # ⚠️ NEW — BOM-vs-actual consumption check. The Style BOM (planned_materials,
+    # snapshotted onto the order at creation from style_bom_plans_collection)
+    # says how much fabric a design SHOULD take per finished unit; nothing
+    # before this compared that to what was actually reconciled as used_qty
+    # THIS receipt. Purely advisory — never blocks the save, just flags a
+    # line that's notably over (>CONSUMPTION_OVERAGE_WARNING_PCT%) so a
+    # buyer/production lead can catch overuse or a wasteful cutter early.
+    consumption_warnings = []
+    planned_by_name = {
+        str(pm.get("material_name") or "").strip().lower(): pm
+        for pm in (order.get("planned_materials") or [])
+    }
+    if output_qty > 0 and planned_by_name:
+        for receipt_line in receipt_materials:
+            used_this_receipt = _number(receipt_line.get("used_qty"))
+            if used_this_receipt <= 0:
+                continue
+            planned = planned_by_name.get(str(receipt_line.get("product") or "").strip().lower())
+            expected_per_unit = _number((planned or {}).get("consumption_per_unit"))
+            if expected_per_unit <= 0:
+                continue
+            actual_per_unit = round(used_this_receipt / output_qty, 4)
+            over_pct = round(((actual_per_unit - expected_per_unit) / expected_per_unit) * 100)
+            if over_pct > CONSUMPTION_OVERAGE_WARNING_PCT:
+                consumption_warnings.append({
+                    "material": receipt_line.get("product"),
+                    "expected_per_unit": expected_per_unit,
+                    "actual_per_unit": actual_per_unit,
+                    "over_pct": over_pct,
+                })
+
     now = datetime.utcnow()
     all_reconciled = all(
-        _number(line.get("issued_qty")) - _number(line.get("used_qty")) - _number(line.get("returned_qty")) - _number(line.get("waste_qty")) <= 0.000001
+        _number(line.get("issued_qty")) - _number(line.get("used_qty")) - _number(line.get("returned_qty"))
+        - _number(line.get("leftover_qty")) - _number(line.get("waste_qty")) <= 0.000001
         for line in materials
     )
     status = "COMPLETED" if all_reconciled else "PARTIALLY_RECEIVED"
@@ -757,6 +1106,7 @@ async def receive_job_work(order_id: str, payload: dict, ctx: dict = Depends(_re
         "receipt_no": f"JWR-{now.strftime('%y%m%d')}-{str(ObjectId())[-5:].upper()}",
         "materials": receipt_materials,
         "output": {"barcode": output_barcode, "product": output_product, "quantity": output_qty, "rate": output_rate},
+        "consumption_warnings": consumption_warnings,
         "remarks": str(payload.get("remarks") or "").strip()[:1000],
         "received_by": ctx.get("admin_id"), "received_at": now,
     }
@@ -768,4 +1118,11 @@ async def receive_job_work(order_id: str, payload: dict, ctx: dict = Depends(_re
         {"_id": order["_id"], "tenant_id": tenant_id},
         {"$set": {"materials": materials, "outputs": outputs, "status": status, "updated_at": now}},
     )
-    return {"message": f"Job work receipt recorded. Order status: {status.replace('_', ' ').title()}.", "receipt_id": str(result.inserted_id), "status": status}
+    message = f"Job work receipt recorded. Order status: {status.replace('_', ' ').title()}."
+    if consumption_warnings:
+        flagged = ", ".join(f"{w['material']} ({w['over_pct']}% over)" for w in consumption_warnings)
+        message += f" Note: fabric use is above the design's expected consumption for {flagged}."
+    return {
+        "message": message, "receipt_id": str(result.inserted_id), "status": status,
+        "consumption_warnings": consumption_warnings,
+    }

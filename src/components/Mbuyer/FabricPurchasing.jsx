@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { API_BASE_URL } from "../../config/api.js";
 import { CreateFabricPOModal } from "../shared/FabricBuyingCart.jsx";
+import FabricThemesSection from "./FabricThemes.jsx";
 import { downloadFabricSheetCsv, downloadFabricSheetExcel, downloadFabricSheetPdf } from "../../utils/fabricSheetExport.js";
 
 function authHeaders() {
@@ -174,6 +175,8 @@ export default function FabricPurchasing({ onNavigate = () => {} }) {
           </div>
         )}
       </div>
+
+      <FabricThemesSection vendors={vendors} />
 
       {showCart && (
         <CreateFabricPOModal vendors={vendors} onClose={() => setShowCart(false)} onSubmit={createFabricPO} saving={saving} />

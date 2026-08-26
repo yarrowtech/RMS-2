@@ -38,6 +38,17 @@ class GRCItemModel(BaseModel):
     rejectionReason: str   = ""
     rate:            float = 0
     remarks:         str   = ""
+    # ⚠️ NEW — carried through from a linked Fabric PO item (see create_grc
+    # below) so a fabric receipt doesn't dissolve into a generic, unit-less
+    # SKU the moment it's received. Blank/unused for a normal finished-goods
+    # GRC item.
+    fabric_type:       str = ""
+    gsm:               str = ""
+    width:             str = ""
+    color:             str = ""
+    unit:              str = ""
+    image_url:         str = ""
+    catalogue_item_id: str = ""
 
 
 class GRCModel(BaseModel):
@@ -326,15 +337,24 @@ async def create_grc(grc: GRCModel, ctx: dict = Depends(get_receiving_tenant)):
 
         # rate inherit is strictly inside is_po_linked block, po_match
         # check is properly nested
-        if is_po_linked and not float(item.get("rate", 0)):
+        if is_po_linked:
             po_match = po_item_map.get((item.get("poBarcode") or item["barcode"]).strip())
             if po_match:
-                # Prefer vendorRate (locked-in agreed rate after buyer approval)
-                # Falls back to rate (buyer's original) if PO not yet approved
-                item["rate"] = float(
-                    po_match.get("vendorRate") or
-                    po_match.get("rate") or 0
-                )
+                if not float(item.get("rate", 0)):
+                    # Prefer vendorRate (locked-in agreed rate after buyer approval)
+                    # Falls back to rate (buyer's original) if PO not yet approved
+                    item["rate"] = float(
+                        po_match.get("vendorRate") or
+                        po_match.get("rate") or 0
+                    )
+                # ⚠️ NEW — inherit fabric spec fields from the linked PO item
+                # (present only on a Fabric PO line, blank on a normal one).
+                # Unconditional, unlike rate above: these are descriptive
+                # metadata, not a value the retailer would ever want to
+                # override at receipt time.
+                for field in ("fabric_type", "gsm", "width", "color", "unit", "image_url", "catalogue_item_id"):
+                    if po_match.get(field):
+                        item[field] = po_match[field]
 
     # ── Filter ghost ITEM/ items — PO-linked only ─────────────────────
     # Direct/walk-in GRCs keep ALL items regardless of barcode format.
@@ -449,11 +469,17 @@ async def update_grc(grc_id: str, grc: GRCModel, ctx: dict = Depends(get_receivi
     po_no        = (grc_dict.get("poNo") or "").strip()
     is_po_linked = bool(po_no)
 
-    if is_po_linked and po_no != existing.get("poNo"):
+    po_item_map = {}
+    if is_po_linked:
         po = await resolve_po(po_no, ctx["tenant_id"])
-        grc_dict["po_id"]      = str(po["_id"])
-        grc_dict["vendorName"] = po.get("vendorName", "")
-    elif not is_po_linked:
+        if po_no != existing.get("poNo"):
+            grc_dict["po_id"]      = str(po["_id"])
+            grc_dict["vendorName"] = po.get("vendorName", "")
+        for it in po.get("items", []):
+            po_bc = (it.get("barcode") or "").strip()
+            if po_bc:
+                po_item_map[po_bc] = it
+    else:
         grc_dict["po_id"] = None
         grc_dict["poNo"]  = ""
 
@@ -465,6 +491,16 @@ async def update_grc(grc_id: str, grc: GRCModel, ctx: dict = Depends(get_receivi
         item["barcode"] = await resolve_real_barcode_for_grc(item, ctx["tenant_id"])
         if not item["barcode"] or item["barcode"].startswith("ITEM/"):
             item["barcode"] = await generate_rms_barcode(ctx["tenant_id"])
+        # ⚠️ NEW — re-derive fabric spec fields from the PO on every save,
+        # same reasoning as create_grc: authoritative metadata, always
+        # re-filled from the source PO item rather than trusted to survive
+        # whatever the client's edit form happened to send.
+        if is_po_linked:
+            po_match = po_item_map.get((item.get("poBarcode") or item["barcode"]).strip())
+            if po_match:
+                for field in ("fabric_type", "gsm", "width", "color", "unit", "image_url", "catalogue_item_id"):
+                    if po_match.get(field):
+                        item[field] = po_match[field]
 
     if is_po_linked:
         await enforce_po_receipt_tolerance(grc_dict, ctx["tenant_id"])

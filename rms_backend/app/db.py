@@ -62,6 +62,7 @@ vendor_b2b_stock_ledger_collection = db["vendor_b2b_stock_ledger"]
 vendor_inventory_collection = db["vendor_inventory"]
 vendor_inventory_ledger_collection = db["vendor_inventory_ledger"]
 vendor_tenant_links_collection = db["vendor_tenant_links"]
+fabric_themes_collection = db["fabric_themes"]
 
 # SUPERADMIN / PLATFORM COLLECTIONS 
 # =========================
