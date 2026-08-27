@@ -63,6 +63,14 @@ class TenantBillingUpdate(BaseModel):
     free_reason: Optional[str] = ""
 
 
+class ProductionAddonUpdate(BaseModel):
+    """Toggle the independent Production & Job Work add-on for a tenant.
+    Not tied to plan tier — see job_work_routes.py's
+    _ensure_job_work_addon_enabled. Purchase/checkout flow is a separate,
+    later step; for now Super Admin activates/deactivates it manually."""
+    enabled: bool
+
+
 PLAN_LIMITS = RETAILER_PLAN_LIMITS
 
 
@@ -109,6 +117,7 @@ async def list_tenants(
             "admin_limit":  retailer_plan_config(t.get("plan", "basic")).get("admins"),
             "billing_mode": t.get("billing_mode", "manual"),
             "subscription_status": t.get("subscription_status", "active"),
+            "production_job_work_enabled": bool(t.get("production_job_work_enabled")) or normalize_retailer_plan(t.get("plan", "basic")) == "enterprise",
             "hq_admin_email": t.get("hq_admin_email", ""),
             "hq_admin_name":  t.get("hq_admin_name", ""),
             "kyb_status":   t.get("kyb_status", "Not started"),
@@ -322,6 +331,30 @@ async def update_tenant_billing(
     }
     await tenants_collection.update_one({"tenant_id": tenant_id}, {"$set": patch})
     return {"message": "Tenant billing updated. Departments, admins, stores and stock were not changed."}
+
+
+@router.put("/{tenant_id}/production-addon")
+async def update_production_addon(
+    tenant_id: str,
+    payload: ProductionAddonUpdate,
+    current_admin: CurrentAdmin = Depends(get_current_superadmin),
+):
+    """Activate/deactivate the Production & Job Work add-on for a tenant,
+    independent of their plan tier. Enterprise-plan tenants already have it
+    grandfathered in (see job_work_routes.py) regardless of this flag."""
+    tenant = await tenants_collection.find_one({"tenant_id": tenant_id})
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+    await tenants_collection.update_one(
+        {"tenant_id": tenant_id},
+        {"$set": {"production_job_work_enabled": payload.enabled, "updated_at": datetime.utcnow()}},
+    )
+    await log_activity(
+        current_admin.get("name") or current_admin.get("email", ""),
+        f"{'Activated' if payload.enabled else 'Deactivated'} Production & Job Work add-on for: {tenant.get('company_name', tenant_id)}",
+        type="update",
+    )
+    return {"message": f"Production & Job Work add-on {'activated' if payload.enabled else 'deactivated'} for '{tenant.get('company_name', tenant_id)}'."}
 
 
 @router.delete("/{tenant_id}")

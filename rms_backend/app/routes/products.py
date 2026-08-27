@@ -18,8 +18,17 @@ from pydantic import BaseModel
 
 from ..auth import decode_token
 from .deps import get_hq_tenant
+from .grn_routes import resolve_single_store_destination
 
 router = APIRouter(prefix="/api/products", tags=["Products"])
+
+# The unit dropdown used to be a hardcoded 5-item list with no way to add
+# anything else (no "litre" for a fuel/oil business, no "box"/"roll"/
+# "dozen" for anyone else outside plain retail). These stay as sensible
+# defaults; anything else a tenant types gets remembered on their own
+# tenant record (see GET /units and the $addToSet calls in add_product)
+# so it becomes a normal pickable option for that tenant from then on.
+BUILTIN_UNITS = ["pcs", "set", "kg", "g", "ltr", "l", "ml", "m", "box", "pair"]
 
 load_dotenv()
 
@@ -145,6 +154,80 @@ def generate_variant_sku(base_sku: str, size: str = None, color: str = None) -> 
 
 def generate_barcode() -> str:
     return "890" + str(random.randint(100000000, 999999999))
+
+
+async def _seed_single_store_stock(tenant_id: str, store: dict, barcode: str, description: str, quantity: float, rate: float, unit: str) -> None:
+    """A single-store tenant has no vendor/PO/GRC/GRN cycle to fall back on
+    for stock that wasn't formally purchased — opening stock, self-made
+    goods, anything counted by hand. Without this, Add Product only ever
+    created a catalogue row (product_collection) and the item stayed
+    permanently un-sellable until someone fabricated a fake GRN for it.
+    Mirrors the same upsert shape grn_routes.py's update_single_store_stock
+    uses, tagged with its own `source` so it's still distinguishable in the
+    audit trail from a real GRN receipt."""
+    if quantity <= 0:
+        return
+    now = datetime.utcnow()
+    await store_stock_collection.update_one(
+        {"tenant_id": tenant_id, "barcode": barcode, "store_id": store["id"]},
+        {
+            "$inc": {"stockQty": quantity},
+            "$set": {
+                "tenant_id": tenant_id, "store_id": store["id"], "store_name": store["name"], "store_type": store["type"],
+                "barcode": barcode, "description": description, "rate": rate, "unit": unit or "pcs",
+                "source": "manual_add", "updatedAt": now,
+            },
+            "$setOnInsert": {"createdAt": now},
+        },
+        upsert=True,
+    )
+
+
+async def _remember_custom_units(tenant_id: str, units) -> None:
+    """Any unit typed that isn't one of the BUILTIN_UNITS gets saved onto
+    this tenant so it shows up as a normal pickable option next time,
+    instead of having to be retyped from scratch on every product."""
+    new_units = sorted({str(u).strip() for u in units if str(u or "").strip() and str(u).strip() not in BUILTIN_UNITS})
+    if not new_units:
+        return
+    await tenants_collection.update_one(
+        {"tenant_id": tenant_id},
+        {"$addToSet": {"custom_units": {"$each": new_units}}},
+    )
+
+
+async def _sync_single_store_stock_edit(tenant_id: str, store: dict, barcode: str, description: str | None, quantity, rate, unit: str | None) -> None:
+    """Edit Product sets an ABSOLUTE quantity (the owner typed "this is how
+    much I have"), unlike a GRN/job-work receipt which always ADDS to
+    whatever's already there — so this uses $set on stockQty, never $inc.
+    Only touches fields that were actually part of this edit; leaves the
+    rest of the store_stock line untouched."""
+    if not barcode:
+        return
+    store_update: dict = {}
+    if quantity is not None:
+        store_update["stockQty"] = quantity
+    if rate is not None:
+        store_update["rate"] = rate
+    if unit is not None:
+        store_update["unit"] = unit
+    if description is not None:
+        store_update["description"] = description
+    if not store_update:
+        return
+    store_update["updatedAt"] = datetime.utcnow()
+    await store_stock_collection.update_one(
+        {"tenant_id": tenant_id, "barcode": barcode, "store_id": store["id"]},
+        {
+            "$set": store_update,
+            "$setOnInsert": {
+                "tenant_id": tenant_id, "barcode": barcode, "store_id": store["id"],
+                "store_name": store["name"], "store_type": store["type"],
+                "source": "manual_add", "createdAt": datetime.utcnow(),
+            },
+        },
+        upsert=True,
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -356,7 +439,23 @@ async def add_product(
         "has_variants": True, "variant_type": variant_type, "variants": variant_docs, "images": uploaded_images, **audit,
     }
     await product_collection.insert_one(doc)
+    await _remember_custom_units(tenant_id, [v.get("unit") for v in variant_docs])
+    if seed_store:
+        for v in variant_docs:
+            label = " - ".join(str(part) for part in (v.get("size_label"), v.get("color")) if part)
+            await _seed_single_store_stock(tenant_id, seed_store, v["barcode"], f"{product_name} - {label}" if label else product_name, v.get("stock", 0), v.get("cost_price", 0), v.get("unit"))
     return {"message": "Product added successfully", "base_sku": sku, "total_variants": len(variant_docs)}
+
+
+@router.get("/units")
+async def list_units(ctx: dict = Depends(get_hq_tenant)):
+    """Built-in defaults plus whatever this tenant has typed as a custom
+    unit before (see _remember_custom_units) — merged into one pickable
+    list so a fuel/oil business gets "ltr" and a hardware business can
+    keep using "box"/"roll" without retyping it on every product."""
+    tenant = await tenants_collection.find_one({"tenant_id": ctx["tenant_id"]}, {"custom_units": 1})
+    custom = [u for u in (tenant or {}).get("custom_units", []) if u not in BUILTIN_UNITS]
+    return {"units": BUILTIN_UNITS + sorted(custom)}
 
 
 @router.get("/")
@@ -644,6 +743,7 @@ async def update_product(
     user = get_current_user(authorization)
 
     sku_clause = {"$or": [{"sku": sku}, {"base_sku": sku}]}
+    tenant_id = None
     if user["role"] == "VENDOR":
         sku_clause["vendor_id"] = vendor_id_query(str(user["vendor_id"]))
     else:
@@ -656,6 +756,14 @@ async def update_product(
     product = await product_collection.find_one(sku_clause)
     if not product:
         raise HTTPException(status_code=404, detail="Product not found or unauthorized")
+
+    # A single-store tenant's REAL sellable stock lives in
+    # store_stock_collection (see _seed_single_store_stock in add_product) —
+    # product_collection.quantity is only a catalogue-level reference. Without
+    # this, editing quantity/price/unit here silently updated the catalogue
+    # row but never touched what POS/inventory actually reads, so the shop
+    # owner would see no change anywhere they'd actually notice one.
+    seed_store = await resolve_single_store_destination(tenant_id) if tenant_id else None
 
     try:
         keep_images: list = json.loads(existing_images)
@@ -700,6 +808,11 @@ async def update_product(
         if quantity      is not None: update_data["quantity"]      = quantity
         if unit          is not None: update_data["unit"]          = unit
         await product_collection.update_one({"_id": product["_id"]}, {"$set": update_data})
+        if seed_store:
+            await _sync_single_store_stock_edit(
+                tenant_id, seed_store, product.get("barcode", ""),
+                product_name, quantity, cost_price, unit,
+            )
         return {"message": "Product updated successfully"}
 
     await product_collection.update_one({"_id": product["_id"]}, {"$set": update_data})
@@ -720,6 +833,14 @@ async def update_product(
             if "unit"          in row and row["unit"]          is not None: patch[f"variants.{idx}.unit"]          = row["unit"]
             if patch:
                 await product_collection.update_one({"_id": product["_id"]}, {"$set": patch})
+            if seed_store:
+                variant_barcode = existing_variants[idx].get("barcode", "")
+                await _sync_single_store_stock_edit(
+                    tenant_id, seed_store, variant_barcode, None,
+                    int(row["stock"]) if row.get("stock") is not None else None,
+                    float(row["cost_price"]) if row.get("cost_price") is not None else None,
+                    row.get("unit"),
+                )
 
     return {"message": "Product updated successfully"}
 
@@ -750,7 +871,7 @@ from fastapi.responses import JSONResponse
 from fastapi.encoders import jsonable_encoder
 from typing import List, Optional
 from datetime import datetime
-from ..db import product_collection, vendors_collection, inventory_collection, vendor_tenant_links_collection, tenants_collection
+from ..db import product_collection, vendors_collection, inventory_collection, vendor_tenant_links_collection, tenants_collection, store_stock_collection
 import json
 import cloudinary
 import cloudinary.uploader
@@ -763,8 +884,17 @@ from pydantic import BaseModel
 
 from ..auth import decode_token
 from .deps import get_hq_tenant
+from .grn_routes import resolve_single_store_destination
 
 router = APIRouter(prefix="/api/products", tags=["Products"])
+
+# The unit dropdown used to be a hardcoded 5-item list with no way to add
+# anything else (no "litre" for a fuel/oil business, no "box"/"roll"/
+# "dozen" for anyone else outside plain retail). These stay as sensible
+# defaults; anything else a tenant types gets remembered on their own
+# tenant record (see GET /units and the $addToSet calls in add_product)
+# so it becomes a normal pickable option for that tenant from then on.
+BUILTIN_UNITS = ["pcs", "set", "kg", "g", "ltr", "l", "ml", "m", "box", "pair"]
 
 load_dotenv()
 
@@ -890,6 +1020,80 @@ def generate_variant_sku(base_sku: str, size: str = None, color: str = None) -> 
 
 def generate_barcode() -> str:
     return "890" + str(random.randint(100000000, 999999999))
+
+
+async def _seed_single_store_stock(tenant_id: str, store: dict, barcode: str, description: str, quantity: float, rate: float, unit: str) -> None:
+    """A single-store tenant has no vendor/PO/GRC/GRN cycle to fall back on
+    for stock that wasn't formally purchased — opening stock, self-made
+    goods, anything counted by hand. Without this, Add Product only ever
+    created a catalogue row (product_collection) and the item stayed
+    permanently un-sellable until someone fabricated a fake GRN for it.
+    Mirrors the same upsert shape grn_routes.py's update_single_store_stock
+    uses, tagged with its own `source` so it's still distinguishable in the
+    audit trail from a real GRN receipt."""
+    if quantity <= 0:
+        return
+    now = datetime.utcnow()
+    await store_stock_collection.update_one(
+        {"tenant_id": tenant_id, "barcode": barcode, "store_id": store["id"]},
+        {
+            "$inc": {"stockQty": quantity},
+            "$set": {
+                "tenant_id": tenant_id, "store_id": store["id"], "store_name": store["name"], "store_type": store["type"],
+                "barcode": barcode, "description": description, "rate": rate, "unit": unit or "pcs",
+                "source": "manual_add", "updatedAt": now,
+            },
+            "$setOnInsert": {"createdAt": now},
+        },
+        upsert=True,
+    )
+
+
+async def _remember_custom_units(tenant_id: str, units) -> None:
+    """Any unit typed that isn't one of the BUILTIN_UNITS gets saved onto
+    this tenant so it shows up as a normal pickable option next time,
+    instead of having to be retyped from scratch on every product."""
+    new_units = sorted({str(u).strip() for u in units if str(u or "").strip() and str(u).strip() not in BUILTIN_UNITS})
+    if not new_units:
+        return
+    await tenants_collection.update_one(
+        {"tenant_id": tenant_id},
+        {"$addToSet": {"custom_units": {"$each": new_units}}},
+    )
+
+
+async def _sync_single_store_stock_edit(tenant_id: str, store: dict, barcode: str, description: str | None, quantity, rate, unit: str | None) -> None:
+    """Edit Product sets an ABSOLUTE quantity (the owner typed "this is how
+    much I have"), unlike a GRN/job-work receipt which always ADDS to
+    whatever's already there — so this uses $set on stockQty, never $inc.
+    Only touches fields that were actually part of this edit; leaves the
+    rest of the store_stock line untouched."""
+    if not barcode:
+        return
+    store_update: dict = {}
+    if quantity is not None:
+        store_update["stockQty"] = quantity
+    if rate is not None:
+        store_update["rate"] = rate
+    if unit is not None:
+        store_update["unit"] = unit
+    if description is not None:
+        store_update["description"] = description
+    if not store_update:
+        return
+    store_update["updatedAt"] = datetime.utcnow()
+    await store_stock_collection.update_one(
+        {"tenant_id": tenant_id, "barcode": barcode, "store_id": store["id"]},
+        {
+            "$set": store_update,
+            "$setOnInsert": {
+                "tenant_id": tenant_id, "barcode": barcode, "store_id": store["id"],
+                "store_name": store["name"], "store_type": store["type"],
+                "source": "manual_add", "createdAt": datetime.utcnow(),
+            },
+        },
+        upsert=True,
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1082,6 +1286,13 @@ async def add_product(
         "tenant_id": tenant_id,
     }
 
+    # Single-store tenants have no vendor/PO/GRC/GRN cycle to fall back on
+    # for stock that was never formally purchased — resolved once here and
+    # reused for both the plain and variant branches below. Only for admin
+    # callers: a vendor pushing a product into a retailer's catalogue must
+    # never directly inject sellable stock without a receiving step.
+    seed_store = None if user["role"] == "VENDOR" else await resolve_single_store_destination(tenant_id)
+
     if not has_variants:
         doc = {
             "product_name": product_name, "division": division, "section": section, "department": department,
@@ -1092,6 +1303,9 @@ async def add_product(
             "has_variants": False, "variant_type": "none", "variants": [], "images": uploaded_images, **audit,
         }
         await product_collection.insert_one(doc)
+        await _remember_custom_units(tenant_id, [unit])
+        if seed_store:
+            await _seed_single_store_stock(tenant_id, seed_store, barcode, product_name, quantity, cost_price, unit)
         return {"message": "Product added successfully", "sku": sku, "barcode": barcode}
 
     variant_docs = []
@@ -1118,7 +1332,23 @@ async def add_product(
         "has_variants": True, "variant_type": variant_type, "variants": variant_docs, "images": uploaded_images, **audit,
     }
     await product_collection.insert_one(doc)
+    await _remember_custom_units(tenant_id, [v.get("unit") for v in variant_docs])
+    if seed_store:
+        for v in variant_docs:
+            label = " - ".join(str(part) for part in (v.get("size_label"), v.get("color")) if part)
+            await _seed_single_store_stock(tenant_id, seed_store, v["barcode"], f"{product_name} - {label}" if label else product_name, v.get("stock", 0), v.get("cost_price", 0), v.get("unit"))
     return {"message": "Product added successfully", "base_sku": sku, "total_variants": len(variant_docs)}
+
+
+@router.get("/units")
+async def list_units(ctx: dict = Depends(get_hq_tenant)):
+    """Built-in defaults plus whatever this tenant has typed as a custom
+    unit before (see _remember_custom_units) — merged into one pickable
+    list so a fuel/oil business gets "ltr" and a hardware business can
+    keep using "box"/"roll" without retyping it on every product."""
+    tenant = await tenants_collection.find_one({"tenant_id": ctx["tenant_id"]}, {"custom_units": 1})
+    custom = [u for u in (tenant or {}).get("custom_units", []) if u not in BUILTIN_UNITS]
+    return {"units": BUILTIN_UNITS + sorted(custom)}
 
 
 @router.get("/")
@@ -1476,6 +1706,7 @@ async def update_product(
     user = get_current_user(authorization)
 
     sku_clause = {"$or": [{"sku": sku}, {"base_sku": sku}]}
+    tenant_id = None
     if user["role"] == "VENDOR":
         sku_clause["vendor_id"] = vendor_id_query(str(user["vendor_id"]))
     else:
@@ -1488,6 +1719,14 @@ async def update_product(
     product = await product_collection.find_one(sku_clause)
     if not product:
         raise HTTPException(status_code=404, detail="Product not found or unauthorized")
+
+    # A single-store tenant's REAL sellable stock lives in
+    # store_stock_collection (see _seed_single_store_stock in add_product) —
+    # product_collection.quantity is only a catalogue-level reference. Without
+    # this, editing quantity/price/unit here silently updated the catalogue
+    # row but never touched what POS/inventory actually reads, so the shop
+    # owner would see no change anywhere they'd actually notice one.
+    seed_store = await resolve_single_store_destination(tenant_id) if tenant_id else None
 
     try:
         keep_images: list = json.loads(existing_images)
@@ -1532,6 +1771,11 @@ async def update_product(
         if quantity      is not None: update_data["quantity"]      = quantity
         if unit          is not None: update_data["unit"]          = unit
         await product_collection.update_one({"_id": product["_id"]}, {"$set": update_data})
+        if seed_store:
+            await _sync_single_store_stock_edit(
+                tenant_id, seed_store, product.get("barcode", ""),
+                product_name, quantity, cost_price, unit,
+            )
         return {"message": "Product updated successfully"}
 
     await product_collection.update_one({"_id": product["_id"]}, {"$set": update_data})
@@ -1552,6 +1796,14 @@ async def update_product(
             if "unit"          in row and row["unit"]          is not None: patch[f"variants.{idx}.unit"]          = row["unit"]
             if patch:
                 await product_collection.update_one({"_id": product["_id"]}, {"$set": patch})
+            if seed_store:
+                variant_barcode = existing_variants[idx].get("barcode", "")
+                await _sync_single_store_stock_edit(
+                    tenant_id, seed_store, variant_barcode, None,
+                    int(row["stock"]) if row.get("stock") is not None else None,
+                    float(row["cost_price"]) if row.get("cost_price") is not None else None,
+                    row.get("unit"),
+                )
 
     return {"message": "Product updated successfully"}
 

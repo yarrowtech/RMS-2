@@ -3,6 +3,7 @@ from fastapi_mail import FastMail, MessageSchema, ConnectionConfig
 from pydantic import EmailStr
 from typing import List
 from datetime import datetime
+from html import escape
 from app.config import settings
 from app.db import email_failures_collection
 
@@ -126,6 +127,69 @@ async def _send(subject: str, recipients: List[str], html: str) -> bool:
 
 # 1. ADMIN — Password setup (existing, unchanged behaviour)
 # ─────────────────────────────────────────────────────────────────────────────
+
+
+async def send_customer_pos_invoice_email(
+    email: EmailStr,
+    customer_name: str,
+    store_name: str,
+    invoice_no: str,
+    invoice_date: str,
+    net_payable: float,
+    share_url: str,
+    items: List[dict],
+    payment_method: str = "",
+) -> bool:
+    """Send a customer-facing POS invoice summary after bill generation."""
+    safe_customer = escape(customer_name or "Customer")
+    safe_store = escape(store_name or "RMS Store")
+    safe_invoice = escape(invoice_no or "")
+    safe_date = escape(invoice_date or "")
+    safe_url = escape(share_url or "")
+    safe_payment_method = escape(payment_method or "Cash")
+    rows = []
+    for item in (items or [])[:40]:
+        name = escape(str(item.get("name") or item.get("barcode") or "Item"))
+        qty = float(item.get("qty") or 0)
+        rate = float(item.get("price") or 0)
+        total = float(item.get("total") or 0)
+        rows.append(
+            f"<tr><td style='padding:8px;border-bottom:1px solid #eee;'>{name}</td>"
+            f"<td style='padding:8px;border-bottom:1px solid #eee;text-align:right;'>{qty:g}</td>"
+            f"<td style='padding:8px;border-bottom:1px solid #eee;text-align:right;'>Rs. {rate:,.2f}</td>"
+            f"<td style='padding:8px;border-bottom:1px solid #eee;text-align:right;'>Rs. {abs(total):,.2f}</td></tr>"
+        )
+    body = f"""
+      <h2 style="color:#111827;margin:0 0 8px;">Thank you, {safe_customer}</h2>
+      <p style="font-size:15px;color:#475569;margin:0 0 18px;">
+        Your invoice from <strong>{safe_store}</strong> has been generated.
+      </p>
+      <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;padding:16px;margin-bottom:18px;">
+        <p style="margin:0 0 6px;color:#334155;"><strong>Invoice:</strong> {safe_invoice}</p>
+        <p style="margin:0 0 6px;color:#334155;"><strong>Date:</strong> {safe_date}</p>
+        <p style="margin:0 0 6px;color:#334155;"><strong>Paid by:</strong> {safe_payment_method}</p>
+        <p style="margin:0;color:#111827;font-size:18px;"><strong>Net payable:</strong> Rs. {float(net_payable or 0):,.2f}</p>
+      </div>
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="width:100%;border-collapse:collapse;font-size:13px;color:#334155;">
+        <thead>
+          <tr style="background:#eef2ff;color:#312e81;">
+            <th style="padding:8px;text-align:left;">Item</th>
+            <th style="padding:8px;text-align:right;">Qty</th>
+            <th style="padding:8px;text-align:right;">Rate</th>
+            <th style="padding:8px;text-align:right;">Amount</th>
+          </tr>
+        </thead>
+        <tbody>{''.join(rows) or "<tr><td colspan='4' style='padding:10px;color:#64748b;'>No item details available.</td></tr>"}</tbody>
+      </table>
+      {(_btn(safe_url, "View & download invoice", PRIMARY) if safe_url else "")}
+      {_note("This is an automated POS invoice email from RMS. Keep this email for your purchase record.")}
+    """
+    return await _send(
+        subject=f"Your RMS invoice {invoice_no}",
+        recipients=[email],
+        html=_wrap(PRIMARY, "Your RMS invoice is ready", body),
+    )
+
 async def send_password_setup_email(
     email: EmailStr, name: str, department: str, link: str
 ):

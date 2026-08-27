@@ -36,10 +36,10 @@ const capabilities = [
 ];
 
 const partners = [
-  ["Vendor", "Manage your profile, catalogue, enquiries, orders and retailer communication.", Handshake],
-  ["Wholesaler", "Offer bulk assortments and collaborate with retailers through a structured order flow.", PackageCheck],
-  ["Exporter / Manufacturer", "Present production capabilities, products and fulfilment information.", Globe2],
-  ["Store Owner / Retailer", "Request an RMS retail workspace for stores, staff, inventory and operations.", Building2],
+  ["Vendor", "Manage your profile, catalogue, enquiries, orders and retailer communication.", Handshake, "from-indigo-500 to-violet-600", "bg-indigo-50 text-indigo-700 ring-indigo-100"],
+  ["Wholesaler", "Offer bulk assortments and collaborate with retailers through a structured order flow.", PackageCheck, "from-emerald-500 to-teal-600", "bg-emerald-50 text-emerald-700 ring-emerald-100"],
+  ["Exporter / Manufacturer", "Present production capabilities, products and fulfilment information.", Globe2, "from-cyan-500 to-blue-600", "bg-cyan-50 text-cyan-700 ring-cyan-100"],
+  ["Store Owner / Retailer", "Request an RMS retail workspace for stores, staff, inventory and operations.", Building2, "from-amber-400 to-orange-500", "bg-amber-50 text-amber-700 ring-amber-100"],
 ];
 
 const steps = [
@@ -403,7 +403,7 @@ export default function ProfessionalRoleSelector() {
         <section id="partners" className="bg-white py-20">
           <div className="mx-auto max-w-7xl px-5 sm:px-8 lg:px-10">
             <div className="mx-auto max-w-3xl text-center"><p className="text-xs font-extrabold uppercase tracking-[0.2em] text-violet-600">Join the RMS network</p><h2 className="mt-4 text-3xl font-black tracking-tight text-slate-950 sm:text-4xl">Built for retailers and their supply partners.</h2><p className="mt-4 leading-7 text-slate-600">Apply once, complete verification, and receive access to the workspace appropriate for your business.</p></div>
-            <div className="mt-10 grid gap-4 md:grid-cols-2 xl:grid-cols-4">{partners.map(([title,text,Icon]) => <div key={title} className="rounded-2xl border border-slate-200 bg-slate-50/70 p-6"><span className="grid h-11 w-11 place-items-center rounded-xl bg-violet-50 text-violet-700 ring-1 ring-violet-100"><Icon size={20}/></span><h3 className="mt-5 font-extrabold text-slate-950">{title}</h3><p className="mt-3 text-sm leading-6 text-slate-600">{text}</p></div>)}</div>
+            <div className="mt-10 grid gap-5 md:grid-cols-2 xl:grid-cols-4">{partners.map(([title,text,Icon,accent,soft]) => <div key={title} className="group relative overflow-hidden rounded-3xl border border-white bg-white p-6 shadow-[0_18px_55px_rgba(15,23,42,0.08)] ring-1 ring-slate-200/70 transition duration-300 hover:-translate-y-1 hover:shadow-[0_26px_70px_rgba(15,23,42,0.13)]"><span className={`absolute inset-x-0 top-0 h-1.5 bg-gradient-to-r ${accent}`} /><span className={`grid h-12 w-12 place-items-center rounded-2xl ring-1 ${soft}`}><Icon size={21}/></span><h3 className="mt-6 font-extrabold text-slate-950">{title}</h3><p className="mt-3 text-sm leading-6 text-slate-600">{text}</p></div>)}</div>
             <div className="mt-10 grid gap-4 rounded-3xl border border-emerald-100 bg-emerald-50/60 p-6 sm:grid-cols-2 lg:grid-cols-4">{[["1","Submit registration"],["2","Business verification"],["3","Account approval"],["4","Connect and operate"]].map(([n,t]) => <div key={n} className="flex items-center gap-3"><span className="grid h-8 w-8 place-items-center rounded-full bg-emerald-600 text-xs font-black text-white">{n}</span><span className="text-sm font-bold text-emerald-950">{t}</span></div>)}</div>
           </div>
         </section>

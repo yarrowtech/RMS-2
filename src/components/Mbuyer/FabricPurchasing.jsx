@@ -39,7 +39,13 @@ const statusTone = {
 
 function DownloadModal({ po, onClose }) {
   const [busy, setBusy] = useState("");
-  const meta = { purchase_order_no: po.orderNo, vendor_name: po.vendorName, order_date: po.orderDate, sheet: po.fabric_po_sheet || [] };
+  const meta = {
+    purchase_order_no: po.orderNo, vendor_name: po.vendorName, order_date: po.orderDate, sheet: po.fabric_po_sheet || [],
+    expected_delivery_date: po.expectedDeliveryDate, payment_terms: po.paymentTerms,
+    vendor_gstin: po.vendorGstin, vendor_mobile: po.vendorMobile, vendor_address: po.vendorAddress,
+    company_name: po.ownerSite, company_gstin: po.ownerGstin, company_address: po.ownerAddress,
+    subtotal_amount: po.basicValue, tax_amount: po.taxAmount, net_amount: po.netAmount,
+  };
   const options = [
     { label: "PDF", hint: "Best for sharing or printing — includes fabric photos", run: () => downloadFabricSheetPdf(meta) },
     { label: "Excel (.xlsx)", hint: "Best for editing rates before sending", run: () => downloadFabricSheetExcel(meta) },

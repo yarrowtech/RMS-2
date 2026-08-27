@@ -3,6 +3,7 @@ import { API_BASE_URL } from "../../config/api.js";
 import { logoutOrReturnToDepartmentSelector } from "../../utils/authRedirect.js";
 import { downloadFabricSheetCsv, downloadFabricSheetExcel, downloadFabricSheetPdf } from "../../utils/fabricSheetExport.js";
 import { Modal, Field, CreateFabricPOModal } from "../shared/FabricBuyingCart.jsx";
+import FabricThemesSection from "../Mbuyer/FabricThemes.jsx";
 
 const JOB_WORK_TYPES = ["Cutting", "Stitching", "Finishing", "Embroidery", "Washing", "Packing", "Other"];
 
@@ -42,6 +43,16 @@ async function request(path, options = {}) {
   return data;
 }
 
+async function addonRequest(path, options = {}) {
+  const response = await fetch(`${API_BASE_URL}/api/production-addon${path}`, {
+    ...options,
+    headers: { ...authHeaders(), ...(options.headers || {}) },
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.detail || "Unable to complete this action.");
+  return data;
+}
+
 
 const statusStyle = {
   DRAFT: "bg-slate-100 text-slate-700 ring-slate-200",
@@ -66,6 +77,8 @@ export default function ProductionJobWork() {
   const [planForm, setPlanForm] = useState(emptyPlan);
   const [saving, setSaving] = useState(false);
   const [sheetDownload, setSheetDownload] = useState(null); // { meta, items } once a Fabric PO is created
+  const [addonStatus, setAddonStatus] = useState(null); // { enabled, request } — null while checking
+  const [addonChecking, setAddonChecking] = useState(true);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -87,7 +100,23 @@ export default function ProductionJobWork() {
     }
   }, []);
 
-  useEffect(() => { refresh(); }, [refresh]);
+  const checkAddon = useCallback(async () => {
+    setAddonChecking(true);
+    try {
+      const status = await addonRequest("/me");
+      setAddonStatus(status);
+      if (status.enabled) await refresh();
+    } catch {
+      // If the status check itself fails, fall through to the normal
+      // workspace — its own error banner will explain what went wrong.
+      setAddonStatus({ enabled: true, request: null });
+      await refresh();
+    } finally {
+      setAddonChecking(false);
+    }
+  }, [refresh]);
+
+  useEffect(() => { checkAddon(); }, [checkAddon]);
 
   const materialSummary = useMemo(() => stock.reduce((sum, item) => sum + Number(item.available_qty || 0), 0), [stock]);
 
@@ -151,6 +180,14 @@ export default function ProductionJobWork() {
     } finally { setSaving(false); }
   }
 
+  if (addonChecking) {
+    return <main className="grid min-h-full place-items-center bg-slate-50 p-8 text-sm font-semibold text-slate-400">Checking Production &amp; Job Work access…</main>;
+  }
+
+  if (addonStatus && !addonStatus.enabled) {
+    return <AddonRequestScreen status={addonStatus} onRequested={(req) => setAddonStatus((current) => ({ ...current, request: req }))} />;
+  }
+
   return (
     <main className="min-h-full bg-[radial-gradient(circle_at_top_right,_rgba(99,102,241,0.16),_transparent_30%),linear-gradient(135deg,_#f8fafc_0%,_#eef2ff_46%,_#ecfeff_100%)] p-4 sm:p-6 lg:p-8">
       <div className="mx-auto max-w-7xl">
@@ -176,6 +213,10 @@ export default function ProductionJobWork() {
         </section>
 
         <MaterialPlanList plans={plans} onCreatePO={(plan) => setModal({ type: "purchase-plan", plan })} onStartJob={(plan) => { setOrderForm({ ...emptyOrder, material_plan_id: plan.id, finished_product: plan.style_name || "", expected_quantity: String(plan.planned_quantity || ""), unit: plan.finished_unit || "pcs" }); setModal({ type: "create" }); }} />
+
+        <section className="mb-6">
+          <FabricThemesSection vendors={fabricSuppliers} />
+        </section>
 
         <section className="overflow-hidden rounded-3xl border border-white bg-white/90 shadow-xl shadow-indigo-100/40 backdrop-blur">
           <div className="flex flex-col justify-between gap-2 border-b border-indigo-100/80 bg-gradient-to-r from-white via-indigo-50/60 to-cyan-50/70 px-6 py-5 sm:flex-row sm:items-center">
@@ -205,6 +246,53 @@ export default function ProductionJobWork() {
       {modal?.type === "issue" && <IssueMaterialModal order={modal.order} stock={stock} onClose={closeModal} onSaved={async (message) => { closeModal(); showNotice(message); await refresh(); }} setError={setError} />}
       {modal?.type === "receive" && <ReceiveWorkModal order={modal.order} onClose={closeModal} onSaved={async (message, warnings) => { closeModal(); if (warnings?.length) showWarning(message); else showNotice(message); await refresh(); }} setError={setError} />}
       {sheetDownload && <DownloadSheetModal sheetDownload={sheetDownload} onClose={() => setSheetDownload(null)} />}
+    </main>
+  );
+}
+
+function AddonRequestScreen({ status, onRequested }) {
+  const pending = status.request?.status === "PENDING";
+  const declined = status.request?.status === "DECLINED";
+  const [note, setNote] = useState("");
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState("");
+
+  const submit = async () => {
+    setSending(true);
+    setError("");
+    try {
+      const result = await addonRequest("/requests", { method: "POST", body: JSON.stringify({ note }) });
+      onRequested(result.request);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSending(false);
+    }
+  };
+
+  return (
+    <main className="grid min-h-full place-items-center bg-[radial-gradient(circle_at_top_right,_rgba(99,102,241,0.16),_transparent_30%),linear-gradient(135deg,_#f8fafc_0%,_#eef2ff_46%,_#ecfeff_100%)] p-4 sm:p-6 lg:p-8">
+      <div className="w-full max-w-lg rounded-[28px] border border-white bg-white/90 p-8 text-center shadow-2xl shadow-indigo-100/60 backdrop-blur">
+        <div className="mx-auto grid h-14 w-14 place-items-center rounded-2xl bg-gradient-to-br from-slate-950 via-indigo-950 to-violet-800 text-2xl text-white shadow-lg">✂</div>
+        <h1 className="mt-4 text-xl font-black tracking-tight text-slate-900">Production &amp; Job Work is not activated</h1>
+        <p className="mt-2 text-sm leading-6 text-slate-500">This workspace is a separate add-on, independent of your plan. Activate it to plan materials, issue fabric to job workers and reconcile finished goods.</p>
+
+        {pending ? (
+          <div className="mt-6 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm font-semibold text-amber-800">Your activation request is awaiting review. You'll get access as soon as it's approved.</div>
+        ) : (
+          <div className="mt-6 text-left">
+            {declined && <div className="mb-4 rounded-2xl border border-rose-200 bg-rose-50 p-3 text-xs font-bold text-rose-700">Your previous request was declined. You can send another one below.</div>}
+            {error && <div className="mb-4 rounded-2xl border border-rose-200 bg-rose-50 p-3 text-xs font-bold text-rose-700">{error}</div>}
+            <label className="block text-sm font-bold text-slate-700">
+              <span className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-slate-500">Note to RMS (optional)</span>
+              <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={3} placeholder="e.g. We cut and stitch our own garments and need to track fabric sent to job workers." className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm font-medium outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100" />
+            </label>
+            <button type="button" disabled={sending} onClick={submit} className="mt-4 w-full rounded-xl bg-violet-600 px-5 py-3 text-sm font-black text-white transition hover:bg-violet-700 disabled:opacity-60">{sending ? "Sending…" : "Request activation"}</button>
+          </div>
+        )}
+
+        <button type="button" onClick={() => logoutOrReturnToDepartmentSelector()} className="mt-6 text-xs font-bold text-slate-400 hover:text-slate-600">Back to department selector</button>
+      </div>
     </main>
   );
 }

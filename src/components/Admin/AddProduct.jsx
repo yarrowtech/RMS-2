@@ -2,16 +2,11 @@ import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
 import React, { useEffect, useState } from "react";
 import axios from "axios";
 import { useNavigate } from "react-router-dom";
+import UnitSelect from "../shared/UnitSelect.jsx";
 
 const API_BASE = `${APP_API_URL}`;
 const SIZE_OPTIONS = ["S", "M", "L", "XL", "XXL"];
-const UNIT_OPTIONS = [
-  { value: "pcs", label: "Pieces" },
-  { value: "set", label: "Set" },
-  { value: "kg", label: "Kg" },
-  { value: "g", label: "Gram" },
-  { value: "ltr", label: "Liter" },
-];
+const SELECT_CLASS = "w-full min-w-0 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition hover:border-slate-300 focus:border-indigo-500 focus:bg-white focus:ring-4 focus:ring-indigo-100";
 
 const WEB_SAFE_COLORS = (() => {
   const hex = ["00", "33", "66", "99", "CC", "FF"];
@@ -390,16 +385,7 @@ function ColorVariantCard({ variant, onChange }) {
 
         <div>
           <Label>Unit</Label>
-          <Select
-            value={variant.unit}
-            onChange={(e) => onChange("unit", e.target.value)}
-          >
-            {UNIT_OPTIONS.map((u) => (
-              <option key={u.value} value={u.value}>
-                {u.label}
-              </option>
-            ))}
-          </Select>
+          <UnitSelect className={SELECT_CLASS} value={variant.unit} onChange={(u) => onChange("unit", u)} />
         </div>
       </div>
 
@@ -511,17 +497,7 @@ function SizeColorMiniCard({ size, customSize, colorObj, onChange }) {
 
         <div>
           <Label small>Unit</Label>
-          <Select
-            value={colorObj.unit}
-            onChange={(e) => onChange("unit", e.target.value)}
-            className="px-3 py-2 text-[13px]"
-          >
-            {UNIT_OPTIONS.map((u) => (
-              <option key={u.value} value={u.value}>
-                {u.label}
-              </option>
-            ))}
-          </Select>
+          <UnitSelect className={`${SELECT_CLASS} px-3 py-2 text-[13px]`} value={colorObj.unit} onChange={(u) => onChange("unit", u)} />
         </div>
       </div>
 
@@ -1106,16 +1082,7 @@ await axios.post(`${API_BASE}/api/products/add`, fd, {
 
                     <div>
                       <Label>Unit</Label>
-                      <Select
-                        value={form.unit}
-                        onChange={(e) => handleChange(idx, "unit", e.target.value)}
-                      >
-                        {UNIT_OPTIONS.map((u) => (
-                          <option key={u.value} value={u.value}>
-                            {u.label}
-                          </option>
-                        ))}
-                      </Select>
+                      <UnitSelect className={SELECT_CLASS} value={form.unit} onChange={(u) => handleChange(idx, "unit", u)} />
                     </div>
                   </div>
 

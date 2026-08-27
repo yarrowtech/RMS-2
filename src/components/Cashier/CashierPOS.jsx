@@ -3,11 +3,13 @@ import React, { useMemo, useRef, useState, useEffect, useCallback } from "react"
 import ReactDOM from "react-dom";
 import {
   FaBarcode, FaSearch, FaPlus, FaMinus, FaTrash,
-  FaCreditCard, FaTimes, FaPrint, FaSpinner,
+  FaCreditCard, FaTimes, FaPrint, FaSpinner, FaEnvelope,
   FaFileInvoice, FaCheckCircle, FaExclamationTriangle,
+  FaQuestionCircle, FaUndo, FaLock, FaWifi,
 } from "react-icons/fa";
 
 import { CASHIER_API_BASE as API_BASE, cashierFetch } from "./cashierApi";
+import CashierGuideModal from "./CashierGuideModal";
 
 function money(v)  { return `₹${Math.abs(Number(v || 0)).toFixed(2)}`; }
 function num(v)    { return Math.abs(Number(v || 0)).toFixed(2); }
@@ -355,6 +357,25 @@ function InvoiceLookupModal({ open, onClose, onLoadItems }) {
   );
 }
 
+/* ─── POS step-by-step guide ─── */
+// Tailwind can't resolve classes built from a template literal (bg-${color}-100)
+// at build time — it only generates CSS for class names it can see written out
+// in full somewhere in the source. So each step carries its complete, static
+// className strings instead of a bare color name.
+const POS_GUIDE_STEPS = [
+  { icon: FaCheckCircle, badgeClass: "bg-emerald-100 text-emerald-600", title: "Open your shift", text: "Before selling anything, click \"Open shift\" (top right) and enter your starting cash. If a shift is already open, that button reads \"Close shift\" instead." },
+  { icon: FaBarcode, badgeClass: "bg-violet-100 text-violet-600", title: "Scan or search a product", text: "Use a barcode scanner, or type a product name/code in the search box. Only items actually received into your store's stock will come up — something a vendor has only listed in their catalogue won't scan as sellable." },
+  { icon: FaPlus, badgeClass: "bg-indigo-100 text-indigo-600", title: "Build the bill", text: "Adjust quantity with the +/− buttons, remove a line with the trash icon, and apply a discount if your store allows it." },
+  { icon: FaCreditCard, badgeClass: "bg-violet-100 text-violet-600", title: "Generate the bill", text: "Click \"Generate Bill\", choose the payment method, and confirm. Stock is deducted from your store the moment the bill is generated — there's no separate confirm step after." },
+  { icon: FaUndo, badgeClass: "bg-rose-100 text-rose-600", title: "Process a return", text: "Switch to \"Return\" mode and look up the original invoice number. Pick which items are coming back — returned stock goes back into your store automatically." },
+  { icon: FaLock, badgeClass: "bg-emerald-100 text-emerald-600", title: "Close your shift", text: "At the end of the day, click \"Close shift\" and enter the cash you actually counted. RMS compares it to what it expected — a mismatch is recorded for review, but it will not stop you from closing." },
+];
+
+const POS_GUIDE_NOTES = [
+  { tone: "info", icon: FaWifi, title: "Working without internet", text: "Click \"Offline products\" beforehand to cache today's stock so you can keep billing if the connection drops. Once you're back online, sync the pending bills from the amber banner that appears." },
+  { tone: "caution", icon: FaExclamationTriangle, title: "Two things RMS will not stop you from doing", text: "It does not block a sale that goes beyond what's actually in stock, and there's no automatic discount limit. Keep an eye on the shelf, and follow your store's discount policy yourself — the system trusts the cashier here." },
+];
+
 /* ─── Generate Bill Popup ─── */
 
 function ManualOfflineItemModal({ open, barcode, onClose, onAdd }) {
@@ -516,10 +537,11 @@ function GenerateBillPopup({ open, isReturn, items, bill, setBill, summary, onCl
                   { label: "Cashier Name",  key: "cashierName" },
                   { label: "Customer Name", key: "customerName" },
                   { label: "Mobile Number", key: "mobile" },
+                  { label: "Email for invoice", key: "customerEmail", type: "email" },
                 ].map(({ label, key }) => (
                   <div key={key} className="space-y-1">
                     <label className="ml-1 text-[10px] font-black uppercase tracking-widest text-black">{label}</label>
-                    <input value={bill[key]} onChange={e => setBill({ ...bill, [key]: e.target.value })}
+                    <input type={key === "customerEmail" ? "email" : "text"} value={bill[key]} onChange={e => setBill({ ...bill, [key]: e.target.value })}
                       className="h-11 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm font-bold outline-none focus:border-violet-500" />
                   </div>
                 ))}
@@ -677,6 +699,7 @@ function GenerateBillPopup({ open, isReturn, items, bill, setBill, summary, onCl
 function ReceiptModal({ open, receipt, onClose }) {
   const [shareInfo, setShareInfo] = useState(null);
   const [sharing, setSharing] = useState(false);
+  const [emailing, setEmailing] = useState(false);
 
   useEffect(() => {
     if (!open) return undefined;
@@ -695,6 +718,27 @@ function ReceiptModal({ open, receipt, onClose }) {
   const isReturn = receipt.isReturn;
   const s = receipt.summary;
   const splitRows = Object.entries(receipt.paymentSplit || {}).filter(([, value]) => Number(value || 0) > 0);
+
+  const sendReceiptEmail = async () => {
+    if (receipt.offline) return alert("Sync this offline bill before emailing it.");
+    const email = (receipt.customerEmail || window.prompt("Customer email address", "") || "").trim();
+    if (!email) return;
+    setEmailing(true);
+    try {
+      const res = await cashierFetch(`${API_BASE}/cashier/bill/${encodeURIComponent(receipt.invoiceNo)}/email`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.detail || "Email failed");
+      alert(`Invoice emailed to ${json.email || email}`);
+    } catch (e) {
+      alert(e.message || "Could not email invoice right now.");
+    } finally {
+      setEmailing(false);
+    }
+  };
 
   const prepareShare = async () => {
     const fallbackUrl = receipt.shareUrl || "";
@@ -998,6 +1042,7 @@ function ReceiptModal({ open, receipt, onClose }) {
               </div>
               <p>Customer: {receipt.customerName || "Walking Customer"}</p>
               <p>Mobile: {receipt.mobile || "N/A"}</p>
+              <p>Email: {receipt.customerEmail || "N/A"}</p>
             </div>
 
             <div className="my-2 border-t border-dashed border-black" />
@@ -1195,6 +1240,10 @@ function ReceiptModal({ open, receipt, onClose }) {
               className="flex w-full items-center justify-center gap-2 rounded-2xl border border-emerald-200 bg-emerald-50 py-3 text-[11px] font-black uppercase tracking-widest text-emerald-700 hover:bg-emerald-100 disabled:opacity-50">
               {sharing ? <FaSpinner className="animate-spin" /> : <FaCheckCircle />} {receipt.offline ? "Sync first to share bill" : "Copy / send bill link"}
             </button>
+            <button onClick={sendReceiptEmail} disabled={emailing || receipt.offline}
+              className="flex w-full items-center justify-center gap-2 rounded-2xl border border-indigo-200 bg-indigo-50 py-3 text-[11px] font-black uppercase tracking-widest text-indigo-700 hover:bg-indigo-100 disabled:opacity-50">
+              {emailing ? <FaSpinner className="animate-spin" /> : <FaEnvelope />} {receipt.offline ? "Sync first to email bill" : receipt.emailSent ? "Email sent / resend" : "Email bill to customer"}
+            </button>
             {shareInfo?.share_url && (
               <div className="rounded-2xl bg-slate-50 p-3 text-[11px] font-bold text-slate-600">
                 <p className="break-all">{shareInfo.share_url}</p>
@@ -1228,6 +1277,7 @@ export default function CashierPOS() {
   const [saving,         setSaving]         = useState(false);
   const [invoiceLookup,  setInvoiceLookup]  = useState(false);  // ← NEW
   const [originalInvoice,setOriginalInvoice]= useState("");     // ← NEW
+  const [showGuide,      setShowGuide]      = useState(false);
   const [offlineBills,   setOfflineBills]   = useState(() => readOfflineBills());
   const [syncingOffline, setSyncingOffline] = useState(false);
   const [productCache,     setProductCache] = useState(() => readProductCache());
@@ -1241,7 +1291,7 @@ export default function CashierPOS() {
   // POS default. `admin_name` is written by authRedirect immediately after
   // login and is shared by store cashiers and store owners.
   const [bill, setBill] = useState(() => ({
-    cashierName: localStorage.getItem("admin_name") || "Cashier", customerName: "", mobile: "",
+    cashierName: localStorage.getItem("admin_name") || "Cashier", customerName: "", mobile: "", customerEmail: "",
     offer: "", appliedOffer: 0, discount: "",
     paymentMethod: "Cash",
   }));
@@ -1502,7 +1552,7 @@ export default function CashierPOS() {
   const clearAll = () => {
     setItems([]); setBarcode(""); setSearch(""); setSearchRes([]);
     setOriginalInvoice("");
-    setBill(prev => ({ ...prev, customerName: "", mobile: "", offer: "", appliedOffer: 0, discount: "", paymentMethod: "Cash" }));
+    setBill(prev => ({ ...prev, customerName: "", mobile: "", customerEmail: "", offer: "", appliedOffer: 0, discount: "", paymentMethod: "Cash" }));
   };
 
   const saveOfflineBill = useCallback((paidAmount = 0, changeReturn = 0, reason = "Backend unavailable", paymentMethodOverride = bill.paymentMethod, paymentSplitOverride = {}) => {
@@ -1554,6 +1604,7 @@ export default function CashierPOS() {
       cashierName: billSnapshot.cashierName,
       customerName: billSnapshot.customerName,
       mobile: billSnapshot.mobile,
+      customerEmail: billSnapshot.customerEmail,
       paymentMethod: billSnapshot.paymentMethod,
       paymentSplit: billSnapshot.paymentSplit,
       paidAmount,
@@ -1655,6 +1706,8 @@ export default function CashierPOS() {
         cashierName:     bill.cashierName,
         customerName:    bill.customerName,
         mobile:          bill.mobile,
+        customerEmail:   bill.customerEmail,
+        emailSent:       Boolean(data.email_sent),
         paymentMethod:   paymentMethodOverride,
         paymentSplit:    paymentSplitOverride,
         shareUrl:        data.share_url || "",
@@ -1695,12 +1748,32 @@ export default function CashierPOS() {
         onLoadItems={handleLoadReturnItems}
       />
 
+      {/* Step-by-step POS guide */}
+      <CashierGuideModal
+        open={showGuide}
+        onClose={() => setShowGuide(false)}
+        title="How to use the POS"
+        subtitle="Step-by-step guide for the billing counter"
+        steps={POS_GUIDE_STEPS}
+        notes={POS_GUIDE_NOTES}
+      />
+
       {/* Header */}
       <header className="sticky top-0 z-40 border-b border-slate-200 bg-white/95 px-4 py-3 backdrop-blur sm:px-6">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-          <div>
-            <h1 className="text-xl font-black tracking-tight">RMS POS</h1>
-            <p className="text-[11px] font-semibold text-slate-400">Barcode billing terminal · Live inventory</p>
+          <div className="flex items-center gap-3">
+            <div>
+              <h1 className="text-xl font-black tracking-tight">RMS POS</h1>
+              <p className="text-[11px] font-semibold text-slate-400">Barcode billing terminal · Live inventory</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowGuide(true)}
+              title="How to use the POS"
+              className="grid h-8 w-8 shrink-0 cursor-pointer place-items-center rounded-full border border-violet-200 bg-violet-50 text-violet-600 hover:bg-violet-100"
+            >
+              <FaQuestionCircle size={13} />
+            </button>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <button onClick={() => { setMode("sale"); clearAll(); }}

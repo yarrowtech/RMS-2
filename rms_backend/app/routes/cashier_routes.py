@@ -6,10 +6,12 @@ from datetime import datetime, timedelta
 from bson import ObjectId
 import os
 import secrets
+import re
 
 from ..db import db, product_collection, inventory_collection, sales_collection, store_stock_collection
 from .store_helper import get_store_context
 from ..error_log import log_error
+from ..email_utils import send_customer_pos_invoice_email
 
 router = APIRouter(prefix="/cashier", tags=["Cashier POS"])
 
@@ -20,6 +22,54 @@ cashier_shift_collection = db["cashier_shifts"]
 def _public_invoice_url(token: str) -> str:
     frontend = os.getenv("FRONTEND_URL") or os.getenv("PUBLIC_FRONTEND_URL") or "https://rms.raphaaa.com"
     return f"{frontend.rstrip('/')}/invoice/{token}"
+
+
+@router.get("/public/invoice/{token}")
+async def get_public_invoice(token: str):
+    """Unauthenticated — this is the page a customer lands on from the
+    'View & download invoice' email button/link, so it deliberately returns
+    only customer-facing fields. cost_price, tenant/store IDs, division-
+    section-department classification, and every internal sync/audit field
+    on the bill document are left out."""
+    doc = await sales_collection.find_one({"share_token": token})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Invoice not found.")
+    items = [
+        {
+            "name": item.get("name") or item.get("barcode") or "Item",
+            "hsn": item.get("hsn", ""),
+            "qty": item.get("qty", 0),
+            "price": item.get("price", 0),
+            "gst": item.get("gst", 0),
+            "total": item.get("total", 0),
+        }
+        for item in (doc.get("items") or [])
+    ]
+    summary = doc.get("summary") or {}
+    return {
+        "status": "success",
+        "data": {
+            "invoice_no": doc.get("invoice_no", ""),
+            "type": doc.get("type", "sale"),
+            "original_invoice": doc.get("original_invoice", ""),
+            "date": doc.get("date", ""),
+            "store_name": doc.get("store_name", ""),
+            "customer_name": doc.get("customer_name", ""),
+            "payment_method": doc.get("payment_method", "Cash"),
+            "items": items,
+            "summary": {
+                "total_sale": summary.get("total_sale", 0),
+                "total_savings": summary.get("total_savings", 0),
+                "taxable_amount": summary.get("taxable_amount", 0),
+                "cgst_amount": summary.get("cgst_amount", 0),
+                "sgst_amount": summary.get("sgst_amount", 0),
+                "igst_amount": summary.get("igst_amount", 0),
+                "total_gst": summary.get("total_gst", 0),
+                "round_off": summary.get("round_off", 0),
+                "net_payable": summary.get("net_payable", 0),
+            },
+        },
+    }
 
 
 async def _audit_pos(ctx: dict, action: str, details: dict = None):
@@ -58,6 +108,10 @@ async def _require_store_context(authorization: str = None) -> dict:
 
 def _store_scope(ctx: dict) -> dict:
     return {"tenant_id": ctx["tenant_id"], "store_id": ctx["store_id"]}
+
+
+def _valid_email(value: str) -> bool:
+    return bool(re.match(r"^[^\s@]+@[^\s@]+\.[^\s@]+$", str(value or "").strip()))
 
 
 async def _require_report_context(authorization: str = None) -> dict:
@@ -724,6 +778,7 @@ async def save_bill(
         "cashier_name": cashier_name,
         "customer_name": bill_meta.get("customerName", ""),
         "mobile": bill_meta.get("mobile", ""),
+        "customer_email": str(bill_meta.get("customerEmail") or bill_meta.get("email") or "").strip().lower(),
         "payment_method": bill_meta.get("paymentMethod", "Cash"),
         "payment_split": clean_payment_split if split_total > 0 else {},
         "applied_offer": _float(bill_meta.get("appliedOffer")),
@@ -804,6 +859,29 @@ async def save_bill(
         "inventory_not_found": inventory_not_found,
     })
 
+    customer_email = bill_doc.get("customer_email", "")
+    email_sent = False
+    if customer_email and _valid_email(customer_email):
+        email_sent = await send_customer_pos_invoice_email(
+            customer_email,
+            bill_doc.get("customer_name") or "Customer",
+            store_name,
+            invoice_no,
+            bill_doc.get("date", ""),
+            bill_doc.get("summary", {}).get("net_payable", 0),
+            bill_doc.get("share_url", ""),
+            clean_items,
+            bill_doc.get("payment_method", "Cash"),
+        )
+        await sales_collection.update_one({"_id": result.inserted_id}, {"$set": {
+            "customer_email_sent": email_sent,
+            "customer_email_sent_at": datetime.utcnow() if email_sent else None,
+        }})
+        await _audit_pos(store, "bill_email_sent" if email_sent else "bill_email_failed", {
+            "invoice_no": invoice_no,
+            "customer_email": customer_email,
+        })
+
     return {
         "status": "success",
         "invoice_no": invoice_no,
@@ -812,6 +890,8 @@ async def save_bill(
         "store_id": store_id,
         "sync_status": "synced" if client_offline_id else "online",
         "share_url": bill_doc.get("share_url", ""),
+        "customer_email": bill_doc.get("customer_email", ""),
+        "email_sent": email_sent,
         "inventory_warnings": inventory_warnings,
         "inventory_not_found": inventory_not_found,
         "stock_conflicts": stock_conflicts,
@@ -913,6 +993,42 @@ async def prepare_bill_share(invoice_no: str, authorization: str = Header(None))
     if mobile:
         whatsapp_url = f"https://wa.me/91{mobile[-10:]}?text=Your%20RMS%20invoice%20{invoice_no}%20is%20ready:%20{share_url}"
     return {"status": "success", "invoice_no": invoice_no, "share_url": share_url, "whatsapp_url": whatsapp_url, "mobile": doc.get("mobile", "")}
+
+
+@router.post("/bill/{invoice_no:path}/email")
+async def email_bill_to_customer(invoice_no: str, payload: dict = None, authorization: str = Header(None)):
+    ctx = await _require_store_context(authorization)
+    doc = await sales_collection.find_one({"invoice_no": invoice_no, **_store_scope(ctx)})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Invoice not found.")
+    payload = payload or {}
+    customer_email = str(payload.get("email") or doc.get("customer_email") or "").strip().lower()
+    if not customer_email or not _valid_email(customer_email):
+        raise HTTPException(status_code=400, detail="Valid customer email is required.")
+    token = doc.get("share_token") or secrets.token_urlsafe(18)
+    share_url = doc.get("share_url") or _public_invoice_url(token)
+    if not doc.get("share_url"):
+        await sales_collection.update_one({"_id": doc["_id"]}, {"$set": {"share_token": token, "share_url": share_url, "share_ready": True}})
+    sent = await send_customer_pos_invoice_email(
+        customer_email,
+        doc.get("customer_name") or "Customer",
+        doc.get("store_name") or ctx.get("store_name") or "RMS Store",
+        doc.get("invoice_no") or invoice_no,
+        doc.get("date", ""),
+        doc.get("summary", {}).get("net_payable", 0),
+        share_url,
+        doc.get("items", []),
+        doc.get("payment_method", "Cash"),
+    )
+    await sales_collection.update_one({"_id": doc["_id"]}, {"$set": {
+        "customer_email": customer_email,
+        "customer_email_sent": sent,
+        "customer_email_sent_at": datetime.utcnow() if sent else None,
+    }})
+    await _audit_pos(ctx, "bill_email_sent" if sent else "bill_email_failed", {"invoice_no": invoice_no, "customer_email": customer_email})
+    if not sent:
+        raise HTTPException(status_code=502, detail="Email could not be sent. Check SMTP/email failure logs.")
+    return {"status": "success", "invoice_no": invoice_no, "email": customer_email, "email_sent": True, "share_url": share_url}
 
 
 # GET /cashier/bills

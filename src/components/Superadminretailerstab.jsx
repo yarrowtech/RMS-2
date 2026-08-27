@@ -4,7 +4,7 @@ import {
   Building2, Plus, Search, Eye, Pencil, Trash2, X,
   CheckCircle, XCircle, AlertCircle, Store, Users,
   Crown, Zap, Rocket, ChevronDown, ChevronUp, CreditCard, Gift,
-  ShieldCheck, ShieldAlert, ShieldQuestion,
+  ShieldCheck, ShieldAlert, ShieldQuestion, Factory,
 } from "lucide-react";
 import toast from "react-hot-toast";
 
@@ -568,6 +568,8 @@ export default function RetailersTab({ pendingOnboarding, onConsumeOnboarding })
   const [upgradeLoading, setUpgradeLoading] = useState(false);
   const [upgradeDepartmentCatalog, setUpgradeDepartmentCatalog] = useState([]);
   const [deptSelections, setDeptSelections] = useState({});
+  const [addonRequests, setAddonRequests] = useState([]);
+  const [addonLoading, setAddonLoading] = useState(false);
 
   const fetchTenants = useCallback(async () => {
     try {
@@ -607,7 +609,30 @@ export default function RetailersTab({ pendingOnboarding, onConsumeOnboarding })
     }
   }, []);
 
-  useEffect(() => { fetchTenants(); fetchUpgradeRequests(); fetchUpgradeDepartmentCatalog(); }, [fetchTenants, fetchUpgradeRequests, fetchUpgradeDepartmentCatalog]);
+  const fetchAddonRequests = useCallback(async () => {
+    try {
+      setAddonLoading(true);
+      const data = await apiFetch("/api/production-addon/requests");
+      setAddonRequests(Array.isArray(data.requests) ? data.requests : []);
+    } catch (error) {
+      toast.error(error.message || "Failed to load Production & Job Work requests");
+    } finally {
+      setAddonLoading(false);
+    }
+  }, []);
+
+  const reviewAddonRequest = async (request, action) => {
+    try {
+      await apiFetch(`/api/production-addon/requests/${request.id}`, {
+        method: "PATCH", body: JSON.stringify({ action }),
+      });
+      toast.success(action === "approve" ? `Production & Job Work activated for ${request.company_name}` : "Activation request declined");
+      fetchTenants();
+      fetchAddonRequests();
+    } catch (error) { toast.error(error.message); }
+  };
+
+  useEffect(() => { fetchTenants(); fetchUpgradeRequests(); fetchUpgradeDepartmentCatalog(); fetchAddonRequests(); }, [fetchTenants, fetchUpgradeRequests, fetchUpgradeDepartmentCatalog, fetchAddonRequests]);
   useEffect(() => { if (pendingOnboarding) setShowAdd(true); }, [pendingOnboarding]);
 
   const toggleDeptSelection = (requestId, key) => {
@@ -644,6 +669,21 @@ export default function RetailersTab({ pendingOnboarding, onConsumeOnboarding })
       toast.success(`${tenant.company_name} is now an internal waived Enterprise tenant.`);
       fetchTenants();
     } catch (error) { toast.error(error.message); }
+  };
+
+  const handleToggleJobWorkAddon = async (tenant) => {
+    const enable = !tenant.production_job_work_enabled;
+    if (tenant.plan === "enterprise" && !enable) {
+      toast.error("Enterprise-plan tenants have this bundled in — move them off Enterprise first to deactivate it.");
+      return;
+    }
+    try {
+      await apiFetch(`/superadmin/tenants/${tenant.tenant_id}/production-addon`, {
+        method: "PUT", body: JSON.stringify({ enabled: enable }),
+      });
+      toast.success(`Production & Job Work ${enable ? "activated" : "deactivated"} for ${tenant.company_name}.`);
+      fetchTenants();
+    } catch (e) { toast.error(e.message); }
   };
 
   const handleSuspend = async (tenant) => {
@@ -786,6 +826,35 @@ export default function RetailersTab({ pendingOnboarding, onConsumeOnboarding })
         </section>
       )}
 
+      {(
+        <section className="overflow-hidden rounded-xl border border-fuchsia-200 bg-white shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-fuchsia-100 bg-fuchsia-50 px-5 py-4">
+            <div><h3 className="flex items-center gap-2 font-black text-fuchsia-950"><Factory className="h-4 w-4" /> Production &amp; Job Work add-on requests</h3><p className="mt-0.5 text-xs text-fuchsia-700">Independent of plan tier — approving turns the add-on on for that tenant immediately.</p></div>
+            <button onClick={fetchAddonRequests} disabled={addonLoading} className="rounded-lg border border-fuchsia-200 bg-white px-3 py-2 text-xs font-bold text-fuchsia-700 hover:bg-fuchsia-100">{addonLoading ? "Refreshing…" : "Refresh"}</button>
+          </div>
+          <div className="divide-y divide-slate-100">
+            {addonRequests.filter((request) => request.status === "PENDING").map((request) => (
+              <div key={request.id} className="flex flex-wrap items-start justify-between gap-4 px-5 py-4">
+                <div className="min-w-[260px] flex-1">
+                  <p className="font-bold text-slate-900">{request.company_name} <span className="font-normal text-slate-400">· {request.tenant_id}</span></p>
+                  <p className="mt-1 text-xs text-slate-600">Requested by: {request.requested_by_name} · {request.requested_by_email}</p>
+                  {request.note && <p className="mt-1 text-xs italic text-slate-500">“{request.note}”</p>}
+                </div>
+                <div className="flex items-center gap-2">
+                  <button onClick={() => reviewAddonRequest(request, "decline")} className="rounded-lg border border-rose-200 px-3 py-2 text-xs font-bold text-rose-700 hover:bg-rose-50">Decline</button>
+                  <button onClick={() => reviewAddonRequest(request, "approve")} className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-bold text-white hover:bg-emerald-700">Activate</button>
+                </div>
+              </div>
+            ))}
+            {addonRequests.filter((request) => request.status === "PENDING").length === 0 && (
+              <p className="px-5 py-5 text-sm text-slate-500">
+                No pending Production &amp; Job Work activation requests. Use Refresh to check for new requests.
+              </p>
+            )}
+          </div>
+        </section>
+      )}
+
       {/* Table */}
       <div className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">
         <div className="overflow-x-auto">
@@ -880,6 +949,11 @@ export default function RetailersTab({ pendingOnboarding, onConsumeOnboarding })
                             className="p-1.5 rounded-lg text-emerald-600 transition hover:bg-emerald-50" title="Grant internal free Enterprise plan">
                             <Gift className="w-4 h-4"/>
                           </button>}
+                          <button onClick={() => handleToggleJobWorkAddon(t)}
+                            className={`p-1.5 rounded-lg transition ${t.production_job_work_enabled ? "text-violet-600 hover:bg-violet-50" : "text-slate-400 hover:bg-slate-100"}`}
+                            title={t.production_job_work_enabled ? "Production & Job Work add-on: ON — click to deactivate" : "Production & Job Work add-on: OFF — click to activate"}>
+                            <Factory className="w-4 h-4"/>
+                          </button>
                           <button onClick={() => handleSuspend(t)}
                             className={`p-1.5 rounded-lg transition ${t.status === "active" ? "hover:bg-amber-50 text-amber-500" : "hover:bg-emerald-50 text-emerald-500"}`}
                             title={t.status === "active" ? "Suspend" : "Activate"}>

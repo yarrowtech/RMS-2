@@ -5,10 +5,23 @@ import {
   FaShoppingCart, FaUndo, FaRupeeSign, FaBoxOpen,
   FaChartBar, FaSyncAlt, FaCreditCard, FaMobileAlt,
   FaMoneyBillWave, FaTrophy, FaArrowUp, FaArrowDown,
-  FaReceipt, FaUser, FaClock,
+  FaReceipt, FaUser, FaClock, FaCalendarAlt,
 } from "react-icons/fa";
 
 import { CASHIER_API_BASE as API_BASE, cashierFetch } from "./cashierApi";
+import CashierGuideModal, { GuideButton } from "./CashierGuideModal";
+
+const DASHBOARD_GUIDE_STEPS = [
+  { icon: FaCalendarAlt, badgeClass: "bg-indigo-100 text-indigo-600", title: "Pick a date", text: "Today's numbers load by default and refresh automatically every 60 seconds. Use the date field (top right) to look back at any past day instead." },
+  { icon: FaRupeeSign, badgeClass: "bg-violet-100 text-violet-600", title: "Read the KPI cards", text: "Net Revenue is after returns are subtracted; Gross Sales is before returns. If Returns looks unusually high for the day, that's worth a closer look." },
+  { icon: FaChartBar, badgeClass: "bg-indigo-100 text-indigo-600", title: "Check the Hourly Sales Trend", text: "Shows bill count by hour, so you can see your busiest times and staff the counter accordingly." },
+  { icon: FaCreditCard, badgeClass: "bg-emerald-100 text-emerald-600", title: "Review Payment Methods", text: "Shows the split between cash, card and UPI for today's bills — useful to cross-check against your shift's cash count." },
+  { icon: FaBoxOpen, badgeClass: "bg-amber-100 text-amber-700", title: "See Top Products & Recent Bills", text: "Top Products shows what's actually selling today by units; Recent Bills lists the last 12 transactions if you need to trace one quickly." },
+];
+
+const DASHBOARD_GUIDE_NOTES = [
+  { tone: "info", icon: FaSyncAlt, title: "This page is read-only", text: "Nothing here changes stock, prices or bills — it's a live view built from the day's sales. Billing and returns happen on the POS screen." },
+];
 
 /* ─── Helpers ─── */
 const fmtV  = (n) => `₹${Number(n || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -272,6 +285,7 @@ export default function CashierDashboard() {
   const [error,      setError]      = useState(null);
   const [date,       setDate]       = useState(todayStr());
   const [lastUpdate, setLastUpdate] = useState(null);
+  const [showGuide,  setShowGuide]  = useState(false);
 
   const fetchDashboard = useCallback(async () => {
     setLoading(true); setError(null);
@@ -313,6 +327,15 @@ export default function CashierDashboard() {
         @keyframes pulse-dot { 0%,100%{opacity:1} 50%{opacity:0.3} }
       `}</style>
 
+      <CashierGuideModal
+        open={showGuide}
+        onClose={() => setShowGuide(false)}
+        title="How to read this dashboard"
+        subtitle="What each panel is telling you"
+        steps={DASHBOARD_GUIDE_STEPS}
+        notes={DASHBOARD_GUIDE_NOTES}
+      />
+
       {/* ── Header ── */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 24, flexWrap: "wrap", gap: 12 }}>
         <div>
@@ -321,7 +344,10 @@ export default function CashierDashboard() {
               <FaChartBar style={{ color: "#fff", fontSize: 18 }} />
             </div>
             <div>
-              <h1 style={{ margin: 0, fontSize: 22, fontWeight: 800, color: "#0F172A", letterSpacing: "-0.5px" }}>Cashier Dashboard</h1>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <h1 style={{ margin: 0, fontSize: 22, fontWeight: 800, color: "#0F172A", letterSpacing: "-0.5px" }}>Cashier Dashboard</h1>
+                <GuideButton onClick={() => setShowGuide(true)} />
+              </div>
               <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 2 }}>
                 <div style={{ width: 6, height: 6, borderRadius: "50%", background: "#10B981", animation: "pulse-dot 2s infinite" }} />
                 <span style={{ fontSize: 11, color: "#94A3B8" }}>{lastUpdate ? `Updated ${lastUpdate} · auto-refreshes every 60s` : "Loading…"}</span>

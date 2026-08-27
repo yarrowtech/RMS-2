@@ -10,6 +10,19 @@ import {
 } from "react-icons/fa";
 
 import { CASHIER_API_BASE as API_BASE, cashierFetch } from "./cashierApi";
+import CashierGuideModal, { GuideButton } from "./CashierGuideModal";
+
+const CUSTOMER_GUIDE_STEPS = [
+  { icon: FaCalendarAlt, badgeClass: "bg-indigo-100 text-indigo-600", title: "Set a date range", text: "Use From Date / To Date to narrow the list down to the period you care about — the last 30 days load by default." },
+  { icon: FaFilter, badgeClass: "bg-violet-100 text-violet-600", title: "Filter by type or payment", text: "Switch Type to Sales Only or Returns Only, or filter by payment method (Cash / Card / UPI), to zero in on a specific set of bills." },
+  { icon: FaSearch, badgeClass: "bg-sky-100 text-sky-600", title: "Search for a specific bill", text: "Type an invoice number, customer name or mobile number in Search to jump straight to it, instead of scrolling the whole list." },
+  { icon: FaChevronDown, badgeClass: "bg-amber-100 text-amber-700", title: "Expand a row for details", text: "Click a bill's row to see its full item list, quantities and amounts inline, without leaving this page." },
+  { icon: FaPrint, badgeClass: "bg-emerald-100 text-emerald-600", title: "View, print or download", text: "Use the row actions to reprint a receipt or view it in detail, or use \"Download Excel\" (top right) to export everything currently shown to a spreadsheet." },
+];
+
+const CUSTOMER_GUIDE_NOTES = [
+  { tone: "info", icon: FaFileInvoice, title: "This page is a record, not a workspace", text: "It's for looking up and exporting past bills — to bill a new sale or process a return, go to the POS screen instead." },
+];
 
 function num(v)   { return Math.abs(Number(v || 0)).toFixed(2); }
 function money(v) { return `₹${num(v)}`; }
@@ -384,6 +397,7 @@ export default function CashierCustomer() {
   const [error,      setError]      = useState("");
   const [detailBill, setDetailBill] = useState(null);
   const [expanded,   setExpanded]   = useState(new Set());
+  const [showGuide,  setShowGuide]  = useState(false);
 
   // Filters
   const [fromDate,   setFromDate]   = useState(today);
@@ -507,9 +521,20 @@ export default function CashierCustomer() {
       <div style={{ maxWidth:1300, margin:"0 auto" }}>
 
         {/* Page Header */}
+        <CashierGuideModal
+          open={showGuide}
+          onClose={() => setShowGuide(false)}
+          title="How to use Sales & Customer Records"
+          subtitle="Finding, reviewing and exporting past bills"
+          steps={CUSTOMER_GUIDE_STEPS}
+          notes={CUSTOMER_GUIDE_NOTES}
+        />
         <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:20, flexWrap:"wrap", gap:12 }}>
           <div>
-            <h1 style={{ fontSize:22, fontWeight:900, color:"#0F1B2D", margin:0 }}>Sales & Customer Records</h1>
+            <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+              <h1 style={{ fontSize:22, fontWeight:900, color:"#0F1B2D", margin:0 }}>Sales & Customer Records</h1>
+              <GuideButton onClick={() => setShowGuide(true)} />
+            </div>
             <p style={{ fontSize:13, color:"#7A8BA4", margin:"3px 0 0" }}>View, print and download all bills and customer purchase history</p>
           </div>
           <div style={{ display:"flex", gap:10 }}>

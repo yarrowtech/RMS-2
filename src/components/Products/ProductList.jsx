@@ -3,6 +3,7 @@ import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
 import React, { useEffect, useState } from "react";
 import axios from "axios";
 import { useNavigate } from "react-router-dom";
+import BulkProductImportModal from "../../utils/BulkProductImportModal.jsx";
 
 const API_BASE = `${APP_API_URL}`;
 const authHeaders = () => {
@@ -775,6 +776,7 @@ export default function ProductList() {
   const [loading, setLoading]           = useState(false);
   const [error, setError]               = useState("");
   const [selectedProduct, setSelectedProduct] = useState(null);
+  const [showBulkImport, setShowBulkImport] = useState(false);
   const navigate = useNavigate();
 
   const fetchProducts = async () => {
@@ -831,17 +833,29 @@ export default function ProductList() {
               </p>
             </div>
           </div>
-          <button className="pl-add-btn" onClick={() => navigate("/products/add")}>
-            Add product
-          </button>
+          <div style={{ display: "flex", gap: "10px" }}>
+            <button className="pl-add-btn" onClick={() => setShowBulkImport(true)} style={{ background: "#fff", color: "#4338ca", border: "1px solid #c7d2fe" }}>
+              Bulk import (CSV)
+            </button>
+            <button className="pl-add-btn" onClick={() => navigate("/products/add")}>
+              Add product
+            </button>
+          </div>
         </div>
+
+        {showBulkImport && (
+          <BulkProductImportModal
+            onClose={() => setShowBulkImport(false)}
+            onImported={() => { setShowBulkImport(false); fetchProducts(); }}
+          />
+        )}
 
         {isSingleStore && (
           <section className="pl-store-guide" aria-label="Set up your store catalogue">
             <div>
               <p className="pl-guide-kicker">Recommended setup</p>
               <h2>Build a catalogue your team can sell from</h2>
-              <p>Create product groups first, then add products with prices and variants. Receive opening stock through purchasing or GRN so the stock history stays accurate.</p>
+              <p>Create product groups first, then add products with prices and an opening quantity — it's added straight to your store stock. For anything bought from a supplier afterward, receive it through purchasing/GRN so that stock history stays accurate.</p>
             </div>
             <div className="pl-guide-steps">
               <span><b>1</b> Product groups</span>

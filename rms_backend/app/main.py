@@ -45,6 +45,7 @@ from .routes.retailer_store_addon_routes import router as retailer_store_addon_r
 from .routes.marketing_routes import router as marketing_router, superadmin_router as superadmin_marketing_router
 from .routes.customer_crm_routes import router as customer_crm_router
 from .routes.staff_task_routes import router as staff_task_router
+from .routes.production_addon_routes import router as production_addon_router
    
 
 
@@ -125,6 +126,7 @@ app.include_router(business_network_router)
 app.include_router(vendor_finance_router)
 app.include_router(finance_router)
 app.include_router(job_work_router)
+app.include_router(production_addon_router)
 app.include_router(onboarding_router)
 app.include_router(store_upgrade_router)
 app.include_router(retailer_signup_router)

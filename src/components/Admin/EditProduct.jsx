@@ -2,6 +2,7 @@ import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
 import { useState, useEffect, useRef, useCallback } from "react";
 import axios from "axios";
 import { useParams, useNavigate } from "react-router-dom";
+import UnitSelect from "../shared/UnitSelect.jsx";
 
 
 const API_BASE = APP_API_URL;
@@ -478,17 +479,11 @@ export default function EditProduct({
                     <label className="mb-2 block text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">
                       Unit
                     </label>
-                    <select
+                    <UnitSelect
                       className="w-full cursor-pointer rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition hover:border-slate-300 focus:border-indigo-500 focus:bg-white focus:ring-4 focus:ring-indigo-100"
                       value={unit}
-                      onChange={(e) => setUnit(e.target.value)}
-                    >
-                      {["pcs", "kg", "g", "l", "ml", "m", "set", "box", "pair"].map((u) => (
-                        <option key={u} value={u}>
-                          {u}
-                        </option>
-                      ))}
-                    </select>
+                      onChange={setUnit}
+                    />
                   </div>
                 </div>
               </div>
@@ -616,17 +611,11 @@ export default function EditProduct({
                         </td>
 
                         <td className="px-2 py-2">
-                          <select
+                          <UnitSelect
                             className="w-full cursor-pointer rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5 font-mono text-xs text-slate-900 outline-none transition focus:border-indigo-500"
                             value={v.unit || "pcs"}
-                            onChange={(e) => patchV(i, "unit", e.target.value)}
-                          >
-                            {["pcs", "kg", "g", "l", "ml", "m", "set", "box", "pair"].map((u) => (
-                              <option key={u} value={u}>
-                                {u}
-                              </option>
-                            ))}
-                          </select>
+                            onChange={(u) => patchV(i, "unit", u)}
+                          />
                         </td>
                       </tr>
                     ))}

@@ -2,9 +2,11 @@ import * as XLSX from "xlsx";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 
-// Shared by ProductionJobWork.jsx (right after a Fabric PO is created) and
-// PurchesOrder.jsx (re-downloading a fabric PO later from the Order Details
-// list) — one place for the sheet layout so both stay in sync.
+// Shared by ProductionJobWork.jsx (right after a Fabric PO is created),
+// FabricPurchasing.jsx/PurchesOrder.jsx (re-downloading a fabric PO later
+// from the Order Details list), and FabricBuyingCart.jsx (a pre-creation
+// draft, before a real PO/company snapshot exists) — one place for the
+// sheet layout so all of them stay in sync.
 
 export function csvValue(value) {
   const text = String(value ?? "");
@@ -35,33 +37,65 @@ export function fabricSheetTotalAmount(rows) {
   return rows.reduce((sum, row) => sum + Number(row[9] || 0), 0);
 }
 
-export function fabricSheetTotalRow(rows) {
-  return ["", "", "", "", "", "", "", "", "TOTAL", fabricSheetTotalAmount(rows).toFixed(2), "", ""];
+// Subtotal/Tax/Grand Total footer, driven by whatever the PO itself has
+// worked out (subtotal_amount/tax_amount/net_amount) — falling back to the
+// line-item sum when those aren't available yet (e.g. a pre-creation draft
+// sheet, or an old PO downloaded before this field existed).
+export function fabricSheetTotals(rows, meta = {}) {
+  const subtotal = meta.subtotal_amount != null ? Number(meta.subtotal_amount) : fabricSheetTotalAmount(rows);
+  const tax = Number(meta.tax_amount || 0);
+  const grandTotal = meta.net_amount != null ? Number(meta.net_amount) : subtotal + tax;
+  return { subtotal, tax, grandTotal };
 }
 
-export function pdfFabricSheetFootRow(rows) {
-  return [[
-    { content: "TOTAL", colSpan: 9, styles: { halign: "right", fontStyle: "bold" } },
-    { content: fabricSheetTotalAmount(rows).toFixed(2), styles: { halign: "right", fontStyle: "bold" } },
+export function fabricSheetFooterRows(rows, meta = {}) {
+  const { subtotal, tax, grandTotal } = fabricSheetTotals(rows, meta);
+  return [
+    ["", "", "", "", "", "", "", "", "Subtotal", subtotal.toFixed(2), "", ""],
+    ["", "", "", "", "", "", "", "", "Tax", tax.toFixed(2), "", ""],
+    ["", "", "", "", "", "", "", "", "Grand Total", grandTotal.toFixed(2), "", ""],
+  ];
+}
+
+export function pdfFabricSheetFootRow(rows, meta = {}) {
+  const { subtotal, tax, grandTotal } = fabricSheetTotals(rows, meta);
+  const line = (label, value, bold = false) => [
+    { content: label, colSpan: 9, styles: { halign: "right", fontStyle: bold ? "bold" : "normal" } },
+    { content: value, styles: { halign: "right", fontStyle: bold ? "bold" : "normal" } },
     { content: "", colSpan: 2 },
-  ]];
+  ];
+  return [line("Subtotal", subtotal.toFixed(2)), line("Tax", tax.toFixed(2)), line("Grand Total", grandTotal.toFixed(2), true)];
 }
 
 export function fabricSheetFileBase(purchase_order_no) {
   return purchase_order_no ? `${purchase_order_no}-fabric-po-sheet` : "fabric-po-draft-sheet";
 }
 
-export function downloadFabricSheetCsv({ purchase_order_no, vendor_name, order_date, sheet }, fallbackItems = []) {
+// Buyer/vendor/terms header block, shared across CSV/Excel/PDF. Only rows
+// with something to show are included — a pre-creation draft sheet (no
+// company/vendor snapshot yet) just prints fewer lines instead of blanks.
+function fabricSheetMetaRows(meta) {
+  const rows = [];
+  if (meta.company_name) rows.push(["Buyer", meta.company_name, meta.company_gstin ? "GSTIN" : "", meta.company_gstin || ""]);
+  if (meta.company_address) rows.push(["Buyer Address", meta.company_address]);
+  rows.push(["Vendor", meta.vendor_name || "", meta.vendor_gstin ? "GSTIN" : "", meta.vendor_gstin || ""]);
+  if (meta.vendor_mobile || meta.vendor_address) rows.push(["Vendor Contact", meta.vendor_mobile || "", meta.vendor_address ? "Vendor Address" : "", meta.vendor_address || ""]);
+  if (meta.expected_delivery_date || meta.payment_terms) rows.push([meta.expected_delivery_date ? "Delivery By" : "", meta.expected_delivery_date || "", meta.payment_terms ? "Payment Terms" : "", meta.payment_terms || ""]);
+  return rows;
+}
+
+export function downloadFabricSheetCsv(meta, fallbackItems = []) {
+  const { purchase_order_no, order_date, sheet } = meta;
   const rows = buildFabricSheetRows(sheet, fallbackItems);
   const lines = [
     ["Fabric PO Sheet"],
-    ["PO No.", purchase_order_no || "Draft"],
-    ["Vendor", vendor_name || ""],
-    ["Order Date", order_date || ""],
+    ["PO No.", purchase_order_no || "Draft", "Order Date", order_date || ""],
+    ...fabricSheetMetaRows(meta),
     [],
     FABRIC_SHEET_HEADERS,
     ...rows,
-    fabricSheetTotalRow(rows),
+    [],
+    ...fabricSheetFooterRows(rows, meta),
   ];
   const csv = lines.map((line) => line.map(csvValue).join(",")).join("\n");
   const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
@@ -75,17 +109,18 @@ export function downloadFabricSheetCsv({ purchase_order_no, vendor_name, order_d
   URL.revokeObjectURL(url);
 }
 
-export function downloadFabricSheetExcel({ purchase_order_no, vendor_name, order_date, sheet }, fallbackItems = []) {
+export function downloadFabricSheetExcel(meta, fallbackItems = []) {
+  const { purchase_order_no, order_date, sheet } = meta;
   const rows = buildFabricSheetRows(sheet, fallbackItems);
   const aoa = [
     ["Fabric PO Sheet"],
-    ["PO No.", purchase_order_no || "Draft"],
-    ["Vendor", vendor_name || ""],
-    ["Order Date", order_date || ""],
+    ["PO No.", purchase_order_no || "Draft", "Order Date", order_date || ""],
+    ...fabricSheetMetaRows(meta),
     [],
     FABRIC_SHEET_HEADERS,
     ...rows,
-    fabricSheetTotalRow(rows),
+    [],
+    ...fabricSheetFooterRows(rows, meta),
   ];
   const ws = XLSX.utils.aoa_to_sheet(aoa);
   ws["!cols"] = [
@@ -124,7 +159,8 @@ function dataUrlImageFormat(dataUrl) {
 const PDF_IMAGE_COL_INDEX = FABRIC_SHEET_HEADERS.length - 1;
 const PDF_COLUMN_WIDTHS = [26, 96, 62, 30, 40, 52, 48, 26, 36, 46, 130, 48];
 
-export async function downloadFabricSheetPdf({ purchase_order_no, vendor_name, order_date, sheet }, fallbackItems = []) {
+export async function downloadFabricSheetPdf(meta, fallbackItems = []) {
+  const { purchase_order_no, vendor_name, order_date, sheet } = meta;
   const rows = buildFabricSheetRows(sheet, fallbackItems);
   const imageUrls = rows.map((row) => row[PDF_IMAGE_COL_INDEX]);
   const images = await Promise.all(imageUrls.map(fetchImageAsDataUrl));
@@ -135,13 +171,27 @@ export async function downloadFabricSheetPdf({ purchase_order_no, vendor_name, o
   doc.setFont("helvetica", "bold"); doc.setFontSize(16); doc.text("Fabric PO Sheet", 40, 40);
   doc.setFont("helvetica", "normal"); doc.setFontSize(10);
   doc.text(`PO No.: ${purchase_order_no || "Draft"}`, 40, 58);
-  doc.text(`Vendor: ${vendor_name || "-"}`, 260, 58);
-  doc.text(`Order Date: ${order_date || "-"}`, 480, 58);
+  doc.text(`Order Date: ${order_date || "-"}`, 260, 58);
+  doc.text(`Delivery By: ${meta.expected_delivery_date || "-"}`, 480, 58);
+
+  let y = 74;
+  if (meta.company_name) {
+    doc.text(`Buyer: ${meta.company_name}${meta.company_gstin ? `  |  GSTIN: ${meta.company_gstin}` : ""}${meta.company_address ? `  |  ${meta.company_address}` : ""}`, 40, y);
+    y += 15;
+  }
+  doc.text(`Vendor: ${vendor_name || "-"}${meta.vendor_gstin ? `  |  GSTIN: ${meta.vendor_gstin}` : ""}${meta.vendor_mobile ? `  |  ${meta.vendor_mobile}` : ""}`, 40, y);
+  y += 15;
+  if (meta.payment_terms) {
+    doc.text(`Payment Terms: ${meta.payment_terms}`, 40, y);
+    y += 15;
+  }
+  y += 4;
+
   autoTable(doc, {
     head: [headers],
     body: tableRows,
-    foot: pdfFabricSheetFootRow(rows),
-    startY: 74,
+    foot: pdfFabricSheetFootRow(rows, meta),
+    startY: y,
     styles: { font: "helvetica", fontSize: 8.5, cellPadding: 5, overflow: "linebreak", minCellHeight: 44, valign: "middle" },
     headStyles: { fillColor: [226, 232, 240], textColor: [15, 23, 42] },
     footStyles: { fillColor: [241, 245, 249], textColor: [15, 23, 42], fontStyle: "bold" },

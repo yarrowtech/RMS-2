@@ -4,6 +4,7 @@ import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
 import React, { useEffect, useState } from "react";
 import axios from "axios";
 import { useNavigate } from "react-router-dom";
+import UnitSelect from "../shared/UnitSelect.jsx";
 
 const API_BASE = `${APP_API_URL}`;
 const authHeaders = () => {
@@ -11,13 +12,6 @@ const authHeaders = () => {
   return token ? { Authorization: `Bearer ${token}` } : {};
 };
 const SIZE_OPTIONS = ["S", "M", "L", "XL", "XXL"];
-const UNIT_OPTIONS = [
-  { value: "pcs", label: "Pieces" },
-  { value: "set", label: "Set"    },
-  { value: "kg",  label: "Kg"     },
-  { value: "g",   label: "Gram"   },
-  { value: "ltr", label: "Liter"  },
-];
 
 const WEB_SAFE_COLORS = (() => {
   const hex = ["00", "33", "66", "99", "CC", "FF"];
@@ -652,9 +646,7 @@ function ColorVariantCard({ variant, onChange }) {
         </div>
         <div>
           <label className="ap-lbl">Unit</label>
-          <select className="ap-vin" value={variant.unit} onChange={(e) => onChange("unit", e.target.value)}>
-            {UNIT_OPTIONS.map((u) => <option key={u.value} value={u.value}>{u.label}</option>)}
-          </select>
+          <UnitSelect className="ap-vin" value={variant.unit} onChange={(u) => onChange("unit", u)} />
         </div>
       </div>
       <StatCards cp={variant.cost_price} sp={variant.selling_price} qty={variant.quantity} />
@@ -716,9 +708,7 @@ function SizeColorMiniCard({ size, customSize, colorObj, onChange }) {
         </div>
         <div>
           <label className="ap-lbl" style={{ fontSize: 9 }}>Unit</label>
-          <select className="ap-vin" value={colorObj.unit} onChange={(e) => onChange("unit", e.target.value)}>
-            {UNIT_OPTIONS.map((u) => <option key={u.value} value={u.value}>{u.label}</option>)}
-          </select>
+          <UnitSelect className="ap-vin" value={colorObj.unit} onChange={(u) => onChange("unit", u)} />
         </div>
       </div>
       {showStats && (
@@ -1014,10 +1004,8 @@ export default function AddProduct() {
                       </div>
                       <div>
                         <label className="ap-lbl">Unit</label>
-                        <select className="ap-in" value={form.unit}
-                          onChange={(e) => handleChange(idx, "unit", e.target.value)}>
-                          {UNIT_OPTIONS.map((u) => <option key={u.value} value={u.value}>{u.label}</option>)}
-                        </select>
+                        <UnitSelect className="ap-in" value={form.unit}
+                          onChange={(u) => handleChange(idx, "unit", u)} />
                       </div>
                     </div>
 

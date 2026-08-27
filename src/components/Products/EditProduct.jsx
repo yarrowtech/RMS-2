@@ -3,6 +3,7 @@ import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
 import { useState, useEffect, useRef, useCallback } from "react";
 import axios from "axios";
 import { useParams, useNavigate } from "react-router-dom";
+import UnitSelect from "../shared/UnitSelect.jsx";
 
 const API_BASE = `${APP_API_URL}`;
 const authHeaders = () => {
@@ -578,11 +579,7 @@ export default function EditProduct() {
                   </div>
                   <div className="ep-field" style={{ marginBottom: 0 }}>
                     <label className="ep-lbl">Unit</label>
-                    <select className="ep-sel" value={unit} onChange={e => setUnit(e.target.value)}>
-                      {["pcs","kg","g","l","ml","m","set","box","pair"].map(u => (
-                        <option key={u} value={u}>{u}</option>
-                      ))}
-                    </select>
+                    <UnitSelect className="ep-sel" value={unit} onChange={setUnit} />
                   </div>
                 </div>
               </div>
@@ -653,12 +650,7 @@ export default function EditProduct() {
                             style={{ minWidth: 56 }} />
                         </td>
                         <td>
-                          <select className="ep-vi" style={{ cursor:"pointer" }}
-                            value={v.unit || "pcs"} onChange={e => patchV(i,"unit",e.target.value)}>
-                            {["pcs","kg","g","l","ml","m","set","box","pair"].map(u => (
-                              <option key={u} value={u}>{u}</option>
-                            ))}
-                          </select>
+                          <UnitSelect className="ep-vi" value={v.unit || "pcs"} onChange={u => patchV(i,"unit",u)} />
                         </td>
                       </tr>
                     ))}

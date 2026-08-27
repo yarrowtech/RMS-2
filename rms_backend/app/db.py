@@ -63,6 +63,7 @@ vendor_inventory_collection = db["vendor_inventory"]
 vendor_inventory_ledger_collection = db["vendor_inventory_ledger"]
 vendor_tenant_links_collection = db["vendor_tenant_links"]
 fabric_themes_collection = db["fabric_themes"]
+production_addon_requests_collection = db["production_addon_requests"]
 
 # SUPERADMIN / PLATFORM COLLECTIONS 
 # =========================

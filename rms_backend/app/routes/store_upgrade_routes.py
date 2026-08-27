@@ -155,8 +155,18 @@ SELECTABLE_DEPARTMENTS = list(HQ_ADMIN_DEPARTMENTS)
 # Manufacturing/specialist departments are Enterprise-only; the rest are
 # available on Professional. Keeps plan price tied to capability, not just
 # store count. "IT" joins this group as a specialist/support function, same
-# reasoning as HR/Job Work — not needed to run day-to-day retail ops.
-ENTERPRISE_ONLY_DEPARTMENTS = {"Design & Pattern", "Third Party", "Production & Job Work", "HR", "IT"}
+# reasoning as HR.
+#
+# "Production & Job Work" is deliberately NOT in this set — it used to be
+# Enterprise-only, but a retailer's need for it depends on whether they do
+# their own manufacturing, not on how many stores/admins they have (a
+# Professional-plan manufacturer needs it just as much as an Enterprise
+# one; an Enterprise-plan pure retailer may never need it at all). It is
+# now an independent, purchasable add-on gated by the tenant's
+# `production_job_work_enabled` flag (see job_work_routes.py's
+# _ensure_job_work_addon_enabled) instead of plan tier, so it can be
+# selected/requested on any plan.
+ENTERPRISE_ONLY_DEPARTMENTS = {"Design & Pattern", "Third Party", "HR", "IT"}
 
 # Every HQ Admin gets these regardless of chosen departments.
 BASE_HQ_PERMISSIONS = ["reports", "user_management"]

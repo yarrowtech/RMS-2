@@ -19,6 +19,7 @@ from ..db import (
     job_work_orders_collection,
     job_work_receipts_collection,
     purchaseorders_collection,
+    store_stock_collection,
     style_bom_plans_collection,
     tenants_collection,
     vendor_tenant_links_collection,
@@ -27,6 +28,8 @@ from ..db import (
 from .deps import get_hq_tenant
 from .vendor_routes import decode_token
 from .purchaseorder_routes import TOKEN_EXPIRY_DAYS, _clean_whatsapp_mobile, _make_share_link, calculate_po_totals, generate_po_number, resolve_real_barcode
+from .grn_routes import resolve_single_store_destination
+from ..retailer_plans import normalize_retailer_plan
 
 router = APIRouter(prefix="/api/job-work", tags=["Production & Job Work"])
 
@@ -62,6 +65,24 @@ def _serialize(document: dict) -> dict:
     return row
 
 
+async def _ensure_job_work_addon_enabled(ctx: dict) -> None:
+    """Production & Job Work is an independent, purchasable add-on — not tied
+    to plan tier. A tenant needs `production_job_work_enabled` set on their
+    tenant record; Enterprise-plan tenants are grandfathered in automatically
+    since Job Work used to be bundled into that plan."""
+    tenant = await tenants_collection.find_one(
+        {"tenant_id": ctx["tenant_id"]}, {"plan": 1, "production_job_work_enabled": 1}
+    )
+    if (tenant or {}).get("production_job_work_enabled"):
+        return
+    if normalize_retailer_plan((tenant or {}).get("plan")) == "enterprise":
+        return
+    raise HTTPException(
+        status_code=403,
+        detail="Production & Job Work is not enabled for this account. Ask your Super Admin to activate this add-on.",
+    )
+
+
 async def _require_job_work(ctx: dict = Depends(get_hq_tenant)) -> dict:
     """Job work is a central production operation, never a store operation."""
     permissions = set(ctx.get("_permissions") or [])
@@ -71,6 +92,7 @@ async def _require_job_work(ctx: dict = Depends(get_hq_tenant)) -> dict:
             status_code=403,
             detail="Production & Job Work permission is required. Ask an HQ administrator to grant it.",
         )
+    await _ensure_job_work_addon_enabled(ctx)
     return ctx
 
 
@@ -78,18 +100,21 @@ async def _require_job_work_or_buyer(ctx: dict = Depends(get_hq_tenant)) -> dict
     """Same as _require_job_work, but also lets a Merchandiser Buyer through —
     used only for the fabric-supplier list and manual fabric PO creation, so
     a buyer can raise a Fabric PO directly without needing the rest of the
-    Production & Job Work workflow (material stock, job orders, receipts)."""
+    Production & Job Work workflow (material stock, job orders, receipts).
+    The add-on check only applies to the job-work path — a Merchandiser
+    Buyer's own fabric purchasing is a separate capability and is never
+    gated by the Production & Job Work add-on."""
     permissions = set(ctx.get("_permissions") or [])
     departments = set(ctx.get("_managed_departments") or [])
-    allowed = (
-        "job_work" in permissions or "Production & Job Work" in departments
-        or "mbuyer" in permissions or "Merchandiser Buyer" in departments
-    )
-    if not allowed:
+    is_buyer = "mbuyer" in permissions or "Merchandiser Buyer" in departments
+    is_job_work_role = "job_work" in permissions or "Production & Job Work" in departments
+    if not (is_buyer or is_job_work_role):
         raise HTTPException(
             status_code=403,
             detail="Production & Job Work or Merchandiser Buyer permission is required.",
         )
+    if is_job_work_role and not is_buyer:
+        await _ensure_job_work_addon_enabled(ctx)
     return ctx
 
 
@@ -151,28 +176,53 @@ async def _require_vendor_job_work_access(vendor_id: str) -> dict:
 LEFTOVER_BARCODE_SUFFIX = "-LEFTOVER"
 
 
-async def _add_leftover_stock(tenant_id: str, parent_barcode: str, quantity: float, product: str, rate: float, reason: str) -> None:
+async def _stock_scope(tenant_id: str) -> dict | None:
+    """A single-store tenant's fabric never lands in inventory_collection —
+    GRN posts it straight to store_stock_collection (see grn_routes.py's
+    update_single_store_stock), because that IS their central stock; there
+    is no separate "central" pool for a business with only one location.
+    Every job-work touchpoint below must read/write wherever the tenant's
+    stock actually lives, or a single-store tenant's fabric would be
+    invisible to /material-stock and any receipt would leak into a shadow
+    pool their own POS/store screens never show. Returns None for a
+    multi-store tenant (keep using inventory_collection as before)."""
+    return await resolve_single_store_destination(tenant_id)
+
+
+def _stock_collection(store: dict | None):
+    return store_stock_collection if store else inventory_collection
+
+
+def _stock_query(tenant_id: str, barcode: str, store: dict | None) -> dict:
+    query = {"tenant_id": tenant_id, "barcode": barcode}
+    if store:
+        query["store_id"] = store["id"]
+    return query
+
+
+async def _add_leftover_stock(tenant_id: str, parent_barcode: str, quantity: float, product: str, rate: float, reason: str, store: dict | None = None) -> None:
     """A reusable fabric remnant — NOT the same as job-work waste_qty, which
     is a true write-off that never touches inventory. This is recorded as
-    its own inventory line, one running pool per source material (not one
-    row per order), so it stays distinctly visible/searchable in material
+    its own stock line, one running pool per source material (not one row
+    per order), so it stays distinctly visible/searchable in material
     stock — a job worker can consciously draw down a leftover pool for a
     small job instead of issuing fresh fabric for it."""
     leftover_barcode = f"{parent_barcode}{LEFTOVER_BARCODE_SUFFIX}"
-    existing = await inventory_collection.find_one({"tenant_id": tenant_id, "barcode": leftover_barcode})
+    collection = _stock_collection(store)
+    query = _stock_query(tenant_id, leftover_barcode, store)
+    existing = await collection.find_one(query)
     adjustment = {
         "qty_change": quantity, "reason": reason,
         "adjustedAt": datetime.utcnow().isoformat(), "source": "job_work_leftover",
     }
     if existing:
-        await inventory_collection.update_one(
-            {"_id": existing["_id"], "tenant_id": tenant_id},
+        await collection.update_one(
+            {"_id": existing["_id"]},
             {"$inc": {"stockQty": quantity}, "$set": {"updatedAt": datetime.utcnow()}, "$push": {"adjustments": adjustment}},
         )
         return
-    await inventory_collection.insert_one({
-        "tenant_id": tenant_id,
-        "barcode": leftover_barcode,
+    document = {
+        **query,
         "stockQty": quantity,
         "rate": rate, "mrp": rate,
         "description": f"{product} — leftover remnant",
@@ -182,11 +232,16 @@ async def _add_leftover_stock(tenant_id: str, parent_barcode: str, quantity: flo
         "createdAt": datetime.utcnow(),
         "updatedAt": datetime.utcnow(),
         "adjustments": [adjustment],
-    })
+    }
+    if store:
+        document.update({"store_name": store["name"], "store_type": store["type"]})
+    await collection.insert_one(document)
 
 
-async def _increase_central_stock(tenant_id: str, barcode: str, quantity: float, product: str, rate: float, reason: str) -> None:
-    existing = await inventory_collection.find_one({"tenant_id": tenant_id, "barcode": barcode})
+async def _increase_central_stock(tenant_id: str, barcode: str, quantity: float, product: str, rate: float, reason: str, store: dict | None = None) -> None:
+    collection = _stock_collection(store)
+    query = _stock_query(tenant_id, barcode, store)
+    existing = await collection.find_one(query)
     adjustment = {
         "qty_change": quantity,
         "reason": reason,
@@ -194,14 +249,13 @@ async def _increase_central_stock(tenant_id: str, barcode: str, quantity: float,
         "source": "job_work_receipt",
     }
     if existing:
-        await inventory_collection.update_one(
-            {"_id": existing["_id"], "tenant_id": tenant_id},
+        await collection.update_one(
+            {"_id": existing["_id"]},
             {"$inc": {"stockQty": quantity}, "$set": {"updatedAt": datetime.utcnow()}, "$push": {"adjustments": adjustment}},
         )
         return
-    await inventory_collection.insert_one({
-        "tenant_id": tenant_id,
-        "barcode": barcode,
+    document = {
+        **query,
         "stockQty": quantity,
         "rate": rate,
         "mrp": rate,
@@ -210,15 +264,29 @@ async def _increase_central_stock(tenant_id: str, barcode: str, quantity: float,
         "createdAt": datetime.utcnow(),
         "updatedAt": datetime.utcnow(),
         "adjustments": [adjustment],
-    })
+    }
+    if store:
+        document.update({"store_name": store["name"], "store_type": store["type"]})
+    await collection.insert_one(document)
 
 
 @router.get("/material-stock")
 async def material_stock(ctx: dict = Depends(_require_job_work)):
     """Central stock available to issue to a job worker."""
+    tenant_id = ctx["tenant_id"]
+    store = await _stock_scope(tenant_id)
+    query: dict = {"tenant_id": tenant_id, "stockQty": {"$gt": 0}}
+    if store:
+        # store_stock_collection holds this tenant's ENTIRE store — finished
+        # goods and everything else, not just raw material — so the picker
+        # must stay scoped to fabric/leftover lines the same way
+        # inventory_collection already is by construction (only job-work and
+        # Fabric-PO receipts ever land there).
+        query["store_id"] = store["id"]
+        query["$or"] = [{"is_fabric": True}, {"is_leftover": True}]
     rows = []
-    cursor = inventory_collection.find(
-        {"tenant_id": ctx["tenant_id"], "stockQty": {"$gt": 0}},
+    cursor = _stock_collection(store).find(
+        query,
         {
             "barcode": 1, "sku": 1, "description": 1, "product": 1, "stockQty": 1, "rate": 1, "mrp": 1, "unit": 1,
             "is_leftover": 1, "is_fabric": 1, "fabric_type": 1, "gsm": 1, "width": 1, "color": 1,
@@ -293,6 +361,9 @@ async def _create_fabric_po_document(ctx: dict, payload: dict, plan: dict | None
     if vendor_id:
         vendor, _link = await _approved_vendor(ctx["tenant_id"], vendor_id)
         vendor_name = vendor.get("name") or vendor.get("vendor_name") or "Fabric supplier"
+        vendor_gstin = str(vendor.get("gstin") or "").strip()
+        vendor_mobile = str(vendor.get("mobile") or vendor.get("phone") or "").strip()
+        vendor_address = str(vendor.get("address") or "").strip()
     else:
         walkin_vendor = dict(payload.get("walkin_vendor") or {})
         vendor_name = str(walkin_vendor.get("name") or payload.get("vendor_name") or "").strip()
@@ -307,8 +378,15 @@ async def _create_fabric_po_document(ctx: dict, payload: dict, plan: dict | None
             "contact_person": str(walkin_vendor.get("contact_person") or "").strip(),
             "business_type": "fabric_supplier",
         }
-    tenant = await tenants_collection.find_one({"tenant_id": ctx["tenant_id"]}, {"company_name": 1, "name": 1})
+        vendor_gstin = walkin_vendor["gstin"]
+        vendor_mobile = walkin_vendor["mobile"]
+        vendor_address = walkin_vendor["address"]
+    tenant = await tenants_collection.find_one(
+        {"tenant_id": ctx["tenant_id"]}, {"company_name": 1, "name": 1, "gstin": 1, "address": 1, "city": 1, "state": 1}
+    )
     owner_name = (tenant or {}).get("company_name") or (tenant or {}).get("name") or ctx["tenant_id"]
+    owner_gstin = (tenant or {}).get("gstin", "")
+    owner_address = ", ".join(part for part in [(tenant or {}).get("address", ""), (tenant or {}).get("city", ""), (tenant or {}).get("state", "")] if part)
 
     source_items = payload.get("items") or []
     if plan and not source_items:
@@ -390,6 +468,11 @@ async def _create_fabric_po_document(ctx: dict, payload: dict, plan: dict | None
         "purchaseType": "Fabric / Raw Material",
         "ownerSite": owner_name,
         "ownerSiteShortName": owner_name[:20],
+        "ownerGstin": owner_gstin,
+        "ownerAddress": owner_address,
+        "vendorGstin": vendor_gstin,
+        "vendorMobile": vendor_mobile,
+        "vendorAddress": vendor_address,
         "currency": str(payload.get("currency") or "INR"),
         "exchangeRate": 1,
         "paymentTerms": str(payload.get("payment_terms") or "").strip(),
@@ -440,6 +523,20 @@ async def _create_fabric_po_document(ctx: dict, payload: dict, plan: dict | None
         "whatsapp_message": whatsapp_message,
         "whatsapp_url": whatsapp_url,
         "whatsapp_mobile": walkin_vendor.get("mobile", "") if vendor_type == "walkin" else "",
+        # ⚠️ NEW — surfaced so the downloadable Fabric PO sheet can show a
+        # real buyer/vendor identity block, delivery/payment terms and a
+        # Subtotal/Tax/Grand Total footer instead of a bare line-item list.
+        "expected_delivery_date": po["expectedDeliveryDate"],
+        "payment_terms": po["paymentTerms"],
+        "vendor_gstin": po["vendorGstin"],
+        "vendor_mobile": po["vendorMobile"],
+        "vendor_address": po["vendorAddress"],
+        "company_name": owner_name,
+        "company_gstin": owner_gstin,
+        "company_address": owner_address,
+        "subtotal_amount": po["basicValue"],
+        "tax_amount": po["taxAmount"],
+        "net_amount": po["netAmount"],
     }
 
 
@@ -880,6 +977,9 @@ async def issue_material(order_id: str, payload: dict, ctx: dict = Depends(_requ
     if not isinstance(lines, list) or not lines:
         raise HTTPException(status_code=400, detail="Add at least one material line.")
 
+    store = await _stock_scope(tenant_id)
+    collection = _stock_collection(store)
+
     # Validate the requested total for each barcode before changing any stock.
     # This prevents two duplicate UI lines from issuing more than is available.
     requested_by_barcode: dict[str, float] = {}
@@ -890,7 +990,7 @@ async def issue_material(order_id: str, payload: dict, ctx: dict = Depends(_requ
             raise HTTPException(status_code=400, detail="Every material requires a barcode and issued quantity.")
         requested_by_barcode[barcode] = requested_by_barcode.get(barcode, 0.0) + quantity
     for barcode, requested_quantity in requested_by_barcode.items():
-        stock = await inventory_collection.find_one({"tenant_id": tenant_id, "barcode": barcode})
+        stock = await collection.find_one(_stock_query(tenant_id, barcode, store))
         if not stock or _number(stock.get("stockQty")) < requested_quantity:
             available = _number((stock or {}).get("stockQty"))
             raise HTTPException(status_code=400, detail=f"Insufficient central stock for {barcode}. Available: {available}.")
@@ -899,11 +999,11 @@ async def issue_material(order_id: str, payload: dict, ctx: dict = Depends(_requ
     for line in lines:
         barcode = str(line.get("barcode") or "").strip()
         quantity = _number(line.get("issued_qty"))
-        stock = await inventory_collection.find_one({"tenant_id": tenant_id, "barcode": barcode})
+        stock = await collection.find_one(_stock_query(tenant_id, barcode, store))
         product = str(line.get("product") or stock.get("description") or stock.get("product") or barcode).strip()
         rate = _number(line.get("rate") or stock.get("rate") or stock.get("mrp"))
-        await inventory_collection.update_one(
-            {"_id": stock["_id"], "tenant_id": tenant_id},
+        await collection.update_one(
+            {"_id": stock["_id"]},
             {"$inc": {"stockQty": -quantity}, "$set": {"updatedAt": datetime.utcnow()}, "$push": {"adjustments": {
                 "qty_change": -quantity,
                 "reason": f"Job work issue {order['order_no']} to {order['job_worker_name']}",
@@ -1023,6 +1123,7 @@ async def receive_job_work(order_id: str, payload: dict, ctx: dict = Depends(_re
     if order.get("status") not in {"ISSUED", "PARTIALLY_RECEIVED"}:
         raise HTTPException(status_code=400, detail="Issue material before recording a job work receipt.")
 
+    store = await _stock_scope(tenant_id)
     incoming = payload.get("materials") or []
     if not isinstance(incoming, list) or not incoming:
         raise HTTPException(status_code=400, detail="Enter the material reconciliation for this receipt.")
@@ -1048,9 +1149,9 @@ async def receive_job_work(order_id: str, payload: dict, ctx: dict = Depends(_re
         material["leftover_qty"] = round(_number(material.get("leftover_qty")) + leftover, 3)
         material["waste_qty"] = round(_number(material.get("waste_qty")) + waste, 3)
         if returned:
-            await _increase_central_stock(tenant_id, material["barcode"], returned, material["product"], _number(material.get("rate")), f"Job work material return {order['order_no']}")
+            await _increase_central_stock(tenant_id, material["barcode"], returned, material["product"], _number(material.get("rate")), f"Job work material return {order['order_no']}", store=store)
         if leftover:
-            await _add_leftover_stock(tenant_id, material["barcode"], leftover, material["product"], _number(material.get("rate")), f"Job work leftover from {order['order_no']}")
+            await _add_leftover_stock(tenant_id, material["barcode"], leftover, material["product"], _number(material.get("rate")), f"Job work leftover from {order['order_no']}", store=store)
         receipt_materials.append({"barcode": material["barcode"], "product": material["product"], "used_qty": used, "returned_qty": returned, "leftover_qty": leftover, "waste_qty": waste})
 
     output = payload.get("output") or {}
@@ -1061,7 +1162,7 @@ async def receive_job_work(order_id: str, payload: dict, ctx: dict = Depends(_re
     if output_qty > 0 and not output_barcode:
         raise HTTPException(status_code=400, detail="Finished output barcode is required when receiving finished quantity.")
     if output_qty:
-        await _increase_central_stock(tenant_id, output_barcode, output_qty, output_product, output_rate, f"Job work output receipt {order['order_no']}")
+        await _increase_central_stock(tenant_id, output_barcode, output_qty, output_product, output_rate, f"Job work output receipt {order['order_no']}", store=store)
 
     # ⚠️ NEW — BOM-vs-actual consumption check. The Style BOM (planned_materials,
     # snapshotted onto the order at creation from style_bom_plans_collection)
