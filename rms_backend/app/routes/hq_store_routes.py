@@ -944,6 +944,11 @@ async def get_tenant_kyb(ctx: TenantCtx = Depends(get_hq_tenant)):
         "gstin": kyb.get("gstin", ""),
         "gst_certificate_url": kyb.get("gst_certificate_url", ""),
         "pan_document_url": kyb.get("pan_document_url", ""),
+        "cancelled_cheque_url": kyb.get("cancelled_cheque_url", ""),
+        "bank_account_holder": kyb.get("bank_account_holder", ""),
+        "bank_name": kyb.get("bank_name", ""),
+        "account_last4": kyb.get("account_last4", ""),
+        "ifsc": kyb.get("ifsc", ""),
         "submitted_at": kyb.get("submitted_at"),
     }}
 
@@ -958,6 +963,7 @@ async def upload_tenant_kyb_document(
     field_by_type = {
         "gst_certificate": "gst_certificate_url",
         "pan_document": "pan_document_url",
+        "cancelled_cheque": "cancelled_cheque_url",
     }
     if document_type not in field_by_type:
         raise HTTPException(status_code=400, detail="Choose a valid business verification document type.")
@@ -1006,16 +1012,23 @@ async def submit_tenant_kyb(request: Request, ctx: TenantCtx = Depends(get_hq_te
     if not GSTIN_RE.fullmatch(gstin):
         raise HTTPException(status_code=400, detail="GSTIN must be a valid 15-character GST number.")
     urls = {}
-    for key in ("gst_certificate_url", "pan_document_url"):
+    for key in ("gst_certificate_url", "pan_document_url", "cancelled_cheque_url"):
         value = str(body.get(key) or "").strip()
         if value and not re.match(r"^https://", value, re.I):
             raise HTTPException(status_code=400, detail=f"{key.replace('_', ' ')} must be a secure https link.")
         urls[key] = value
     if not urls.get("gst_certificate_url") or not urls.get("pan_document_url"):
         raise HTTPException(status_code=400, detail="Upload both the GST certificate and PAN document before submitting.")
+
+    account_number = str(body.get("account_number") or "").strip()
+    account_last4 = account_number[-4:] if account_number else str(body.get("account_last4") or "").strip()[-4:]
     kyb = {
         "legal_name": values["legal_name"][:200], "business_address": values["business_address"][:600],
         "pan": pan, "gstin": gstin, **urls,
+        "bank_account_holder": str(body.get("bank_account_holder") or "").strip()[:160],
+        "bank_name": str(body.get("bank_name") or "").strip()[:160],
+        "account_last4": account_last4,
+        "ifsc": str(body.get("ifsc") or "").strip().upper()[:20],
         "submitted_at": datetime.utcnow(), "updated_at": datetime.utcnow(),
     }
     await tenants_collection.update_one(

@@ -156,7 +156,7 @@ def generate_barcode() -> str:
     return "890" + str(random.randint(100000000, 999999999))
 
 
-async def _seed_single_store_stock(tenant_id: str, store: dict, barcode: str, description: str, quantity: float, rate: float, unit: str) -> None:
+async def _seed_single_store_stock(tenant_id: str, store: dict, barcode: str, description: str, quantity: float, rate: float, unit: str, batch_no: str = "", mfg_date: str = "", expiry_date: str = "") -> None:
     """A single-store tenant has no vendor/PO/GRC/GRN cycle to fall back on
     for stock that wasn't formally purchased — opening stock, self-made
     goods, anything counted by hand. Without this, Add Product only ever
@@ -175,6 +175,7 @@ async def _seed_single_store_stock(tenant_id: str, store: dict, barcode: str, de
             "$set": {
                 "tenant_id": tenant_id, "store_id": store["id"], "store_name": store["name"], "store_type": store["type"],
                 "barcode": barcode, "description": description, "rate": rate, "unit": unit or "pcs",
+                "batchNo": batch_no or "", "mfgDate": mfg_date or "", "expiryDate": expiry_date or None,
                 "source": "manual_add", "updatedAt": now,
             },
             "$setOnInsert": {"createdAt": now},
@@ -196,7 +197,7 @@ async def _remember_custom_units(tenant_id: str, units) -> None:
     )
 
 
-async def _sync_single_store_stock_edit(tenant_id: str, store: dict, barcode: str, description: str | None, quantity, rate, unit: str | None) -> None:
+async def _sync_single_store_stock_edit(tenant_id: str, store: dict, barcode: str, description: str | None, quantity, rate, unit: str | None, batch_no=None, mfg_date=None, expiry_date=None) -> None:
     """Edit Product sets an ABSOLUTE quantity (the owner typed "this is how
     much I have"), unlike a GRN/job-work receipt which always ADDS to
     whatever's already there — so this uses $set on stockQty, never $inc.
@@ -213,6 +214,12 @@ async def _sync_single_store_stock_edit(tenant_id: str, store: dict, barcode: st
         store_update["unit"] = unit
     if description is not None:
         store_update["description"] = description
+    if batch_no is not None:
+        store_update["batchNo"] = batch_no or ""
+    if mfg_date is not None:
+        store_update["mfgDate"] = mfg_date or ""
+    if expiry_date is not None:
+        store_update["expiryDate"] = expiry_date or None
     if not store_update:
         return
     store_update["updatedAt"] = datetime.utcnow()
@@ -309,6 +316,8 @@ async def add_product(
     requires_expiry: bool            = Form(False),
     expiry_date:     str             = Form(""),
     shelf_life_days: int             = Form(0),
+    batch_no:        str             = Form(""),
+    mfg_date:        str             = Form(""),
     cost_price:      float           = Form(0.0),
     mrp:             float           = Form(0.0),
     selling_price:   float           = Form(0.0),
@@ -408,6 +417,7 @@ async def add_product(
             "product_name": product_name, "division": division, "section": section, "department": department,
             "hsn_code": hsn_code, "gst_rate": gst_rate, "cgst_rate": round(gst_rate/2,2), "sgst_rate": round(gst_rate/2,2), "igst_rate": gst_rate,
             "requires_expiry": requires_expiry, "expiry_date": expiry_date if requires_expiry else "", "shelf_life_days": shelf_life_days if requires_expiry else 0,
+            "batch_no": batch_no, "mfg_date": mfg_date,
             "sku": sku, "barcode": barcode, "cost_price": cost_price, "mrp": mrp, "selling_price": selling_price if selling_price > 0 else mrp,
             "quantity": quantity, "unit": unit, "description": description, "specification": specification,
             "has_variants": False, "variant_type": "none", "variants": [], "images": uploaded_images, **audit,
@@ -728,6 +738,8 @@ async def update_product(
     requires_expiry: Optional[bool]  = Form(None),
     expiry_date:     Optional[str]   = Form(None),
     shelf_life_days: Optional[int]   = Form(None),
+    batch_no:        Optional[str]   = Form(None),
+    mfg_date:        Optional[str]   = Form(None),
     description:     Optional[str]   = Form(None),
     specification:   Optional[str]   = Form(None),
     cost_price:      Optional[float] = Form(None),
@@ -794,6 +806,8 @@ async def update_product(
     if requires_expiry is not None: update_data["requires_expiry"] = requires_expiry
     if expiry_date     is not None: update_data["expiry_date"]     = expiry_date
     if shelf_life_days is not None: update_data["shelf_life_days"] = shelf_life_days
+    if batch_no        is not None: update_data["batch_no"] = batch_no
+    if mfg_date        is not None: update_data["mfg_date"] = mfg_date
     if description     is not None: update_data["description"]     = description
     if specification   is not None: update_data["specification"]   = specification
 
@@ -811,7 +825,7 @@ async def update_product(
         if seed_store:
             await _sync_single_store_stock_edit(
                 tenant_id, seed_store, product.get("barcode", ""),
-                product_name, quantity, cost_price, unit,
+                product_name, quantity, cost_price, unit, batch_no, mfg_date, expiry_date,
             )
         return {"message": "Product updated successfully"}
 
@@ -1022,7 +1036,7 @@ def generate_barcode() -> str:
     return "890" + str(random.randint(100000000, 999999999))
 
 
-async def _seed_single_store_stock(tenant_id: str, store: dict, barcode: str, description: str, quantity: float, rate: float, unit: str) -> None:
+async def _seed_single_store_stock(tenant_id: str, store: dict, barcode: str, description: str, quantity: float, rate: float, unit: str, batch_no: str = "", mfg_date: str = "", expiry_date: str = "") -> None:
     """A single-store tenant has no vendor/PO/GRC/GRN cycle to fall back on
     for stock that wasn't formally purchased — opening stock, self-made
     goods, anything counted by hand. Without this, Add Product only ever
@@ -1041,6 +1055,7 @@ async def _seed_single_store_stock(tenant_id: str, store: dict, barcode: str, de
             "$set": {
                 "tenant_id": tenant_id, "store_id": store["id"], "store_name": store["name"], "store_type": store["type"],
                 "barcode": barcode, "description": description, "rate": rate, "unit": unit or "pcs",
+                "batchNo": batch_no or "", "mfgDate": mfg_date or "", "expiryDate": expiry_date or None,
                 "source": "manual_add", "updatedAt": now,
             },
             "$setOnInsert": {"createdAt": now},
@@ -1062,7 +1077,7 @@ async def _remember_custom_units(tenant_id: str, units) -> None:
     )
 
 
-async def _sync_single_store_stock_edit(tenant_id: str, store: dict, barcode: str, description: str | None, quantity, rate, unit: str | None) -> None:
+async def _sync_single_store_stock_edit(tenant_id: str, store: dict, barcode: str, description: str | None, quantity, rate, unit: str | None, batch_no=None, mfg_date=None, expiry_date=None) -> None:
     """Edit Product sets an ABSOLUTE quantity (the owner typed "this is how
     much I have"), unlike a GRN/job-work receipt which always ADDS to
     whatever's already there — so this uses $set on stockQty, never $inc.
@@ -1079,6 +1094,12 @@ async def _sync_single_store_stock_edit(tenant_id: str, store: dict, barcode: st
         store_update["unit"] = unit
     if description is not None:
         store_update["description"] = description
+    if batch_no is not None:
+        store_update["batchNo"] = batch_no or ""
+    if mfg_date is not None:
+        store_update["mfgDate"] = mfg_date or ""
+    if expiry_date is not None:
+        store_update["expiryDate"] = expiry_date or None
     if not store_update:
         return
     store_update["updatedAt"] = datetime.utcnow()
@@ -1175,6 +1196,8 @@ async def add_product(
     requires_expiry: bool            = Form(False),
     expiry_date:     str             = Form(""),
     shelf_life_days: int             = Form(0),
+    batch_no:        str             = Form(""),
+    mfg_date:        str             = Form(""),
     cost_price:      float           = Form(0.0),
     mrp:             float           = Form(0.0),
     selling_price:   float           = Form(0.0),
@@ -1298,6 +1321,7 @@ async def add_product(
             "product_name": product_name, "division": division, "section": section, "department": department,
             "hsn_code": hsn_code, "gst_rate": gst_rate, "cgst_rate": round(gst_rate/2,2), "sgst_rate": round(gst_rate/2,2), "igst_rate": gst_rate,
             "requires_expiry": requires_expiry, "expiry_date": expiry_date if requires_expiry else "", "shelf_life_days": shelf_life_days if requires_expiry else 0,
+            "batch_no": batch_no, "mfg_date": mfg_date,
             "sku": sku, "barcode": barcode, "cost_price": cost_price, "mrp": mrp, "selling_price": selling_price if selling_price > 0 else mrp,
             "quantity": quantity, "unit": unit, "description": description, "specification": specification,
             "has_variants": False, "variant_type": "none", "variants": [], "images": uploaded_images, **audit,
@@ -1305,7 +1329,7 @@ async def add_product(
         await product_collection.insert_one(doc)
         await _remember_custom_units(tenant_id, [unit])
         if seed_store:
-            await _seed_single_store_stock(tenant_id, seed_store, barcode, product_name, quantity, cost_price, unit)
+            await _seed_single_store_stock(tenant_id, seed_store, barcode, product_name, quantity, cost_price, unit, batch_no, mfg_date, expiry_date if requires_expiry else "")
         return {"message": "Product added successfully", "sku": sku, "barcode": barcode}
 
     variant_docs = []
@@ -1691,6 +1715,8 @@ async def update_product(
     requires_expiry: Optional[bool]  = Form(None),
     expiry_date:     Optional[str]   = Form(None),
     shelf_life_days: Optional[int]   = Form(None),
+    batch_no:        Optional[str]   = Form(None),
+    mfg_date:        Optional[str]   = Form(None),
     description:     Optional[str]   = Form(None),
     specification:   Optional[str]   = Form(None),
     cost_price:      Optional[float] = Form(None),
@@ -1757,6 +1783,8 @@ async def update_product(
     if requires_expiry is not None: update_data["requires_expiry"] = requires_expiry
     if expiry_date     is not None: update_data["expiry_date"]     = expiry_date
     if shelf_life_days is not None: update_data["shelf_life_days"] = shelf_life_days
+    if batch_no        is not None: update_data["batch_no"] = batch_no
+    if mfg_date        is not None: update_data["mfg_date"] = mfg_date
     if description     is not None: update_data["description"]     = description
     if specification   is not None: update_data["specification"]   = specification
 
@@ -1774,7 +1802,7 @@ async def update_product(
         if seed_store:
             await _sync_single_store_stock_edit(
                 tenant_id, seed_store, product.get("barcode", ""),
-                product_name, quantity, cost_price, unit,
+                product_name, quantity, cost_price, unit, batch_no, mfg_date, expiry_date,
             )
         return {"message": "Product updated successfully"}
 

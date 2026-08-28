@@ -358,6 +358,10 @@ export default function EditProduct() {
   const [sellingPrice, setSellingPrice] = useState("");
   const [quantity,     setQuantity]     = useState("");
   const [unit,         setUnit]         = useState("pcs");
+  const [batchNo,      setBatchNo]      = useState("");
+  const [mfgDate,      setMfgDate]      = useState("");
+  const [expiryDate,   setExpiryDate]   = useState("");
+  const [shelfLifeDays,setShelfLifeDays]= useState("");
 
   const [keepImgs, setKeepImgs] = useState([]);
   const [newFiles, setNewFiles] = useState([]);
@@ -383,6 +387,10 @@ export default function EditProduct() {
           setSellingPrice(d.selling_price ?? "");
           setQuantity(d.quantity          ?? "");
           setUnit(d.unit                  || "pcs");
+          setBatchNo(d.batch_no || d.batchNo || "");
+          setMfgDate(d.mfg_date || d.mfgDate || "");
+          setExpiryDate(d.expiry_date || d.expiryDate || "");
+          setShelfLifeDays(d.shelf_life_days ?? "");
         } else {
           setVariants((d.variants || []).map(v => ({ ...v })));
         }
@@ -426,6 +434,11 @@ export default function EditProduct() {
         if (sellingPrice !== "") fd.append("selling_price", sellingPrice);
         if (quantity     !== "") fd.append("quantity",      quantity);
         fd.append("unit", unit);
+        fd.append("batch_no", batchNo || "");
+        fd.append("mfg_date", mfgDate || "");
+        fd.append("expiry_date", expiryDate || "");
+        fd.append("shelf_life_days", shelfLifeDays || 0);
+        fd.append("requires_expiry", String(Boolean(expiryDate || shelfLifeDays)));
       } else {
         fd.append("variants_update", JSON.stringify(
           variants.map(v => ({
@@ -442,7 +455,7 @@ export default function EditProduct() {
       const skuKey = product.base_sku || product.sku;
       await axios.put(`${API_BASE}/api/products/${skuKey}`, fd, { headers: authHeaders() });
       setToast({ msg: "Saved successfully!", type: "ok" });
-      setTimeout(() => navigate("/products"), 1300);
+      navigate("/products", { replace: true });
     } catch (err) {
       setToast({ msg: err.response?.data?.detail || "Save failed", type: "err" });
     } finally {
@@ -502,7 +515,7 @@ export default function EditProduct() {
       {/* TOP BAR */}
       <header className="ep-bar">
         <div className="ep-bar-left">
-          <button className="ep-back" onClick={() => navigate(-1)}>
+          <button className="ep-back" onClick={() => navigate("/products")}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
               <path d="M19 12H5M12 5l-7 7 7 7"/>
             </svg>
@@ -512,7 +525,7 @@ export default function EditProduct() {
           <span className="ep-sku-badge">{displaySku}</span>
         </div>
         <div className="ep-bar-right">
-          <button className="ep-discard" onClick={() => navigate(-1)}>Discard</button>
+          <button className="ep-discard" onClick={() => navigate("/products")}>Discard</button>
           <button className="ep-save" onClick={handleSave} disabled={saving}>
             {saving
               ? <><span className="ep-spin" /> Saving…</>
@@ -580,6 +593,30 @@ export default function EditProduct() {
                   <div className="ep-field" style={{ marginBottom: 0 }}>
                     <label className="ep-lbl">Unit</label>
                     <UnitSelect className="ep-sel" value={unit} onChange={setUnit} />
+                  </div>
+                </div>
+                <div className="ep-field" style={{ marginTop: 16, marginBottom: 0 }}>
+                  <div style={{ border: '1px solid #fed7aa', background: '#fff7ed', borderRadius: 18, padding: 16 }}>
+                    <label className="ep-lbl">Batch / MFG / Expiry tracking <span style={{ color: '#94a3b8', fontWeight: 700 }}>(optional)</span></label>
+                    <p style={{ color: '#64748b', fontSize: 12, lineHeight: 1.6, marginBottom: 12 }}>Use for FMCG, beverages, cosmetics, engine oil or items where expiry matters. Leave blank for garments.</p>
+                    <div className="ep-g3" style={{ marginBottom: 12 }}>
+                      <div className="ep-field" style={{ marginBottom: 0 }}>
+                        <label className="ep-lbl">Batch No.</label>
+                        <input className="ep-in" value={batchNo} onChange={e => setBatchNo(e.target.value)} placeholder="e.g. BATCH-AUG26" />
+                      </div>
+                      <div className="ep-field" style={{ marginBottom: 0 }}>
+                        <label className="ep-lbl">MFG Date</label>
+                        <input className="ep-in" type="date" value={mfgDate} onChange={e => setMfgDate(e.target.value)} />
+                      </div>
+                      <div className="ep-field" style={{ marginBottom: 0 }}>
+                        <label className="ep-lbl">Expiry Date</label>
+                        <input className="ep-in" type="date" value={expiryDate} onChange={e => setExpiryDate(e.target.value)} />
+                      </div>
+                    </div>
+                    <div className="ep-field" style={{ marginBottom: 0 }}>
+                      <label className="ep-lbl">Shelf Life Days</label>
+                      <input className="ep-in" type="number" min="0" value={shelfLifeDays} onChange={e => setShelfLifeDays(e.target.value)} placeholder="e.g. 180" />
+                    </div>
                   </div>
                 </div>
               </div>

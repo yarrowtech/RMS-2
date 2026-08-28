@@ -55,7 +55,7 @@ const calcTotalValue  = (sp, qty) => toNum(sp) * toInt(qty);
 const fmt = (n) => (Math.abs(n) < 0.005 ? "0.00" : n.toFixed(2));
 
 // ─── Empty shapes ───
-const emptyPricing      = () => ({ cost_price:"", mrp:"", selling_price:"", quantity:"", unit:"pcs" });
+const emptyPricing      = () => ({ cost_price:"", mrp:"", selling_price:"", quantity:"", unit:"pcs", batch_no:"", mfg_date:"", expiry_date:"", shelf_life_days:"" });
 const emptyProduct      = () => ({ product_name:"", division:"", section:"", department:"", ...emptyPricing(), description:"", specification:"", has_variants:false, variant_type:"color", variants:[], images:[] });
 const emptyColorVariant = (color) => ({ color, ...emptyPricing() });
 const emptyColorForSize = (color) => ({ color, ...emptyPricing() });
@@ -893,6 +893,11 @@ export default function AddProduct() {
           fd.append("selling_price", toNum(p.selling_price) || toNum(p.mrp));
           fd.append("quantity",      toInt(p.quantity, 0));
           fd.append("unit",          p.unit);
+          fd.append("batch_no",      p.batch_no || "");
+          fd.append("mfg_date",      p.mfg_date || "");
+          fd.append("expiry_date",   p.expiry_date || "");
+          fd.append("shelf_life_days", toInt(p.shelf_life_days, 0));
+          fd.append("requires_expiry", String(Boolean(p.expiry_date || p.shelf_life_days)));
         }
         fd.append("variants", JSON.stringify(variants));
         (p.images || []).forEach((f) => fd.append("images", f));
@@ -1006,6 +1011,42 @@ export default function AddProduct() {
                         <label className="ap-lbl">Unit</label>
                         <UnitSelect className="ap-in" value={form.unit}
                           onChange={(u) => handleChange(idx, "unit", u)} />
+                      </div>
+                    </div>
+
+                    <div className="ap-fg" style={{ marginTop: 14 }}>
+                      <div className="rounded-2xl border border-amber-200 bg-amber-50/70 p-4">
+                        <div className="mb-3">
+                          <label className="ap-lbl">Batch / MFG / Expiry tracking <span style={{ color: '#94a3b8', fontWeight: 700 }}>(optional)</span></label>
+                          <p style={{ color: '#64748b', fontSize: 12, lineHeight: 1.6 }}>Use this for snacks, cold drinks, cosmetics, personal care, engine oil or any item where batch/expiry matters. Leave blank for garments and normal non-expiry products.</p>
+                        </div>
+                        <div className="g3">
+                          <div>
+                            <label className="ap-lbl">Batch No.</label>
+                            <input className="ap-in" placeholder="e.g. BATCH-AUG26" value={form.batch_no}
+                              onChange={(e) => handleChange(idx, "batch_no", e.target.value)} />
+                          </div>
+                          <div>
+                            <label className="ap-lbl">MFG Date</label>
+                            <input type="date" className="ap-in" value={form.mfg_date}
+                              onChange={(e) => handleChange(idx, "mfg_date", e.target.value)} />
+                          </div>
+                          <div>
+                            <label className="ap-lbl">Expiry Date</label>
+                            <input type="date" className="ap-in" value={form.expiry_date}
+                              onChange={(e) => handleChange(idx, "expiry_date", e.target.value)} />
+                          </div>
+                        </div>
+                        <div className="g2" style={{ marginTop: 12 }}>
+                          <div>
+                            <label className="ap-lbl">Shelf Life Days</label>
+                            <input type="number" min="0" step="1" className="ap-in ap-mono" placeholder="e.g. 180" value={form.shelf_life_days} onKeyDown={preventInvalidKeys}
+                              onChange={(e) => handleChange(idx, "shelf_life_days", sanitizeInt(e.target.value, ""))} />
+                          </div>
+                          <div style={{ alignSelf: 'end', color: '#64748b', fontSize: 12, lineHeight: 1.6 }}>
+                            RMS marks expiry tracking automatically when Expiry Date or Shelf Life is filled.
+                          </div>
+                        </div>
                       </div>
                     </div>
 

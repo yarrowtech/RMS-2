@@ -531,7 +531,13 @@ function GenerateBillPopup({ open, isReturn, items, bill, setBill, summary, onCl
           <div className="grid gap-4 lg:grid-cols-2">
             {/* Customer details */}
             <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-              <h3 className="mb-3 text-xs font-black uppercase tracking-widest text-black">Customer Details</h3>
+              <div className="mb-3 flex items-start justify-between gap-3">
+                <h3 className="text-xs font-black uppercase tracking-widest text-black">Customer Details</h3>
+                <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-[9px] font-black uppercase tracking-widest text-emerald-700">Digital bill ready</span>
+              </div>
+              <p className="mb-3 rounded-2xl border border-sky-100 bg-sky-50 px-3 py-2 text-[11px] font-bold text-sky-800">
+                Add email to send the invoice automatically after saving. Mobile is kept for WhatsApp/SMS sharing when credentials are connected.
+              </p>
               <div className="space-y-3">
                 {[
                   { label: "Cashier Name",  key: "cashierName" },
@@ -1043,6 +1049,9 @@ function ReceiptModal({ open, receipt, onClose }) {
               <p>Customer: {receipt.customerName || "Walking Customer"}</p>
               <p>Mobile: {receipt.mobile || "N/A"}</p>
               <p>Email: {receipt.customerEmail || "N/A"}</p>
+              <p className={receipt.offline ? "font-black text-amber-700" : receipt.customerEmail ? (receipt.emailSent ? "font-black text-emerald-700" : "font-black text-rose-700") : "font-bold text-slate-500"}>
+                Digital bill: {receipt.offline ? "Will send after sync" : receipt.customerEmail ? (receipt.emailSent ? "Email sent" : "Email not sent") : "No email added"}
+              </p>
             </div>
 
             <div className="my-2 border-t border-dashed border-black" />
@@ -1238,11 +1247,11 @@ function ReceiptModal({ open, receipt, onClose }) {
             </button>
             <button onClick={prepareShare} disabled={sharing || receipt.offline}
               className="flex w-full items-center justify-center gap-2 rounded-2xl border border-emerald-200 bg-emerald-50 py-3 text-[11px] font-black uppercase tracking-widest text-emerald-700 hover:bg-emerald-100 disabled:opacity-50">
-              {sharing ? <FaSpinner className="animate-spin" /> : <FaCheckCircle />} {receipt.offline ? "Sync first to share bill" : "Copy / send bill link"}
+              {sharing ? <FaSpinner className="animate-spin" /> : <FaCheckCircle />} {receipt.offline ? "Sync first to share bill" : "Copy bill link / WhatsApp"}
             </button>
             <button onClick={sendReceiptEmail} disabled={emailing || receipt.offline}
               className="flex w-full items-center justify-center gap-2 rounded-2xl border border-indigo-200 bg-indigo-50 py-3 text-[11px] font-black uppercase tracking-widest text-indigo-700 hover:bg-indigo-100 disabled:opacity-50">
-              {emailing ? <FaSpinner className="animate-spin" /> : <FaEnvelope />} {receipt.offline ? "Sync first to email bill" : receipt.emailSent ? "Email sent / resend" : "Email bill to customer"}
+              {emailing ? <FaSpinner className="animate-spin" /> : <FaEnvelope />} {receipt.offline ? "Sync first to email bill" : receipt.emailSent ? "Email sent / resend" : "Send email bill"}
             </button>
             {shareInfo?.share_url && (
               <div className="rounded-2xl bg-slate-50 p-3 text-[11px] font-bold text-slate-600">
@@ -1262,6 +1271,7 @@ function ReceiptModal({ open, receipt, onClose }) {
 export default function CashierPOS() {
   const barcodeRef = useRef(null);
   const scrollRef  = useRef(null);
+  const scannerFallbackRef = useRef(null);
 
   const [mode,           setMode]           = useState("sale");
   const [items,          setItems]          = useState([]);
@@ -1502,6 +1512,16 @@ export default function CashierPOS() {
     finally { setScanning(false); }
   }, [barcode, showToast, openManualOfflineItem, addProduct]);
 
+  useEffect(() => {
+    const clean = barcode.trim();
+    if (isReturn || scanning || clean.length < 6 || clean.includes(" ")) return undefined;
+    window.clearTimeout(scannerFallbackRef.current);
+    scannerFallbackRef.current = window.setTimeout(() => {
+      scanBarcode();
+    }, 550);
+    return () => window.clearTimeout(scannerFallbackRef.current);
+  }, [barcode, isReturn, scanning, scanBarcode]);
+
 
   /* ── Load items from invoice lookup ── */
   const handleLoadReturnItems = useCallback((returnItems, invNo) => {
@@ -1650,7 +1670,7 @@ export default function CashierPOS() {
         if (!res.ok) throw new Error(data.detail || "Sync failed");
 
         const nextRows = readOfflineBills().map(item => item.id === row.id
-          ? { ...item, status: "synced", syncedAt: new Date().toISOString(), serverInvoiceNo: data.invoice_no, shareUrl: data.share_url || item.shareUrl || "", stockConflicts: data.stock_conflicts || [], lastError: "" }
+          ? { ...item, status: "synced", syncedAt: new Date().toISOString(), serverInvoiceNo: data.invoice_no, shareUrl: data.share_url || item.shareUrl || "", emailSent: Boolean(data.email_sent), customerEmail: data.customer_email || item.payload?.bill?.customerEmail || "", stockConflicts: data.stock_conflicts || [], lastError: "" }
           : item
         );
         writeOfflineBills(nextRows);
@@ -1853,7 +1873,7 @@ export default function CashierPOS() {
               <FaBarcode className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
               <input ref={barcodeRef} value={barcode} onChange={e => setBarcode(e.target.value)}
                 onKeyDown={e => e.key === "Enter" && scanBarcode()}
-                placeholder="Scan barcode and press Enter"
+                placeholder="Scan barcode - auto-adds after scan"
                 className="h-12 w-full rounded-2xl border border-slate-200 bg-slate-50 pl-11 pr-20 text-sm font-bold outline-none focus:border-violet-500" />
               <button onClick={scanBarcode} disabled={scanning || !barcode.trim()}
                 className="absolute right-2 top-1/2 -translate-y-1/2 rounded-xl bg-violet-600 px-3 py-1.5 text-[10px] font-black uppercase text-white disabled:opacity-40">
@@ -1888,6 +1908,9 @@ export default function CashierPOS() {
               )}
             </div>
           </div>
+          <p className="mt-2 text-[11px] font-bold text-slate-500">
+            Scanner tip: RMS adds the item on Enter. If your scanner does not send Enter, it auto-adds after a short pause on barcode-like input.
+          </p>
         </section>
       )}
 
