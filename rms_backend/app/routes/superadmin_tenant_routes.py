@@ -118,6 +118,7 @@ async def list_tenants(
             "billing_mode": t.get("billing_mode", "manual"),
             "subscription_status": t.get("subscription_status", "active"),
             "production_job_work_enabled": bool(t.get("production_job_work_enabled")) or normalize_retailer_plan(t.get("plan", "basic")) == "enterprise",
+            "logistics_enabled": bool(t.get("logistics_enabled")),
             "hq_admin_email": t.get("hq_admin_email", ""),
             "hq_admin_name":  t.get("hq_admin_name", ""),
             "kyb_status":   t.get("kyb_status", "Not started"),
@@ -355,6 +356,29 @@ async def update_production_addon(
         type="update",
     )
     return {"message": f"Production & Job Work add-on {'activated' if payload.enabled else 'deactivated'} for '{tenant.get('company_name', tenant_id)}'."}
+
+
+@router.put("/{tenant_id}/logistics-addon")
+async def update_logistics_addon(
+    tenant_id: str,
+    payload: ProductionAddonUpdate,
+    current_admin: CurrentAdmin = Depends(get_current_superadmin),
+):
+    """Activate/deactivate the Logistics add-on for a tenant. Pure opt-in —
+    no plan-tier grandfather, unlike Production & Job Work."""
+    tenant = await tenants_collection.find_one({"tenant_id": tenant_id})
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+    await tenants_collection.update_one(
+        {"tenant_id": tenant_id},
+        {"$set": {"logistics_enabled": payload.enabled, "updated_at": datetime.utcnow()}},
+    )
+    await log_activity(
+        current_admin.get("name") or current_admin.get("email", ""),
+        f"{'Activated' if payload.enabled else 'Deactivated'} Logistics add-on for: {tenant.get('company_name', tenant_id)}",
+        type="update",
+    )
+    return {"message": f"Logistics add-on {'activated' if payload.enabled else 'deactivated'} for '{tenant.get('company_name', tenant_id)}'."}
 
 
 @router.delete("/{tenant_id}")

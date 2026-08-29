@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { API_BASE_URL } from "../../config/api.js";
 import { CreateFabricPOModal } from "../shared/FabricBuyingCart.jsx";
 import FabricThemesSection from "./FabricThemes.jsx";
+import FabricRequirementSummary from "./FabricRequirementSummary.jsx";
 import { downloadFabricSheetCsv, downloadFabricSheetExcel, downloadFabricSheetPdf } from "../../utils/fabricSheetExport.js";
 
 function authHeaders() {
@@ -119,7 +120,7 @@ export default function FabricPurchasing({ onNavigate = () => {} }) {
     setSaving(true);
     try {
       const result = await request("/fabric-purchase-orders", { method: "POST", body: JSON.stringify(payload) });
-      showNotice(result.share_link ? `${result.message} Walk-in share link generated.` : result.message);
+      showNotice(result.share_link ? `${result.message} Walk-in share link generated.${result.email_sent ? " Email sent." : ""}` : `${result.message}${result.email_sent ? " Email sent." : ""}`);
       if (result.whatsapp_url) window.open(result.whatsapp_url, "_blank", "noopener,noreferrer");
       setShowCart(false);
       await refresh();
@@ -183,6 +184,10 @@ export default function FabricPurchasing({ onNavigate = () => {} }) {
       </div>
 
       <FabricThemesSection vendors={vendors} />
+
+      <div className="mt-6">
+        <FabricRequirementSummary />
+      </div>
 
       {showCart && (
         <CreateFabricPOModal vendors={vendors} onClose={() => setShowCart(false)} onSubmit={createFabricPO} saving={saving} />

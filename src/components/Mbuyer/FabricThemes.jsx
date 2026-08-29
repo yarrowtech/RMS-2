@@ -48,8 +48,8 @@ const statusTone = {
   ordered: "bg-emerald-50 text-emerald-700",
 };
 
-function CreateThemeModal({ onClose, onCreated }) {
-  const [form, setForm] = useState({ theme_name: "", target_date: "", notes: "" });
+function CreateThemeModal({ plans, onClose, onCreated }) {
+  const [form, setForm] = useState({ theme_name: "", target_date: "", notes: "", plan_ids: [] });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const submit = async (event) => {
@@ -81,6 +81,16 @@ function CreateThemeModal({ onClose, onCreated }) {
           <span className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-slate-500">Notes</span>
           <input value={form.notes} onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))} placeholder="Optional" className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm font-medium outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100" />
         </label>
+        <section className="rounded-xl border border-cyan-100 bg-cyan-50/50 p-3">
+          <p className="text-xs font-black uppercase tracking-wide text-cyan-800">Link BOM plans (optional)</p>
+          <p className="mt-1 text-xs leading-5 text-slate-600">Choose one or more style BOMs. RMS will calculate fabric required, usable stock, and the remaining quantity to buy for this theme.</p>
+          <div className="mt-3 max-h-40 space-y-2 overflow-y-auto pr-1">
+            {plans.length ? plans.map((plan) => {
+              const selected = form.plan_ids.includes(plan.id);
+              return <label key={plan.id} className="flex cursor-pointer items-start gap-2 rounded-lg bg-white px-2.5 py-2 text-xs text-slate-700 hover:bg-cyan-50"><input type="checkbox" checked={selected} onChange={() => setForm((current) => ({ ...current, plan_ids: selected ? current.plan_ids.filter((id) => id !== plan.id) : [...current.plan_ids, plan.id] }))} className="mt-0.5" /><span><b>{plan.plan_no}</b> - {plan.style_name}<span className="block text-slate-400">{plan.planned_quantity} {plan.finished_unit} planned</span></span></label>;
+            }) : <p className="rounded-lg bg-white p-2 text-xs text-slate-500">No BOM plan yet. You can still create a supplier-only theme.</p>}
+          </div>
+        </section>
         <div className="flex justify-end gap-3 pt-2">
           <button type="button" onClick={onClose} className="rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-bold text-slate-600">Cancel</button>
           <button disabled={saving} className="rounded-xl bg-violet-600 px-5 py-2.5 text-sm font-bold text-white disabled:opacity-60">{saving ? "Creating…" : "Create theme"}</button>
@@ -211,6 +221,7 @@ function ThemeDetailModal({ themeId, vendors, onClose, onChanged }) {
 
   const isDraft = theme.status === "draft";
   const lines = theme.lines || [];
+  const requirements = theme.requirements || [];
   const total = lines.reduce((sum, line) => sum + Number(line.quantity || 0) * Number(line.rate || 0), 0);
   const linesByVendor = lines.reduce((acc, line) => {
     const key = line.vendor_name || "Unassigned";
@@ -228,6 +239,13 @@ function ThemeDetailModal({ themeId, vendors, onClose, onChanged }) {
           <span className={`rounded-full px-3 py-1 text-xs font-black uppercase tracking-wide ${statusTone[theme.status] || "bg-slate-100 text-slate-600"}`}>{theme.status}</span>
           <span className="text-xs font-bold text-slate-500">{lines.length} selection{lines.length === 1 ? "" : "s"} · Est. value ₹{total.toLocaleString("en-IN", { maximumFractionDigits: 0 })}</span>
         </div>
+
+        {requirements.length > 0 && (
+          <section className="overflow-hidden rounded-xl border border-cyan-200 bg-cyan-50/40">
+            <div className="border-b border-cyan-100 bg-cyan-50 px-4 py-3"><p className="text-sm font-black text-slate-900">Theme fabric requirement planner</p><p className="mt-0.5 text-xs text-slate-600">BOM demand less usable fabric stock. Supplier selections below can be split across one or many vendors.</p></div>
+            <div className="overflow-x-auto"><table className="min-w-[760px] w-full text-left text-xs"><thead className="bg-white text-[10px] uppercase tracking-wide text-slate-500"><tr><th className="px-4 py-3">Fabric / linked plans</th><th className="px-3 py-3 text-right">Need</th><th className="px-3 py-3 text-right">In stock</th><th className="px-3 py-3 text-right">To buy</th><th className="px-3 py-3 text-right">Allocated</th><th className="px-4 py-3 text-right">Still allocate</th></tr></thead><tbody className="divide-y divide-cyan-100">{requirements.map((item) => <tr key={item.material_name}><td className="px-4 py-3"><p className="font-bold text-slate-800">{item.material_name}</p><p className="mt-0.5 text-[11px] text-slate-500">{item.plans.map((plan) => `${plan.plan_no}: ${plan.quantity} ${item.unit}`).join(" | ")}</p></td><td className="px-3 py-3 text-right font-bold">{item.required_qty} {item.unit}</td><td className="px-3 py-3 text-right text-emerald-700">{item.available_qty} {item.unit}</td><td className="px-3 py-3 text-right font-bold text-amber-700">{item.to_buy_qty} {item.unit}</td><td className="px-3 py-3 text-right text-violet-700">{item.selected_qty} {item.unit}</td><td className={`px-4 py-3 text-right font-black ${item.unallocated_qty > 0 ? "text-rose-600" : "text-emerald-700"}`}>{item.unallocated_qty > 0 ? `${item.unallocated_qty} ${item.unit}` : "Covered"}</td></tr>)}</tbody></table></div>
+          </section>
+        )}
 
         {isDraft && (
           <section className="rounded-xl border border-slate-200 bg-slate-50/70 p-4">
@@ -327,7 +345,7 @@ function ThemeDetailModal({ themeId, vendors, onClose, onChanged }) {
   );
 }
 
-export default function FabricThemesSection({ vendors }) {
+export default function FabricThemesSection({ vendors, plans = [] }) {
   const [themes, setThemes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -388,7 +406,7 @@ export default function FabricThemesSection({ vendors }) {
       )}
 
       {showCreate && (
-        <CreateThemeModal onClose={() => setShowCreate(false)} onCreated={(theme) => { setShowCreate(false); reload(); setOpenThemeId(theme.id); }} />
+        <CreateThemeModal plans={plans} onClose={() => setShowCreate(false)} onCreated={(theme) => { setShowCreate(false); reload(); setOpenThemeId(theme.id); }} />
       )}
       {openThemeId && (
         <ThemeDetailModal themeId={openThemeId} vendors={vendors} onClose={() => setOpenThemeId(null)} onChanged={reload} />

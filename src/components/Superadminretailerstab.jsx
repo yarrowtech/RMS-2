@@ -4,7 +4,7 @@ import {
   Building2, Plus, Search, Eye, Pencil, Trash2, X,
   CheckCircle, XCircle, AlertCircle, Store, Users,
   Crown, Zap, Rocket, ChevronDown, ChevronUp, CreditCard, Gift,
-  ShieldCheck, ShieldAlert, ShieldQuestion, Factory,
+  ShieldCheck, ShieldAlert, ShieldQuestion, Factory, Truck,
 } from "lucide-react";
 import toast from "react-hot-toast";
 
@@ -570,6 +570,8 @@ export default function RetailersTab({ pendingOnboarding, onConsumeOnboarding })
   const [deptSelections, setDeptSelections] = useState({});
   const [addonRequests, setAddonRequests] = useState([]);
   const [addonLoading, setAddonLoading] = useState(false);
+  const [logisticsAddonRequests, setLogisticsAddonRequests] = useState([]);
+  const [logisticsAddonLoading, setLogisticsAddonLoading] = useState(false);
 
   const fetchTenants = useCallback(async () => {
     try {
@@ -632,7 +634,30 @@ export default function RetailersTab({ pendingOnboarding, onConsumeOnboarding })
     } catch (error) { toast.error(error.message); }
   };
 
-  useEffect(() => { fetchTenants(); fetchUpgradeRequests(); fetchUpgradeDepartmentCatalog(); fetchAddonRequests(); }, [fetchTenants, fetchUpgradeRequests, fetchUpgradeDepartmentCatalog, fetchAddonRequests]);
+  const fetchLogisticsAddonRequests = useCallback(async () => {
+    try {
+      setLogisticsAddonLoading(true);
+      const data = await apiFetch("/api/logistics-addon/requests");
+      setLogisticsAddonRequests(Array.isArray(data.requests) ? data.requests : []);
+    } catch (error) {
+      toast.error(error.message || "Failed to load Logistics requests");
+    } finally {
+      setLogisticsAddonLoading(false);
+    }
+  }, []);
+
+  const reviewLogisticsAddonRequest = async (request, action) => {
+    try {
+      await apiFetch(`/api/logistics-addon/requests/${request.id}`, {
+        method: "PATCH", body: JSON.stringify({ action }),
+      });
+      toast.success(action === "approve" ? `Logistics activated for ${request.company_name}` : "Activation request declined");
+      fetchTenants();
+      fetchLogisticsAddonRequests();
+    } catch (error) { toast.error(error.message); }
+  };
+
+  useEffect(() => { fetchTenants(); fetchUpgradeRequests(); fetchUpgradeDepartmentCatalog(); fetchAddonRequests(); fetchLogisticsAddonRequests(); }, [fetchTenants, fetchUpgradeRequests, fetchUpgradeDepartmentCatalog, fetchAddonRequests, fetchLogisticsAddonRequests]);
   useEffect(() => { if (pendingOnboarding) setShowAdd(true); }, [pendingOnboarding]);
 
   const toggleDeptSelection = (requestId, key) => {
@@ -682,6 +707,17 @@ export default function RetailersTab({ pendingOnboarding, onConsumeOnboarding })
         method: "PUT", body: JSON.stringify({ enabled: enable }),
       });
       toast.success(`Production & Job Work ${enable ? "activated" : "deactivated"} for ${tenant.company_name}.`);
+      fetchTenants();
+    } catch (e) { toast.error(e.message); }
+  };
+
+  const handleToggleLogisticsAddon = async (tenant) => {
+    const enable = !tenant.logistics_enabled;
+    try {
+      await apiFetch(`/superadmin/tenants/${tenant.tenant_id}/logistics-addon`, {
+        method: "PUT", body: JSON.stringify({ enabled: enable }),
+      });
+      toast.success(`Logistics ${enable ? "activated" : "deactivated"} for ${tenant.company_name}.`);
       fetchTenants();
     } catch (e) { toast.error(e.message); }
   };
@@ -855,6 +891,35 @@ export default function RetailersTab({ pendingOnboarding, onConsumeOnboarding })
         </section>
       )}
 
+      {(
+        <section className="overflow-hidden rounded-xl border border-cyan-200 bg-white shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-cyan-100 bg-cyan-50 px-5 py-4">
+            <div><h3 className="flex items-center gap-2 font-black text-cyan-950"><Truck className="h-4 w-4" /> Logistics add-on requests</h3><p className="mt-0.5 text-xs text-cyan-700">Pure opt-in, independent of plan tier — not every retailer needs shipment/transfer tracking.</p></div>
+            <button onClick={fetchLogisticsAddonRequests} disabled={logisticsAddonLoading} className="rounded-lg border border-cyan-200 bg-white px-3 py-2 text-xs font-bold text-cyan-700 hover:bg-cyan-100">{logisticsAddonLoading ? "Refreshing…" : "Refresh"}</button>
+          </div>
+          <div className="divide-y divide-slate-100">
+            {logisticsAddonRequests.filter((request) => request.status === "PENDING").map((request) => (
+              <div key={request.id} className="flex flex-wrap items-start justify-between gap-4 px-5 py-4">
+                <div className="min-w-[260px] flex-1">
+                  <p className="font-bold text-slate-900">{request.company_name} <span className="font-normal text-slate-400">· {request.tenant_id}</span></p>
+                  <p className="mt-1 text-xs text-slate-600">Requested by: {request.requested_by_name} · {request.requested_by_email}</p>
+                  {request.note && <p className="mt-1 text-xs italic text-slate-500">“{request.note}”</p>}
+                </div>
+                <div className="flex items-center gap-2">
+                  <button onClick={() => reviewLogisticsAddonRequest(request, "decline")} className="rounded-lg border border-rose-200 px-3 py-2 text-xs font-bold text-rose-700 hover:bg-rose-50">Decline</button>
+                  <button onClick={() => reviewLogisticsAddonRequest(request, "approve")} className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-bold text-white hover:bg-emerald-700">Activate</button>
+                </div>
+              </div>
+            ))}
+            {logisticsAddonRequests.filter((request) => request.status === "PENDING").length === 0 && (
+              <p className="px-5 py-5 text-sm text-slate-500">
+                No pending Logistics activation requests. Use Refresh to check for new requests.
+              </p>
+            )}
+          </div>
+        </section>
+      )}
+
       {/* Table */}
       <div className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">
         <div className="overflow-x-auto">
@@ -953,6 +1018,11 @@ export default function RetailersTab({ pendingOnboarding, onConsumeOnboarding })
                             className={`p-1.5 rounded-lg transition ${t.production_job_work_enabled ? "text-violet-600 hover:bg-violet-50" : "text-slate-400 hover:bg-slate-100"}`}
                             title={t.production_job_work_enabled ? "Production & Job Work add-on: ON — click to deactivate" : "Production & Job Work add-on: OFF — click to activate"}>
                             <Factory className="w-4 h-4"/>
+                          </button>
+                          <button onClick={() => handleToggleLogisticsAddon(t)}
+                            className={`p-1.5 rounded-lg transition ${t.logistics_enabled ? "text-cyan-600 hover:bg-cyan-50" : "text-slate-400 hover:bg-slate-100"}`}
+                            title={t.logistics_enabled ? "Logistics add-on: ON — click to deactivate" : "Logistics add-on: OFF — click to activate"}>
+                            <Truck className="w-4 h-4"/>
                           </button>
                           <button onClick={() => handleSuspend(t)}
                             className={`p-1.5 rounded-lg transition ${t.status === "active" ? "hover:bg-amber-50 text-amber-500" : "hover:bg-emerald-50 text-emerald-500"}`}

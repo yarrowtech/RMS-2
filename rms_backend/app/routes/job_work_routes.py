@@ -7,11 +7,12 @@ job-work order balance and reconciled when panels/finished goods return.
 
 from datetime import datetime, timedelta
 from typing import Any
+import json
 import uuid
 from urllib.parse import quote
 
 from bson import ObjectId
-from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 
 from ..db import (
     fabric_themes_collection,
@@ -21,15 +22,28 @@ from ..db import (
     purchaseorders_collection,
     store_stock_collection,
     style_bom_plans_collection,
+    tech_packs_collection,
     tenants_collection,
     vendor_tenant_links_collection,
     vendors_collection,
 )
 from .deps import get_hq_tenant
+from ..config import settings
+import cloudinary
+import cloudinary.uploader
 from .vendor_routes import decode_token
-from .purchaseorder_routes import TOKEN_EXPIRY_DAYS, _clean_whatsapp_mobile, _make_share_link, calculate_po_totals, generate_po_number, resolve_real_barcode
+from .purchaseorder_routes import APP_BASE_URL, TOKEN_EXPIRY_DAYS, _clean_whatsapp_mobile, _make_share_link, _send_po_created_alerts, calculate_po_totals, generate_po_number, resolve_real_barcode
 from .grn_routes import resolve_single_store_destination
+from .procurement_notification_routes import notify_vendor
+from ..email_utils import send_job_work_order_email
 from ..retailer_plans import normalize_retailer_plan
+
+cloudinary.config(
+    cloud_name=settings.cloudinary_cloud_name,
+    api_key=settings.cloudinary_api_key,
+    api_secret=settings.cloudinary_api_secret,
+    secure=True,
+)
 
 router = APIRouter(prefix="/api/job-work", tags=["Production & Job Work"])
 
@@ -43,6 +57,178 @@ def _number(value: Any, default: float = 0.0) -> float:
         return number if number >= 0 else default
     except (TypeError, ValueError):
         return default
+
+def _parse_design_lines(raw: Any) -> list[dict]:
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw or "[]")
+        except json.JSONDecodeError:
+            raw = []
+    if not isinstance(raw, list):
+        return []
+    clean: list[dict] = []
+    for line in raw[:50]:
+        if not isinstance(line, dict):
+            continue
+        design_no = str(line.get("design_no") or "").strip()[:120]
+        product_type = str(line.get("product_type") or "").strip()[:160]
+        qty = _number(line.get("quantity"))
+        if not design_no and not product_type and qty <= 0:
+            continue
+        image_urls = [str(url).strip() for url in (line.get("image_urls") or []) if str(url).strip()]
+        clean.append({
+            "design_no": design_no,
+            "department": str(line.get("department") or "").strip()[:80],
+            "product_type": product_type,
+            "quantity": qty,
+            "unit": str(line.get("unit") or "pcs").strip()[:30] or "pcs",
+            "rate": _number(line.get("rate")),
+            "remarks": str(line.get("remarks") or "").strip()[:500],
+            "tech_pack_id": str(line.get("tech_pack_id") or "").strip(),
+            "image_urls": image_urls[:12],
+        })
+    return clean
+
+
+def _parse_json_list(raw: Any) -> list:
+    """Accepts either a real list (JSON body) or a JSON-encoded string
+    (multipart form field, since form values are always strings)."""
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw or "[]")
+        except json.JSONDecodeError:
+            raw = []
+    return raw if isinstance(raw, list) else []
+
+
+def _parse_measurement_rows(raw: Any) -> list[dict]:
+    rows = []
+    for row in _parse_json_list(raw)[:60]:
+        if not isinstance(row, dict):
+            continue
+        point = str(row.get("point") or "").strip()[:80]
+        if not point:
+            continue
+        grades = row.get("grades") or {}
+        if not isinstance(grades, dict):
+            grades = {}
+        rows.append({
+            "point": point,
+            "sample_value": str(row.get("sample_value") or "").strip()[:20],
+            "grades": {str(size).strip()[:20]: str(value).strip()[:20] for size, value in grades.items() if str(size).strip()},
+        })
+    return rows
+
+
+def _parse_trims_items(raw: Any) -> list[dict]:
+    items = []
+    for row in _parse_json_list(raw)[:100]:
+        if not isinstance(row, dict):
+            continue
+        description = str(row.get("description") or "").strip()[:200]
+        if not description:
+            continue
+        items.append({
+            "description": description,
+            "color": str(row.get("color") or "").strip()[:60],
+            "size": str(row.get("size") or "").strip()[:40],
+            "supplier": str(row.get("supplier") or "").strip()[:120],
+            "quantity": str(row.get("quantity") or "").strip()[:40],
+            "price": str(row.get("price") or "").strip()[:40],
+        })
+    return items
+
+
+def _parse_colourways(raw: Any) -> list[dict]:
+    rows = []
+    for row in _parse_json_list(raw)[:40]:
+        if not isinstance(row, dict):
+            continue
+        name = str(row.get("name") or "").strip()[:80]
+        if not name:
+            continue
+        rows.append({
+            "name": name,
+            "fabric_ref": str(row.get("fabric_ref") or "").strip()[:120],
+            "thread_ref": str(row.get("thread_ref") or "").strip()[:120],
+        })
+    return rows
+
+
+TECH_PACK_IMAGE_CATEGORIES = ("sketch", "details", "artwork", "trims", "colourway")
+
+
+async def _tech_pack_payload_from_request(request: Request) -> tuple[dict, dict[str, list[str]]]:
+    """Same multipart/JSON split as _payload_from_request, but keyed by tech
+    pack image category (sketch/details/artwork/trims/colourway) instead of
+    a design-line index — a tech pack has one image slot per guide page,
+    not per line item."""
+    content_type = (request.headers.get("content-type") or "").lower()
+    if "multipart/form-data" not in content_type:
+        return await request.json(), {}
+    form = await request.form()
+    payload: dict[str, Any] = {}
+    uploaded_by_category: dict[str, list[str]] = {}
+    for key, value in form.multi_items():
+        if hasattr(value, "filename") and hasattr(value, "file"):
+            if not str(value.content_type or "").startswith("image/"):
+                continue
+            if not key.startswith("pack_image_"):
+                continue
+            category = key[len("pack_image_"):]
+            if category not in TECH_PACK_IMAGE_CATEGORIES:
+                continue
+            try:
+                result = cloudinary.uploader.upload(
+                    value.file,
+                    folder=f"rms/job-work/tech-packs/{category}",
+                    resource_type="image",
+                    use_filename=True,
+                    unique_filename=True,
+                )
+                url = result.get("secure_url")
+                if url:
+                    uploaded_by_category.setdefault(category, []).append(url)
+            except Exception as exc:
+                raise HTTPException(status_code=500, detail=f"Tech pack image upload failed: {exc}")
+        else:
+            payload[key] = value
+    return payload, uploaded_by_category
+
+
+async def _payload_from_request(request: Request) -> tuple[dict, dict[int, list[str]]]:
+    content_type = (request.headers.get("content-type") or "").lower()
+    if "multipart/form-data" not in content_type:
+        return await request.json(), {}
+    form = await request.form()
+    payload: dict[str, Any] = {}
+    uploaded_by_line: dict[int, list[str]] = {}
+    for key, value in form.multi_items():
+        if hasattr(value, "filename") and hasattr(value, "file"):
+            if not str(value.content_type or "").startswith("image/"):
+                continue
+            if not key.startswith("design_image_"):
+                continue
+            try:
+                line_index = int(key.rsplit("_", 1)[-1])
+            except ValueError:
+                continue
+            try:
+                result = cloudinary.uploader.upload(
+                    value.file,
+                    folder="rms/job-work/designs",
+                    resource_type="image",
+                    use_filename=True,
+                    unique_filename=True,
+                )
+                url = result.get("secure_url")
+                if url:
+                    uploaded_by_line.setdefault(line_index, []).append(url)
+            except Exception as exc:
+                raise HTTPException(status_code=500, detail=f"Design image upload failed: {exc}")
+        else:
+            payload[key] = value
+    return payload, uploaded_by_line
 
 
 def _is_overdue(row: dict) -> bool:
@@ -484,8 +670,6 @@ async def _create_fabric_po_document(ctx: dict, payload: dict, plan: dict | None
     }
     calculate_po_totals(po)
     share_link = ""
-    whatsapp_message = ""
-    whatsapp_url = ""
     if vendor_type == "walkin":
         token = str(uuid.uuid4())
         expires_at = now + timedelta(days=TOKEN_EXPIRY_DAYS)
@@ -494,16 +678,6 @@ async def _create_fabric_po_document(ctx: dict, payload: dict, plan: dict | None
         po["po_viewed_at"] = None
         po["vendor_accepted_at"] = None
         share_link = _make_share_link(token)
-        whatsapp_message = (
-            f"Dear {vendor_name},\n\n"
-            f"A Fabric Purchase Order {po['orderNo']} has been raised for you from {owner_name}.\n\n"
-            f"Total Value: {po.get('currency', 'INR')} {po.get('netAmount', 0):,.2f}\n\n"
-            f"Please view/accept the PO and register with RMS here:\n{share_link}\n\n"
-            f"Link valid for {TOKEN_EXPIRY_DAYS} days.\nRegards,\n{owner_name}"
-        )
-        mobile = _clean_whatsapp_mobile(walkin_vendor.get("mobile", ""))
-        if mobile:
-            whatsapp_url = f"https://wa.me/{mobile}?text={quote(whatsapp_message)}"
 
     await purchaseorders_collection.insert_one(po)
     if plan:
@@ -511,6 +685,13 @@ async def _create_fabric_po_document(ctx: dict, payload: dict, plan: dict | None
             {"_id": plan["_id"], "tenant_id": ctx["tenant_id"]},
             {"$set": {"purchase_order_id": str(po["_id"]), "purchase_order_no": po["orderNo"], "updated_at": now}},
         )
+    # Real email (registered or walk-in, whichever has an address on file) +
+    # a portal notification for a registered vendor, plus a manual-send
+    # WhatsApp link/message — same alert helper the regular PO flow uses,
+    # since a Fabric PO is stored in the same purchase_orders collection.
+    # Auto WhatsApp send still isn't possible: no Meta WhatsApp Business
+    # credentials are configured anywhere in this codebase.
+    alert = await _send_po_created_alerts(po, ctx, vendor, share_link)
     return {
         "message": f"Fabric PO {po['orderNo']} created. Download the sheet here, then go to Purchase Order to send it to the vendor.",
         "purchase_order_id": str(po["_id"]),
@@ -520,9 +701,10 @@ async def _create_fabric_po_document(ctx: dict, payload: dict, plan: dict | None
         "order_date": po["orderDate"],
         "vendor_type": vendor_type,
         "share_link": share_link,
-        "whatsapp_message": whatsapp_message,
-        "whatsapp_url": whatsapp_url,
-        "whatsapp_mobile": walkin_vendor.get("mobile", "") if vendor_type == "walkin" else "",
+        "whatsapp_message": alert["whatsapp_message"],
+        "whatsapp_url": alert["whatsapp_url"],
+        "whatsapp_mobile": alert["whatsapp_mobile"],
+        "email_sent": alert["email_sent"],
         # ⚠️ NEW — surfaced so the downloadable Fabric PO sheet can show a
         # real buyer/vendor identity block, delivery/payment terms and a
         # Subtotal/Tax/Grand Total footer instead of a bare line-item list.
@@ -571,6 +753,53 @@ async def _get_theme(theme_id: str, tenant_id: str) -> dict:
     return theme
 
 
+def _material_key(value: Any) -> str:
+    """Create a forgiving key when matching BOM fabric to received stock."""
+    return " ".join(str(value or "").lower().replace("-", " ").split())
+
+
+async def _theme_requirement_summary(theme: dict, tenant_id: str) -> list[dict]:
+    """Planning-only requirement, stock and supplier-allocation summary."""
+    plan_ids = [plan_id for plan_id in (theme.get("plan_ids") or []) if ObjectId.is_valid(plan_id)]
+    requirements: dict[str, dict] = {}
+    if plan_ids:
+        object_ids = [ObjectId(plan_id) for plan_id in plan_ids]
+        async for plan in style_bom_plans_collection.find({"_id": {"$in": object_ids}, "tenant_id": tenant_id}):
+            for material in plan.get("materials") or []:
+                name = str(material.get("material_name") or "").strip()
+                if not name:
+                    continue
+                key = _material_key(name)
+                row = requirements.setdefault(key, {"material_name": name, "unit": str(material.get("unit") or "m"), "required_qty": 0.0, "available_qty": 0.0, "selected_qty": 0.0, "plans": []})
+                row["required_qty"] += _number(material.get("required_quantity"))
+                row["plans"].append({"plan_no": plan.get("plan_no") or "", "style_name": plan.get("style_name") or "", "quantity": _number(material.get("required_quantity"))})
+
+    store = await _stock_scope(tenant_id)
+    query: dict = {"tenant_id": tenant_id, "stockQty": {"$gt": 0}}
+    if store:
+        query["store_id"] = store["id"]
+        query["$or"] = [{"is_fabric": True}, {"is_leftover": True}]
+    cursor = _stock_collection(store).find(query, {"description": 1, "product": 1, "stockQty": 1})
+    async for stock in cursor:
+        key = _material_key(stock.get("description") or stock.get("product"))
+        if key in requirements:
+            requirements[key]["available_qty"] += _number(stock.get("stockQty"))
+
+    for line in theme.get("lines") or []:
+        key = _material_key(line.get("fabric_name"))
+        if key in requirements:
+            requirements[key]["selected_qty"] += _number(line.get("quantity"))
+
+    rows = []
+    for row in requirements.values():
+        row["required_qty"] = round(row["required_qty"], 3)
+        row["available_qty"] = round(row["available_qty"], 3)
+        row["selected_qty"] = round(row["selected_qty"], 3)
+        row["to_buy_qty"] = round(max(0, row["required_qty"] - row["available_qty"]), 3)
+        row["unallocated_qty"] = round(max(0, row["to_buy_qty"] - row["selected_qty"]), 3)
+        rows.append(row)
+    return sorted(rows, key=lambda row: row["material_name"].lower())
+
 @router.get("/fabric-themes")
 async def list_fabric_themes(ctx: dict = Depends(_require_job_work_or_buyer)):
     rows = []
@@ -584,12 +813,17 @@ async def create_fabric_theme(payload: dict, ctx: dict = Depends(_require_job_wo
     theme_name = str(payload.get("theme_name") or "").strip()
     if not theme_name:
         raise HTTPException(status_code=400, detail="Theme name is required.")
+    raw_plan_ids = payload.get("plan_ids") or []
+    if not isinstance(raw_plan_ids, list):
+        raw_plan_ids = []
+    plan_ids = list(dict.fromkeys(str(plan_id) for plan_id in raw_plan_ids if ObjectId.is_valid(str(plan_id))))[:50]
     now = datetime.utcnow()
     doc = {
         "tenant_id": ctx["tenant_id"],
         "theme_name": theme_name,
         "target_date": str(payload.get("target_date") or "").strip(),
         "notes": str(payload.get("notes") or "").strip(),
+        "plan_ids": plan_ids,
         "status": "draft",   # draft | ordered
         "lines": [],
         "purchase_orders": [],
@@ -608,7 +842,9 @@ async def create_fabric_theme(payload: dict, ctx: dict = Depends(_require_job_wo
 @router.get("/fabric-themes/{theme_id}")
 async def get_fabric_theme(theme_id: str, ctx: dict = Depends(_require_job_work_or_buyer)):
     theme = await _get_theme(theme_id, ctx["tenant_id"])
-    return {"data": _serialize_theme(theme)}
+    data = _serialize_theme(theme)
+    data["requirements"] = await _theme_requirement_summary(theme, ctx["tenant_id"])
+    return {"data": data}
 
 
 @router.delete("/fabric-themes/{theme_id}")
@@ -796,13 +1032,167 @@ async def finalize_fabric_theme(theme_id: str, payload: dict, ctx: dict = Depend
     }
 
 
+def _fabric_key(fabric_type: str, gsm, width: str, color: str) -> tuple[str, str, str, str]:
+    """Same fabric, matched the only way there is to match it across
+    separately-typed lines from different vendors/themes — no shared SKU
+    exists between a theme line and a stock row, so normalized
+    type+GSM+width+colour is the join key everywhere in this feature."""
+    return (
+        str(fabric_type or "").strip().lower(),
+        str(gsm or "").strip().lower(),
+        str(width or "").strip().lower(),
+        str(color or "").strip().lower(),
+    )
+
+
+@router.get("/fabric-requirement-summary")
+async def fabric_requirement_summary(ctx: dict = Depends(_require_job_work_or_buyer)):
+    """Same fabric, requested across several DRAFT themes, collapsed into
+    one line: total demand, what's already in stock (leftover called out
+    separately), and the net still to buy. Ordered themes are excluded —
+    that demand already became a PO, it's no longer an open requirement.
+    Deliberately does NOT pull in Style BOM material plans: those use a
+    free-text material_name/specification with no structured GSM/width/
+    colour fields, so there is no reliable key to join them against a
+    theme line's fabric_type/gsm/width/color without guessing at parsing
+    free text — guessed matches would be worse than no match at all here.
+    """
+    tenant_id = ctx["tenant_id"]
+
+    groups: dict[tuple, dict] = {}
+
+    async for theme in fabric_themes_collection.find({"tenant_id": tenant_id, "status": "draft"}):
+        theme_id = str(theme["_id"])
+        theme_name = theme.get("theme_name") or "Untitled theme"
+        for line in theme.get("lines") or []:
+            key = _fabric_key(line.get("fabric_type"), line.get("gsm"), line.get("width"), line.get("color"))
+            if not key[0]:
+                continue  # a line with no fabric_type can't be pooled with anything
+            quantity = _number(line.get("quantity"))
+            vendor_name = line.get("vendor_name") or (line.get("walkin_vendor") or {}).get("name") or "Unassigned"
+            group = groups.setdefault(key, {
+                "fabric_type": line.get("fabric_type") or "",
+                "gsm": line.get("gsm") or "",
+                "width": line.get("width") or "",
+                "color": line.get("color") or "",
+                "unit": line.get("unit") or "m",
+                "total_required": 0.0,
+                "contributions": [],
+                "vendors": set(),
+            })
+            group["total_required"] += quantity
+            group["contributions"].append({
+                "theme_id": theme_id, "theme_name": theme_name, "line_id": line.get("line_id", ""),
+                "vendor_name": vendor_name, "quantity": quantity, "unit": line.get("unit") or "m", "rate": _number(line.get("rate")),
+            })
+            group["vendors"].add(vendor_name)
+
+    if not groups:
+        return {"data": []}
+
+    store = await _stock_scope(tenant_id)
+    stock_query: dict = {"tenant_id": tenant_id, "stockQty": {"$gt": 0}}
+    if store:
+        stock_query["store_id"] = store["id"]
+        stock_query["$or"] = [{"is_fabric": True}, {"is_leftover": True}]
+    stock_totals: dict[tuple, dict] = {}
+    async for item in _stock_collection(store).find(
+        stock_query, {"stockQty": 1, "is_leftover": 1, "is_fabric": 1, "fabric_type": 1, "gsm": 1, "width": 1, "color": 1},
+    ):
+        if not item.get("is_fabric") and not item.get("is_leftover"):
+            continue
+        key = _fabric_key(item.get("fabric_type"), item.get("gsm"), item.get("width"), item.get("color"))
+        if key not in groups:
+            continue  # no open theme requirement for this fabric — irrelevant to this summary
+        totals = stock_totals.setdefault(key, {"available": 0.0, "leftover": 0.0})
+        qty = _number(item.get("stockQty"))
+        totals["available"] += qty
+        if item.get("is_leftover"):
+            totals["leftover"] += qty
+
+    data = []
+    for key, group in groups.items():
+        totals = stock_totals.get(key, {"available": 0.0, "leftover": 0.0})
+        available = round(totals["available"], 3)
+        net_to_buy = round(max(0.0, group["total_required"] - available), 3)
+        data.append({
+            "fabric_type": group["fabric_type"], "gsm": group["gsm"], "width": group["width"], "color": group["color"],
+            "unit": group["unit"],
+            "total_required": round(group["total_required"], 3),
+            "available_stock": available,
+            "leftover_stock": round(totals["leftover"], 3),
+            "net_to_buy": net_to_buy,
+            "theme_count": len({c["theme_id"] for c in group["contributions"]}),
+            "vendor_count": len(group["vendors"]),
+            "vendors": sorted(group["vendors"]),
+            "contributions": sorted(group["contributions"], key=lambda c: -c["quantity"]),
+        })
+
+    data.sort(key=lambda row: -row["net_to_buy"])
+    return {"data": data}
+
+
+def _normalize_style_name(value: str) -> str:
+    return str(value or "").strip().lower()
+
+
 @router.get("/material-plans")
 async def list_material_plans(ctx: dict = Depends(_require_job_work)):
-    """Style BOMs with calculated fabric/material quantities for a planned run."""
+    """Style BOMs with calculated fabric/material quantities for a planned run.
+
+    A BOM and a Tech Pack are deliberately separate records (one calculates
+    fabric quantity, the other documents the approved design) — the only
+    connection is the Tech Pack's optional `material_plan_id`. That link only
+    ever got set from the Tech Pack side, so a BOM had no way to show "a tech
+    pack already exists for this style" even when one did. This enriches
+    each plan with whichever applies: an existing reverse link, or (if none)
+    a same-style-name tech pack that isn't linked to anything yet, so the UI
+    can offer a one-click "Link it" instead of the connection staying silent.
+    """
+    tech_packs_by_plan: dict[str, dict] = {}
+    unlinked_by_style: dict[str, dict] = {}
+    async for pack in tech_packs_collection.find({"tenant_id": ctx["tenant_id"]}, {
+        "tech_pack_no": 1, "design_no": 1, "version": 1, "style_name": 1, "material_plan_id": 1,
+    }):
+        summary = {"id": str(pack["_id"]), "tech_pack_no": pack.get("tech_pack_no", ""), "design_no": pack.get("design_no", ""), "version": pack.get("version", "")}
+        linked_plan_id = pack.get("material_plan_id")
+        if linked_plan_id:
+            tech_packs_by_plan[str(linked_plan_id)] = summary
+        else:
+            key = _normalize_style_name(pack.get("style_name"))
+            if key and key not in unlinked_by_style:
+                unlinked_by_style[key] = summary
+
     rows = []
     async for plan in style_bom_plans_collection.find({"tenant_id": ctx["tenant_id"]}).sort("created_at", -1).limit(300):
-        rows.append(_serialize(plan))
+        row = _serialize(plan)
+        plan_id = str(plan["_id"])
+        row["linked_tech_pack"] = tech_packs_by_plan.get(plan_id)
+        row["suggested_tech_pack"] = None if row["linked_tech_pack"] else unlinked_by_style.get(_normalize_style_name(plan.get("style_name")))
+        rows.append(row)
     return {"data": rows}
+
+
+@router.patch("/tech-packs/{tech_pack_id}/link-material-plan")
+async def link_tech_pack_to_material_plan(tech_pack_id: str, payload: dict, ctx: dict = Depends(_require_job_work)):
+    """Reverse-link an existing Tech Pack to a Style BOM plan — same field
+    the Tech Pack creation form already sets, just settable after the fact
+    from the BOM side too (see list_material_plans's suggestion above)."""
+    if not ObjectId.is_valid(tech_pack_id):
+        raise HTTPException(status_code=400, detail="Invalid tech pack.")
+    material_plan_id = str(payload.get("material_plan_id") or "").strip()
+    if not material_plan_id or not ObjectId.is_valid(material_plan_id):
+        raise HTTPException(status_code=400, detail="Invalid material plan.")
+    plan = await style_bom_plans_collection.find_one({"_id": ObjectId(material_plan_id), "tenant_id": ctx["tenant_id"]})
+    if not plan:
+        raise HTTPException(status_code=404, detail="Material plan not found.")
+    result = await tech_packs_collection.update_one(
+        {"_id": ObjectId(tech_pack_id), "tenant_id": ctx["tenant_id"]},
+        {"$set": {"material_plan_id": material_plan_id, "updated_at": datetime.utcnow()}},
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Tech pack not found.")
+    return {"message": f"Tech pack linked to {plan.get('plan_no', 'the material plan')}."}
 
 
 @router.post("/material-plans", status_code=201)
@@ -880,6 +1270,103 @@ async def create_manual_fabric_purchase_order(payload: dict, ctx: dict = Depends
     return await _create_fabric_po_document(ctx, payload, plan=None)
 
 
+@router.get("/tech-packs")
+async def list_tech_packs(ctx: dict = Depends(_require_job_work)):
+    rows = []
+    async for pack in tech_packs_collection.find({"tenant_id": ctx["tenant_id"]}).sort("updated_at", -1).limit(300):
+        rows.append(_serialize(pack))
+    return {"data": rows}
+
+
+@router.post("/tech-packs", status_code=201)
+async def create_tech_pack(request: Request, ctx: dict = Depends(_require_job_work)):
+    payload, uploaded_by_category = await _tech_pack_payload_from_request(request)
+    design_no = str(payload.get("design_no") or "").strip()[:120]
+    style_name = str(payload.get("style_name") or "").strip()[:160]
+    if not design_no or not style_name:
+        raise HTTPException(status_code=400, detail="Design number and style name are required for a tech pack.")
+    version = str(payload.get("version") or "v1").strip()[:30] or "v1"
+    raw_images = payload.get("reference_images") or []
+    if isinstance(raw_images, str):
+        raw_images = [line.strip() for line in raw_images.splitlines()]
+    if not isinstance(raw_images, list):
+        raw_images = []
+    raw_documents = payload.get("document_urls") or []
+    if isinstance(raw_documents, str):
+        raw_documents = [line.strip() for line in raw_documents.splitlines()]
+    if not isinstance(raw_documents, list):
+        raw_documents = []
+    material_plan_id = str(payload.get("material_plan_id") or "").strip()
+    if material_plan_id and not ObjectId.is_valid(material_plan_id):
+        raise HTTPException(status_code=400, detail="Invalid linked material plan.")
+    if material_plan_id:
+        plan = await style_bom_plans_collection.find_one({"_id": ObjectId(material_plan_id), "tenant_id": ctx["tenant_id"]})
+        if not plan:
+            raise HTTPException(status_code=404, detail="Linked material plan not found.")
+
+    def _category_images(category: str) -> list[str]:
+        existing = payload.get(f"{category}_images") or []
+        existing = _parse_json_list(existing) if isinstance(existing, str) else existing
+        uploaded = uploaded_by_category.get(category, [])
+        return [str(url).strip() for url in (*existing, *uploaded) if str(url).strip()][:20]
+
+    now = datetime.utcnow()
+    sequence = await tech_packs_collection.count_documents({"tenant_id": ctx["tenant_id"]}) + 1
+    pack = {
+        "tenant_id": ctx["tenant_id"],
+        "tech_pack_no": f"TP-{now.strftime('%y%m%d')}-{sequence:04d}",
+        "design_no": design_no,
+        "style_name": style_name,
+        "department": str(payload.get("department") or "").strip()[:80],
+        "version": version,
+        "status": "Draft",
+        "sample_size": str(payload.get("sample_size") or "").strip()[:40],
+        "description": str(payload.get("description") or "").strip()[:1200],
+        "fabric_notes": str(payload.get("fabric_notes") or "").strip()[:2000],
+        "measurement_notes": str(payload.get("measurement_notes") or "").strip()[:3000],
+        "construction_notes": str(payload.get("construction_notes") or "").strip()[:3000],
+        "artwork_notes": str(payload.get("artwork_notes") or "").strip()[:3000],
+        "trims_labels_notes": str(payload.get("trims_labels_notes") or "").strip()[:3000],
+        "colourway_notes": str(payload.get("colourway_notes") or "").strip()[:3000],
+        "reference_images": [str(url).strip() for url in raw_images if str(url).strip()][:20],
+        "document_urls": [str(url).strip() for url in raw_documents if str(url).strip()][:20],
+        "material_plan_id": material_plan_id or None,
+        # Structured Spec Sheet — measurement points × size grading, matching
+        # a proper POM/grading table instead of a free-text description.
+        "sizes": [str(size).strip()[:20] for size in _parse_json_list(payload.get("sizes")) if str(size).strip()][:20],
+        "measurement_rows": _parse_measurement_rows(payload.get("measurement_rows")),
+        # Structured Trims & Label line items — description/color/size/supplier/qty/price.
+        "trims_items": _parse_trims_items(payload.get("trims_items")),
+        # Artwork placement + real dimensions, alongside the artwork image(s).
+        "artwork_width_cm": str(payload.get("artwork_width_cm") or "").strip()[:20],
+        "artwork_height_cm": str(payload.get("artwork_height_cm") or "").strip()[:20],
+        "artwork_placement": str(payload.get("artwork_placement") or "").strip()[:300],
+        # Structured colourways — one row per fabric/thread combo.
+        "colourways": _parse_colourways(payload.get("colourways")),
+        # Per-guide-page image slots (Sketch / Details / Artwork / Trims & Label / Colourways).
+        "sketch_images": _category_images("sketch"),
+        "details_images": _category_images("details"),
+        "artwork_images": _category_images("artwork"),
+        "trims_images": _category_images("trims"),
+        "colourway_images": _category_images("colourway"),
+        "created_by": ctx.get("admin_id"),
+        "created_at": now,
+        "updated_at": now,
+    }
+    result = await tech_packs_collection.insert_one(pack)
+    pack["_id"] = result.inserted_id
+    return {"message": f"Tech pack {pack['tech_pack_no']} saved as {version}.", "data": _serialize(pack)}
+
+
+@router.get("/tech-packs/{tech_pack_id}")
+async def get_tech_pack(tech_pack_id: str, ctx: dict = Depends(_require_job_work)):
+    if not ObjectId.is_valid(tech_pack_id):
+        raise HTTPException(status_code=400, detail="Invalid tech pack.")
+    pack = await tech_packs_collection.find_one({"_id": ObjectId(tech_pack_id), "tenant_id": ctx["tenant_id"]})
+    if not pack:
+        raise HTTPException(status_code=404, detail="Tech pack not found.")
+    return {"data": _serialize(pack)}
+
 @router.get("/orders")
 async def list_orders(status: str = "", ctx: dict = Depends(_require_job_work)):
     query: dict = {"tenant_id": ctx["tenant_id"]}
@@ -911,13 +1398,112 @@ async def dashboard(ctx: dict = Depends(_require_job_work)):
     }
 
 
+async def _send_job_work_order_alerts(order: dict, ctx: dict, vendor_doc: dict | None) -> dict:
+    """Registered job worker: portal notification + email to their account
+    address, same pattern as a regular PO. Walk-in job worker: email only if
+    an address was entered on the order, plus a manual-send WhatsApp link —
+    there is no public no-login order view to link to (unlike the Fabric PO
+    share-link flow), so the email/WhatsApp text carries the order summary
+    directly instead of a clickable link."""
+    walkin = order.get("walkin_vendor") or {}
+    job_worker_name = order.get("job_worker_name") or "Job worker"
+    tenant = await tenants_collection.find_one({"tenant_id": ctx["tenant_id"]}, {"company_name": 1})
+    retailer_name = (tenant or {}).get("company_name") or ctx["tenant_id"]
+    link = f"{APP_BASE_URL}/merchandiser-seller" if vendor_doc else ""
+    due = order.get("due_date") or "Not set"
+    message = (
+        f"Dear {job_worker_name},\n\n"
+        f"A new job work order {order.get('order_no', '')} has been created for you by {retailer_name}.\n"
+        f"Work type: {order.get('job_work_type', '')}\n"
+        f"Finished product: {order.get('finished_product', '')}\n"
+        f"Expected quantity: {order.get('expected_quantity', '')} {order.get('unit', '')}\n"
+        f"Due date: {due}\n\n"
+        + (f"View it here:\n{link}\n\n" if link else "Please contact us for full order details and material handover.\n\n")
+        + f"Regards,\n{retailer_name}"
+    )
+    mobile = ((vendor_doc or {}).get("contactMobile") or (vendor_doc or {}).get("mobile") or (vendor_doc or {}).get("phone") or walkin.get("mobile") or "")
+    clean_mobile = _clean_whatsapp_mobile(mobile)
+    whatsapp_url = f"https://wa.me/{clean_mobile}?text={quote(message)}" if clean_mobile else ""
+
+    portal_notified = False
+    if order.get("assigned_vendor_id"):
+        await notify_vendor(
+            order["assigned_vendor_id"], "job_work_order_created", "New job work order assigned",
+            f"{retailer_name} created job work order {order.get('order_no', '')} for {order.get('finished_product', '')}.",
+            tenant_id=ctx.get("tenant_id"),
+            metadata={"order_id": str(order.get("_id", "")), "order_no": order.get("order_no", ""), "portal_link": link},
+            category="job_work",
+        )
+        portal_notified = True
+
+    recipient_email = (vendor_doc or {}).get("email") or walkin.get("email") or ""
+    email_sent = False
+    if recipient_email:
+        email_sent = await send_job_work_order_email(
+            recipient_email, job_worker_name, retailer_name, order.get("order_no", ""),
+            order.get("job_work_type", ""), order.get("finished_product", ""),
+            order.get("expected_quantity", 0), order.get("unit", "pcs"), due, link,
+        )
+
+    return {
+        "portal_notification_created": portal_notified,
+        "email_sent": email_sent,
+        "whatsapp_url": whatsapp_url,
+        "whatsapp_message": message,
+        "whatsapp_mobile": clean_mobile,
+        "whatsapp_auto_sent": False,
+        "whatsapp_note": "Auto WhatsApp needs Meta WhatsApp Business credentials; use whatsapp_url/message for manual sending now." if clean_mobile else "",
+    }
+
+
 @router.post("/orders", status_code=201)
-async def create_order(payload: dict, ctx: dict = Depends(_require_job_work)):
+async def create_order(request: Request, ctx: dict = Depends(_require_job_work)):
+    payload, uploaded_by_line = await _payload_from_request(request)
+    design_lines = _parse_design_lines(payload.get("design_lines"))
+    for index, urls in uploaded_by_line.items():
+        if index < len(design_lines):
+            design_lines[index]["image_urls"] = [*(design_lines[index].get("image_urls") or []), *urls][:12]
+    for line in design_lines:
+        tech_pack_id = line.get("tech_pack_id") or ""
+        if not tech_pack_id:
+            continue
+        if not ObjectId.is_valid(tech_pack_id):
+            raise HTTPException(status_code=400, detail="Invalid tech pack selected on a design line.")
+        tech_pack = await tech_packs_collection.find_one({"_id": ObjectId(tech_pack_id), "tenant_id": ctx["tenant_id"]})
+        if not tech_pack:
+            raise HTTPException(status_code=404, detail="Selected tech pack was not found.")
+        line["tech_pack"] = {
+            "id": str(tech_pack["_id"]), "tech_pack_no": tech_pack.get("tech_pack_no", ""),
+            "version": tech_pack.get("version", ""), "design_no": tech_pack.get("design_no", ""),
+            "style_name": tech_pack.get("style_name", ""), "department": tech_pack.get("department", ""),
+            "description": tech_pack.get("description", ""), "fabric_notes": tech_pack.get("fabric_notes", ""),
+            "measurement_notes": tech_pack.get("measurement_notes", ""), "construction_notes": tech_pack.get("construction_notes", ""),
+            "artwork_notes": tech_pack.get("artwork_notes", ""), "trims_labels_notes": tech_pack.get("trims_labels_notes", ""),
+            "colourway_notes": tech_pack.get("colourway_notes", ""), "reference_images": tech_pack.get("reference_images", []),
+            "document_urls": tech_pack.get("document_urls", []), "material_plan_id": tech_pack.get("material_plan_id"),
+            "sizes": tech_pack.get("sizes", []), "measurement_rows": tech_pack.get("measurement_rows", []),
+            "trims_items": tech_pack.get("trims_items", []),
+            "artwork_width_cm": tech_pack.get("artwork_width_cm", ""), "artwork_height_cm": tech_pack.get("artwork_height_cm", ""),
+            "artwork_placement": tech_pack.get("artwork_placement", ""), "colourways": tech_pack.get("colourways", []),
+            "sketch_images": tech_pack.get("sketch_images", []), "details_images": tech_pack.get("details_images", []),
+            "artwork_images": tech_pack.get("artwork_images", []), "trims_images": tech_pack.get("trims_images", []),
+            "colourway_images": tech_pack.get("colourway_images", []),
+        }
+        if not line.get("image_urls"):
+            line["image_urls"] = list(tech_pack.get("reference_images") or [])[:12]
     job_worker_name = str(payload.get("job_worker_name") or "").strip()
     registered_vendor_id = str(payload.get("vendor_id") or "").strip()
+    job_worker_mobile = str(payload.get("job_worker_mobile") or "").strip()
+    job_worker_email = str(payload.get("job_worker_email") or "").strip()
     job_work_type = str(payload.get("job_work_type") or "").strip()
     finished_product = str(payload.get("finished_product") or "").strip()
     expected_quantity = _number(payload.get("expected_quantity"))
+    if design_lines:
+        first = design_lines[0]
+        if not finished_product:
+            finished_product = first.get("product_type") or first.get("design_no") or "Design job"
+        if expected_quantity <= 0:
+            expected_quantity = sum(_number(line.get("quantity")) for line in design_lines)
     material_plan_id = str(payload.get("material_plan_id") or "").strip()
     material_plan = None
     if material_plan_id:
@@ -948,12 +1534,14 @@ async def create_order(payload: dict, ctx: dict = Depends(_require_job_work)):
         "job_work_type": job_work_type,
         "finished_product": finished_product,
         "expected_quantity": expected_quantity,
+        "design_lines": design_lines,
         "unit": str(payload.get("unit") or "pcs").strip() or "pcs",
         "due_date": str(payload.get("due_date") or "").strip(),
         "remarks": str(payload.get("remarks") or "").strip()[:1000],
         "material_plan_id": str(material_plan["_id"]) if material_plan else None,
         "material_plan_no": material_plan.get("plan_no") if material_plan else None,
         "planned_materials": list(material_plan.get("materials") or []) if material_plan else [],
+        "walkin_vendor": ({"mobile": job_worker_mobile, "email": job_worker_email} if not registered_vendor_id and (job_worker_mobile or job_worker_email) else None),
         "status": "DRAFT",
         "materials": [],
         "outputs": [],
@@ -963,7 +1551,13 @@ async def create_order(payload: dict, ctx: dict = Depends(_require_job_work)):
     }
     result = await job_work_orders_collection.insert_one(order)
     order["_id"] = result.inserted_id
-    return {"message": "Job work order created. Issue material when it is physically sent.", "data": _serialize(order)}
+    # Real email to whichever address is on file (registered vendor or
+    # walk-in), a portal notification for a registered vendor, and a
+    # manual-send WhatsApp link/message — same honest limitation as the
+    # regular PO flow: no Meta WhatsApp Business credentials are configured
+    # anywhere in this codebase, so WhatsApp can't be auto-sent server-side.
+    alert = await _send_job_work_order_alerts(order, ctx, vendor if registered_vendor_id else None)
+    return {"message": "Job work order created. Issue material when it is physically sent.", "data": _serialize(order), **alert}
 
 
 @router.post("/orders/{order_id}/issue")

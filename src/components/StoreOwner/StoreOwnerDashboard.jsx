@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import {
-  ArrowRight, Boxes, Building2, CalendarClock, CheckCircle2, CircleDot, CreditCard, Crown, LogOut, PackagePlus, ShoppingCart, Store, Tags, UsersRound, X,
+  ArrowRight, Boxes, Building2, CalendarClock, CheckCircle2, CircleDot, CreditCard, Crown, LogOut, PackagePlus, ShieldCheck, ShoppingCart, Store, Tags, UsersRound, X,
 } from "lucide-react";
 import { clearAuthData } from "../../utils/authRedirect.js";
 import { API_BASE_URL } from "../../config/api.js";
@@ -84,6 +84,13 @@ const WORKSPACES = [
     path: "/dashboard/store-owner/staff",
     icon: UsersRound,
     color: "from-slate-600 to-slate-800",
+  },
+  {
+    title: "Business Verification",
+    description: "Submit GST/PAN proof (KYB) once — required before raising purchase orders or paying vendors.",
+    path: "/dashboard/store-owner/verification",
+    icon: ShieldCheck,
+    color: "from-emerald-500 to-teal-600",
   },
 ];
 

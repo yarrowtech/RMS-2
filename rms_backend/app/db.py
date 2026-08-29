@@ -58,6 +58,7 @@ vendor_b2b_receipts_collection = db["vendor_b2b_receipts"]
 vendor_b2b_invoices_collection = db["vendor_b2b_invoices"]
 vendor_b2b_returns_collection = db["vendor_b2b_returns"]
 vendor_b2b_stock_collection = db["vendor_b2b_stock"]
+logistics_addon_requests_collection = db["logistics_addon_requests"]
 vendor_b2b_stock_ledger_collection = db["vendor_b2b_stock_ledger"]
 vendor_inventory_collection = db["vendor_inventory"]
 vendor_inventory_ledger_collection = db["vendor_inventory_ledger"]
@@ -121,6 +122,7 @@ finance_vouchers_collection = db["finance_vouchers"]
 job_work_orders_collection = db["job_work_orders"]
 job_work_receipts_collection = db["job_work_receipts"]
 style_bom_plans_collection = db["style_bom_plans"]
+tech_packs_collection = db["tech_packs"]
 
 # HR module. Employees are NOT duplicated here — admins_collection is the
 # single source of truth for who works at this tenant (name, department,
@@ -218,6 +220,7 @@ async def ensure_procurement_indexes():
     await job_work_orders_collection.create_index([("assigned_vendor_id", 1), ("status", 1), ("created_at", -1)], name="job_work_vendor_status_created")
     await job_work_receipts_collection.create_index([("tenant_id", 1), ("order_id", 1), ("received_at", -1)], name="job_work_receipt_order_created")
     await style_bom_plans_collection.create_index([("tenant_id", 1), ("style_name", 1), ("created_at", -1)], name="style_bom_tenant_style_created")
+    await tech_packs_collection.create_index([("tenant_id", 1), ("design_no", 1), ("version", -1)], name="tech_pack_tenant_design_version")
     await onboarding_requests_collection.create_index([("status", 1), ("created_at", -1)], name="onboarding_status_created")
     await onboarding_requests_collection.create_index([("email", 1), ("account_type", 1), ("created_at", -1)], name="onboarding_email_type_created")
     await store_upgrade_requests_collection.create_index([("tenant_id", 1), ("status", 1), ("created_at", -1)], name="store_upgrade_tenant_status_created")

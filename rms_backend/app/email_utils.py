@@ -1031,3 +1031,53 @@ async def send_purchase_order_created_email(
         recipients=[email],
         html=_wrap(PRIMARY, "New Purchase Order", body, "RMS Procurement"),
     )
+
+
+async def send_job_work_order_email(
+    email: EmailStr,
+    job_worker_name: str,
+    retailer_name: str,
+    order_no: str,
+    job_work_type: str,
+    finished_product: str,
+    expected_quantity,
+    unit: str = "pcs",
+    due_date: str = "",
+    link: str = "",
+) -> bool:
+    """Notify a job worker (registered or walk-in) that a job work order has been created for them."""
+    import html
+
+    safe_worker = html.escape(job_worker_name or "Job worker")
+    safe_retailer = html.escape(retailer_name or "RMS buyer")
+    safe_order = html.escape(order_no or "New job work order")
+    safe_type = html.escape(job_work_type or "Not specified")
+    safe_product = html.escape(finished_product or "Not specified")
+    safe_due = html.escape(due_date or "Not set")
+    safe_link = html.escape(link or "")
+    try:
+        qty_text = f"{float(expected_quantity or 0):,.0f} {unit or 'pcs'}"
+    except (TypeError, ValueError):
+        qty_text = f"0 {unit or 'pcs'}"
+
+    action = _btn("Open job work order", safe_link, PRIMARY) if safe_link else ""
+    body = f"""
+      <h2 style="color:#222;margin-bottom:8px;">Hello, {safe_worker}</h2>
+      <p style="font-size:15px;color:#444;">{safe_retailer} has created a new job work order for you in RMS.</p>
+      <table style="border-collapse:collapse;font-size:14px;color:#444;margin:16px 0;">
+        <tr><td style="padding:6px 18px 6px 0;font-weight:bold;">Order number</td><td>{safe_order}</td></tr>
+        <tr><td style="padding:6px 18px 6px 0;font-weight:bold;">Work type</td><td>{safe_type}</td></tr>
+        <tr><td style="padding:6px 18px 6px 0;font-weight:bold;">Finished product</td><td>{safe_product}</td></tr>
+        <tr><td style="padding:6px 18px 6px 0;font-weight:bold;">Expected quantity</td><td>{qty_text}</td></tr>
+        <tr><td style="padding:6px 18px 6px 0;font-weight:bold;">Due date</td><td>{safe_due}</td></tr>
+      </table>
+      {action}
+      <p style="font-size:14px;color:#555;margin-top:18px;">{"Log in to your RMS vendor portal to view design references and confirm the order." if safe_link else "Please contact " + safe_retailer + " directly for full order details, design references and material handover."}</p>
+      {_divider()}
+      {_note("This is an automated job work order notice from RMS.")}
+    """
+    return await _send(
+        subject=f"New job work order {safe_order} from {safe_retailer}",
+        recipients=[email],
+        html=_wrap(PRIMARY, "New Job Work Order", body, "RMS Production"),
+    )

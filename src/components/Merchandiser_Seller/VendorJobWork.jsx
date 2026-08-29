@@ -33,6 +33,64 @@ function chip(status) {
   return <span className={`rounded-full px-2.5 py-1 text-[11px] font-bold ${style}`}>{text}</span>;
 }
 
+const TECH_PACK_IMAGE_KEYS = [
+  ["sketch_images", "Sketch"], ["details_images", "Details"], ["artwork_images", "Artwork"],
+  ["trims_images", "Trims & label"], ["colourway_images", "Colourways"],
+];
+
+function TechPackSnapshot({ pack }) {
+  return <div className="mt-2 rounded-lg border border-violet-100 bg-violet-50 p-2 text-xs text-slate-600">
+    <p className="font-black text-violet-800">{pack.tech_pack_no || "Tech pack"} · {pack.version || "v1"}</p>
+
+    {TECH_PACK_IMAGE_KEYS.some(([key]) => pack[key]?.length > 0) && (
+      <div className="mt-1.5 space-y-1">
+        {TECH_PACK_IMAGE_KEYS.filter(([key]) => pack[key]?.length > 0).map(([key, label]) => (
+          <div key={key} className="flex flex-wrap items-center gap-1.5"><span className="font-bold text-slate-700">{label}:</span>{pack[key].map((src) => <a key={src} href={src} target="_blank" rel="noreferrer"><img src={src} alt={label} className="h-10 w-10 rounded-lg border border-white object-cover" /></a>)}</div>
+        ))}
+      </div>
+    )}
+
+    {pack.sizes?.length > 0 && pack.measurement_rows?.length > 0 && (
+      <div className="mt-1.5 overflow-x-auto"><table className="w-full text-[11px]"><thead><tr><th className="pr-2 text-left font-bold">Point</th><th className="pr-2 text-left font-bold">Sample</th>{pack.sizes.map((s) => <th key={s} className="pr-2 text-left font-bold">{s}</th>)}</tr></thead><tbody>{pack.measurement_rows.map((row, i) => <tr key={i}><td className="pr-2">{row.point}</td><td className="pr-2">{row.sample_value}</td>{pack.sizes.map((s) => <td key={s} className="pr-2">{row.grades?.[s] || ""}</td>)}</tr>)}</tbody></table></div>
+    )}
+
+    {pack.trims_items?.length > 0 && (
+      <div className="mt-1.5 overflow-x-auto"><table className="w-full text-[11px]"><thead><tr>{["Trim", "Color", "Size", "Supplier", "Qty"].map((h) => <th key={h} className="pr-2 text-left font-bold">{h}</th>)}</tr></thead><tbody>{pack.trims_items.map((row, i) => <tr key={i}><td className="pr-2">{row.description}</td><td className="pr-2">{row.color}</td><td className="pr-2">{row.size}</td><td className="pr-2">{row.supplier}</td><td className="pr-2">{row.quantity}</td></tr>)}</tbody></table></div>
+    )}
+
+    {pack.colourways?.length > 0 && (
+      <p className="mt-1.5"><b>Colourways:</b> {pack.colourways.map((c) => c.name).join(", ")}</p>
+    )}
+
+    {(pack.artwork_width_cm || pack.artwork_height_cm || pack.artwork_placement) && (
+      <p className="mt-1"><b>Artwork:</b> {[pack.artwork_width_cm && `${pack.artwork_width_cm}cm w`, pack.artwork_height_cm && `${pack.artwork_height_cm}cm h`, pack.artwork_placement].filter(Boolean).join(" · ")}</p>
+    )}
+
+    <div className="mt-1 space-y-1">{[["Sketch", pack.description], ["Construction", pack.construction_notes], ["Other spec notes", pack.measurement_notes], ["Other colourway notes", pack.colourway_notes]].filter(([, value]) => value).map(([label, value]) => <p key={label}><b>{label}:</b> {value}</p>)}</div>
+    {pack.document_urls?.length > 0 && <div className="mt-1 flex flex-wrap gap-2">{pack.document_urls.map((url, docIndex) => <a key={url} href={url} target="_blank" rel="noreferrer" className="font-bold text-violet-700 underline">Open document {docIndex + 1}</a>)}</div>}
+  </div>;
+}
+
+function DesignReferencePanel({ order }) {
+  const lines = (order.design_lines || []).filter((line) => line?.design_no || line?.product_type || line?.image_urls?.length);
+  if (!lines.length) return null;
+  return <div className="mb-4 rounded-2xl border border-violet-100 bg-violet-50/50 p-4">
+    <p className="text-xs font-black uppercase tracking-[0.16em] text-violet-700">Design references</p>
+    <div className="mt-3 grid gap-3 md:grid-cols-2">{lines.map((line, index) => <article key={`${line.design_no || index}`} className="rounded-xl border border-white bg-white p-3 shadow-sm">
+      <div className="flex gap-3">
+        <div className="flex shrink-0 gap-1">{(line.image_urls || []).slice(0, 3).map((src, imgIndex) => <a key={src} href={src} target="_blank" rel="noreferrer"><img src={src} alt="Design" className="h-16 w-16 rounded-xl border border-slate-100 object-cover" /></a>)}{!(line.image_urls || []).length && <div className="grid h-16 w-16 place-items-center rounded-xl bg-slate-100 text-xs font-bold text-slate-400">No image</div>}</div>
+        <div className="min-w-0">
+          <p className="font-black text-slate-900">{line.design_no || "Design"}</p>
+          <p className="mt-0.5 text-xs font-semibold text-slate-500">{line.department || "Department"} - {line.product_type || order.finished_product}</p>
+          <p className="mt-1 text-sm font-bold text-teal-700">{line.quantity || 0} {line.unit || order.unit || "pcs"}{line.rate ? ` - Rs ${line.rate}/pc` : ""}</p>
+          {line.remarks && <p className="mt-1 line-clamp-2 text-xs text-slate-500">{line.remarks}</p>}
+          {line.tech_pack && <TechPackSnapshot pack={line.tech_pack} />}
+        </div>
+      </div>
+    </article>)}</div>
+  </div>;
+}
+
 export default function VendorJobWork() {
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -90,7 +148,7 @@ export default function VendorJobWork() {
     {loading ? <div className="rounded-2xl border border-slate-200 bg-white p-16 text-center text-sm text-slate-400">Loading assigned job work…</div> : orders.length === 0 ? <div className="rounded-2xl border border-slate-200 bg-white p-16 text-center"><div className="text-3xl">✂</div><p className="mt-3 font-bold text-slate-700">No linked job-work orders</p><p className="mt-1 text-sm text-slate-400">When an approved retailer assigns and issues a job-work order to your RMS account, it appears here.</p></div> : orders.map((order) => {
       const draft = drafts[order.id] || { stage: "UPDATE", message: "", takenDate: new Date().toISOString().slice(0, 10), piecesReceived: "", promisedReadyDate: "", ackNote: "" };
       const acknowledged = Boolean(order.vendor_acknowledged_at);
-      return <article key={order.id} className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm"><div className="flex flex-col gap-3 border-b border-slate-100 p-5 sm:flex-row sm:items-start sm:justify-between"><div><div className="flex flex-wrap items-center gap-2"><h2 className="text-base font-black text-slate-900">{order.order_no}</h2>{chip(order.status)}{acknowledged && <span className="rounded-full bg-teal-50 px-2.5 py-1 text-[11px] font-bold text-teal-700">Acknowledged</span>}{order.is_overdue && <span className="rounded-full bg-rose-50 px-2.5 py-1 text-[11px] font-bold text-rose-700">Overdue</span>}</div><p className="mt-2 text-sm font-semibold text-slate-700">{order.finished_product} · {order.expected_quantity} {order.unit}</p><p className="mt-1 text-xs text-slate-500">Retailer: <b>{order.retailer_name || order.tenant_id}</b> · {order.job_work_type} · Due: {order.due_date || "Not set"}{order.vendor_acknowledgement?.promised_ready_date && <> · Promised: <b className={order.is_overdue ? "text-rose-600" : "text-teal-700"}>{order.vendor_acknowledgement.promised_ready_date}</b></>}</p></div><div className="rounded-xl bg-slate-50 px-3 py-2 text-xs text-slate-500">Challan: <b className="text-slate-700">{order.issue_challan_no || "Not issued yet"}</b></div></div><div className="grid gap-5 p-5 lg:grid-cols-[1fr_320px]"><div><p className="mb-2 text-xs font-bold uppercase tracking-widest text-slate-400">Material issue</p><div className="overflow-hidden rounded-xl border border-slate-100"><table className="w-full text-sm"><thead className="bg-slate-50 text-left text-[10px] font-bold uppercase tracking-wide text-slate-500"><tr><th className="px-3 py-2">Material</th><th className="px-3 py-2">Barcode</th><th className="px-3 py-2 text-right">Issued</th></tr></thead><tbody>{(order.materials || []).length ? order.materials.map((line) => <tr key={line.barcode} className="border-t border-slate-100"><td className="px-3 py-2.5 font-semibold text-slate-700">{line.product}</td><td className="px-3 py-2.5 font-mono text-xs text-slate-500">{line.barcode}</td><td className="px-3 py-2.5 text-right font-bold text-slate-700">{line.issued_qty} {line.unit}</td></tr>) : <tr><td colSpan="3" className="px-3 py-6 text-center text-xs text-slate-400">Material has not been issued by the retailer yet.</td></tr>}</tbody></table></div>{order.vendor_progress?.length > 0 && <div className="mt-3 rounded-xl bg-slate-50 p-3"><p className="text-xs font-bold text-slate-600">Latest update: <span className="text-teal-700">{order.vendor_progress[order.vendor_progress.length - 1].stage.replaceAll("_", " ")}</span></p><p className="mt-1 text-xs text-slate-500">{order.vendor_progress[order.vendor_progress.length - 1].message || "No note"}</p></div>}</div><aside className="rounded-xl border border-teal-100 bg-teal-50/50 p-4"><p className="text-sm font-black text-teal-900">Update retailer</p>
+      return <article key={order.id} className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm"><div className="flex flex-col gap-3 border-b border-slate-100 p-5 sm:flex-row sm:items-start sm:justify-between"><div><div className="flex flex-wrap items-center gap-2"><h2 className="text-base font-black text-slate-900">{order.order_no}</h2>{chip(order.status)}{acknowledged && <span className="rounded-full bg-teal-50 px-2.5 py-1 text-[11px] font-bold text-teal-700">Acknowledged</span>}{order.is_overdue && <span className="rounded-full bg-rose-50 px-2.5 py-1 text-[11px] font-bold text-rose-700">Overdue</span>}</div><p className="mt-2 text-sm font-semibold text-slate-700">{order.finished_product} · {order.expected_quantity} {order.unit}</p><p className="mt-1 text-xs text-slate-500">Retailer: <b>{order.retailer_name || order.tenant_id}</b> · {order.job_work_type} · Due: {order.due_date || "Not set"}{order.vendor_acknowledgement?.promised_ready_date && <> · Promised: <b className={order.is_overdue ? "text-rose-600" : "text-teal-700"}>{order.vendor_acknowledgement.promised_ready_date}</b></>}</p></div><div className="rounded-xl bg-slate-50 px-3 py-2 text-xs text-slate-500">Challan: <b className="text-slate-700">{order.issue_challan_no || "Not issued yet"}</b></div></div><div className="grid gap-5 p-5 lg:grid-cols-[1fr_320px]"><div><DesignReferencePanel order={order} /><p className="mb-2 text-xs font-bold uppercase tracking-widest text-slate-400">Material issue</p><div className="overflow-hidden rounded-xl border border-slate-100"><table className="w-full text-sm"><thead className="bg-slate-50 text-left text-[10px] font-bold uppercase tracking-wide text-slate-500"><tr><th className="px-3 py-2">Material</th><th className="px-3 py-2">Barcode</th><th className="px-3 py-2 text-right">Issued</th></tr></thead><tbody>{(order.materials || []).length ? order.materials.map((line) => <tr key={line.barcode} className="border-t border-slate-100"><td className="px-3 py-2.5 font-semibold text-slate-700">{line.product}</td><td className="px-3 py-2.5 font-mono text-xs text-slate-500">{line.barcode}</td><td className="px-3 py-2.5 text-right font-bold text-slate-700">{line.issued_qty} {line.unit}</td></tr>) : <tr><td colSpan="3" className="px-3 py-6 text-center text-xs text-slate-400">Material has not been issued by the retailer yet.</td></tr>}</tbody></table></div>{order.vendor_progress?.length > 0 && <div className="mt-3 rounded-xl bg-slate-50 p-3"><p className="text-xs font-bold text-slate-600">Latest update: <span className="text-teal-700">{order.vendor_progress[order.vendor_progress.length - 1].stage.replaceAll("_", " ")}</span></p><p className="mt-1 text-xs text-slate-500">{order.vendor_progress[order.vendor_progress.length - 1].message || "No note"}</p></div>}</div><aside className="rounded-xl border border-teal-100 bg-teal-50/50 p-4"><p className="text-sm font-black text-teal-900">Update retailer</p>
 
 {!acknowledged && order.status !== "DRAFT" && <div className="mt-3 space-y-2 rounded-lg border border-teal-200 bg-white p-3">
   <p className="text-xs font-bold text-slate-600">Scan &amp; confirm challan</p>
