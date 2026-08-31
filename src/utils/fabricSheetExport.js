@@ -157,7 +157,14 @@ function dataUrlImageFormat(dataUrl) {
 }
 
 const PDF_IMAGE_COL_INDEX = FABRIC_SHEET_HEADERS.length - 1;
-const PDF_COLUMN_WIDTHS = [26, 96, 62, 30, 40, 52, 48, 26, 36, 46, 130, 48];
+const PDF_REMARKS_COL_INDEX = 10;
+// Every other column has a fixed width totalling ~640pt, well under a
+// landscape A4's ~762pt usable width — autotable then has no resizable
+// column left to absorb that ~122pt gap and logs a "could not fit page"
+// warning (misleading: it's underflow, not overflow; nothing was ever
+// clipped). Leaving Remarks unset makes it the one flexible column, so it
+// stretches to fill the page edge-to-edge instead of leaving blank margin.
+const PDF_COLUMN_WIDTHS = [26, 96, 62, 30, 40, 52, 48, 26, 36, 46, null, 48];
 
 export async function downloadFabricSheetPdf(meta, fallbackItems = []) {
   const { purchase_order_no, vendor_name, order_date, sheet } = meta;
@@ -197,7 +204,7 @@ export async function downloadFabricSheetPdf(meta, fallbackItems = []) {
     footStyles: { fillColor: [241, 245, 249], textColor: [15, 23, 42], fontStyle: "bold" },
     alternateRowStyles: { fillColor: [248, 250, 252] },
     columnStyles: PDF_COLUMN_WIDTHS.reduce((acc, width, index) => {
-      acc[index] = { cellWidth: width, ...(index === 0 || index === 8 || index === 9 ? { halign: "right" } : {}) };
+      acc[index] = { ...(width != null ? { cellWidth: width } : {}), ...(index === 0 || index === 8 || index === 9 ? { halign: "right" } : {}) };
       return acc;
     }, {}),
     margin: { left: 40, right: 40 },

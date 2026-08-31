@@ -3,7 +3,10 @@ Lightweight product-usage analytics — page views, feature usage, session
 duration, device type. Separate from audit_logs_collection (a compliance
 record of discrete admin actions); this is aggregate behavioural data for
 Super Admin's Usage Analytics tab — which pages get visited, which features
-get used, how long people stay, what device they're on.
+get used, how long people stay, what device they're on. The /tenant/*
+endpoints below serve the same data narrowed to one retailer's own HQ
+admins, for their own Usage Analytics view — the platform-wide endpoints
+stay Super-Admin-only.
 
 Ingestion is deliberately UNAUTHENTICATED. Half of what needs tracking —
 landing page visits, onboarding attempts — happens before anyone has a
@@ -23,6 +26,7 @@ from pydantic import BaseModel, Field
 
 from ..config import settings
 from ..db import admins_collection, usage_events_collection, vendors_collection
+from .deps import get_hq_tenant
 
 router = APIRouter(prefix="/api/analytics", tags=["Analytics"])
 
@@ -95,11 +99,7 @@ async def _require_superadmin(authorization: str = Header(None)) -> dict:
     return await get_current_superadmin(authorization.split(" ", 1)[1])
 
 
-@router.get("/summary")
-async def analytics_summary(days: int = Query(30, ge=1, le=365), admin: dict = Depends(_require_superadmin)):
-    since = datetime.utcnow() - timedelta(days=days)
-    match: Dict[str, Any] = {"created_at": {"$gte": since}}
-
+async def _compute_summary(match: Dict[str, Any], days: int) -> dict:
     total_events = await usage_events_collection.count_documents(match)
     unique_sessions = len(await usage_events_collection.distinct("session_id", match))
     page_views = await usage_events_collection.count_documents({**match, "event_type": "page_view"})
@@ -173,21 +173,31 @@ async def analytics_summary(days: int = Query(30, ge=1, le=365), admin: dict = D
     }
 
 
-@router.get("/users")
-async def analytics_users(
-    days: int = Query(30, ge=1, le=365),
-    limit: int = Query(50, ge=1, le=200),
-    admin: dict = Depends(_require_superadmin),
-):
+@router.get("/summary")
+async def analytics_summary(days: int = Query(30, ge=1, le=365), admin: dict = Depends(_require_superadmin)):
+    since = datetime.utcnow() - timedelta(days=days)
+    match: Dict[str, Any] = {"created_at": {"$gte": since}}
+    return await _compute_summary(match, days)
+
+
+@router.get("/tenant/summary")
+async def tenant_analytics_summary(days: int = Query(30, ge=1, le=365), ctx: dict = Depends(get_hq_tenant)):
+    """Same aggregate shape as /summary, narrowed to this retailer's own HQ
+    admins only — tracked events only carry tenant_id for the 'admin' role
+    (see _best_effort_identity above), so this naturally excludes vendor
+    activity and every other tenant's data without an extra filter."""
+    since = datetime.utcnow() - timedelta(days=days)
+    match: Dict[str, Any] = {"created_at": {"$gte": since}, "tenant_id": ctx["tenant_id"]}
+    return await _compute_summary(match, days)
+
+
+async def _compute_users(match: Dict[str, Any], days: int, limit: int) -> dict:
     """Per-user drill-down: who's actually using RMS, which portal, which
     pages they open, which features they use. Grouped in Python over the
     matched cursor (same manual-aggregation style as forecast_analytics_routes
     .py's _compute_demand_forecast) rather than a heavy Mongo pipeline, since
     "top N pages/features per user" doesn't collapse cleanly into one
     aggregate stage anyway."""
-    since = datetime.utcnow() - timedelta(days=days)
-    match: Dict[str, Any] = {"created_at": {"$gte": since}, "role": {"$in": ["admin", "vendor"]}}
-
     users: Dict[str, Dict[str, Any]] = {}
     async for doc in usage_events_collection.find(match, {
         "role": 1, "admin_id": 1, "vendor_id": 1, "tenant_id": 1, "department": 1,
@@ -260,3 +270,29 @@ async def analytics_users(
 
     rows.sort(key=lambda r: r["last_active"] or "", reverse=True)
     return {"range_days": days, "count": len(rows), "data": rows[:limit]}
+
+
+@router.get("/users")
+async def analytics_users(
+    days: int = Query(30, ge=1, le=365),
+    limit: int = Query(50, ge=1, le=200),
+    admin: dict = Depends(_require_superadmin),
+):
+    since = datetime.utcnow() - timedelta(days=days)
+    match: Dict[str, Any] = {"created_at": {"$gte": since}, "role": {"$in": ["admin", "vendor"]}}
+    return await _compute_users(match, days, limit)
+
+
+@router.get("/tenant/users")
+async def tenant_analytics_users(
+    days: int = Query(30, ge=1, le=365),
+    limit: int = Query(50, ge=1, le=200),
+    ctx: dict = Depends(get_hq_tenant),
+):
+    """Same per-user drill-down as /users, narrowed to this retailer's own
+    HQ admins — role locked to 'admin' and tenant_id locked to the caller's
+    own tenant, so no vendor telemetry or other tenant's admins ever show up
+    here regardless of what a client might try to pass."""
+    since = datetime.utcnow() - timedelta(days=days)
+    match: Dict[str, Any] = {"created_at": {"$gte": since}, "role": "admin", "tenant_id": ctx["tenant_id"]}
+    return await _compute_users(match, days, limit)

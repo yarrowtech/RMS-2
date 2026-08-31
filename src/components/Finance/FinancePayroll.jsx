@@ -70,7 +70,7 @@ export default function FinancePayroll() {
     });
   }, [incentivesList, searchTerm, statusFilter]);
 
-  // Approved incentives total â€” computed live from the list (no separate state needed)
+  // Approved incentives total — computed live from the list (no separate state needed)
   const incentivesApprovedTotal = useMemo(() =>
     incentivesList.filter(i => i.status === "Approved").reduce((sum, i) => sum + i.amount, 0)
     , [incentivesList]);
@@ -126,7 +126,7 @@ export default function FinancePayroll() {
     const doc = new jsPDF({ orientation: "portrait", unit: "pt", format: "a4" });
     const pageW = 595;
 
-    // â”€â”€ Dark header banner â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Dark header banner ──────────────────────────────────────────
     doc.setFillColor(15, 23, 42);
     doc.rect(0, 0, pageW, 90, "F");
 
@@ -148,21 +148,21 @@ export default function FinancePayroll() {
     doc.setFontSize(8.5);
     doc.text(`Generated: ${new Date().toLocaleString("en-IN")}`, pageW - 40, 70, { align: "right" });
 
-    // â”€â”€ Meta row â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Meta row ───────────────────────────────────────────────────
     const metaY = 115;
     doc.setTextColor(51, 65, 85);
     doc.setFont("helvetica", "bold");
     doc.setFontSize(9);
     doc.text("Audit Period:", 40, metaY);
     doc.setFont("helvetica", "normal");
-    doc.text("Jan 2026 â€“ May 2026", 110, metaY);
+    doc.text("Jan 2026 – May 2026", 110, metaY);
 
     doc.setFont("helvetica", "bold");
     doc.text("Finance Controller:", 240, metaY);
     doc.setFont("helvetica", "normal");
     doc.text("RMS Finance Dept", 340, metaY);
 
-    // â”€â”€ Summary KPI boxes â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Summary KPI boxes ──────────────────────────────────────────
     const boxes = [
       { label: "Total Salary", value: kpiStats.base, color: [238, 242, 255] },
       { label: "Bonuses Paid", value: kpiStats.bonuses, color: [236, 253, 245] },
@@ -188,7 +188,7 @@ export default function FinancePayroll() {
       doc.text(valStr, bx + 8, boxY + 36);
     });
 
-    // â”€â”€ Section title â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Section title ──────────────────────────────────────────────
     doc.setFont("helvetica", "bold");
     doc.setFontSize(10);
     doc.setTextColor(51, 65, 85);
@@ -196,7 +196,7 @@ export default function FinancePayroll() {
     doc.setDrawColor(203, 213, 225);
     doc.line(40, 215, pageW - 40, 215);
 
-    // â”€â”€ Main table â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Main table ─────────────────────────────────────────────────
     const tableData = history.map((row, i) => {
       const rowIncentives = i === 0 ? incentivesApprovedTotal : 0;
       const rowTotal = row.base + row.bonus + rowIncentives;
@@ -236,7 +236,7 @@ export default function FinancePayroll() {
       margin: { left: 40, right: 40 },
     });
 
-    // â”€â”€ Footer â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Footer ─────────────────────────────────────────────────────
     const finalY = doc.lastAutoTable.finalY + 20;
     doc.setFillColor(248, 250, 252);
     doc.roundedRect(40, finalY, pageW - 80, 32, 5, 5, "F");
@@ -679,7 +679,7 @@ export default function FinancePayroll() {
             ) : (
               <div className="space-y-4">
                 <div className="text-center py-2.5 text-sm font-bold text-emerald-600 bg-emerald-50 border border-emerald-150 rounded-xl">
-                  âœ“ All Incentives Successfully Approved
+                  ✓ All Incentives Successfully Approved
                 </div>
                 <button
                   onClick={() => setShowIncentiveModal(false)}

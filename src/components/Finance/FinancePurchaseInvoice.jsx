@@ -21,7 +21,7 @@ const clamp0 = (v) => Math.max(0, n0(v));
 const money = (v) => clamp0(v).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const today = () => new Date().toISOString().slice(0, 10);
 const fmtDate = (d) => {
-  if (!d) return "â€”";
+  if (!d) return "—";
   try { return new Date(d).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }); }
   catch { return d; }
 };
@@ -85,7 +85,7 @@ function StatusPill({ s }) {
   return (
     <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-medium uppercase tracking-wide border ${m.bg}`}>
       <span className={`w-1.5 h-1.5 rounded-full ${m.dot}`} />
-      {s || "â€”"}
+      {s || "—"}
     </span>
   );
 }
@@ -94,7 +94,7 @@ function PayStatusPill({ s }) {
   const m = PAY_META[s] || PAY_META.Unpaid;
   return (
     <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-medium uppercase tracking-wide border ${m}`}>
-      {s || "â€”"}
+      {s || "—"}
     </span>
   );
 }
@@ -171,7 +171,7 @@ function MiniModal({ title, onClose, children }) {
       <div className="w-full max-w-md rounded-2xl bg-white shadow-xl flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200">
         <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4 bg-slate-50">
           <h3 className="font-semibold text-slate-800 text-lg">{title}</h3>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-600 transition">âœ•</button>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600 transition">✕</button>
         </div>
         <div className="p-5 overflow-y-auto">{children}</div>
       </div>
@@ -374,7 +374,7 @@ export default function PurchaseInvoiceManager() {
         {/* No-contact alert */}
         {kpis.noContact > 0 && (
           <div className="flex items-center gap-3 rounded-xl bg-red-50 border border-red-200 p-4 text-sm text-red-800 font-medium">
-            <span><b>{kpis.noContact} walk-in invoice(s)</b> have no contact info â€” open the Notifications tab to add email/phone and send manually.</span>
+            <span><b>{kpis.noContact} walk-in invoice(s)</b> have no contact info — open the Notifications tab to add email/phone and send manually.</span>
           </div>
         )}
 
@@ -395,7 +395,7 @@ export default function PurchaseInvoiceManager() {
             <div className="flex flex-wrap items-center gap-3 bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
               <div className="relative flex-1 min-w-[220px]">
                 <input value={search} onChange={e => setSearch(e.target.value)}
-                  placeholder="Search invoice no, PO, GRC, vendorâ€¦"
+                  placeholder="Search invoice no, PO, GRC, vendor…"
                   className="w-full rounded-xl border border-slate-200 bg-white shadow-sm px-4 py-2.5 text-sm font-medium text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all" />
               </div>
               <div className="flex items-center gap-2 border-l border-slate-200 pl-3">
@@ -441,7 +441,7 @@ export default function PurchaseInvoiceManager() {
                     {loading ? (
                       <tr><td colSpan={15} className="p-14 text-center text-sm text-slate-800">
                         <div className="flex items-center justify-center gap-3">
-                          Loading invoicesâ€¦
+                          Loading invoices…
                         </div>
                       </td></tr>
                     ) : visible.length === 0 ? (
@@ -451,7 +451,7 @@ export default function PurchaseInvoiceManager() {
                     ) : visible.map((inv, i) => {
                       const isOverdue = inv.dueDate && inv.dueDate < today() && inv.paymentStatus !== "Paid";
                       const isDirect = inv.invoiceType === "direct_grc";
-                      const sourceRef = isDirect ? (inv.directGrcNo || "â€”") : (inv.poNo || "â€”");
+                      const sourceRef = isDirect ? (inv.directGrcNo || "—") : (inv.poNo || "—");
                       const noContact = !inv.isRegisteredVendor && !inv.vendorEmail && !inv.vendorPhone;
                       return (
                         <tr key={inv.id}
@@ -461,9 +461,9 @@ export default function PurchaseInvoiceManager() {
                             {i + 1}
                           </td>
                           <td className="px-4 py-4.5">
-                            <span className="font-mono text-sm font-semibold text-slate-900">{inv.invoiceNo || "â€”"}</span>
+                            <span className="font-mono text-sm font-semibold text-slate-900">{inv.invoiceNo || "—"}</span>
                           </td>
-                          <td className="px-4 py-4.5 font-mono text-[10px] font-bold text-slate-500">{inv.vendorInvoiceNo || "â€”"}</td>
+                          <td className="px-4 py-4.5 font-mono text-[10px] font-bold text-slate-500">{inv.vendorInvoiceNo || "—"}</td>
                           <td className="px-4 py-4.5">
                             <TypeBadge t={inv.invoiceType} />
                             <div className="mt-1"><VendorBadge isRegistered={inv.isRegisteredVendor} /></div>
@@ -472,19 +472,19 @@ export default function PurchaseInvoiceManager() {
                           <td className="px-4 py-4.5 max-w-[200px]">
                             <div className="flex items-center gap-3">
                               <div className="h-8 w-8 rounded-xl bg-slate-100 border border-slate-200 flex items-center justify-center text-[10px] font-bold text-slate-500 shadow-sm shrink-0">
-                                {(inv.vendorName || "â€”").charAt(0)}
+                                {(inv.vendorName || "—").charAt(0)}
                               </div>
                               <div className="">
-                                <div className="font-semibold text-slate-500 text-sm break-words">{inv.vendorName || "â€”"}</div>
-                                {inv.vendorEmail && <div className="mt-0.5 text-xs text-slate-500 break-words">ðŸ“§ {inv.vendorEmail}</div>}
-                                {!inv.isRegisteredVendor && inv.vendorPhone && <div className="mt-0.5 text-xs text-slate-500 break-words">ðŸ“± {inv.vendorPhone}</div>}
+                                <div className="font-semibold text-slate-500 text-sm break-words">{inv.vendorName || "—"}</div>
+                                {inv.vendorEmail && <div className="mt-0.5 text-xs text-slate-500 break-words">📧 {inv.vendorEmail}</div>}
+                                {!inv.isRegisteredVendor && inv.vendorPhone && <div className="mt-0.5 text-xs text-slate-500 break-words">📱 {inv.vendorPhone}</div>}
                               </div>
                             </div>
                           </td>
                           <td className="px-4 py-4.5 font-mono text-[10px] font-bold text-slate-500">{sourceRef}</td>
                           <td className="px-4 py-4.5 text-sm font-medium text-slate-500">{fmtDate(inv.invoiceDate)}</td>
                           <td className={`px-4 py-4.5 text-sm ${isOverdue ? "font-semibold text-red-600" : "text-slate-500 font-medium"}`}>
-                            {fmtDate(inv.dueDate)}{isOverdue && " âš "}
+                            {fmtDate(inv.dueDate)}{isOverdue && " ⚠"}
                           </td>
                           <td className="px-4 py-4.5"><StatusPill s={inv.status} /></td>
                           <td className="px-4 py-4.5"><PayStatusPill s={inv.paymentStatus} /></td>
@@ -544,7 +544,7 @@ export default function PurchaseInvoiceManager() {
               <p className="mb-3 text-sm text-slate-500">
                 {modal === "hold" ? "Provide a reason for holding." : "Provide a cancellation reason."}
               </p>
-              <textarea rows={3} value={reasonInput} onChange={e => setReasonInput(e.target.value)} placeholder="Reasonâ€¦"
+              <textarea rows={3} value={reasonInput} onChange={e => setReasonInput(e.target.value)} placeholder="Reason…"
                 className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100" />
             </>
           )}
@@ -571,9 +571,9 @@ function NotifyVendorModal({ inv, onClose, showToast }) {
   const isReg = !!inv.isRegisteredVendor;
   const [channel, setChannel] = useState(isReg ? "email" : inv.vendorEmail ? "email" : "sms");
   const [to, setTo] = useState(isReg ? (inv.vendorEmail || "") : (inv.vendorEmail || inv.vendorPhone || ""));
-  const [subject, setSubject] = useState(`Invoice ${inv.invoiceNo} â€” ${inv.vendorName}`);
+  const [subject, setSubject] = useState(`Invoice ${inv.invoiceNo} — ${inv.vendorName}`);
   const [message, setMessage] = useState(
-    `Dear ${inv.vendorName || "Vendor"},\n\nThis is to inform you regarding Invoice ${inv.invoiceNo} dated ${inv.invoiceDate}.\n\nInvoice Total : ₹${n0(inv.invoiceTotal).toLocaleString("en-IN")}\nBalance Due   : ₹${n0(inv.balanceDue).toLocaleString("en-IN")}\nStatus        : ${inv.status}\nDue Date      : ${inv.dueDate || "â€”"}\n\nPlease contact the AP team for any queries.\n\nRegards,\nAccounts Payable`
+    `Dear ${inv.vendorName || "Vendor"},\n\nThis is to inform you regarding Invoice ${inv.invoiceNo} dated ${inv.invoiceDate}.\n\nInvoice Total : ₹${n0(inv.invoiceTotal).toLocaleString("en-IN")}\nBalance Due   : ₹${n0(inv.balanceDue).toLocaleString("en-IN")}\nStatus        : ${inv.status}\nDue Date      : ${inv.dueDate || "—"}\n\nPlease contact the AP team for any queries.\n\nRegards,\nAccounts Payable`
   );
   const [patchEmail, setPatchEmail] = useState(inv.vendorEmail || "");
   const [patchPhone, setPatchPhone] = useState(inv.vendorPhone || "");
@@ -621,7 +621,7 @@ function NotifyVendorModal({ inv, onClose, showToast }) {
         <h3 className="mb-2 font-semibold text-2xl text-slate-800 tracking-tight">Notify Vendor</h3>
         <div className="flex flex-wrap items-center gap-2">
           <span className="font-mono text-sm text-slate-500 font-medium">{inv.invoiceNo}</span>
-          <span className="text-slate-300">â€¢</span>
+          <span className="text-slate-300">•</span>
           <span className="text-sm font-semibold text-slate-900">{inv.vendorName}</span>
           <TypeBadge t={inv.invoiceType} />
           <VendorBadge isRegistered={isReg} />
@@ -631,7 +631,7 @@ function NotifyVendorModal({ inv, onClose, showToast }) {
       {/* Registered: info banner */}
       {isReg && (
         <div className="mb-6 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800">
-          <p className="font-medium"><b>âœ… Registered Vendor</b> â€” notification is recorded in their portal AND sent by email automatically on every status change. You can also send a custom message below.</p>
+          <p className="font-medium"><b>✅ Registered Vendor</b> — notification is recorded in their portal AND sent by email automatically on every status change. You can also send a custom message below.</p>
           {inv.vendorEmail && <div className="mt-1 text-emerald-600 font-medium">Portal email: {inv.vendorEmail}</div>}
           {inv.vendorAcknowledged
             ? <div className="mt-1.5 font-semibold flex items-center gap-1"><CheckCircle2 size={16} /> Already acknowledged by vendor</div>
@@ -667,7 +667,7 @@ function NotifyVendorModal({ inv, onClose, showToast }) {
             </FField>
             <button onClick={saveContact} disabled={patching}
               className="mt-4 flex items-center gap-2 rounded-xl bg-slate-800 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-900 disabled:opacity-50">
-              {patching ? <Spinner /> : "ðŸ’¾ Save Contact Info"}
+              {patching ? <Spinner /> : "💾 Save Contact Info"}
             </button>
           </div>
         </div>
@@ -678,9 +678,9 @@ function NotifyVendorModal({ inv, onClose, showToast }) {
         <div className="mb-2 text-[10px] font-bold text-slate-500">Send via</div>
         <div className="flex flex-wrap gap-2">
           {[
-            { v: "email", l: "ðŸ“§ Email", enabled: isReg || !!patchEmail || !!inv.vendorEmail },
-            { v: "sms", l: "ðŸ“± SMS", enabled: isReg || !!patchPhone || !!inv.vendorPhone },
-            { v: "whatsapp", l: "ðŸ’¬ WhatsApp", enabled: isReg || !!patchPhone || !!inv.vendorPhone },
+            { v: "email", l: "📧 Email", enabled: isReg || !!patchEmail || !!inv.vendorEmail },
+            { v: "sms", l: "📱 SMS", enabled: isReg || !!patchPhone || !!inv.vendorPhone },
+            { v: "whatsapp", l: "💬 WhatsApp", enabled: isReg || !!patchPhone || !!inv.vendorPhone },
           ].map(({ v, l, enabled }) => (
             <button key={v} disabled={!enabled} onClick={() => { setChannel(v); setTo(v === "email" ? (patchEmail || inv.vendorEmail || "") : (patchPhone || inv.vendorPhone || "")); }}
               className={`rounded-xl px-4 py-2 text-sm font-semibold transition-colors disabled:opacity-40 disabled:cursor-not-allowed border ${channel === v ? "bg-indigo-100 text-indigo-700 border-indigo-200" : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50"}`}>
@@ -718,13 +718,13 @@ function NotifyVendorModal({ inv, onClose, showToast }) {
         </FField>
         <div className="mt-1 text-xs font-medium text-slate-500">
           {message.length} chars
-          {channel === "sms" && message.length > 160 && <span className="text-red-500"> â€” will be split into {Math.ceil(message.length / 160)} SMS parts</span>}
+          {channel === "sms" && message.length > 160 && <span className="text-red-500"> — will be split into {Math.ceil(message.length / 160)} SMS parts</span>}
         </div>
       </div>
 
       {/* Preview strip */}
       <div className="mb-6 rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">
-        <span className="text-slate-500">To: </span><b className="mr-4">{to || "â€”"}</b>
+        <span className="text-slate-500">To: </span><b className="mr-4">{to || "—"}</b>
         <span className="text-slate-500">Channel: </span><b className="mr-4">{isReg ? `portal + ${channel}` : channel}</b>
         {channel === "email" && <><span className="text-slate-500">Subject: </span><b>{subject}</b></>}
       </div>
@@ -733,7 +733,7 @@ function NotifyVendorModal({ inv, onClose, showToast }) {
         <GhostBtn onClick={onClose}>Cancel</GhostBtn>
         <button onClick={send} disabled={sending || !to.trim()}
           className="flex items-center gap-2 rounded-xl bg-indigo-600 px-6 py-2.5 text-sm font-semibold text-white transition hover:bg-indigo-700 disabled:opacity-50">
-          {sending ? <Spinner /> : null} {sending ? "Sendingâ€¦" : `Send via ${channel}`}
+          {sending ? <Spinner /> : null} {sending ? "Sending…" : `Send via ${channel}`}
         </button>
       </div>
     </div>
@@ -788,7 +788,7 @@ function NotificationCenter({ invoices, showToast, onRefresh }) {
         <div onClick={() => setFilter("nocontact")}
           className="flex cursor-pointer items-center gap-3 rounded-xl border border-red-200 bg-red-50 p-4 text-sm font-medium text-red-800 transition hover:bg-red-100">
           <AlertTriangle size={18} className="shrink-0 text-red-600" />
-          <span><b>{groups.noContact.length} walk-in invoice(s)</b> have no contact info â†’ click to view and add email/phone.</span>
+          <span><b>{groups.noContact.length} walk-in invoice(s)</b> have no contact info → click to view and add email/phone.</span>
         </div>
       )}
 
@@ -806,7 +806,7 @@ function NotificationCenter({ invoices, showToast, onRefresh }) {
                 <div key={inv.id} className={`rounded-2xl border-l-4 border-y border-r border-y-slate-200 border-r-slate-200 p-5 shadow-sm transition hover:shadow-md ${accentColor} ${noContact ? "" : "bg-white"}`}>
                   <div className="flex flex-wrap items-start justify-between gap-4">
                     <div className="flex flex-wrap items-center gap-3">
-                      <span className="font-mono text-base font-semibold text-slate-900">{inv.invoiceNo || "â€”"}</span>
+                      <span className="font-mono text-base font-semibold text-slate-900">{inv.invoiceNo || "—"}</span>
                       <TypeBadge t={inv.invoiceType} />
                       <VendorBadge isRegistered={isReg} />
                       <StatusPill s={inv.status} />
@@ -822,21 +822,21 @@ function NotificationCenter({ invoices, showToast, onRefresh }) {
                     </div>
                   </div>
                   <div className="mt-4 flex flex-wrap gap-x-8 gap-y-2 text-sm font-medium text-slate-900">
-                    <span>Vendor: <b className="text-slate-900 font-semibold">{inv.vendorName || "â€”"}</b></span>
+                    <span>Vendor: <b className="text-slate-900 font-semibold">{inv.vendorName || "—"}</b></span>
                     <span>Total: <b className="font-mono text-slate-900 font-semibold">₹{money(inv.invoiceTotal)}</b></span>
                     <span>Due: <b className="text-slate-900 font-semibold">{fmtDate(inv.dueDate)}</b></span>
                     {isReg
                       ? <>
-                        {inv.vendorEmail && <span className="font-semibold text-emerald-700">ðŸ“§ {inv.vendorEmail}</span>}
-                        <span className="font-semibold text-emerald-700">ðŸ–¥ï¸ Portal active</span>
+                        {inv.vendorEmail && <span className="font-semibold text-emerald-700">📧 {inv.vendorEmail}</span>}
+                        <span className="font-semibold text-emerald-700">🖥ï¸ Portal active</span>
                         {inv.vendorAcknowledged
-                          ? <span className="font-medium text-emerald-700">âœ“ Acknowledged</span>
+                          ? <span className="font-medium text-emerald-700">✓ Acknowledged</span>
                           : <span className="font-medium text-orange-700">â³ Awaiting acknowledgement</span>}
                       </>
                       : <>
-                        {inv.vendorEmail && <span className="font-semibold text-amber-800">ðŸ“§ {inv.vendorEmail}</span>}
-                        {inv.vendorPhone && <span className="font-semibold text-amber-800">ðŸ“± {inv.vendorPhone}</span>}
-                        {noContact && <span className="font-medium text-red-650 flex items-center gap-1"><AlertTriangle size={14} /> No email or phone â€” cannot auto-notify</span>}
+                        {inv.vendorEmail && <span className="font-semibold text-amber-800">📧 {inv.vendorEmail}</span>}
+                        {inv.vendorPhone && <span className="font-semibold text-amber-800">📱 {inv.vendorPhone}</span>}
+                        {noContact && <span className="font-medium text-red-650 flex items-center gap-1"><AlertTriangle size={14} /> No email or phone — cannot auto-notify</span>}
                       </>}
                   </div>
                 </div>
@@ -869,7 +869,7 @@ function VendorPortal({ invoices, showToast, onRefresh }) {
   const vendorMap = useMemo(() => {
     const reg = {}, walk = {};
     invoices.forEach(inv => {
-      const k = inv.vendorName || "â€”";
+      const k = inv.vendorName || "—";
       const map = inv.isRegisteredVendor ? reg : walk;
       if (!map[k]) map[k] = { name: k, invoices: [], balance: 0, email: inv.vendorEmail || "", phone: inv.vendorPhone || "" };
       map[k].invoices.push(inv);
@@ -900,7 +900,7 @@ function VendorPortal({ invoices, showToast, onRefresh }) {
           </div>
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-900" size={14} />
-            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search vendorâ€¦"
+            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search vendor…"
               className="w-full rounded-xl border border-slate-200 bg-white py-2 pl-9 pr-3 text-sm focus:ring-2 focus:ring-indigo-100" />
           </div>
         </div>
@@ -916,10 +916,10 @@ function VendorPortal({ invoices, showToast, onRefresh }) {
                 <div key={v.name} onClick={() => setSelVendor(selVendor?.name === v.name ? null : v)}
                   className={`cursor-pointer rounded-xl border-l-4 p-3.5 mb-2 transition hover:bg-slate-50 ${selVendor?.name === v.name ? "bg-indigo-50" : "bg-white"} ${borderClass}`}>
                   <div className={`mb-1 text-sm font-semibold ${selVendor?.name === v.name ? "text-indigo-700" : "text-slate-800"}`}>{v.name}</div>
-                  <div className="text-xs text-slate-500">{v.invoices.length} inv Â· <span className="font-mono text-slate-650 font-medium">₹{v.balance.toLocaleString("en-IN", { maximumFractionDigits: 0 })}</span></div>
+                  <div className="text-xs text-slate-500">{v.invoices.length} inv · <span className="font-mono text-slate-650 font-medium">₹{v.balance.toLocaleString("en-IN", { maximumFractionDigits: 0 })}</span></div>
                   {portalTab === "walkin" && <div className="mt-1 text-xs flex flex-wrap gap-x-2 gap-y-1">
-                    {v.email && <span className="text-amber-850 font-semibold truncate">ðŸ“§ {v.email}</span>}
-                    {v.phone && <span className="text-amber-850 font-semibold">ðŸ“± {v.phone}</span>}
+                    {v.email && <span className="text-amber-850 font-semibold truncate">📧 {v.email}</span>}
+                    {v.phone && <span className="text-amber-850 font-semibold">📱 {v.phone}</span>}
                     {noContact && <span className="font-medium text-red-650 flex items-center gap-1"><AlertTriangle size={12} /> No contact</span>}
                   </div>}
                   {portalTab === "registered" && <div className="mt-1 text-xs font-semibold text-emerald-600 flex items-center gap-1"><CheckCircle2 size={12} /> Portal access</div>}
@@ -945,8 +945,8 @@ function VendorPortal({ invoices, showToast, onRefresh }) {
                 <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm font-medium text-slate-500">
                   <span>{selInvs.length} invoice(s)</span>
                   <span>Balance: <b className="font-mono text-indigo-700">₹{selVendor.balance.toLocaleString("en-IN", { maximumFractionDigits: 0 })}</b></span>
-                  {selVendor.email && <span className="text-slate-500">ðŸ“§ {selVendor.email}</span>}
-                  {selVendor.phone && <span className="text-slate-500">ðŸ“± {selVendor.phone}</span>}
+                  {selVendor.email && <span className="text-slate-500">📧 {selVendor.email}</span>}
+                  {selVendor.phone && <span className="text-slate-500">📱 {selVendor.phone}</span>}
                 </div>
               </div>
               <div className="flex items-center gap-2">
@@ -961,7 +961,7 @@ function VendorPortal({ invoices, showToast, onRefresh }) {
             {/* Registered: portal info */}
             {portalTab === "registered" && (
               <div className="border-b border-emerald-200 bg-emerald-50 px-6 py-4 text-xs font-medium text-emerald-800 shrink-0">
-                âœ… This vendor can log in at <code className="rounded bg-emerald-100 px-1 py-0.5 text-[11px] font-semibold">/vendor-invoices</code> to view all their invoices, payment schedules, match results, and raise queries.
+                ✅ This vendor can log in at <code className="rounded bg-emerald-100 px-1 py-0.5 text-[11px] font-semibold">/vendor-invoices</code> to view all their invoices, payment schedules, match results, and raise queries.
                 All status-change events (created, submitted, approved, paid) are automatically pushed to their portal.
               </div>
             )}
@@ -984,12 +984,12 @@ function VendorPortal({ invoices, showToast, onRefresh }) {
                     const isOverdue = inv.dueDate && inv.dueDate < today() && inv.paymentStatus !== "Paid";
                     return (
                       <tr key={inv.id} className="transition-colors hover:bg-slate-50">
-                        <td className="px-4 py-3.5 font-mono text-sm font-medium text-indigo-700">{inv.invoiceNo || "â€”"}</td>
-                        <td className="px-4 py-3.5 font-mono text-[10px] font-bold text-slate-500">{inv.vendorInvoiceNo || "â€”"}</td>
+                        <td className="px-4 py-3.5 font-mono text-sm font-medium text-indigo-700">{inv.invoiceNo || "—"}</td>
+                        <td className="px-4 py-3.5 font-mono text-[10px] font-bold text-slate-500">{inv.vendorInvoiceNo || "—"}</td>
                         <td className="px-4 py-3.5"><TypeBadge t={inv.invoiceType} /></td>
-                        <td className="px-4 py-3.5 font-mono text-[10px] font-bold text-slate-500">{isDirect ? (inv.directGrcNo || "â€”") : (inv.poNo || "â€”")}</td>
+                        <td className="px-4 py-3.5 font-mono text-[10px] font-bold text-slate-500">{isDirect ? (inv.directGrcNo || "—") : (inv.poNo || "—")}</td>
                         <td className="px-4 py-3.5 text-sm font-medium text-slate-500">{fmtDate(inv.invoiceDate)}</td>
-                        <td className={`px-4 py-3.5 text-sm ${isOverdue ? "font-semibold text-red-600" : "text-slate-500 font-medium"}`}>{fmtDate(inv.dueDate)}{isOverdue && " âš "}</td>
+                        <td className={`px-4 py-3.5 text-sm ${isOverdue ? "font-semibold text-red-600" : "text-slate-500 font-medium"}`}>{fmtDate(inv.dueDate)}{isOverdue && " ⚠"}</td>
                         <td className="px-4 py-3.5 font-mono text-sm font-semibold text-slate-900">₹{money(inv.invoiceTotal)}</td>
                         <td className="px-4 py-3.5 font-mono text-sm font-medium text-emerald-700">₹{money(inv.paidAmount)}</td>
                         <td className={`px-4 py-3.5 font-mono text-sm font-semibold ${n0(inv.balanceDue) > 0 ? "text-indigo-700" : "text-slate-500"}`}>₹{money(inv.balanceDue)}</td>
@@ -999,7 +999,7 @@ function VendorPortal({ invoices, showToast, onRefresh }) {
                           {inv.vendorNotified ? <CheckCircle2 size={15} className="text-emerald-600 mx-auto" /> : <X size={15} className="text-slate-400 mx-auto" />}
                         </td>
                         <td className="px-4 py-3.5 text-center">
-                          {inv.vendorAcknowledged ? <CheckCircle2 size={15} className="text-emerald-600 mx-auto" /> : <span className="text-slate-450 font-semibold text-xs">â€”</span>}
+                          {inv.vendorAcknowledged ? <CheckCircle2 size={15} className="text-emerald-600 mx-auto" /> : <span className="text-slate-450 font-semibold text-xs">—</span>}
                         </td>
                         <td className="px-4 py-3.5">
                           <TblBtn color="#2563EB" onClick={() => setNotifTarget(inv)}>Notify</TblBtn>
@@ -1048,7 +1048,7 @@ function WalkInContactManager({ vendor, invoices, showToast, onRefresh, onNotify
   return (
     <div className="border-b border-amber-200 bg-amber-50 p-6 shrink-0">
       <div className="mb-2 text-xs font-medium uppercase tracking-wider text-amber-800">
-        ðŸ“‹ Walk-in Vendor â€” Contact Management
+        📋 Walk-in Vendor — Contact Management
       </div>
       <div className="mb-4 text-sm font-medium text-amber-900">
         Not a registered vendor. Add email/phone here to enable invoice notifications.
@@ -1069,12 +1069,12 @@ function WalkInContactManager({ vendor, invoices, showToast, onRefresh, onNotify
         </div>
         <button onClick={saveAll} disabled={saving}
           className="flex items-center gap-2 rounded-2xl bg-slate-800 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-900 disabled:opacity-50 whitespace-nowrap h-[42px] hover:-translate-y-[1px] shadow-sm">
-          {saving ? <Spinner /> : "ðŸ’¾ Save & Apply"}
+          {saving ? <Spinner /> : "💾 Save & Apply"}
         </button>
         {(email || phone) && invoices[0] && (
           <button onClick={() => onNotify(invoices[0])}
             className="flex items-center gap-2 rounded-2xl bg-indigo-750 bg-indigo-700 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-indigo-850 whitespace-nowrap h-[42px] hover:-translate-y-[1px] shadow-sm">
-            ðŸ”” Notify Now
+            🔔 Notify Now
           </button>
         )}
       </div>
@@ -1142,7 +1142,7 @@ function InvoiceForm({ initialInv, onClose, onSave }) {
       try {
         const res = await fetch(PO_API);
         const d = await res.json();
-        // Only POs that have been fully processed through GRCâ†’GRN can be invoiced.
+        // Only POs that have been fully processed through GRC→GRN can be invoiced.
         // VendorSubmitted = buyer hasn't approved yet (rates not locked in)
         // Approved onwards = buyer accepted, GRC/GRN can be created, invoice is valid
         const invoiceable = ["Approved", "PartiallyReceived", "FullyReceived", "StockUpdated", "Paid"];
@@ -1268,9 +1268,9 @@ function InvoiceForm({ initialInv, onClose, onSave }) {
       <div className="px-6 py-5 bg-slate-50 border-b border-slate-200 flex items-center justify-between shrink-0">
         <div>
           <h2 className="text-2xl font-semibold text-slate-900">{initialInv ? "Edit Invoice" : "New Purchase Invoice"}</h2>
-          <p className="text-sm text-slate-500 mt-1.5 font-medium">{invoiceType === "direct_grc" ? "Direct GRC â†’ GRN â†’ Verify â†’ Payment â†’ Save" : "PO â†’ GRN â†’ Verify â†’ Payment â†’ Save"}</p>
+          <p className="text-sm text-slate-500 mt-1.5 font-medium">{invoiceType === "direct_grc" ? "Direct GRC → GRN → Verify → Payment → Save" : "PO → GRN → Verify → Payment → Save"}</p>
         </div>
-        <button onClick={onClose} className="text-slate-400 hover:text-slate-500 text-xl transition-colors">âœ•</button>
+        <button onClick={onClose} className="text-slate-400 hover:text-slate-500 text-xl transition-colors">✕</button>
       </div>
 
       <div className="flex-1 overflow-y-auto p-6">
@@ -1282,11 +1282,11 @@ function InvoiceForm({ initialInv, onClose, onSave }) {
             <div className="flex overflow-hidden rounded-xl border border-slate-200 bg-slate-50 p-1">
               <button className={`flex-1 rounded-lg px-4 py-3.5 text-center text-sm font-medium transition-all ${invoiceType === "po_linked" ? "bg-blue-100 text-blue-900 shadow-sm ring-2 ring-blue-500" : "text-slate-500 hover:text-slate-700 hover:bg-slate-100"}`} onClick={() => switchType("po_linked")}>
                 <div style={{ fontWeight: 800, fontSize: 15, color: "#0f172a" }}>PO-Linked Invoice</div>
-                <div style={{ fontSize: 12, fontWeight: 500, opacity: .7, marginTop: 4 }}>Purchase Order â†’ GRC â†’ GRN â†’ Invoice</div>
+                <div style={{ fontSize: 12, fontWeight: 500, opacity: .7, marginTop: 4 }}>Purchase Order → GRC → GRN → Invoice</div>
               </button>
               <button className={`flex-1 rounded-lg px-4 py-3.5 text-center text-sm font-medium transition-all ${invoiceType === "direct_grc" ? "bg-blue-100 text-blue-900 shadow-sm ring-2 ring-blue-500" : "text-slate-500 hover:text-slate-700 hover:bg-slate-100"}`} onClick={() => switchType("direct_grc")}>
                 <div style={{ fontWeight: 800, fontSize: 15, color: "#0f172a" }}>Direct GRC Invoice</div>
-                <div style={{ fontSize: 12, fontWeight: 500, opacity: .7, marginTop: 4 }}>Walk-in Supplier â†’ Direct GRC â†’ GRN â†’ Invoice</div>
+                <div style={{ fontSize: 12, fontWeight: 500, opacity: .7, marginTop: 4 }}>Walk-in Supplier → Direct GRC → GRN → Invoice</div>
               </button>
             </div>
           </div>
@@ -1295,8 +1295,8 @@ function InvoiceForm({ initialInv, onClose, onSave }) {
         {/* Info banner */}
         <div className={`mb-5 p-4 rounded-xl text-sm font-medium border ${invoiceType === "direct_grc" ? "bg-blue-50 text-blue-800 border-blue-200" : "bg-indigo-50 text-indigo-800 border-indigo-200"}`}>
           {invoiceType === "direct_grc"
-            ? "Direct GRC Invoice: No PO required. Walk-in vendors may not be registered â€” add email/phone below so they can be notified."
-            : "PO-Linked Invoice: Full 3-way match (PO â†” GRN â†” Invoice). Registered vendor receives portal + email notification automatically."}
+            ? "Direct GRC Invoice: No PO required. Walk-in vendors may not be registered — add email/phone below so they can be notified."
+            : "PO-Linked Invoice: Full 3-way match (PO ↔ GRN ↔ Invoice). Registered vendor receives portal + email notification automatically."}
         </div>
 
         {/* Invoice Header */}
@@ -1313,7 +1313,7 @@ function InvoiceForm({ initialInv, onClose, onSave }) {
               {invoiceType === "po_linked" && (
                 <FField label="Purchase Order" req>
                   <DropDown open={poOpen} setOpen={setPoOpen} search={poSearch} setSearch={setPoSearch}
-                    items={pos} selectedKey={header.poNo} onSelect={handlePOSelect} placeholder="Search PO numberâ€¦"
+                    items={pos} selectedKey={header.poNo} onSelect={handlePOSelect} placeholder="Search PO number…"
                     keyFn={p => p.orderNo} labelFn={p => p.orderNo}
                     renderItem={p => (
                       <div style={{ display: "flex", justifyContent: "space-between" }}>
@@ -1326,9 +1326,9 @@ function InvoiceForm({ initialInv, onClose, onSave }) {
               {/* GRC selector */}
               {invoiceType === "direct_grc" && (
                 <FField label="Source GRC (Direct)" req>
-                  {grcLoading ? <div style={{ padding: "9px 12px", border: `1px solid ${C.border}`, borderRadius: 7, fontSize: 13, color: C.muted, display: "flex", gap: 8, alignItems: "center" }}><Spinner />Loading GRCsâ€¦</div> : (
+                  {grcLoading ? <div style={{ padding: "9px 12px", border: `1px solid ${C.border}`, borderRadius: 7, fontSize: 13, color: C.muted, display: "flex", gap: 8, alignItems: "center" }}><Spinner />Loading GRCs…</div> : (
                     <DropDown open={grcOpen} setOpen={setGrcOpen} search={grcSearch} setSearch={setGrcSearch}
-                      items={grcs} selectedKey={header.directGrcNo} onSelect={handleGRCSelect} placeholder="Search GRC numberâ€¦"
+                      items={grcs} selectedKey={header.directGrcNo} onSelect={handleGRCSelect} placeholder="Search GRC number…"
                       keyFn={g => g.grcNo} labelFn={g => g.grcNo}
                       renderItem={g => (
                         <div style={{ display: "flex", justifyContent: "space-between" }}>
@@ -1349,7 +1349,7 @@ function InvoiceForm({ initialInv, onClose, onSave }) {
                   <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                     <FField label="Email"><input className="w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm font-medium focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white" type="email" value={header.vendorEmail} onChange={e => setH("vendorEmail", e.target.value)} placeholder="vendor@example.com (if not registered)" /></FField>
                     <FField label="Phone / WhatsApp"><input className="w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm font-medium focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white" type="tel" value={header.vendorPhone} onChange={e => setH("vendorPhone", e.target.value)} placeholder="+91 98765 43210 (fallback)" /></FField>
-                    {!header.vendorEmail && !header.vendorPhone && <div style={{ fontSize: 12, color: "#C2410C", fontWeight: 700 }}>âš  Without contact info, you'll need to notify manually after saving.</div>}
+                    {!header.vendorEmail && !header.vendorPhone && <div style={{ fontSize: 12, color: "#C2410C", fontWeight: 700 }}>⚠ Without contact info, you'll need to notify manually after saving.</div>}
                   </div>
                 </div>
               )}
@@ -1357,7 +1357,7 @@ function InvoiceForm({ initialInv, onClose, onSave }) {
               {/* GRN selector */}
               <FField label="Select Posted GRNs" req>
                 {!srcSelected ? <div style={{ padding: "9px 12px", border: `1px solid ${C.border}`, borderRadius: 7, fontSize: 13, fontWeight: 600, color: C.muted }}>{invoiceType === "direct_grc" ? "Select a GRC first" : "Select a PO first"}</div>
-                  : curGrnLoad ? <div style={{ padding: "9px 12px", border: `1px solid ${C.border}`, borderRadius: 7, fontSize: 13, color: C.muted, display: "flex", gap: 8, alignItems: "center" }}><Spinner />Loading GRNsâ€¦</div>
+                  : curGrnLoad ? <div style={{ padding: "9px 12px", border: `1px solid ${C.border}`, borderRadius: 7, fontSize: 13, color: C.muted, display: "flex", gap: 8, alignItems: "center" }}><Spinner />Loading GRNs…</div>
                     : curGrns.length === 0 ? (
                       <div style={{
                         padding: "10px 12px", borderRadius: 7, fontSize: 13, fontWeight: 600,
@@ -1366,8 +1366,8 @@ function InvoiceForm({ initialInv, onClose, onSave }) {
                         border: `1px solid ${curAllGrns.length > 0 ? "#FED7AA" : "#FECACA"}`
                       }}>
                         {curAllGrns.length > 0
-                          ? <><b>âš  {curAllGrns.length} GRN(s) not yet Posted</b><div style={{ fontSize: 13, marginTop: 3 }}>Status: {Object.entries(grnCounts).map(([s, c]) => `${s}(${c})`).join(", ")}</div></>
-                          : <div><b>No GRNs found.</b> {invoiceType === "direct_grc" ? "Create and Post a GRN for this GRC first." : "Flow: PO Approved â†’ GRC â†’ GRN Posted."}</div>}
+                          ? <><b>⚠ {curAllGrns.length} GRN(s) not yet Posted</b><div style={{ fontSize: 13, marginTop: 3 }}>Status: {Object.entries(grnCounts).map(([s, c]) => `${s}(${c})`).join(", ")}</div></>
+                          : <div><b>No GRNs found.</b> {invoiceType === "direct_grc" ? "Create and Post a GRN for this GRC first." : "Flow: PO Approved → GRC → GRN Posted."}</div>}
                       </div>
                     ) : (
                       <div style={{ border: `1px solid ${C.border}`, borderRadius: 7, overflow: "hidden" }}>
@@ -1375,7 +1375,7 @@ function InvoiceForm({ initialInv, onClose, onSave }) {
                           <label key={g.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 14px", borderBottom: `1px solid ${C.border}`, cursor: "pointer", background: header.grnNos.includes(g.grnNo) ? C.accentLight : "#fff", fontSize: 14, fontWeight: 600 }}>
                             <input type="checkbox" checked={header.grnNos.includes(g.grnNo)} onChange={() => handleGRNToggle(g.grnNo)} style={{ accentColor: C.accent }} />
                             <span style={{ fontFamily: "'DM Mono',monospace", color: C.accent, fontWeight: 700 }}>{g.grnNo}</span>
-                            <span style={{ color: C.muted }}>Qty: {n0(g.totalInwardQty).toFixed(3)} Â· ₹{money(g.totalAmount)}</span>
+                            <span style={{ color: C.muted }}>Qty: {n0(g.totalInwardQty).toFixed(3)} · ₹{money(g.totalAmount)}</span>
                           </label>
                         ))}
                       </div>
@@ -1419,14 +1419,14 @@ function InvoiceForm({ initialInv, onClose, onSave }) {
               {needsUPI && <FField label="UPI ID"><input className="inp text-slate-900 font-medium text-sm" value={header.upiId} onChange={e => setH("upiId", e.target.value)} placeholder="vendor@upi" style={{ padding: "8px 12px" }} /></FField>}
               {header.paymentMode === "DD" && <FField label="DD No"><input className="inp text-slate-900 font-medium text-sm" value={header.ddNo} onChange={e => setH("ddNo", e.target.value)} style={{ fontFamily: "'DM Mono',monospace", padding: "8px 12px" }} /></FField>}
               {header.paymentMode === "Advance" && <FField label="Advance Adjusted (₹)"><input className="inp text-slate-900 font-medium text-sm" type="number" value={header.advanceAdjusted} onChange={e => setH("advanceAdjusted", e.target.value)} style={{ fontFamily: "'DM Mono',monospace", padding: "8px 12px" }} /></FField>}
-              <FField label="Narration"><textarea className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 font-medium focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white" rows={3} value={header.narration} onChange={e => setH("narration", e.target.value)} placeholder="Internal notesâ€¦" style={{ resize: "vertical" }} /></FField>
+              <FField label="Narration"><textarea className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 font-medium focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white" rows={3} value={header.narration} onChange={e => setH("narration", e.target.value)} placeholder="Internal notes…" style={{ resize: "vertical" }} /></FField>
             </div>
           </div>
         </FCard>
 
         {/* Line Items */}
         <FCard title="Line Items"
-          sub={invoiceType === "direct_grc" ? "GRN Qty vs Invoiced Qty (no PO rate comparison)" : "GRN Qty vs Invoiced Qty Â· Rate vs PO Rate â€” variances flagged"}
+          sub={invoiceType === "direct_grc" ? "GRN Qty vs Invoiced Qty (no PO rate comparison)" : "GRN Qty vs Invoiced Qty · Rate vs PO Rate — variances flagged"}
           right={<button className="btn" onClick={() => setItems(p => [...p, EMPTY_ITEM()])} style={{ padding: "8px 16px", background: C.accentLight, color: C.accent, border: `1px solid ${C.accentBorder}`, fontSize: 13, fontWeight: 700 }}>+ Row</button>}>
           <div style={{ overflowX: "auto", border: `1px solid ${C.border}`, borderRadius: 7 }}>
             <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 980 }}>
@@ -1454,7 +1454,7 @@ function InvoiceForm({ initialInv, onClose, onSave }) {
                       <td style={{ padding: "10px 8px" }}>
                         {(qtyOver || rateVar) && <span style={{ fontSize: 11, background: "#FEF3C7", color: "#92400E", border: "1px solid #FDE68A", borderRadius: 4, padding: "2px 6px", fontWeight: 700, marginRight: 4 }}>Warning</span>}
                         <button onClick={() => setItems(p => p.filter((_, i) => i !== idx))} disabled={items.length === 1}
-                          style={{ background: "none", border: "none", cursor: "pointer", color: "#B91C1C", fontSize: 18, opacity: items.length === 1 ? 0.2 : 1 }}>âœ•</button>
+                          style={{ background: "none", border: "none", cursor: "pointer", color: "#B91C1C", fontSize: 18, opacity: items.length === 1 ? 0.2 : 1 }}>✕</button>
                       </td>
                     </tr>
                   );
@@ -1477,7 +1477,7 @@ function InvoiceForm({ initialInv, onClose, onSave }) {
             </div>
           </FCard>
           <FCard title="Preview Totals" sub="Backend recomputes on save">
-            {[["Subtotal", totals.subtotal, C.text], ["â€“ Discount", -totals.totalDiscount, C.green], ["+ Tax", totals.totalTax, C.blue], ["+ Freight", clamp0(header.freightCharges), C.muted], ["+ Other", clamp0(header.otherCharges), C.muted], ["Round Off", clamp0(header.roundOff), C.muted], ["â€“ Advance", -clamp0(header.advanceAdjusted), "#7C3AED"]].map(([label, val, color]) => (
+            {[["Subtotal", totals.subtotal, C.text], ["– Discount", -totals.totalDiscount, C.green], ["+ Tax", totals.totalTax, C.blue], ["+ Freight", clamp0(header.freightCharges), C.muted], ["+ Other", clamp0(header.otherCharges), C.muted], ["Round Off", clamp0(header.roundOff), C.muted], ["– Advance", -clamp0(header.advanceAdjusted), "#7C3AED"]].map(([label, val, color]) => (
               <div key={label} style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", borderBottom: `1px solid ${C.border}`, fontSize: 14, fontWeight: 600 }}>
                 <span style={{ color: C.muted }}>{label}</span>
                 <span style={{ fontFamily: "'DM Mono',monospace", color }}>{val < 0 ? "-" : ""}₹{money(Math.abs(val))}</span>
@@ -1496,14 +1496,14 @@ function InvoiceForm({ initialInv, onClose, onSave }) {
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
           <TypeBadge t={invoiceType} />
           {invoiceType === "direct_grc" && !header.vendorEmail && !header.vendorPhone && (
-            <span style={{ fontSize: 13, color: "#92400E", fontFamily: "'DM Sans',sans-serif", fontWeight: 700 }}>No contact info â€” notification will be manual after save</span>
+            <span style={{ fontSize: 13, color: "#92400E", fontFamily: "'DM Sans',sans-serif", fontWeight: 700 }}>No contact info — notification will be manual after save</span>
           )}
         </div>
         <div style={{ display: "flex", gap: 10 }}>
           <GhostBtn onClick={onClose}>Cancel</GhostBtn>
           <button className="btn" onClick={handleSubmitForm} disabled={saving}
             style={{ padding: "12px 28px", background: saving ? "#D4CEBF" : C.accent, color: "#fff", fontSize: 14, fontWeight: 700, borderRadius: 8, boxShadow: saving ? "none" : "0 4px 14px rgba(139,69,19,.3)" }}>
-            {saving ? "Savingâ€¦" : initialInv ? "Update Invoice" : "Save & Notify Vendor"}
+            {saving ? "Saving…" : initialInv ? "Update Invoice" : "Save & Notify Vendor"}
           </button>
         </div>
       </div>
@@ -1537,7 +1537,7 @@ function PaymentForm({ inv, onClose, showToast }) {
   return (
     <div style={{ background: "#fff", borderRadius: 14, padding: 28, width: "min(540px,94vw)", fontFamily: "'DM Sans',sans-serif", maxHeight: "90vh", overflowY: "auto" }}>
       <h3 style={{ margin: "0 0 4px", fontFamily: "'Crimson Pro',serif", fontSize: 20, fontWeight: 300 }}>Record Payment</h3>
-      <p style={{ margin: "0 0 4px", fontSize: 12, color: C.muted }}>{inv.invoiceNo} â€” {inv.vendorName}</p>
+      <p style={{ margin: "0 0 4px", fontSize: 12, color: C.muted }}>{inv.invoiceNo} — {inv.vendorName}</p>
       <div style={{ display: "flex", gap: 10, marginBottom: 18, flexWrap: "wrap" }}>
         <span style={{ fontSize: 12 }}>Total: <b style={{ fontFamily: "'DM Mono',monospace", color: C.accent }}>₹{money(inv.invoiceTotal)}</b></span>
         <span style={{ fontSize: 12 }}>Paid: <b style={{ fontFamily: "'DM Mono',monospace", color: C.green }}>₹{money(inv.paidAmount)}</b></span>
@@ -1579,18 +1579,18 @@ function PaymentForm({ inv, onClose, showToast }) {
         {form.paymentMode === "DD" && <div><div style={{ fontSize: 11, fontWeight: 600, color: C.muted, marginBottom: 5 }}>DD Number</div><input className="inp" value={form.ddNo} onChange={e => setF("ddNo", e.target.value)} style={{ fontFamily: "'DM Mono',monospace" }} /></div>}
         {!["Net30", "Net45", "Net60", "Advance"].includes(form.paymentMode) && <div><div style={{ fontSize: 11, fontWeight: 600, color: C.muted, marginBottom: 5 }}>Reference / Transaction No</div><input className="inp" value={form.referenceNo} onChange={e => setF("referenceNo", e.target.value)} placeholder="UTR / Txn ID" style={{ fontFamily: "'DM Mono',monospace" }} /></div>}
         <div><div style={{ fontSize: 11, fontWeight: 600, color: C.muted, marginBottom: 5 }}>Remarks</div><input className="inp" value={form.remarks} onChange={e => setF("remarks", e.target.value)} placeholder="Optional notes" /></div>
-        {needsPDC && <div style={{ padding: "10px 13px", borderRadius: 7, background: "#FFF7ED", border: "1px solid #FED7AA", fontSize: 12, color: "#C2410C" }}>ðŸ“… <b>Post-Dated Cheque:</b> Payment registered now. Mark cleared when cheque actually clears.</div>}
+        {needsPDC && <div style={{ padding: "10px 13px", borderRadius: 7, background: "#FFF7ED", border: "1px solid #FED7AA", fontSize: 12, color: "#C2410C" }}>📅 <b>Post-Dated Cheque:</b> Payment registered now. Mark cleared when cheque actually clears.</div>}
       </div>
       <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 20 }}>
         <GhostBtn onClick={onClose}>Cancel</GhostBtn>
-        <button className="btn" onClick={pay} disabled={saving} style={{ padding: "10px 22px", background: "#15803D", color: "#fff", fontSize: 13 }}>{saving ? "Recordingâ€¦" : `Record ₹${money(form.amount)}`}</button>
+        <button className="btn" onClick={pay} disabled={saving} style={{ padding: "10px 22px", background: "#15803D", color: "#fff", fontSize: 13 }}>{saving ? "Recording…" : `Record ₹${money(form.amount)}`}</button>
       </div>
     </div>
   );
 }
 
 /* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-   INVOICE VIEW MODAL â€” with Notify tab
+   INVOICE VIEW MODAL — with Notify tab
 â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
 function InvoiceViewModal({ inv: initialInv, onClose, showToast, onRefresh }) {
   const [inv, setInv] = useState(initialInv);
@@ -1628,12 +1628,12 @@ function InvoiceViewModal({ inv: initialInv, onClose, showToast, onRefresh }) {
   const resolveQuery = async (qid) => { try { await fetch(`${PI_API}/${inv.id}/vendor-query/${qid}/resolve`, { method: "POST" }); showToast("Query resolved"); refresh(); } catch (e) { showToast(e.message, "err"); } };
 
   const TABS = [
-    { id: "details", label: "ðŸ“‹ Details" },
-    { id: "items", label: "ðŸ“¦ Line Items" },
-    { id: "payment", label: "ðŸ’³ Payments" },
+    { id: "details", label: "📋 Details" },
+    { id: "items", label: "📦 Line Items" },
+    { id: "payment", label: "💳 Payments" },
     { id: "queries", label: `â“ Queries${queries.filter(q => q.status === "Open").length > 0 ? ` (${queries.filter(q => q.status === "Open").length})` : ""}` },
-    { id: "notify", label: "ðŸ”” Notify" },
-    { id: "timeline", label: "ðŸ“œ Timeline" },
+    { id: "notify", label: "🔔 Notify" },
+    { id: "timeline", label: "📜 Timeline" },
   ];
 
   return (
@@ -1648,10 +1648,10 @@ function InvoiceViewModal({ inv: initialInv, onClose, showToast, onRefresh }) {
           </div>
           <p style={{ margin: "4px 0 0", fontSize: 11, color: C.muted }}>
             Vendor Inv: {inv.vendorInvoiceNo}
-            {isDirect ? ` Â· GRC: ${inv.directGrcNo || "â€”"}` : ` Â· PO: ${inv.poNo}`}
-            {" Â· GRNs: "}{(inv.grnNos || []).join(", ") || "â€”"}
-            {inv.vendorEmail && <span> Â· ðŸ“§ {inv.vendorEmail}</span>}
-            {!inv.isRegisteredVendor && inv.vendorPhone && <span> Â· ðŸ“± {inv.vendorPhone}</span>}
+            {isDirect ? ` · GRC: ${inv.directGrcNo || "—"}` : ` · PO: ${inv.poNo}`}
+            {" · GRNs: "}{(inv.grnNos || []).join(", ") || "—"}
+            {inv.vendorEmail && <span> · 📧 {inv.vendorEmail}</span>}
+            {!inv.isRegisteredVendor && inv.vendorPhone && <span> · 📱 {inv.vendorPhone}</span>}
           </p>
         </div>
         <button className="btn" onClick={onClose} style={{ padding: "7px 14px", background: C.card, color: C.muted, border: `1px solid ${C.border}`, fontSize: 12 }}>Close</button>
@@ -1672,7 +1672,7 @@ function InvoiceViewModal({ inv: initialInv, onClose, showToast, onRefresh }) {
 
       <div style={{ flex: 1, overflowY: "auto", padding: "20px 24px" }}>
 
-        {/* â”€â”€ DETAILS â”€â”€ */}
+        {/* ── DETAILS ── */}
         {tab === "details" && (
           <>
             {/* Match banner */}
@@ -1680,25 +1680,25 @@ function InvoiceViewModal({ inv: initialInv, onClose, showToast, onRefresh }) {
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
                 <div style={{ display: "flex", gap: 20, flexWrap: "wrap" }}>
                   {isDirect
-                    ? [["GRN Match", match.grn_match], ["Rate Consistent", match.rate_match]].map(([l, ok]) => (<span key={l} style={{ fontSize: 12, fontWeight: 700, color: ok ? "#166534" : "#991B1B" }}>{ok ? "âœ“" : "âœ—"} {l}</span>))
-                    : [["PO Match", match.po_match], ["GRN Match", match.grn_match], ["Rate Match", match.rate_match]].map(([l, ok]) => (<span key={l} style={{ fontSize: 12, fontWeight: 700, color: ok ? "#166534" : "#991B1B" }}>{ok ? "âœ“" : "âœ—"} {l}</span>))}
+                    ? [["GRN Match", match.grn_match], ["Rate Consistent", match.rate_match]].map(([l, ok]) => (<span key={l} style={{ fontSize: 12, fontWeight: 700, color: ok ? "#166534" : "#991B1B" }}>{ok ? "✓" : "✗"} {l}</span>))
+                    : [["PO Match", match.po_match], ["GRN Match", match.grn_match], ["Rate Match", match.rate_match]].map(([l, ok]) => (<span key={l} style={{ fontSize: 12, fontWeight: 700, color: ok ? "#166534" : "#991B1B" }}>{ok ? "✓" : "✗"} {l}</span>))}
                 </div>
                 {match.variance_amount > 0 && <span style={{ fontSize: 12, color: C.muted }}>Variance: ₹{money(match.variance_amount)}</span>}
               </div>
               {match.notes && <div style={{ fontSize: 12, marginTop: 6, color: match.matched ? "#166534" : "#991B1B" }}>{match.notes}</div>}
-              {isDirect && <div style={{ fontSize: 11, marginTop: 4, color: C.muted }}>Direct GRC â€” PO match not applicable.</div>}
+              {isDirect && <div style={{ fontSize: 11, marginTop: 4, color: C.muted }}>Direct GRC — PO match not applicable.</div>}
             </div>
 
             {/* Detail grid */}
             <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 10, marginBottom: 14 }}>
               {[["Status", "STATUS"], ["Pay Status", "PAYMENT"], ["Vendor Type", "VTYPE"], ["Invoice Type", "ITYPE"],
               ["Vendor", inv.vendorName], ["Invoice Date", fmtDate(inv.invoiceDate)], ["Due Date", fmtDate(inv.dueDate)],
-              isDirect ? ["Source GRC", inv.directGrcNo || "â€”"] : ["Source PO", inv.poNo || "â€”"],
+              isDirect ? ["Source GRC", inv.directGrcNo || "—"] : ["Source PO", inv.poNo || "—"],
               ["Payment Mode", inv.paymentMode], ["Invoice Total", `₹${money(inv.invoiceTotal)}`], ["Paid", `₹${money(inv.paidAmount)}`], ["Balance Due", `₹${money(inv.balanceDue)}`],
               ].map(([k, v]) => (
                 <div key={k} style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, padding: "10px 14px" }}>
                   <div style={{ fontSize: 9, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".6px", marginBottom: 4 }}>{k}</div>
-                  {v === "STATUS" ? <StatusPill s={inv.status} /> : v === "PAYMENT" ? <PayStatusPill s={inv.paymentStatus} /> : v === "VTYPE" ? <VendorBadge isRegistered={inv.isRegisteredVendor} /> : v === "ITYPE" ? <TypeBadge t={inv.invoiceType} /> : <div style={{ fontSize: 12, fontWeight: 600 }}>{v || "â€”"}</div>}
+                  {v === "STATUS" ? <StatusPill s={inv.status} /> : v === "PAYMENT" ? <PayStatusPill s={inv.paymentStatus} /> : v === "VTYPE" ? <VendorBadge isRegistered={inv.isRegisteredVendor} /> : v === "ITYPE" ? <TypeBadge t={inv.invoiceType} /> : <div style={{ fontSize: 12, fontWeight: 600 }}>{v || "—"}</div>}
                 </div>
               ))}
             </div>
@@ -1707,16 +1707,16 @@ function InvoiceViewModal({ inv: initialInv, onClose, showToast, onRefresh }) {
             <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 10, padding: "14px 18px", marginBottom: 14 }}>
               <div style={{ fontSize: 10, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".6px", marginBottom: 10 }}>Vendor Notification Status</div>
               <div style={{ display: "flex", gap: 20, flexWrap: "wrap", fontSize: 12, alignItems: "center" }}>
-                <div><span style={{ color: C.muted }}>Notified: </span><b style={{ color: inv.vendorNotified ? C.green : C.red }}>{inv.vendorNotified ? "âœ“ Yes" : "âœ— No"}</b>{inv.vendorNotified && <span style={{ color: C.muted, marginLeft: 6 }}>{fmtDate(inv.vendorNotifiedAt?.slice(0, 10))}</span>}</div>
-                <div><span style={{ color: C.muted }}>Acknowledged: </span><b style={{ color: inv.vendorAcknowledged ? C.green : C.muted }}>{inv.vendorAcknowledged ? "âœ“ Yes" : "â€”"}</b></div>
-                {inv.isRegisteredVendor ? <div style={{ color: C.green, fontWeight: 700 }}>ðŸ–¥ï¸ Portal notifications active</div> : <>
-                  {inv.vendorEmail && <div>ðŸ“§ {inv.vendorEmail}</div>}
-                  {inv.vendorPhone && <div>ðŸ“± {inv.vendorPhone}</div>}
-                  {!inv.vendorEmail && !inv.vendorPhone && <div style={{ color: C.red, fontWeight: 700 }}>âš  No contact info â€” go to Notify tab</div>}
+                <div><span style={{ color: C.muted }}>Notified: </span><b style={{ color: inv.vendorNotified ? C.green : C.red }}>{inv.vendorNotified ? "✓ Yes" : "✗ No"}</b>{inv.vendorNotified && <span style={{ color: C.muted, marginLeft: 6 }}>{fmtDate(inv.vendorNotifiedAt?.slice(0, 10))}</span>}</div>
+                <div><span style={{ color: C.muted }}>Acknowledged: </span><b style={{ color: inv.vendorAcknowledged ? C.green : C.muted }}>{inv.vendorAcknowledged ? "✓ Yes" : "—"}</b></div>
+                {inv.isRegisteredVendor ? <div style={{ color: C.green, fontWeight: 700 }}>🖥ï¸ Portal notifications active</div> : <>
+                  {inv.vendorEmail && <div>📧 {inv.vendorEmail}</div>}
+                  {inv.vendorPhone && <div>📱 {inv.vendorPhone}</div>}
+                  {!inv.vendorEmail && !inv.vendorPhone && <div style={{ color: C.red, fontWeight: 700 }}>⚠ No contact info — go to Notify tab</div>}
                 </>}
                 <button className="btn" onClick={() => setTab("notify")}
                   style={{ padding: "6px 14px", fontSize: 11, background: "#2563EB", color: "#fff", marginLeft: "auto" }}>
-                  ðŸ”” Send Notification
+                  🔔 Send Notification
                 </button>
               </div>
             </div>
@@ -1736,7 +1736,7 @@ function InvoiceViewModal({ inv: initialInv, onClose, showToast, onRefresh }) {
           </>
         )}
 
-        {/* â”€â”€ LINE ITEMS â”€â”€ */}
+        {/* ── LINE ITEMS ── */}
         {tab === "items" && Array.isArray(inv.items) && (
           <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 10, overflow: "hidden" }}>
             <div style={{ overflowX: "auto" }}>
@@ -1750,8 +1750,8 @@ function InvoiceViewModal({ inv: initialInv, onClose, showToast, onRefresh }) {
                   {inv.items.map((it, i) => (
                     <tr key={i} style={{ borderBottom: `1px solid ${C.border}`, background: it.varianceFlag ? "#FFFBEB" : i % 2 === 0 ? "#fff" : C.surface }}>
                       <td style={{ padding: "9px 12px", fontSize: 11, color: C.muted }}>{i + 1}</td>
-                      <td style={{ padding: "9px 12px", fontFamily: "'DM Mono',monospace", fontSize: 12, color: C.accent }}>{it.barcode || "â€”"}</td>
-                      <td style={{ padding: "9px 12px", fontSize: 12 }}>{it.description || "â€”"}</td>
+                      <td style={{ padding: "9px 12px", fontFamily: "'DM Mono',monospace", fontSize: 12, color: C.accent }}>{it.barcode || "—"}</td>
+                      <td style={{ padding: "9px 12px", fontSize: 12 }}>{it.description || "—"}</td>
                       <td style={{ padding: "9px 12px", fontFamily: "'DM Mono',monospace", fontSize: 12, color: C.blue }}>{n0(it.grnQty).toFixed(3)}</td>
                       <td style={{ padding: "9px 12px", fontFamily: "'DM Mono',monospace", fontSize: 12 }}>{n0(it.invoicedQty).toFixed(3)}</td>
                       <td style={{ padding: "9px 12px", fontFamily: "'DM Mono',monospace", fontSize: 12 }}>₹{money(it.rate)}</td>
@@ -1759,7 +1759,7 @@ function InvoiceViewModal({ inv: initialInv, onClose, showToast, onRefresh }) {
                       <td style={{ padding: "9px 12px", fontFamily: "'DM Mono',monospace", fontSize: 12, color: C.blue }}>₹{money(it.taxAmount)}</td>
                       <td style={{ padding: "9px 12px", fontFamily: "'DM Mono',monospace", fontSize: 12, color: C.green }}>₹{money(it.discountAmount)}</td>
                       <td style={{ padding: "9px 12px", fontFamily: "'DM Mono',monospace", fontSize: 12, fontWeight: 600, color: C.accent }}>₹{money(it.lineAmount)}</td>
-                      <td style={{ padding: "9px 12px" }}>{it.varianceFlag && <span style={{ fontSize: 10, background: "#FEF3C7", color: "#92400E", border: "1px solid #FDE68A", borderRadius: 4, padding: "2px 6px", fontWeight: 700 }}>âš  {it.varianceFlag}</span>}</td>
+                      <td style={{ padding: "9px 12px" }}>{it.varianceFlag && <span style={{ fontSize: 10, background: "#FEF3C7", color: "#92400E", border: "1px solid #FDE68A", borderRadius: 4, padding: "2px 6px", fontWeight: 700 }}>⚠ {it.varianceFlag}</span>}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -1773,7 +1773,7 @@ function InvoiceViewModal({ inv: initialInv, onClose, showToast, onRefresh }) {
           </div>
         )}
 
-        {/* â”€â”€ PAYMENTS â”€â”€ */}
+        {/* ── PAYMENTS ── */}
         {tab === "payment" && (
           <>
             {schedule.length > 0 && (
@@ -1812,7 +1812,7 @@ function InvoiceViewModal({ inv: initialInv, onClose, showToast, onRefresh }) {
           </>
         )}
 
-        {/* â”€â”€ QUERIES â”€â”€ */}
+        {/* ── QUERIES ── */}
         {tab === "queries" && (
           <>
             <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 10, padding: 16, marginBottom: 14 }}>
@@ -1821,8 +1821,8 @@ function InvoiceViewModal({ inv: initialInv, onClose, showToast, onRefresh }) {
                 <div><div style={{ fontSize: 11, fontWeight: 600, color: C.muted, marginBottom: 5 }}>Subject *</div><input className="inp" value={queryText.subject} onChange={e => setQueryText(p => ({ ...p, subject: e.target.value }))} placeholder="Brief subject" /></div>
                 <div><div style={{ fontSize: 11, fontWeight: 600, color: C.muted, marginBottom: 5 }}>Type</div><select className="inp" value={queryText.queryType} onChange={e => setQueryText(p => ({ ...p, queryType: e.target.value }))}>{["General", "RateDispute", "QtyDispute", "TaxDispute", "PaymentDispute", "Other"].map(t => <option key={t}>{t}</option>)}</select></div>
               </div>
-              <div style={{ marginBottom: 10 }}><div style={{ fontSize: 11, fontWeight: 600, color: C.muted, marginBottom: 5 }}>Description</div><textarea className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white" rows={3} value={queryText.description} onChange={e => setQueryText(p => ({ ...p, description: e.target.value }))} placeholder="Describe the issueâ€¦" style={{ resize: "vertical" }} /></div>
-              <button className="btn" onClick={raiseQuery} disabled={submitting} style={{ padding: "9px 18px", background: C.accent, color: "#fff", fontSize: 12 }}>{submitting ? "Raisingâ€¦" : "Raise Query"}</button>
+              <div style={{ marginBottom: 10 }}><div style={{ fontSize: 11, fontWeight: 600, color: C.muted, marginBottom: 5 }}>Description</div><textarea className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white" rows={3} value={queryText.description} onChange={e => setQueryText(p => ({ ...p, description: e.target.value }))} placeholder="Describe the issue…" style={{ resize: "vertical" }} /></div>
+              <button className="btn" onClick={raiseQuery} disabled={submitting} style={{ padding: "9px 18px", background: C.accent, color: "#fff", fontSize: 12 }}>{submitting ? "Raising…" : "Raise Query"}</button>
             </div>
             {queries.length === 0 ? <div style={{ textAlign: "center", padding: 32, color: C.muted, fontSize: 13 }}>No queries yet.</div>
               : queries.map((q, i) => (
@@ -1834,7 +1834,7 @@ function InvoiceViewModal({ inv: initialInv, onClose, showToast, onRefresh }) {
                     </div>
                     <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                       <span style={{ fontSize: 10, color: C.muted }}>{q.raisedAt?.slice(0, 10)}</span>
-                      {q.status !== "Resolved" && <button className="btn" onClick={() => resolveQuery(q.queryId)} style={{ padding: "4px 10px", fontSize: 11, background: "#F0FDF4", color: "#166534", border: "1px solid #BBF7D0" }}>âœ“ Resolve</button>}
+                      {q.status !== "Resolved" && <button className="btn" onClick={() => resolveQuery(q.queryId)} style={{ padding: "4px 10px", fontSize: 11, background: "#F0FDF4", color: "#166534", border: "1px solid #BBF7D0" }}>✓ Resolve</button>}
                     </div>
                   </div>
                   {q.description && <div style={{ padding: "10px 16px", fontSize: 13, color: C.text, borderBottom: `1px solid ${C.border}` }}>{q.description}</div>}
@@ -1849,7 +1849,7 @@ function InvoiceViewModal({ inv: initialInv, onClose, showToast, onRefresh }) {
                   ))}
                   {q.status !== "Resolved" && (
                     <div style={{ padding: "10px 16px", display: "flex", gap: 8 }}>
-                      <input className="inp" value={replyText[q.queryId] || ""} onChange={e => setReplyText(p => ({ ...p, [q.queryId]: e.target.value }))} placeholder="Type replyâ€¦" style={{ flex: 1 }} onKeyDown={e => { if (e.key === "Enter") sendReply(q.queryId); }} />
+                      <input className="inp" value={replyText[q.queryId] || ""} onChange={e => setReplyText(p => ({ ...p, [q.queryId]: e.target.value }))} placeholder="Type reply…" style={{ flex: 1 }} onKeyDown={e => { if (e.key === "Enter") sendReply(q.queryId); }} />
                       <button className="btn" onClick={() => sendReply(q.queryId)} style={{ padding: "9px 14px", background: C.accent, color: "#fff", fontSize: 12 }}>Send</button>
                     </div>
                   )}
@@ -1858,12 +1858,12 @@ function InvoiceViewModal({ inv: initialInv, onClose, showToast, onRefresh }) {
           </>
         )}
 
-        {/* â”€â”€ NOTIFY TAB (inline) â”€â”€ */}
+        {/* ── NOTIFY TAB (inline) ── */}
         {tab === "notify" && (
           <NotifyVendorModal inv={inv} onClose={() => setTab("details")} showToast={showToast} inlineMode />
         )}
 
-        {/* â”€â”€ TIMELINE â”€â”€ */}
+        {/* ── TIMELINE ── */}
         {tab === "timeline" && (
           <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 10, padding: 20 }}>
             <div style={{ fontSize: 12, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".6px", marginBottom: 16 }}>Notification &amp; Event Log</div>
@@ -1871,7 +1871,7 @@ function InvoiceViewModal({ inv: initialInv, onClose, showToast, onRefresh }) {
               : [...(inv.notificationLog || [])].reverse().map((n, i) => (
                 <div key={i} style={{ display: "flex", gap: 12, paddingBottom: 14, borderBottom: i < (inv.notificationLog || []).length - 1 ? `1px solid ${C.border}` : "none", marginBottom: 14 }}>
                   <div style={{ width: 34, height: 34, borderRadius: "50%", background: C.accentLight, border: `1px solid ${C.accentBorder}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 15, flexShrink: 0 }}>
-                    {n.event === "invoice_created" ? "ðŸ“‹" : n.event === "invoice_submitted" ? "ðŸ“¤" : n.event === "payment_recorded" ? "ðŸ’³" : n.event === "invoice_approved" ? "âœ…" : n.event === "manual_notification" ? "ðŸ“¢" : "ðŸ“§"}
+                    {n.event === "invoice_created" ? "📋" : n.event === "invoice_submitted" ? "📤" : n.event === "payment_recorded" ? "💳" : n.event === "invoice_approved" ? "✅" : n.event === "manual_notification" ? "📢" : "📧"}
                   </div>
                   <div style={{ flex: 1 }}>
                     <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 2, flexWrap: "wrap" }}>
@@ -1882,20 +1882,20 @@ function InvoiceViewModal({ inv: initialInv, onClose, showToast, onRefresh }) {
                         color: n.isRegistered ? "#166534" : "#92400E",
                         border: `1px solid ${n.isRegistered ? "#BBF7D0" : "#FDE68A"}`
                       }}>
-                        {n.channel || "â€”"}
+                        {n.channel || "—"}
                       </span>
                       <span style={{
                         fontSize: 10, padding: "1px 7px", borderRadius: 8, fontWeight: 700,
                         background: n.status === "delivered" ? "#F0FDF4" : n.status === "queued" ? "#FFF7ED" : "#FEF2F2",
                         color: n.status === "delivered" ? "#166534" : n.status === "queued" ? "#C2410C" : "#991B1B"
                       }}>
-                        {n.status || "â€”"}
+                        {n.status || "—"}
                       </span>
                     </div>
                     {n.message && <div style={{ fontSize: 12, color: C.muted, lineHeight: 1.5 }}>{n.message}</div>}
                     {n.deliveryDetail && <div style={{ fontSize: 11, color: C.muted, marginTop: 3, fontStyle: "italic" }}>{n.deliveryDetail}</div>}
                     <div style={{ fontSize: 10, color: C.muted, marginTop: 4 }}>
-                      {n.sentAt?.slice(0, 19).replace("T", " ")} Â· To: {n.to || "â€”"}
+                      {n.sentAt?.slice(0, 19).replace("T", " ")} · To: {n.to || "—"}
                       {n.isManual && <span style={{ marginLeft: 6, background: "#EFF6FF", color: "#1E40AF", padding: "1px 5px", borderRadius: 4, fontWeight: 700 }}>Manual</span>}
                     </div>
                   </div>
@@ -1923,14 +1923,14 @@ function AgingReport({ showToast }) {
     })();
   }, []);
 
-  if (loading) return <div className="p-12 text-center text-sm font-medium text-slate-500">Loading aging reportâ€¦</div>;
+  if (loading) return <div className="p-12 text-center text-sm font-medium text-slate-500">Loading aging report…</div>;
   if (!data) return null;
 
   const buckets = [
     { key: "current", label: "Not Yet Due", colorClass: "text-emerald-600", bgClass: "bg-emerald-50", borderClass: "border-emerald-200" },
-    { key: "0-30", label: "0â€“30 Days", colorClass: "text-amber-600", bgClass: "bg-amber-50", borderClass: "border-amber-200" },
-    { key: "31-60", label: "31â€“60 Days", colorClass: "text-orange-600", bgClass: "bg-orange-50", borderClass: "border-orange-200" },
-    { key: "61-90", label: "61â€“90 Days", colorClass: "text-red-600", bgClass: "bg-red-50", borderClass: "border-red-200" },
+    { key: "0-30", label: "0–30 Days", colorClass: "text-amber-600", bgClass: "bg-amber-50", borderClass: "border-amber-200" },
+    { key: "31-60", label: "31–60 Days", colorClass: "text-orange-600", bgClass: "bg-orange-50", borderClass: "border-orange-200" },
+    { key: "61-90", label: "61–90 Days", colorClass: "text-red-600", bgClass: "bg-red-50", borderClass: "border-red-200" },
     { key: "90+", label: "90+ Days", colorClass: "text-rose-800", bgClass: "bg-rose-50", borderClass: "border-rose-200" },
   ];
   const grandTotal = Object.values(data.totals || {}).reduce((s, v) => s + v, 0);
@@ -1941,13 +1941,13 @@ function AgingReport({ showToast }) {
         {buckets.map(b => (
           <div key={b.key} className={`rounded-2xl border bg-white p-5 shadow-sm transition hover:shadow-md ${b.borderClass}`}>
             <div className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-600">{b.label}</div>
-            <div className={`font-mono text-xl font-semibold ${b.colorClass}`}>â‚¹{money(data.totals?.[b.key] || 0)}</div>
+            <div className={`font-mono text-xl font-semibold ${b.colorClass}`}>₹{money(data.totals?.[b.key] || 0)}</div>
             <div className="mt-1 text-sm font-medium text-slate-500">{(data.buckets?.[b.key] || []).length} invoice(s)</div>
           </div>
         ))}
       </div>
       <div className="text-base font-semibold text-slate-500 mb-4">
-        Grand Total Outstanding: <b className="font-mono text-indigo-700">â‚¹{money(grandTotal)}</b>
+        Grand Total Outstanding: <b className="font-mono text-indigo-700">₹{money(grandTotal)}</b>
       </div>
       <div className="space-y-4">
         {buckets.map(b => {
@@ -1957,7 +1957,7 @@ function AgingReport({ showToast }) {
             <div key={b.key} className={`overflow-hidden rounded-2xl border bg-white shadow-sm mb-3 ${b.borderClass}`}>
               <div className={`flex items-center justify-between border-b px-5 py-4 ${b.bgClass} ${b.borderClass}`}>
                 <span className={`text-base font-medium ${b.colorClass}`}>{b.label}</span>
-                <span className={`font-mono text-base font-semibold ${b.colorClass}`}>â‚¹{money(data.totals?.[b.key] || 0)}</span>
+                <span className={`font-mono text-base font-semibold ${b.colorClass}`}>₹{money(data.totals?.[b.key] || 0)}</span>
               </div>
               <div className="overflow-x-auto">
                 <table className="w-full border-collapse text-left text-sm min-w-[800px]">
@@ -1971,15 +1971,15 @@ function AgingReport({ showToast }) {
                   <tbody className="divide-y divide-slate-100">
                     {entries.map((e, i) => (
                       <tr key={i} className="transition-colors hover:bg-slate-50">
-                        <td className="px-4 py-3.5 font-mono text-sm font-medium text-indigo-700">{e.invoiceNo || "â€”"}</td>
-                        <td className="px-4 py-3.5 text-sm font-semibold text-slate-800">{e.vendor || "â€”"}</td>
+                        <td className="px-4 py-3.5 font-mono text-sm font-medium text-indigo-700">{e.invoiceNo || "—"}</td>
+                        <td className="px-4 py-3.5 text-sm font-semibold text-slate-800">{e.vendor || "—"}</td>
                         <td className="px-4 py-3.5"><TypeBadge t={e.invoiceType} /></td>
                         <td className="px-4 py-3.5"><VendorBadge isRegistered={e.isRegisteredVendor} /></td>
-                        <td className="px-4 py-3.5 font-mono text-sm text-slate-650 text-slate-600">â‚¹{money(e.invoiceTotal)}</td>
-                        <td className={`px-4 py-3.5 font-mono text-sm font-semibold ${b.colorClass}`}>â‚¹{money(e.balanceDue)}</td>
+                        <td className="px-4 py-3.5 font-mono text-sm text-slate-650 text-slate-600">₹{money(e.invoiceTotal)}</td>
+                        <td className={`px-4 py-3.5 font-mono text-sm font-semibold ${b.colorClass}`}>₹{money(e.balanceDue)}</td>
                         <td className="px-4 py-3.5 text-sm font-medium text-slate-500">{fmtDate(e.dueDate)}</td>
                         <td className={`px-4 py-3.5 font-mono text-sm font-semibold ${e.daysOverdue > 60 ? "text-red-600" : "text-slate-500"}`}>{e.daysOverdue}d</td>
-                        <td className="px-4 py-3.5 text-sm font-medium text-slate-500">{e.paymentMode || "â€”"}</td>
+                        <td className="px-4 py-3.5 text-sm font-medium text-slate-500">{e.paymentMode || "—"}</td>
                       </tr>
                     ))}
                   </tbody>

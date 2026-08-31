@@ -26,6 +26,7 @@ from ..auth import create_password_setup_token
 from ..email_utils import send_password_setup_email
 from ..config import settings
 from ..retailer_plans import retailer_plan_config
+from ..utils import gstin_checksum_valid
 
 cloudinary.config(
     cloud_name=settings.cloudinary_cloud_name,
@@ -39,6 +40,12 @@ router = APIRouter(prefix="/hq", tags=["HQ Store Management"])
 KYB_GRACE_PERIOD_DAYS = 30
 PAN_RE = re.compile(r"[A-Z]{5}[0-9]{4}[A-Z]")
 GSTIN_RE = re.compile(r"\d{2}[A-Z]{5}\d{4}[A-Z][A-Z\d]Z[A-Z\d]")
+AADHAAR_RE = re.compile(r"[2-9]\d{11}")
+# Aadhaar is the identity anchor for a sole proprietor (no separate legal
+# entity exists to hold PAN/GST apart from the individual); a Partnership/
+# LLP/company already has its own registration documents, so Aadhaar stays
+# optional for those.
+BUSINESS_ENTITY_TYPES = {"Sole Proprietorship", "Partnership", "LLP", "Private Limited", "Public Limited", "Other"}
 
 TenantCtx = Dict[str, Any]
 
@@ -940,8 +947,11 @@ async def get_tenant_kyb(ctx: TenantCtx = Depends(get_hq_tenant)):
         "required_after": tenant.get("kyb_required_after"),
         "legal_name": kyb.get("legal_name", ""),
         "business_address": kyb.get("business_address", ""),
+        "business_entity_type": kyb.get("business_entity_type", ""),
         "pan": kyb.get("pan", ""),
         "gstin": kyb.get("gstin", ""),
+        "aadhar_last4": kyb.get("aadhar_last4", ""),
+        "aadhar_document_url": kyb.get("aadhar_document_url", ""),
         "gst_certificate_url": kyb.get("gst_certificate_url", ""),
         "pan_document_url": kyb.get("pan_document_url", ""),
         "cancelled_cheque_url": kyb.get("cancelled_cheque_url", ""),
@@ -964,6 +974,7 @@ async def upload_tenant_kyb_document(
         "gst_certificate": "gst_certificate_url",
         "pan_document": "pan_document_url",
         "cancelled_cheque": "cancelled_cheque_url",
+        "aadhar_document": "aadhar_document_url",
     }
     if document_type not in field_by_type:
         raise HTTPException(status_code=400, detail="Choose a valid business verification document type.")
@@ -1000,7 +1011,7 @@ async def upload_tenant_kyb_document(
 async def submit_tenant_kyb(request: Request, ctx: TenantCtx = Depends(get_hq_tenant)):
     """Submit this retailer's business verification for SuperAdmin review."""
     body = await request.json()
-    required = ("legal_name", "business_address", "pan", "gstin")
+    required = ("legal_name", "business_address", "pan", "gstin", "business_entity_type")
     values = {key: str(body.get(key) or "").strip() for key in required}
     missing = [key.replace("_", " ") for key, value in values.items() if not value]
     if missing:
@@ -1011,8 +1022,13 @@ async def submit_tenant_kyb(request: Request, ctx: TenantCtx = Depends(get_hq_te
     gstin = values["gstin"].upper()
     if not GSTIN_RE.fullmatch(gstin):
         raise HTTPException(status_code=400, detail="GSTIN must be a valid 15-character GST number.")
+    if not gstin_checksum_valid(gstin):
+        raise HTTPException(status_code=400, detail="That GSTIN's check digit doesn't match — please re-check it for a typo.")
+    entity_type = values["business_entity_type"]
+    if entity_type not in BUSINESS_ENTITY_TYPES:
+        raise HTTPException(status_code=400, detail="Select a valid business entity type.")
     urls = {}
-    for key in ("gst_certificate_url", "pan_document_url", "cancelled_cheque_url"):
+    for key in ("gst_certificate_url", "pan_document_url", "cancelled_cheque_url", "aadhar_document_url"):
         value = str(body.get(key) or "").strip()
         if value and not re.match(r"^https://", value, re.I):
             raise HTTPException(status_code=400, detail=f"{key.replace('_', ' ')} must be a secure https link.")
@@ -1020,11 +1036,19 @@ async def submit_tenant_kyb(request: Request, ctx: TenantCtx = Depends(get_hq_te
     if not urls.get("gst_certificate_url") or not urls.get("pan_document_url"):
         raise HTTPException(status_code=400, detail="Upload both the GST certificate and PAN document before submitting.")
 
+    aadhar_number = re.sub(r"\D", "", str(body.get("aadhar_number") or ""))
+    aadhar_last4 = aadhar_number[-4:] if aadhar_number else str(body.get("aadhar_last4") or "").strip()[-4:]
+    if aadhar_number and not AADHAAR_RE.fullmatch(aadhar_number):
+        raise HTTPException(status_code=400, detail="Aadhaar must be a valid 12-digit number.")
+    if entity_type == "Sole Proprietorship" and (not aadhar_last4 or not urls.get("aadhar_document_url")):
+        raise HTTPException(status_code=400, detail="A Sole Proprietorship needs the proprietor's Aadhaar number and document — there's no separate legal entity to identify the business apart from the individual.")
+
     account_number = str(body.get("account_number") or "").strip()
     account_last4 = account_number[-4:] if account_number else str(body.get("account_last4") or "").strip()[-4:]
     kyb = {
         "legal_name": values["legal_name"][:200], "business_address": values["business_address"][:600],
-        "pan": pan, "gstin": gstin, **urls,
+        "business_entity_type": entity_type,
+        "pan": pan, "gstin": gstin, "aadhar_last4": aadhar_last4, **urls,
         "bank_account_holder": str(body.get("bank_account_holder") or "").strip()[:160],
         "bank_name": str(body.get("bank_name") or "").strip()[:160],
         "account_last4": account_last4,

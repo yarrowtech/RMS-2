@@ -58,6 +58,7 @@ import StoreOwnerDashboard from "./components/StoreOwner/StoreOwnerDashboard.jsx
 import StorePurchasing from "./components/StoreOwner/StorePurchasing.jsx";
 import StoreOwnerStaff from "./components/StoreOwner/StoreOwnerStaff.jsx";
 import StoreOwnerVerification from "./components/StoreOwner/StoreOwnerVerification.jsx";
+import StoreOwnerUsageAnalytics from "./components/StoreOwner/StoreOwnerUsageAnalytics.jsx";
 import RetailerHelpSupport from "./components/RetailerHelpSupport.jsx";
 
 
@@ -130,6 +131,7 @@ export default function App() {
         <Route path="/dashboard/store-owner/purchasing" element={<DepartmentRouteGuard department="Store Owner"><StorePurchasing /></DepartmentRouteGuard>} />
         <Route path="/dashboard/store-owner/staff"   element={<DepartmentRouteGuard department="Store Owner"><StoreOwnerStaff /></DepartmentRouteGuard>} />
         <Route path="/dashboard/store-owner/verification" element={<DepartmentRouteGuard department="Store Owner"><StoreOwnerVerification /></DepartmentRouteGuard>} />
+        <Route path="/dashboard/store-owner/usage-analytics" element={<DepartmentRouteGuard department="Store Owner"><StoreOwnerUsageAnalytics /></DepartmentRouteGuard>} />
 
         {/* Legacy department dashboards (keep for backward compatibility) */}
         <Route path="/cashier"            element={<DepartmentRouteGuard department="Cashier"><Cashier /></DepartmentRouteGuard>} />

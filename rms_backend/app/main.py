@@ -16,6 +16,7 @@ from .routes.mbuyer_routes import router as mbuyer_router
 from .routes.uploads import router as uploads_router
 from .routes.stock_allocation_routes import router as stock_allocation_router
 from .routes.inventory_product_routes import router as inv_product_router
+from .routes.inventory_import_routes import router as inventory_import_router
 from .routes.hq_store_routes import router as hq_store_router
 from .routes.superadmin_vendor_routes import router as superadmin_vendor_router
 from .routes.catalogue_routes import router as catalogue_router
@@ -115,6 +116,7 @@ app.include_router(stock_transfer_router)
 app.include_router(mbuyer_router)
 app.include_router(stock_allocation_router)
 app.include_router(inv_product_router)
+app.include_router(inventory_import_router)
 app.include_router(tenant_router)
 app.include_router(hq_store_router)
 app.include_router(superadmin_vendor_router)

@@ -58,7 +58,7 @@ from ..db import (
     tenants_collection,
 )
 from ..config import settings, frontend_url
-from ..utils import hash_password, verify_password
+from ..utils import gstin_checksum_valid, hash_password, verify_password
 from ..email_utils import (
     send_vendor_confirmation_email,
     send_vendor_invite_email,
@@ -75,6 +75,13 @@ from ..activity_log import log_activity
 from ..vision_extract import extract_visiting_card
 
 vendor_bp = APIRouter(prefix="/api/vendors", tags=["Vendors"])
+
+AADHAAR_RE = re.compile(r"[2-9]\d{11}")
+# Same reasoning as hq_store_routes.py's retailer KYB: a Sole Proprietorship
+# has no separate legal entity from the individual, so Aadhaar is the
+# identity anchor there; a Partnership/LLP/company already has its own
+# registration documents, so it stays optional for those.
+VENDOR_ENTITY_TYPES = {"Sole Proprietorship", "Partnership", "LLP", "Private Limited", "Public Limited", "Other"}
 
 SECRET_KEY = settings.secret_key
 ALGORITHM = "HS256"
@@ -777,6 +784,7 @@ async def update_vendor_settings(request: Request, vendor: dict = Depends(requir
         "gstin": 15,
         "gstCategory": 40,
         "gstState": 60,
+        "legalEntityType": 40,
     }
     for field, maximum in profile_limits.items():
         if field not in profile:
@@ -790,6 +798,10 @@ async def update_vendor_settings(request: Request, vendor: dict = Depends(requir
             raise HTTPException(status_code=400, detail="PAN must be in the format AAAAA9999A.")
         if field == "gstin" and value and not re.fullmatch(r"\d{2}[A-Z]{5}\d{4}[A-Z][A-Z\d]Z[A-Z\d]", value):
             raise HTTPException(status_code=400, detail="GSTIN must be a valid 15-character GST number.")
+        if field == "gstin" and value and not gstin_checksum_valid(value):
+            raise HTTPException(status_code=400, detail="That GSTIN's check digit doesn't match — please re-check it for a typo.")
+        if field == "legalEntityType" and value and value not in VENDOR_ENTITY_TYPES:
+            raise HTTPException(status_code=400, detail="Select a valid business entity type.")
         updates[field] = value
 
     current_settings = vendor.get("settings") if isinstance(vendor.get("settings"), dict) else {}
@@ -853,6 +865,7 @@ async def update_vendor_settings(request: Request, vendor: dict = Depends(requir
             "gstin": updated.get("gstin", ""),
             "gstCategory": updated.get("gstCategory", ""),
             "gstState": updated.get("gstState", ""),
+            "legalEntityType": updated.get("legalEntityType", ""),
             "settings": {
                 "notification_preferences": notifications,
                 "order_preferences": order_defaults,
@@ -871,6 +884,7 @@ async def upload_vendor_kyb_document(
         "gst_certificate": "gst_certificate_url",
         "pan_document": "pan_document_url",
         "cancelled_cheque": "cancelled_cheque_url",
+        "aadhar_document": "aadhar_document_url",
     }
     if document_type not in field_by_type:
         raise HTTPException(status_code=400, detail="Choose a valid KYB document type.")
@@ -916,6 +930,7 @@ async def get_vendor_kyb(vendor: dict = Depends(require_vendor_identity)):
         "ifsc": kyb.get("ifsc", ""), "account_last4": kyb.get("account_last4", ""),
         "gst_certificate_url": kyb.get("gst_certificate_url", ""), "pan_document_url": kyb.get("pan_document_url", ""),
         "cancelled_cheque_url": kyb.get("cancelled_cheque_url", ""), "submitted_at": kyb.get("submitted_at"),
+        "aadhar_last4": kyb.get("aadhar_last4", ""), "aadhar_document_url": kyb.get("aadhar_document_url", ""),
         "relationships": [{"tenant_id": row.get("tenant_id"), "relationship_status": row.get("status", "Pending"), "status": row.get("kyb_status", "Not started"), "note": row.get("kyb_note", ""), "reviewed_at": row.get("kyb_reviewed_at")} for row in links],
     }}
 
@@ -931,6 +946,9 @@ async def submit_vendor_kyb(request: Request, vendor: dict = Depends(require_ven
         raise HTTPException(status_code=400, detail=f"Complete: {', '.join(missing)}.")
     if not vendor.get("pan") or not vendor.get("gstin"):
         raise HTTPException(status_code=400, detail="Save valid PAN and GSTIN in Tax & registration before submitting KYB.")
+    entity_type = str(vendor.get("legalEntityType") or "").strip()
+    if entity_type and entity_type not in VENDOR_ENTITY_TYPES:
+        entity_type = ""
     account_number = re.sub(r"[\s-]", "", values["account_number"])
     if not re.fullmatch(r"\d{9,18}", account_number):
         raise HTTPException(status_code=400, detail="Bank account number must contain 9 to 18 digits.")
@@ -938,15 +956,23 @@ async def submit_vendor_kyb(request: Request, vendor: dict = Depends(require_ven
     if not re.fullmatch(r"[A-Z]{4}0[A-Z0-9]{6}", ifsc):
         raise HTTPException(status_code=400, detail="IFSC must be in the format AAAA0AAAAAA.")
     urls = {}
-    for key in ("gst_certificate_url", "pan_document_url", "cancelled_cheque_url"):
+    for key in ("gst_certificate_url", "pan_document_url", "cancelled_cheque_url", "aadhar_document_url"):
         value = str(body.get(key) or "").strip()
         if value and not re.match(r"^https://", value, re.I):
             raise HTTPException(status_code=400, detail=f"{key.replace('_', ' ')} must be a secure https link.")
         urls[key] = value
+
+    aadhar_number = re.sub(r"\D", "", str(body.get("aadhar_number") or ""))
+    aadhar_last4 = aadhar_number[-4:] if aadhar_number else str(body.get("aadhar_last4") or "").strip()[-4:]
+    if aadhar_number and not AADHAAR_RE.fullmatch(aadhar_number):
+        raise HTTPException(status_code=400, detail="Aadhaar must be a valid 12-digit number.")
+    if entity_type == "Sole Proprietorship" and (not aadhar_last4 or not urls.get("aadhar_document_url")):
+        raise HTTPException(status_code=400, detail="A Sole Proprietorship needs your Aadhaar number and document — set your business entity type and add these in Tax & registration first.")
+
     kyb = {
         "legal_name": values["legal_name"][:200], "business_address": values["business_address"][:600],
         "bank_account_holder": values["bank_account_holder"][:160], "bank_name": values["bank_name"][:160],
-        "ifsc": ifsc, "account_last4": account_number[-4:], **urls,
+        "ifsc": ifsc, "account_last4": account_number[-4:], "aadhar_last4": aadhar_last4, **urls,
         "submitted_at": datetime.utcnow(), "updated_at": datetime.utcnow(),
     }
     await vendors_collection.update_one({"_id": vendor["_id"]}, {"$set": {"kyb": kyb}})

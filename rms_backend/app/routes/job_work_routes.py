@@ -247,6 +247,11 @@ def _serialize(document: dict) -> dict:
     for key in ("created_at", "updated_at", "issued_at", "due_date"):
         if isinstance(row.get(key), datetime):
             row[key] = row[key].isoformat()
+    if isinstance(row.get("comments"), list):
+        row["comments"] = [
+            {**comment, "date": comment["date"].isoformat() if isinstance(comment.get("date"), datetime) else comment.get("date")}
+            for comment in row["comments"]
+        ]
     row["is_overdue"] = _is_overdue(row)
     return row
 
@@ -1270,11 +1275,34 @@ async def create_manual_fabric_purchase_order(payload: dict, ctx: dict = Depends
     return await _create_fabric_po_document(ctx, payload, plan=None)
 
 
+async def _linked_theme_swatch(tenant_id: str, material_plan_id: str | None) -> dict | None:
+    """A Tech Pack's optional material_plan_id points at a Style BOM plan;
+    a Fabric Theme separately points at zero or more BOM plans via
+    plan_ids. Neither record points at the other directly, so this walks
+    BOM -> Theme to surface the theme name + its vendor fabric swatches on
+    the Tech Pack — read-only enrichment, no new field stored on either
+    record, nothing to keep in sync."""
+    if not material_plan_id:
+        return None
+    theme = await fabric_themes_collection.find_one({"tenant_id": tenant_id, "plan_ids": material_plan_id})
+    if not theme:
+        return None
+    swatches = [{
+        "image_url": line.get("image_url", ""),
+        "fabric_type": line.get("fabric_type", ""), "gsm": line.get("gsm", ""),
+        "width": line.get("width", ""), "color": line.get("color", ""),
+        "vendor_name": line.get("vendor_name") or (line.get("walkin_vendor") or {}).get("name") or "",
+    } for line in (theme.get("lines") or [])]
+    return {"id": str(theme["_id"]), "theme_name": theme.get("theme_name", ""), "swatches": swatches}
+
+
 @router.get("/tech-packs")
 async def list_tech_packs(ctx: dict = Depends(_require_job_work)):
     rows = []
     async for pack in tech_packs_collection.find({"tenant_id": ctx["tenant_id"]}).sort("updated_at", -1).limit(300):
-        rows.append(_serialize(pack))
+        row = _serialize(pack)
+        row["linked_theme"] = await _linked_theme_swatch(ctx["tenant_id"], pack.get("material_plan_id"))
+        rows.append(row)
     return {"data": rows}
 
 
@@ -1320,6 +1348,9 @@ async def create_tech_pack(request: Request, ctx: dict = Depends(_require_job_wo
         "department": str(payload.get("department") or "").strip()[:80],
         "version": version,
         "status": "Draft",
+        "theme_name": str(payload.get("theme_name") or "").strip()[:120],
+        "collection": str(payload.get("collection") or "").strip()[:120],
+        "designer_name": str(payload.get("designer_name") or "").strip()[:120],
         "sample_size": str(payload.get("sample_size") or "").strip()[:40],
         "description": str(payload.get("description") or "").strip()[:1200],
         "fabric_notes": str(payload.get("fabric_notes") or "").strip()[:2000],
@@ -1349,6 +1380,7 @@ async def create_tech_pack(request: Request, ctx: dict = Depends(_require_job_wo
         "artwork_images": _category_images("artwork"),
         "trims_images": _category_images("trims"),
         "colourway_images": _category_images("colourway"),
+        "comments": [],
         "created_by": ctx.get("admin_id"),
         "created_at": now,
         "updated_at": now,
@@ -1365,7 +1397,35 @@ async def get_tech_pack(tech_pack_id: str, ctx: dict = Depends(_require_job_work
     pack = await tech_packs_collection.find_one({"_id": ObjectId(tech_pack_id), "tenant_id": ctx["tenant_id"]})
     if not pack:
         raise HTTPException(status_code=404, detail="Tech pack not found.")
-    return {"data": _serialize(pack)}
+    row = _serialize(pack)
+    row["linked_theme"] = await _linked_theme_swatch(ctx["tenant_id"], pack.get("material_plan_id"))
+    return {"data": row}
+
+
+@router.post("/tech-packs/{tech_pack_id}/comments", status_code=201)
+async def add_tech_pack_comment(tech_pack_id: str, payload: dict, ctx: dict = Depends(_require_job_work)):
+    """A dated, appended note — for a small correction ('use the right
+    button reference') that doesn't warrant cutting a whole new version.
+    Never edited or removed once added, so it stays a genuine history."""
+    if not ObjectId.is_valid(tech_pack_id):
+        raise HTTPException(status_code=400, detail="Invalid tech pack.")
+    note = str(payload.get("note") or "").strip()[:1000]
+    if not note:
+        raise HTTPException(status_code=400, detail="Comment cannot be empty.")
+    comment = {
+        "note": note,
+        "author": ctx.get("admin_name") or ctx.get("admin_email") or "",
+        "date": datetime.utcnow(),
+    }
+    result = await tech_packs_collection.update_one(
+        {"_id": ObjectId(tech_pack_id), "tenant_id": ctx["tenant_id"]},
+        {"$push": {"comments": comment}, "$set": {"updated_at": datetime.utcnow()}},
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Tech pack not found.")
+    pack = await tech_packs_collection.find_one({"_id": ObjectId(tech_pack_id), "tenant_id": ctx["tenant_id"]})
+    return {"message": "Comment added.", "data": _serialize(pack)}
+
 
 @router.get("/orders")
 async def list_orders(status: str = "", ctx: dict = Depends(_require_job_work)):
@@ -1476,6 +1536,8 @@ async def create_order(request: Request, ctx: dict = Depends(_require_job_work))
             "id": str(tech_pack["_id"]), "tech_pack_no": tech_pack.get("tech_pack_no", ""),
             "version": tech_pack.get("version", ""), "design_no": tech_pack.get("design_no", ""),
             "style_name": tech_pack.get("style_name", ""), "department": tech_pack.get("department", ""),
+            "theme_name": tech_pack.get("theme_name", ""), "collection": tech_pack.get("collection", ""),
+            "designer_name": tech_pack.get("designer_name", ""),
             "description": tech_pack.get("description", ""), "fabric_notes": tech_pack.get("fabric_notes", ""),
             "measurement_notes": tech_pack.get("measurement_notes", ""), "construction_notes": tech_pack.get("construction_notes", ""),
             "artwork_notes": tech_pack.get("artwork_notes", ""), "trims_labels_notes": tech_pack.get("trims_labels_notes", ""),

@@ -141,7 +141,7 @@ import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
 //     dailySales: 18,
 //     avgSales: 220,
 //     stockAlert: "OK",
-//     // âœ… usable dates for food
+//     // ✅ usable dates for food
 //     mfgDate: "2026-01-01",
 //     expDate: "2026-07-01",
 //     trend: 12,
@@ -291,7 +291,7 @@ import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
 //     setError("");
 //   }, [fromDate, toDate, dateValid]);
 
-//   /* âœ… Date range filter first */
+//   /* ✅ Date range filter first */
 //   const dateRows = useMemo(() => {
 //     if (!fromDate || !toDate) return [];
 
@@ -309,7 +309,7 @@ import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
 //     });
 //   }, [fromDate, toDate]);
 
-//   /* âœ… Dropdown options (cascading) */
+//   /* ✅ Dropdown options (cascading) */
 //   const storeOptions = useMemo(() => STORE_MASTER, []);
 
 //   const divisionOptions = useMemo(() => {
@@ -332,7 +332,7 @@ import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
 //     return uniqSorted(base.map((r) => r.department));
 //   }, [dateRows, storeFilter, divisionFilter, sectionFilter]);
 
-//   /* âœ… Final filtered rows */
+//   /* ✅ Final filtered rows */
 //   const filteredRows = useMemo(() => {
 //     let rows = dateRows;
 //     if (storeFilter !== "All") rows = rows.filter((r) => r.store === storeFilter);
@@ -342,7 +342,7 @@ import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
 //     return rows;
 //   }, [dateRows, storeFilter, divisionFilter, sectionFilter, departmentFilter]);
 
-//   /* âœ… Cascading safety */
+//   /* ✅ Cascading safety */
 //   useEffect(() => {
 //     if (divisionFilter !== "All" && !divisionOptions.includes(divisionFilter)) {
 //       setDivisionFilter("All");
@@ -478,9 +478,9 @@ import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
 //         String(r.dailySales ?? ""),
 //         String(r.avgSales ?? ""),
 //         String(r.stockAlert ?? ""),
-//         mfg || "â€”",
-//         exp || "â€”",
-//         expBadge || "â€”",
+//         mfg || "—",
+//         exp || "—",
+//         expBadge || "—",
 //         String(trendSafe),
 //         String(seasonSafe),
 //         String(forecastQty),
@@ -789,15 +789,15 @@ import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
 //                         </div>
 //                       </td>
 
-//                       {/* âœ… Food-only MFG/EXP */}
+//                       {/* ✅ Food-only MFG/EXP */}
 //                       <td className="px-3 py-2 border-r border-[#D6DEE8]">
 //                         {isFood ? (
 //                           <div className={cn(boxCls, "space-y-1")}>
 //                             <div className="text-[12px]">
-//                               <span className="font-semibold">MFG:</span> {fmtISO(r.mfgDate) || "â€”"}
+//                               <span className="font-semibold">MFG:</span> {fmtISO(r.mfgDate) || "—"}
 //                             </div>
 //                             <div className="text-[12px]">
-//                               <span className="font-semibold">EXP:</span> {fmtISO(r.expDate) || "â€”"}
+//                               <span className="font-semibold">EXP:</span> {fmtISO(r.expDate) || "—"}
 //                             </div>
 
 //                             <div
@@ -1111,7 +1111,7 @@ export default function StockPlanForecastingDemandForecastSheet() {
                   <FaFileUpload /> Sales Data Upload
                 </div>
                 <div className="text-[12px] text-slate-500 mt-1">
-                  Expected: Store, Division, Section, Department, BillQty, Cat1â€“Cat5
+                  Expected: Store, Division, Section, Department, BillQty, Cat1–Cat5
                 </div>
               </div>
               <input
@@ -1130,7 +1130,7 @@ export default function StockPlanForecastingDemandForecastSheet() {
                   <FaFileUpload /> Stock Data Upload
                 </div>
                 <div className="text-[12px] text-slate-500 mt-1">
-                  Expected: Store, Division, Section, Department, ClosingQty, Cat1â€“Cat5
+                  Expected: Store, Division, Section, Department, ClosingQty, Cat1–Cat5
                 </div>
               </div>
               <input
@@ -1181,7 +1181,7 @@ export default function StockPlanForecastingDemandForecastSheet() {
             disabled={loading}
             className="bg-blue-700 hover:bg-blue-800 text-white px-4 py-2 rounded-xl text-sm font-semibold"
           >
-            {loading ? "Loading..." : "ðŸ”„ Generate Stock Gap Report"}
+            {loading ? "Loading..." : "🔄 Generate Stock Gap Report"}
           </button>
         </div>
 
@@ -1234,7 +1234,7 @@ export default function StockPlanForecastingDemandForecastSheet() {
               {!stockGapData.length && (
                 <tr>
                   <td colSpan={13} className="px-4 py-6 text-center text-sm text-slate-600">
-                    No Stock Gap data available. Upload files and click â€œGenerate Stock Gap Reportâ€.
+                    No Stock Gap data available. Upload files and click “Generate Stock Gap Reportâ€.
                   </td>
                 </tr>
               )}

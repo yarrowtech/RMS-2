@@ -5,14 +5,14 @@ import { useParams, useNavigate } from "react-router-dom";
 
 const API_BASE = APP_API_URL;
 
-// â”€â”€ Token helper: vendor_token first, then admin_token, then token â”€â”€
+// ── Token helper: vendor_token first, then admin_token, then token ──
 const getToken = () =>
   localStorage.getItem("vendor_token") ||
   localStorage.getItem("admin_token") ||
   localStorage.getItem("token") ||
   "";
 
-/* â”€â”€ Toast â”€â”€ */
+/* ── Toast ── */
 function Toast({ msg, type, onClose }) {
   useEffect(() => {
     const t = setTimeout(onClose, 3800);
@@ -203,7 +203,7 @@ export default function EditProduct({ embedded = false, product: productProp = n
   return (
     <div className={embedded ? "w-full rounded-2xl bg-slate-50 p-4 sm:p-5" : "min-h-screen bg-slate-50"}>
 
-      {/* â”€â”€ Standalone header â”€â”€ */}
+      {/* ── Standalone header ── */}
       {!embedded && (
         <header className="sticky top-0 z-30 flex h-[60px] items-center justify-between border-b border-slate-200 bg-white/90 px-4 backdrop-blur sm:px-6">
           <div className="flex items-center gap-3 sm:gap-4">
@@ -221,13 +221,13 @@ export default function EditProduct({ embedded = false, product: productProp = n
               className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:-translate-y-[1px] hover:bg-indigo-700 hover:shadow-md disabled:opacity-50"
               onClick={handleSave} disabled={saving}
             >
-              {saving ? <><span className="h-[14px] w-[14px] animate-spin rounded-full border-2 border-white/30 border-t-white" />Savingâ€¦</> : <>âœ“ Save Changes</>}
+              {saving ? <><span className="h-[14px] w-[14px] animate-spin rounded-full border-2 border-white/30 border-t-white" />Saving…</> : <>✓ Save Changes</>}
             </button>
           </div>
         </header>
       )}
 
-      {/* â”€â”€ Embedded header â”€â”€ */}
+      {/* ── Embedded header ── */}
       {embedded && (
         <div className="mb-5 flex flex-col gap-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0">
@@ -248,21 +248,21 @@ export default function EditProduct({ embedded = false, product: productProp = n
               className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:-translate-y-[1px] hover:bg-indigo-700 hover:shadow-md disabled:opacity-50"
               onClick={handleSave} disabled={saving}
             >
-              {saving ? <><span className="h-[14px] w-[14px] animate-spin rounded-full border-2 border-white/30 border-t-white" />Savingâ€¦</> : "Save Changes"}
+              {saving ? <><span className="h-[14px] w-[14px] animate-spin rounded-full border-2 border-white/30 border-t-white" />Saving…</> : "Save Changes"}
             </button>
           </div>
         </div>
       )}
 
-      {/* â”€â”€ GRN banner â”€â”€ */}
+      {/* ── GRN banner ── */}
       {isGRN && (
         <div className="mb-5 flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
-          <span className="text-[22px]">ðŸ“‹</span>
+          <span className="text-[22px]">📋</span>
           <div>
             <p className="text-[11px] font-bold uppercase tracking-[1px] text-amber-600">Auto-created from GRN Inward</p>
             <p className="text-[13px] font-semibold text-amber-800">
-              GRN: {product.grn_no || "â€”"}
-              {product.vendor_name ? ` Â· ${product.vendor_name}` : ""}
+              GRN: {product.grn_no || "—"}
+              {product.vendor_name ? ` · ${product.vendor_name}` : ""}
             </p>
             <p className="mt-1 text-[11px] text-amber-600">
               Review the product details, pricing, stock and images before saving.</p>
@@ -272,7 +272,7 @@ export default function EditProduct({ embedded = false, product: productProp = n
 
       <div className={`mx-auto grid w-full max-w-[1480px] grid-cols-1 gap-5 ${embedded ? "" : "px-4 py-6 sm:px-6"} lg:grid-cols-[1fr_340px]`}>
 
-        {/* â”€â”€ Left column â”€â”€ */}
+        {/* ── Left column ── */}
         <div className="flex min-w-0 flex-col gap-5">
 
           {/* Basic info */}
@@ -306,7 +306,7 @@ export default function EditProduct({ embedded = false, product: productProp = n
             </div>
           </div>
 
-          {/* Pricing & stock â€” simple product */}
+          {/* Pricing & stock — simple product */}
           {!isVariant && (
             <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_4px_16px_rgba(15,23,42,0.05)]">
               <div className="flex items-center gap-3 border-b border-slate-100 bg-slate-50/70 px-5 py-4">
@@ -350,7 +350,7 @@ export default function EditProduct({ embedded = false, product: productProp = n
               <div className="flex items-center gap-3 border-b border-slate-100 bg-slate-50/70 px-5 py-4">
                 <div className="flex h-[30px] w-[30px] items-center justify-center rounded-lg border border-indigo-200 bg-indigo-50 text-[10px] font-bold text-indigo-700">03</div>
                 <span className="flex items-center text-[11px] font-bold uppercase tracking-[0.12em] text-slate-500">
-                  Variants â€” Pricing & Stock
+                  Variants — Pricing & Stock
                   <span className="ml-2 inline-flex min-w-[20px] items-center justify-center rounded-full bg-indigo-50 px-2 py-0.5 text-[10px] font-bold text-indigo-700">{variants.length}</span>
                 </span>
                 <span className={`ml-auto rounded-full border px-2.5 py-1 text-[9px] font-bold uppercase tracking-[0.1em] ${vType === "size_color" ? "border-amber-200 bg-amber-50 text-amber-700" : "border-emerald-200 bg-emerald-50 text-emerald-700"}`}>
@@ -401,7 +401,7 @@ export default function EditProduct({ embedded = false, product: productProp = n
           )}
         </div>
 
-        {/* â”€â”€ Right column â”€â”€ */}
+        {/* ── Right column ── */}
         <div className="flex min-w-0 flex-col gap-5">
 
           {/* Images */}
@@ -421,20 +421,20 @@ export default function EditProduct({ embedded = false, product: productProp = n
                   {keepImgs.map((url) => (
                     <div key={url} className="group relative aspect-square overflow-hidden rounded-xl border border-slate-200 bg-slate-50">
                       <img src={url} alt="" className="h-full w-full object-cover transition duration-200 group-hover:scale-105" />
-                      <button type="button" className="absolute right-1 top-1 flex h-[22px] w-[22px] items-center justify-center rounded-full bg-red-500 text-[10px] text-white opacity-0 transition group-hover:opacity-100" onClick={() => setKeepImgs((p) => p.filter((u) => u !== url))}>âœ•</button>
+                      <button type="button" className="absolute right-1 top-1 flex h-[22px] w-[22px] items-center justify-center rounded-full bg-red-500 text-[10px] text-white opacity-0 transition group-hover:opacity-100" onClick={() => setKeepImgs((p) => p.filter((u) => u !== url))}>✕</button>
                     </div>
                   ))}
                 </div>
               )}
               {newFiles.length > 0 && (
                 <>
-                  <p className="mb-2 text-[9px] font-bold uppercase tracking-[0.1em] text-indigo-700">New â€” pending upload</p>
+                  <p className="mb-2 text-[9px] font-bold uppercase tracking-[0.1em] text-indigo-700">New — pending upload</p>
                   <div className="mb-4 grid grid-cols-3 gap-2.5">
                     {newFiles.map((f, i) => (
                       <div key={i} className="relative aspect-square overflow-hidden rounded-xl border border-indigo-300 bg-indigo-50">
                         <img src={URL.createObjectURL(f)} alt="" className="h-full w-full object-cover" />
                         <span className="absolute bottom-1 left-1 rounded bg-indigo-600 px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-[0.08em] text-white">New</span>
-                        <button type="button" className="absolute right-1 top-1 flex h-[22px] w-[22px] items-center justify-center rounded-full bg-red-500 text-[10px] text-white" onClick={() => setNewFiles((p) => p.filter((_, j) => j !== i))}>âœ•</button>
+                        <button type="button" className="absolute right-1 top-1 flex h-[22px] w-[22px] items-center justify-center rounded-full bg-red-500 text-[10px] text-white" onClick={() => setNewFiles((p) => p.filter((_, j) => j !== i))}>✕</button>
                       </div>
                     ))}
                   </div>

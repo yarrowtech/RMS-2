@@ -752,7 +752,7 @@ function VariantMatrixModal({ parent, onClose, onLoad, onCreate }) {
   );
 }
 
-/* â”€â”€ Store Item Editor â€” details and quantity are deliberately separate â”€â”€ */
+/* ── Store Item Editor — details and quantity are deliberately separate ── */
 function StoreStockEditorModal({ row, onClose, onSaveDetails, onAdjustQuantity, onPrint, onGenerateSku, onManageVariants, mappingRows = [] }) {
   const [draft, setDraft] = useState({});
   const [qtyChange, setQtyChange] = useState("");
@@ -817,7 +817,7 @@ function StoreStockEditorModal({ row, onClose, onSaveDetails, onAdjustQuantity, 
         <div className="flex items-start justify-between gap-4 border-b border-slate-100 bg-gradient-to-r from-indigo-700 to-violet-700 px-5 py-4 text-white">
           <div className="min-w-0">
             <div className="flex items-center gap-2 text-lg font-extrabold"><FaEdit /> Edit Store Item</div>
-            <div className="mt-1 truncate text-xs text-indigo-100">{row.description || row.barcode} Â· Barcode: <span className="font-mono">{row.barcode}</span></div>
+            <div className="mt-1 truncate text-xs text-indigo-100">{row.description || row.barcode} · Barcode: <span className="font-mono">{row.barcode}</span></div>
           </div>
           <button onClick={onClose} className="grid h-8 w-8 shrink-0 place-items-center rounded-lg border border-white/25 bg-white/10 text-white hover:bg-white/20"><FaTimes /></button>
         </div>

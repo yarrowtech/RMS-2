@@ -11,7 +11,7 @@ import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import { toast } from "react-hot-toast";
 
-// â”€â”€ Helper â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Helper ──────────────────────────────────────────────────────────────────
 const fmt = (n) => `₹${Number(n).toLocaleString("en-IN")}`;
 
 function KPICard({ title, value, icon, color, iconColor }) {
@@ -44,7 +44,7 @@ function SectionCard({ title, badge, children }) {
   );
 }
 
-// â”€â”€ Main Component â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Main Component ───────────────────────────────────────────────────────────
 export default function FinanceTaxGst() {
   // Government GST Payments state
   const [paymentsList, setPaymentsList] = useState([]);
@@ -62,7 +62,7 @@ export default function FinanceTaxGst() {
     const doc = new jsPDF({ orientation: "portrait", unit: "pt", format: "a4" });
     const pageW = 595;
 
-    // â”€â”€ Dark header banner â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Dark header banner ──────────────────────────────────────────
     doc.setFillColor(15, 23, 42);
     doc.rect(0, 0, pageW, 90, "F");
 
@@ -84,21 +84,21 @@ export default function FinanceTaxGst() {
     doc.setFontSize(8.5);
     doc.text(`Generated: ${new Date().toLocaleString("en-IN")}`, pageW - 40, 70, { align: "right" });
 
-    // â”€â”€ Meta row â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Meta row ───────────────────────────────────────────────────
     const metaY = 115;
     doc.setTextColor(51, 65, 85);
     doc.setFont("helvetica", "bold");
     doc.setFontSize(9);
     doc.text("Audit Period:", 40, metaY);
     doc.setFont("helvetica", "normal");
-    doc.text("Jan 2026 â€“ May 2026", 110, metaY);
+    doc.text("Jan 2026 – May 2026", 110, metaY);
 
     doc.setFont("helvetica", "bold");
     doc.text("Tax Office:", 240, metaY);
     doc.setFont("helvetica", "normal");
     doc.text("State GST Authority", 300, metaY);
 
-    // â”€â”€ Summary KPI boxes â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Summary KPI boxes ──────────────────────────────────────────
     const boxes = [
       { label: "Total Collected", value: fmt(totalCollected), color: [238, 242, 255] },
       { label: "Paid to Gov", value: fmt(totalPaid), color: [236, 253, 245] },
@@ -124,7 +124,7 @@ export default function FinanceTaxGst() {
       doc.text(valStr, bx + 8, boxY + 36);
     });
 
-    // â”€â”€ Section title â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Section title ──────────────────────────────────────────────
     doc.setFont("helvetica", "bold");
     doc.setFontSize(10);
     doc.setTextColor(51, 65, 85);
@@ -132,7 +132,7 @@ export default function FinanceTaxGst() {
     doc.setDrawColor(203, 213, 225);
     doc.line(40, 215, pageW - 40, 215);
 
-    // â”€â”€ Main table â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Main table ─────────────────────────────────────────────────
     const tableData = paymentsList.map((row) => [
       row.date,
       row.refNo,
@@ -161,7 +161,7 @@ export default function FinanceTaxGst() {
       margin: { left: 40, right: 40 },
     });
 
-    // â”€â”€ Footer â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Footer ─────────────────────────────────────────────────────
     const finalY = doc.lastAutoTable.finalY + 20;
     doc.setFillColor(248, 250, 252);
     doc.rect(40, finalY, pageW - 80, 50, "F");
@@ -209,7 +209,7 @@ export default function FinanceTaxGst() {
     <div className="min-h-full bg-transparent p-4 lg:p-6 font-sans text-slate-900 flex flex-col gap-6">
       <div className="mx-auto w-full max-w-[1750px] space-y-6 min-w-0">
 
-        {/* â”€â”€ Header â”€â”€ */}
+        {/* ── Header ── */}
         <div className="rounded-3xl border border-slate-200 bg-white/80 backdrop-blur-2xl p-5 shadow-sm flex flex-col gap-4 md:flex-row md:items-center md:justify-between transition-all duration-300">
           <div className="flex items-center gap-4">
             <div className="w-12 h-12 rounded-2xl bg-indigo-50 flex items-center justify-center text-indigo-600 shadow-inner">
@@ -237,7 +237,7 @@ export default function FinanceTaxGst() {
           </div>
         </div>
 
-        {/* â”€â”€ 4 KPI Cards â”€â”€ */}
+        {/* ── 4 KPI Cards ── */}
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
           <KPICard title="Total GST Collected" value={fmt(totalCollected)} icon={<Receipt size={16} />} color="bg-indigo-950/95 border-indigo-400 shadow-indigo-950/80" iconColor="bg-indigo-500/10 text-indigo-400 border border-indigo-500/20" />
           <KPICard title="GST Paid to Government" value={fmt(totalPaid)} icon={<Check size={16} />} color="bg-emerald-950/95 border-emerald-400 shadow-emerald-950/80" iconColor="bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" />
@@ -245,10 +245,10 @@ export default function FinanceTaxGst() {
           <KPICard title="Last Tax Payment" value={fmt(lastPaymentAmount)} icon={<Receipt size={16} />} color="bg-amber-950/95 border-amber-400 shadow-amber-950/80" iconColor="bg-amber-500/10 text-amber-400 border border-amber-500/20" />
         </div>
 
-        {/* â”€â”€ Main Grid â”€â”€ */}
+        {/* ── Main Grid ── */}
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
 
-          {/* Left â€” Government GST Payment History */}
+          {/* Left — Government GST Payment History */}
           <div className="lg:col-span-2 space-y-6">
             <SectionCard title="Government GST Payment History" badge="Tax Remittance">
               <div className="overflow-x-auto max-h-[500px] overflow-y-auto pr-1">
@@ -282,7 +282,7 @@ export default function FinanceTaxGst() {
             </SectionCard>
           </div>
 
-          {/* Right â€” Tax Composition */}
+          {/* Right — Tax Composition */}
           <div className="space-y-6">
             <SectionCard title="Tax Composition" badge="Ledger Share">
               <div className="space-y-4 py-1">
@@ -308,7 +308,7 @@ export default function FinanceTaxGst() {
         </div>
       </div>
 
-      {/* â”€â”€ Record Government GST Payment Modal â”€â”€ */}
+      {/* ── Record Government GST Payment Modal ── */}
       {showPaymentModal && (
         <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
           <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl relative animate-in fade-in zoom-in-95 duration-200">

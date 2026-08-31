@@ -24,12 +24,19 @@ const hqApi = async (path, options = {}) => {
 
 const input = "mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 disabled:bg-slate-50 disabled:text-slate-500";
 const Label = ({ children, ...props }) => <label className="block text-xs font-bold text-slate-600">{children}<input {...props} className={input} /></label>;
+const SelectLabel = ({ children, options, ...props }) => <label className="block text-xs font-bold text-slate-600">{children}<select {...props} className={input}>{options.map((o) => <option key={o || "_empty"} value={o}>{o || "Select..."}</option>)}</select></label>;
+
+const BUSINESS_ENTITY_TYPES = ["", "Sole Proprietorship", "Partnership", "LLP", "Private Limited", "Public Limited", "Other"];
 
 const emptyKyb = {
   legal_name: "",
   business_address: "",
+  business_entity_type: "",
   pan: "",
   gstin: "",
+  aadhar_number: "",
+  aadhar_last4: "",
+  aadhar_document_url: "",
   gst_certificate_url: "",
   pan_document_url: "",
   cancelled_cheque_url: "",
@@ -102,7 +109,7 @@ export default function RetailerVerification({ onSaved }) {
       const body = new FormData();
       body.append("file", file);
       const result = await hqApi(`/kyb/documents/${type}`, { method: "POST", body });
-      const field = type === "gst_certificate" ? "gst_certificate_url" : type === "pan_document" ? "pan_document_url" : "cancelled_cheque_url";
+      const field = type === "gst_certificate" ? "gst_certificate_url" : type === "pan_document" ? "pan_document_url" : type === "aadhar_document" ? "aadhar_document_url" : "cancelled_cheque_url";
       setForm((prev) => ({ ...prev, [field]: result.url }));
     } catch (e) {
       setError(e.message || "Upload failed.");
@@ -154,19 +161,30 @@ export default function RetailerVerification({ onSaved }) {
 
       <div className="mt-5 grid gap-4 sm:grid-cols-2">
         <Label value={form.legal_name || ""} disabled={readOnly} onChange={e => setField("legal_name", e.target.value)}>Legal business name *</Label>
+        <SelectLabel value={form.business_entity_type || ""} disabled={readOnly} options={BUSINESS_ENTITY_TYPES} onChange={e => setField("business_entity_type", e.target.value)}>Business entity type *</SelectLabel>
         <Label value={form.gstin || ""} disabled={readOnly} maxLength={15} onChange={e => setField("gstin", e.target.value.toUpperCase())}>GSTIN *</Label>
         <Label value={form.pan || ""} disabled={readOnly} maxLength={10} onChange={e => setField("pan", e.target.value.toUpperCase())}>PAN *</Label>
         <Label value={form.ifsc || ""} disabled={readOnly} onChange={e => setField("ifsc", e.target.value.toUpperCase())}>IFSC optional</Label>
         <Label value={form.bank_account_holder || ""} disabled={readOnly} onChange={e => setField("bank_account_holder", e.target.value)}>Bank account holder optional</Label>
         <Label value={form.bank_name || ""} disabled={readOnly} onChange={e => setField("bank_name", e.target.value)}>Bank name optional</Label>
         <Label value={form.account_number || ""} disabled={readOnly} onChange={e => setField("account_number", e.target.value)}>Account number optional {form.account_last4 ? `(saved ****${form.account_last4})` : ""}</Label>
+        {form.business_entity_type === "Sole Proprietorship" && (
+          <Label value={form.aadhar_number || ""} disabled={readOnly} maxLength={12} onChange={e => setField("aadhar_number", e.target.value.replace(/\D/g, ""))}>Proprietor's Aadhaar number * {form.aadhar_last4 ? `(saved ****${form.aadhar_last4})` : ""}</Label>
+        )}
         <label className="block text-xs font-bold text-slate-600 sm:col-span-2">Business address *<textarea value={form.business_address || ""} disabled={readOnly} onChange={e => setField("business_address", e.target.value)} className={`${input} min-h-24`} /></label>
       </div>
+
+      {form.business_entity_type === "Sole Proprietorship" && (
+        <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs leading-5 text-amber-900">A Sole Proprietorship has no separate legal entity from you as an individual — Aadhaar is required to identify the business, alongside PAN and GST.</div>
+      )}
 
       <div className="mt-5 grid gap-4 lg:grid-cols-3">
         <DocumentUpload label="GST certificate *" type="gst_certificate" url={form.gst_certificate_url} disabled={readOnly} uploading={uploading} onUpload={uploadDoc} />
         <DocumentUpload label="PAN document *" type="pan_document" url={form.pan_document_url} disabled={readOnly} uploading={uploading} onUpload={uploadDoc} />
         <DocumentUpload label="Cancelled cheque optional" type="cancelled_cheque" url={form.cancelled_cheque_url} disabled={readOnly} uploading={uploading} onUpload={uploadDoc} />
+        {form.business_entity_type === "Sole Proprietorship" && (
+          <DocumentUpload label="Proprietor's Aadhaar *" type="aadhar_document" url={form.aadhar_document_url} disabled={readOnly} uploading={uploading} onUpload={uploadDoc} />
+        )}
       </div>
 
       {!readOnly && <button disabled={saving || Boolean(uploading)} onClick={submit} className="mt-5 inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-black text-white disabled:opacity-60"><ShieldAlert className="h-4 w-4" />{saving ? "Submitting..." : "Submit verification"}</button>}

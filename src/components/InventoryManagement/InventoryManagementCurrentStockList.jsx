@@ -934,13 +934,14 @@ import {
   FaFilter, FaSearch, FaBoxes, FaLayerGroup, FaBuilding,
   FaSyncAlt, FaChevronDown, FaWarehouse, FaTimes, FaTag,
   FaStore, FaUserTie, FaTrashAlt, FaClipboardList, FaEdit,
-  FaPrint, FaExclamationTriangle, FaPlus, FaSlidersH,
+  FaPrint, FaExclamationTriangle, FaPlus, FaSlidersH, FaFileImport,
 } from "react-icons/fa";
 import QuickFillPanel from "../Quickfillpanel";
 import BarcodeStickerPrint from "../Barcodestickerprint.jsx";
 import ReactDOM from "react-dom";
 import InventoryProductForm from "./Inventoryproductform.jsx";
 import SplitProductModal from "./Splitproductmodal.jsx";
+import InventoryBulkImport from "./InventoryBulkImport.jsx";
 
 const API = APP_API_URL;
 
@@ -1555,6 +1556,7 @@ export default function InventoryCurrentStockList() {
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [deleting,     setDeleting]     = useState(false);
   const [genBarcodeFor,setGenBarcodeFor]= useState(null); // barcode string currently generating
+  const [showImport,   setShowImport]   = useState(false);
 
   const [divisions,   setDivisions]   = useState([]);
   const [sections,    setSections]    = useState([]);
@@ -1860,12 +1862,23 @@ export default function InventoryCurrentStockList() {
               className="flex items-center gap-2 px-3 py-2 rounded-xl border border-violet-200 bg-violet-50 hover:bg-violet-100 text-violet-700 text-sm font-bold transition-colors">
               <FaSlidersH className="text-xs" /> Label Settings
             </button>
+            <button onClick={() => setShowImport(true)}
+              className="flex items-center gap-2 px-3 py-2 rounded-xl border border-emerald-200 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 text-sm font-bold transition-colors">
+              <FaFileImport className="text-xs" /> Bulk Import
+            </button>
             <button onClick={() => { setEditProduct(null); setShowForm(true); }}
               className="flex items-center gap-2 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold transition-colors shadow-sm">
               <FaPlus className="text-xs" /> Add Product
             </button>
           </div>
         </div>
+
+        {showImport && (
+          <InventoryBulkImport
+            onClose={() => setShowImport(false)}
+            onImported={fetchData}
+          />
+        )}
 
         {error && (
           <div className="shrink-0 px-4 py-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-sm">

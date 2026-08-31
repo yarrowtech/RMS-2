@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import {
-  ArrowRight, Boxes, Building2, CalendarClock, CheckCircle2, CircleDot, CreditCard, Crown, LogOut, PackagePlus, ShieldCheck, ShoppingCart, Store, Tags, UsersRound, X,
+  ArrowRight, BarChart2, Boxes, Building2, CalendarClock, CheckCircle2, CircleDot, CreditCard, Crown, LogOut, PackagePlus, ShieldCheck, ShoppingCart, Store, Tags, UsersRound, X,
 } from "lucide-react";
 import { clearAuthData } from "../../utils/authRedirect.js";
 import { API_BASE_URL } from "../../config/api.js";
@@ -91,6 +91,13 @@ const WORKSPACES = [
     path: "/dashboard/store-owner/verification",
     icon: ShieldCheck,
     color: "from-emerald-500 to-teal-600",
+  },
+  {
+    title: "Usage Analytics",
+    description: "See which of your staff are actually using RMS — sessions, pages opened, features used, last active.",
+    path: "/dashboard/store-owner/usage-analytics",
+    icon: BarChart2,
+    color: "from-indigo-500 to-violet-600",
   },
 ];
 
