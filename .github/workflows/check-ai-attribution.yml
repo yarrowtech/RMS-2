@@ -1,0 +1,53 @@
+name: Check Commit Attribution
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check-attribution:
+    name: Check for AI Co-Authors
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check commit messages
+        run: |
+          echo "Checking commits for prohibited AI attribution..."
+
+          COMMITS=$(git log \
+            --format='%H' \
+            origin/${{ github.base_ref }}..HEAD)
+
+          FAILED=0
+
+          for COMMIT in $COMMITS; do
+            MESSAGE=$(git show -s --format='%B' "$COMMIT")
+
+            if echo "$MESSAGE" | grep -qiE \
+              'Co-Authored-By:.*Claude|Claude <noreply@anthropic.com>|Anthropic'; then
+
+              echo ""
+              echo "❌ AI attribution detected"
+              echo "Commit: $COMMIT"
+              echo ""
+              echo "$MESSAGE"
+              echo ""
+
+              FAILED=1
+            fi
+          done
+
+          if [ "$FAILED" -eq 1 ]; then
+            echo "❌ Pull request blocked."
+            echo "Remove AI co-author attribution from the commit(s)."
+            exit 1
+          fi
+
+          echo "✅ No prohibited AI attribution found."
