@@ -1044,8 +1044,13 @@ async def send_job_work_order_email(
     unit: str = "pcs",
     due_date: str = "",
     link: str = "",
+    requires_login: bool = True,
 ) -> bool:
-    """Notify a job worker (registered or walk-in) that a job work order has been created for them."""
+    """Notify a job worker (registered or walk-in) that a job work order has
+    been created for them. `requires_login` distinguishes a registered
+    vendor's portal link (needs login) from a walk-in's public share link
+    (no login — opens straight to the order and its tech pack), so the
+    wording under the button matches what actually happens when it's clicked."""
     import html
 
     safe_worker = html.escape(job_worker_name or "Job worker")
@@ -1061,6 +1066,14 @@ async def send_job_work_order_email(
         qty_text = f"0 {unit or 'pcs'}"
 
     action = _btn("Open job work order", safe_link, PRIMARY) if safe_link else ""
+    if safe_link:
+        footer_text = (
+            "Log in to your RMS vendor portal to view design references and confirm the order."
+            if requires_login else
+            "No login needed — the link above opens the order details and tech pack (measurements, trims, colourways, construction notes) directly."
+        )
+    else:
+        footer_text = "Please contact " + safe_retailer + " directly for full order details, design references and material handover."
     body = f"""
       <h2 style="color:#222;margin-bottom:8px;">Hello, {safe_worker}</h2>
       <p style="font-size:15px;color:#444;">{safe_retailer} has created a new job work order for you in RMS.</p>
@@ -1072,7 +1085,7 @@ async def send_job_work_order_email(
         <tr><td style="padding:6px 18px 6px 0;font-weight:bold;">Due date</td><td>{safe_due}</td></tr>
       </table>
       {action}
-      <p style="font-size:14px;color:#555;margin-top:18px;">{"Log in to your RMS vendor portal to view design references and confirm the order." if safe_link else "Please contact " + safe_retailer + " directly for full order details, design references and material handover."}</p>
+      <p style="font-size:14px;color:#555;margin-top:18px;">{footer_text}</p>
       {_divider()}
       {_note("This is an automated job work order notice from RMS.")}
     """

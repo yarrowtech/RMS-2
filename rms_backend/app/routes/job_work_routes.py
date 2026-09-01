@@ -244,7 +244,7 @@ def _is_overdue(row: dict) -> bool:
 def _serialize(document: dict) -> dict:
     row = dict(document)
     row["id"] = str(row.pop("_id"))
-    for key in ("created_at", "updated_at", "issued_at", "due_date"):
+    for key in ("created_at", "updated_at", "issued_at", "due_date", "token_expires_at", "order_viewed_at"):
         if isinstance(row.get(key), datetime):
             row[key] = row[key].isoformat()
     if isinstance(row.get("comments"), list):
@@ -1458,18 +1458,84 @@ async def dashboard(ctx: dict = Depends(_require_job_work)):
     }
 
 
+def _make_job_work_share_link(token: str) -> str:
+    return f"{APP_BASE_URL}/job-work-view/{token}"
+
+
+def _job_work_public_payload(order: dict, retailer_name: str) -> dict:
+    """Sanitised job-work order data safe to expose on the public link — no
+    internal IDs, just enough for a walk-in job worker to see what's being
+    asked of them, including the tech pack(s) already embedded on each
+    design line at order-creation time (see create_order below)."""
+    return {
+        "order_no":         order.get("order_no", ""),
+        "retailer_name":    retailer_name,
+        "job_worker_name":  order.get("job_worker_name", ""),
+        "job_work_type":    order.get("job_work_type", ""),
+        "finished_product": order.get("finished_product", ""),
+        "expected_quantity": order.get("expected_quantity", 0),
+        "unit":             order.get("unit", "pcs"),
+        "due_date":         order.get("due_date", ""),
+        "remarks":          order.get("remarks", ""),
+        "status":           order.get("status", ""),
+        "order_viewed_at":  order.get("order_viewed_at"),
+        "token_expires_at": str(order.get("token_expires_at", "")),
+        "design_lines": [
+            {
+                "design_no":    line.get("design_no", ""),
+                "product_type": line.get("product_type", ""),
+                "quantity":     line.get("quantity", 0),
+                "image_urls":   line.get("image_urls", []),
+                "tech_pack":    line.get("tech_pack"),
+            }
+            for line in order.get("design_lines", [])
+        ],
+    }
+
+
+@router.get("/orders/public/{token}")
+async def public_view_job_work_order(token: str):
+    """Public route — no login needed. A walk-in job worker opens this link
+    from their email/WhatsApp message to see the order AND any tech pack
+    linked to it (full spec content, same as a registered vendor gets in
+    their portal — see VendorJobWork.jsx's TechPackSnapshot)."""
+    order = await job_work_orders_collection.find_one({"share_token": token})
+    if not order:
+        raise HTTPException(status_code=404, detail="Invalid or expired link.")
+
+    expires_at = order.get("token_expires_at")
+    if expires_at and datetime.utcnow() > expires_at:
+        raise HTTPException(status_code=410, detail="This link has expired. Please contact the buyer.")
+
+    if not order.get("order_viewed_at"):
+        await job_work_orders_collection.update_one(
+            {"share_token": token},
+            {"$set": {"order_viewed_at": datetime.utcnow(), "updated_at": datetime.utcnow()}},
+        )
+        order["order_viewed_at"] = datetime.utcnow()
+
+    tenant = await tenants_collection.find_one({"tenant_id": order["tenant_id"]}, {"company_name": 1})
+    retailer_name = (tenant or {}).get("company_name") or order["tenant_id"]
+    return {"status": "success", "data": _job_work_public_payload(order, retailer_name)}
+
+
 async def _send_job_work_order_alerts(order: dict, ctx: dict, vendor_doc: dict | None) -> dict:
-    """Registered job worker: portal notification + email to their account
-    address, same pattern as a regular PO. Walk-in job worker: email only if
-    an address was entered on the order, plus a manual-send WhatsApp link —
-    there is no public no-login order view to link to (unlike the Fabric PO
-    share-link flow), so the email/WhatsApp text carries the order summary
-    directly instead of a clickable link."""
+    """Registered job worker: portal notification + email linking to their
+    account portal. Walk-in job worker: email/WhatsApp link to the public,
+    no-login order view (share_token, generated at creation — see
+    create_order) — this carries the full order AND its tech pack, the same
+    way the Fabric PO share-link flow already works for fabric vendors."""
     walkin = order.get("walkin_vendor") or {}
     job_worker_name = order.get("job_worker_name") or "Job worker"
     tenant = await tenants_collection.find_one({"tenant_id": ctx["tenant_id"]}, {"company_name": 1})
     retailer_name = (tenant or {}).get("company_name") or ctx["tenant_id"]
-    link = f"{APP_BASE_URL}/merchandiser-seller" if vendor_doc else ""
+    is_registered = bool(vendor_doc)
+    if is_registered:
+        link = f"{APP_BASE_URL}/merchandiser-seller"
+    elif order.get("share_token"):
+        link = _make_job_work_share_link(order["share_token"])
+    else:
+        link = ""
     due = order.get("due_date") or "Not set"
     message = (
         f"Dear {job_worker_name},\n\n"
@@ -1478,7 +1544,7 @@ async def _send_job_work_order_alerts(order: dict, ctx: dict, vendor_doc: dict |
         f"Finished product: {order.get('finished_product', '')}\n"
         f"Expected quantity: {order.get('expected_quantity', '')} {order.get('unit', '')}\n"
         f"Due date: {due}\n\n"
-        + (f"View it here:\n{link}\n\n" if link else "Please contact us for full order details and material handover.\n\n")
+        + (f"View order & tech pack here:\n{link}\n\n" if link else "Please contact us for full order details and material handover.\n\n")
         + f"Regards,\n{retailer_name}"
     )
     mobile = ((vendor_doc or {}).get("contactMobile") or (vendor_doc or {}).get("mobile") or (vendor_doc or {}).get("phone") or walkin.get("mobile") or "")
@@ -1503,6 +1569,7 @@ async def _send_job_work_order_alerts(order: dict, ctx: dict, vendor_doc: dict |
             recipient_email, job_worker_name, retailer_name, order.get("order_no", ""),
             order.get("job_work_type", ""), order.get("finished_product", ""),
             order.get("expected_quantity", 0), order.get("unit", "pcs"), due, link,
+            requires_login=is_registered,
         )
 
     return {
@@ -1587,6 +1654,10 @@ async def create_order(request: Request, ctx: dict = Depends(_require_job_work))
 
     sequence = await job_work_orders_collection.count_documents({"tenant_id": ctx["tenant_id"]}) + 1
     now = datetime.utcnow()
+    # A walk-in job worker has no portal login, so they need a public,
+    # no-login link to see the order and its tech pack — same share_token
+    # pattern as the walk-in Fabric PO flow (see purchaseorder_routes.py).
+    share_token = str(uuid.uuid4()) if not registered_vendor_id else None
     order = {
         "tenant_id": ctx["tenant_id"],
         "order_no": f"JWO-{now.strftime('%y%m%d')}-{sequence:04d}",
@@ -1604,6 +1675,9 @@ async def create_order(request: Request, ctx: dict = Depends(_require_job_work))
         "material_plan_no": material_plan.get("plan_no") if material_plan else None,
         "planned_materials": list(material_plan.get("materials") or []) if material_plan else [],
         "walkin_vendor": ({"mobile": job_worker_mobile, "email": job_worker_email} if not registered_vendor_id and (job_worker_mobile or job_worker_email) else None),
+        "share_token": share_token,
+        "token_expires_at": (now + timedelta(days=TOKEN_EXPIRY_DAYS)) if share_token else None,
+        "order_viewed_at": None,
         "status": "DRAFT",
         "materials": [],
         "outputs": [],
