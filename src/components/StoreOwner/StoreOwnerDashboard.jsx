@@ -6,6 +6,15 @@ import {
 import { clearAuthData } from "../../utils/authRedirect.js";
 import { API_BASE_URL } from "../../config/api.js";
 
+// These two are commonly assumed to be linked when they're actually
+// independent — a manufacturer needs only Job Work (which has its own
+// fabric buying built in); a trader who doesn't manufacture needs only
+// Merchandiser Buyer. Surfaced as a hover hint at the point of selection.
+const DEPT_HINTS = {
+  "Merchandiser Buyer":    "Buying finished/trade goods to resell. Independent of Production & Job Work.",
+  "Production & Job Work": "Manufacturing via job workers — includes its own fabric buying. Doesn't need Merchandiser Buyer.",
+};
+
 const PERMISSION_LABELS = {
   inventory: "Central inventory across all stores",
   stock_allocation: "Allocate stock to stores",
@@ -455,7 +464,7 @@ export default function StoreOwnerDashboard() {
                     <p className="mt-0.5 text-xs text-slate-500">Only pick what your business actually runs — HQ access is always included.</p>
                     <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
                       {departments.filter((dept) => dept.requires_plan !== "enterprise" || upgradePlan === "enterprise").map((dept) => (
-                        <label key={dept.key} className="flex cursor-pointer items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700 hover:border-indigo-300">
+                        <label key={dept.key} title={DEPT_HINTS[dept.key]} className="flex cursor-pointer items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700 hover:border-indigo-300">
                           <input type="checkbox" checked={upgradeDepartments.includes(dept.key)} onChange={() => toggleDepartment(dept.key)} className="h-4 w-4 rounded border-slate-300" />
                           {dept.key}
                         </label>

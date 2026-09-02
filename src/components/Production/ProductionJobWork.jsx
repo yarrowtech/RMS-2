@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { API_BASE_URL } from "../../config/api.js";
+import { API_BASE_URL, FRONTEND_BASE_URL } from "../../config/api.js";
 import { logoutOrReturnToDepartmentSelector } from "../../utils/authRedirect.js";
 import { downloadFabricSheetCsv, downloadFabricSheetExcel, downloadFabricSheetPdf } from "../../utils/fabricSheetExport.js";
 import { Modal, Field, CreateFabricPOModal } from "../shared/FabricBuyingCart.jsx";
@@ -61,6 +61,31 @@ async function addonRequest(path, options = {}) {
   return data;
 }
 
+// A retailer running Job Work only (no Merchandiser Buyer) still needs to
+// invite vendors and see their fabric PO history — both already exist as
+// tenant-scoped, department-agnostic backend capabilities (vendor invites,
+// purchaseorders_collection), just previously only surfaced inside
+// Buyer's own gated screens. These two reuse the exact same endpoints.
+async function vendorRequest(path, options = {}) {
+  const response = await fetch(`${API_BASE_URL}/api/vendors${path}`, {
+    ...options,
+    headers: { ...authHeaders(), ...(options.headers || {}) },
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.detail || "Unable to complete this vendor action.");
+  return data;
+}
+
+async function poRequest(path, options = {}) {
+  const response = await fetch(`${API_BASE_URL}/purchaseorders${path}`, {
+    ...options,
+    headers: { ...authHeaders(), ...(options.headers || {}) },
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.detail || "Unable to load purchase orders.");
+  return data;
+}
+
 
 const statusStyle = {
   DRAFT: "bg-slate-100 text-slate-700 ring-slate-200",
@@ -87,6 +112,11 @@ const WORKFLOW_STEPS = [
   { key: "bom", label: "2 · Style BOM & Fabric Plan", icon: "🧮" },
   { key: "fabric", label: "3 · Fabric Buying", icon: "🧵" },
   { key: "orders", label: "4 · Job Work Orders", icon: "✂️" },
+  // Self-service for a retailer running Job Work without Merchandiser
+  // Buyer enabled — they still need to invite vendors and see their
+  // fabric PO history without depending on Buyer's own screens.
+  { key: "vendors", label: "5 · Vendors", icon: "🤝" },
+  { key: "po-list", label: "6 · Purchase Orders", icon: "🧾" },
 ];
 
 // Every Tailwind class below is written out in full (never built from a
@@ -430,6 +460,14 @@ export default function ProductionJobWork() {
                 <p className="px-6 py-4 text-xs leading-5 text-slate-500">Normal supplier purchasing remains unchanged: use PO → GRC → GRN for purchased fabric. Use this workspace only when your own material is sent to an outside job worker for processing.</p>
               </section>
             )}
+
+            {activeStep === "vendors" && (
+              <VendorsPanel vendors={vendors} fabricSuppliers={fabricSuppliers} onInvited={refresh} />
+            )}
+
+            {activeStep === "po-list" && (
+              <FabricPOListPanel onCreatePO={() => setModal({ type: "fabric-cart" })} />
+            )}
           </div>
         </div>
       </div>
@@ -522,6 +560,165 @@ function DownloadSheetModal({ sheetDownload, onClose }) {
       </div>
     </div>
   </Modal>;
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// VENDORS — self-service vendor directory + invite, for a retailer running
+// Job Work without Merchandiser Buyer enabled. Reuses the exact same
+// vendor-invite endpoints Buyer's own Vendor List uses (POST /api/vendors/
+// invite, POST /api/vendors/send-invite-email) — no new backend capability,
+// just a Job-Work-scoped view onto it (job workers + fabric suppliers only,
+// vendors/fabricSuppliers already fetched by the parent's own refresh()).
+// ─────────────────────────────────────────────────────────────────────────
+
+function InviteVendorModal({ onClose }) {
+  const [form, setForm] = useState({ companyName: "", contactName: "", mobile: "", email: "", address: "" });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [invite, setInvite] = useState(null); // { link } once generated
+
+  const update = (key, value) => setForm((current) => ({ ...current, [key]: value }));
+
+  const submit = async (event) => {
+    event.preventDefault();
+    setSaving(true);
+    setError("");
+    try {
+      const result = await vendorRequest("/invite", {
+        method: "POST",
+        body: JSON.stringify({
+          company_name: form.companyName, contact_person: form.contactName,
+          mobile: form.mobile, email: form.email, address: form.address,
+          invited_by: localStorage.getItem("admin_name") || "Production & Job Work",
+        }),
+      });
+      const token = result.token || result.invite_token || result.id || "";
+      setInvite({ link: `${FRONTEND_BASE_URL}/vendor/register?token=${token}` });
+    } catch (err) {
+      setError(err.message);
+    } finally { setSaving(false); }
+  };
+
+  const sendWhatsApp = () => {
+    const message = `Hi ${form.contactName}, you're invited to join our vendor network.\n\nComplete your registration here:\n${invite.link}\n\nThis link expires in 7 days.`;
+    const digits = form.mobile.replace(/\D/g, "");
+    const mobile = digits.length === 10 ? `91${digits}` : digits;
+    window.open(`https://wa.me/${mobile}?text=${encodeURIComponent(message)}`, "_blank", "noopener,noreferrer");
+  };
+
+  const sendEmail = async () => {
+    try {
+      await vendorRequest("/send-invite-email", {
+        method: "POST",
+        body: JSON.stringify({ email: form.email, contact_name: form.contactName, company_name: form.companyName, invite_link: invite.link }),
+      });
+    } catch (err) { setError(err.message); }
+  };
+
+  return <Modal title="Invite a vendor" onClose={onClose}><div className="p-6">
+    {!invite ? <form onSubmit={submit} className="grid gap-4 sm:grid-cols-2">
+      <Field label="Company / vendor name *"><input required value={form.companyName} onChange={(e) => update("companyName", e.target.value)} placeholder="e.g. Sunrise Fabrics" /></Field>
+      <Field label="Contact person *"><input required value={form.contactName} onChange={(e) => update("contactName", e.target.value)} placeholder="e.g. Rajesh Kumar" /></Field>
+      <Field label="Mobile *"><input required value={form.mobile} onChange={(e) => update("mobile", e.target.value)} placeholder="10-digit mobile" /></Field>
+      <Field label="Email"><input type="email" value={form.email} onChange={(e) => update("email", e.target.value)} placeholder="Optional" /></Field>
+      <Field label="Address"><input value={form.address} onChange={(e) => update("address", e.target.value)} placeholder="Optional" /></Field>
+      {error && <p className="sm:col-span-2 text-sm font-bold text-rose-600">{error}</p>}
+      <div className="sm:col-span-2 flex justify-end gap-3 mt-2">
+        <button type="button" onClick={onClose} className="rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-bold text-slate-600">Cancel</button>
+        <button disabled={saving} className="rounded-xl bg-violet-600 px-5 py-2.5 text-sm font-bold text-white disabled:opacity-60">{saving ? "Generating…" : "Generate invite link"}</button>
+      </div>
+    </form> : <div className="space-y-4">
+      <p className="text-sm text-slate-600">Invite link for <b>{form.companyName}</b> (valid 7 days):</p>
+      <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5">
+        <input readOnly value={invite.link} className="flex-1 bg-transparent text-xs text-slate-700 outline-none" />
+        <button type="button" onClick={() => navigator.clipboard.writeText(invite.link)} className="rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-bold text-white">Copy</button>
+      </div>
+      <div className="flex flex-wrap gap-3">
+        <button type="button" onClick={sendWhatsApp} className="rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-emerald-700">Send via WhatsApp</button>
+        {form.email && <button type="button" onClick={sendEmail} className="rounded-xl bg-sky-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-sky-700">Send via Email</button>}
+      </div>
+      {error && <p className="text-sm font-bold text-rose-600">{error}</p>}
+      <div className="flex justify-end"><button type="button" onClick={onClose} className="rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-bold text-slate-600">Done</button></div>
+    </div>}
+  </div></Modal>;
+}
+
+function VendorsPanel({ vendors, fabricSuppliers, onInvited }) {
+  const [showInvite, setShowInvite] = useState(false);
+  const groups = [
+    { title: "Job workers", hint: "Cutting, stitching, embroidery, finishing partners", list: vendors },
+    { title: "Fabric suppliers", hint: "Raw material / fabric vendors", list: fabricSuppliers },
+  ];
+  return <section className="mb-6 overflow-hidden rounded-3xl border border-white bg-white/90 shadow-xl shadow-indigo-100/40 backdrop-blur">
+    <div className="flex flex-col justify-between gap-3 border-b border-indigo-100/80 bg-gradient-to-r from-white via-violet-50/60 to-fuchsia-50/70 px-6 py-5 sm:flex-row sm:items-center">
+      <div><p className="text-xs font-bold uppercase tracking-[0.15em] text-violet-600">Step 5</p><h2 className="mt-0.5 font-black text-slate-900">Vendors</h2><p className="mt-1 text-sm text-slate-500">Registered job workers and fabric suppliers — invite new ones without needing Merchandiser Buyer.</p></div>
+      <button type="button" onClick={() => setShowInvite(true)} className="rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-black text-white shadow-lg shadow-violet-200 hover:bg-violet-700">+ Invite vendor</button>
+    </div>
+    <div className="grid gap-0 divide-y divide-slate-100 sm:grid-cols-2 sm:divide-x sm:divide-y-0">
+      {groups.map((group) => <div key={group.title} className="p-5">
+        <p className="text-xs font-black uppercase tracking-wide text-slate-500">{group.title}</p>
+        <p className="mt-0.5 text-xs text-slate-400">{group.hint}</p>
+        <div className="mt-4 space-y-2">
+          {group.list.length === 0
+            ? <p className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-4 text-center text-xs text-slate-400">None yet — invite one, or a vendor picks themselves during registration.</p>
+            : group.list.map((v) => <div key={v.id} className="flex items-center justify-between rounded-xl border border-slate-200 px-4 py-3"><div><p className="font-bold text-slate-800">{v.name}</p>{v.business_type?.length > 0 && <p className="text-xs text-slate-400">{v.business_type.join(", ")}</p>}</div></div>)}
+        </div>
+      </div>)}
+    </div>
+    {showInvite && <InviteVendorModal onClose={() => { setShowInvite(false); onInvited?.(); }} />}
+  </section>;
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// PURCHASE ORDERS — fabric PO history for the same Job-Work-only retailer.
+// Fabric POs already live in the same purchaseorders_collection as every
+// other PO (tagged orderType "Fabric / Raw Material") — this is a filtered
+// view, not a separate PO system. Viewing only; full edit/approve/GRN
+// workflows stay in the standard Inventory Management / GRN screens.
+// ─────────────────────────────────────────────────────────────────────────
+
+const PO_STATUS_TONE = {
+  Pending: "bg-slate-100 text-slate-700", SentToVendor: "bg-amber-50 text-amber-700",
+  VendorSubmitted: "bg-indigo-50 text-indigo-700", Approved: "bg-emerald-50 text-emerald-700",
+  StockUpdated: "bg-emerald-50 text-emerald-700", Cancelled: "bg-rose-50 text-rose-700",
+};
+
+function FabricPOListPanel({ onCreatePO }) {
+  const [orders, setOrders] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const data = await poRequest("/");
+        const all = Array.isArray(data) ? data : [];
+        if (!cancelled) setOrders(all.filter((o) => o.orderType === "Fabric / Raw Material").reverse());
+      } catch (err) {
+        if (!cancelled) setError(err.message || "Could not load fabric purchase orders.");
+      } finally { if (!cancelled) setLoading(false); }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  return <section className="mb-6 overflow-hidden rounded-3xl border border-white bg-white/90 shadow-xl shadow-indigo-100/40 backdrop-blur">
+    <div className="flex flex-col justify-between gap-3 border-b border-indigo-100/80 bg-gradient-to-r from-white via-sky-50/60 to-cyan-50/70 px-6 py-5 sm:flex-row sm:items-center">
+      <div><p className="text-xs font-bold uppercase tracking-[0.15em] text-sky-700">Step 6</p><h2 className="mt-0.5 font-black text-slate-900">Purchase orders</h2><p className="mt-1 text-sm text-slate-500">{orders.length} fabric PO{orders.length === 1 ? "" : "s"} — same PO records used across RMS, filtered to fabric/raw material.</p></div>
+      <button type="button" onClick={onCreatePO} className="rounded-xl bg-sky-600 px-4 py-2.5 text-sm font-black text-white shadow-lg shadow-sky-200 hover:bg-sky-700">+ Create fabric PO</button>
+    </div>
+    {error && <p className="px-6 py-3 text-sm font-bold text-rose-600">{error}</p>}
+    {loading ? <p className="p-10 text-center text-sm text-slate-400">Loading…</p> : orders.length === 0 ? (
+      <div className="p-10 text-center"><p className="font-black text-slate-700">No fabric POs yet</p><p className="mt-1 text-xs text-slate-500">Click "Create fabric PO", or use the Fabric Buying step.</p></div>
+    ) : (
+      <div className="divide-y divide-slate-100">
+        {orders.map((o) => <div key={o.id} className="flex flex-wrap items-center justify-between gap-3 px-6 py-4">
+          <div><div className="flex flex-wrap items-center gap-2"><p className="font-bold text-sky-700">{o.orderNo}</p><span className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${PO_STATUS_TONE[o.status] || "bg-slate-100 text-slate-600"}`}>{o.status}</span></div><p className="mt-0.5 text-xs text-slate-500">{o.vendorName} · {o.orderDate}</p></div>
+          <p className="font-bold text-slate-900">₹{Number(o.netAmount || 0).toLocaleString("en-IN")}</p>
+        </div>)}
+      </div>
+    )}
+  </section>;
 }
 
 function MaterialPlanList({ plans, onCreatePO, onStartJob, onLinkTechPack, embedded = false }) {

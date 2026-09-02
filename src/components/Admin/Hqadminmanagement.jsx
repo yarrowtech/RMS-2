@@ -60,6 +60,16 @@ const DEPT_LABEL_OVERRIDES = {
   "Stock Planning & Forecasting": "Stock Planning",
 };
 
+// Hover tooltip text — most departments are self-explanatory, but these
+// two are commonly assumed to be linked when they're actually independent
+// (a manufacturer needs only Job Work; Job Work has its own fabric buying
+// built in and never depends on Buyer; a trader who doesn't manufacture
+// needs only Buyer). Worth spelling out at the point of selection.
+const DEPT_HINT_BY_ID = {
+  "Merchandiser Buyer":    "Buying finished/trade goods to resell. Independent of Production & Job Work.",
+  "Production & Job Work": "Manufacturing via job workers — includes its own fabric buying. Doesn't need Merchandiser Buyer.",
+};
+
 const PERMISSIONS = [
   { id:"inventory",       label:"Inventory",         group:"Operations" },
   { id:"purchase_orders", label:"Purchase Orders",   group:"Operations" },
@@ -349,7 +359,7 @@ function AddAdminModal({ onClose, onCreated, stores = [], deptConfig, admins = [
                   const activeBorderCls = isStoreScope ? "border-teal-400"        : "border-indigo-400";
                   const checkboxCls     = isStoreScope ? "bg-teal-500 border-teal-500" : "bg-indigo-500 border-indigo-500";
                   return (
-                    <button key={deptId} type="button" onClick={() => toggleDept(deptId)}
+                    <button key={deptId} type="button" onClick={() => toggleDept(deptId)} title={DEPT_HINT_BY_ID[deptId]}
                       className={`px-3 py-2 rounded-xl border text-xs font-semibold text-left transition-all flex items-center gap-2 ${
                         active ? `${activeBorderCls} ${DEPT_COLOR[color]}` : "border-slate-200 text-slate-600 hover:border-slate-300 bg-white"
                       }`}>
@@ -361,6 +371,12 @@ function AddAdminModal({ onClose, onCreated, stores = [], deptConfig, admins = [
                   );
                 })}
               </div>
+            )}
+
+            {!isStoreScope && (hqDepartments.includes("Merchandiser Buyer") || hqDepartments.includes("Production & Job Work")) && (
+              <p className="mt-2 text-[11px] text-slate-400">
+                💡 Merchandiser Buyer (trade goods) and Production &amp; Job Work (manufacturing — has its own fabric buying) are independent. Pick based on what this retailer actually does, not both by default.
+              </p>
             )}
 
             {isStoreScope && (
@@ -537,7 +553,7 @@ function EditPermissionsModal({ admin, onClose, onSaved, deptConfig, admins = []
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
               {availableDepartments.map(department => {
                 const active = departments.includes(department);
-                return <button key={department} type="button" onClick={() => toggleDepartment(department)}
+                return <button key={department} type="button" onClick={() => toggleDepartment(department)} title={DEPT_HINT_BY_ID[department]}
                   className={`flex items-center gap-3 rounded-xl border p-3 text-left text-sm font-semibold transition ${active ? "border-violet-300 bg-violet-50 text-violet-800" : "border-slate-200 text-slate-600 hover:border-violet-200"}`}>
                   <span className={`flex h-4 w-4 items-center justify-center rounded border ${active ? "border-violet-600 bg-violet-600 text-white" : "border-slate-300"}`}>
                     {active && <CheckCircle className="h-3 w-3"/>}
@@ -546,6 +562,11 @@ function EditPermissionsModal({ admin, onClose, onSaved, deptConfig, admins = []
                 </button>;
               })}
             </div>
+            {(availableDepartments.includes("Merchandiser Buyer") || availableDepartments.includes("Production & Job Work")) && (
+              <p className="mt-2 text-[11px] text-slate-400">
+                💡 Merchandiser Buyer (trade goods) and Production &amp; Job Work (manufacturing — has its own fabric buying) are independent. Pick based on what this retailer actually does, not both by default.
+              </p>
+            )}
           </section>
           {admin.scope === "store" && (
             <section className="mb-6 bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3">
