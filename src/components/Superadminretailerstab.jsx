@@ -698,10 +698,6 @@ export default function RetailersTab({ pendingOnboarding, onConsumeOnboarding })
 
   const handleToggleJobWorkAddon = async (tenant) => {
     const enable = !tenant.production_job_work_enabled;
-    if (tenant.plan === "enterprise" && !enable) {
-      toast.error("Enterprise-plan tenants have this bundled in — move them off Enterprise first to deactivate it.");
-      return;
-    }
     try {
       await apiFetch(`/superadmin/tenants/${tenant.tenant_id}/production-addon`, {
         method: "PUT", body: JSON.stringify({ enabled: enable }),

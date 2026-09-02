@@ -6,6 +6,10 @@ toggled only today; there is no self-serve checkout yet, since pricing for
 it is a separate decision. This module just gives an existing HQ retailer
 an in-app way to ask for it instead of contacting support directly, and
 gives Super Admin a review queue instead of a purely manual process.
+
+Not tied to plan tier — not even Enterprise gets it automatically. A
+retailer can be pure retail, pure job-work, or both; which plan they're on
+says nothing about whether they do production.
 """
 from datetime import datetime
 from typing import Any, Dict, Literal
@@ -17,7 +21,6 @@ from pydantic import BaseModel, Field
 from .deps import get_hq_tenant
 from .auth_routes import get_current_superadmin
 from ..db import production_addon_requests_collection, tenants_collection
-from ..retailer_plans import normalize_retailer_plan
 
 router = APIRouter(prefix="/api/production-addon", tags=["Production Add-on Requests"])
 TenantCtx = Dict[str, Any]
@@ -48,15 +51,13 @@ def _serialize(document: dict) -> dict:
 
 
 def _is_addon_enabled(tenant: dict) -> bool:
-    if (tenant or {}).get("production_job_work_enabled"):
-        return True
-    return normalize_retailer_plan((tenant or {}).get("plan")) == "enterprise"
+    return bool((tenant or {}).get("production_job_work_enabled"))
 
 
 @router.get("/me")
 async def get_my_addon_status(ctx: TenantCtx = Depends(get_hq_tenant)):
     tenant = await tenants_collection.find_one(
-        {"tenant_id": ctx["tenant_id"]}, {"plan": 1, "production_job_work_enabled": 1}
+        {"tenant_id": ctx["tenant_id"]}, {"production_job_work_enabled": 1}
     )
     latest = await production_addon_requests_collection.find_one(
         {"tenant_id": ctx["tenant_id"]}, sort=[("created_at", -1)]

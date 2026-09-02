@@ -36,7 +36,6 @@ from .purchaseorder_routes import APP_BASE_URL, TOKEN_EXPIRY_DAYS, _clean_whatsa
 from .grn_routes import resolve_single_store_destination
 from .procurement_notification_routes import notify_vendor
 from ..email_utils import send_job_work_order_email
-from ..retailer_plans import normalize_retailer_plan
 
 cloudinary.config(
     cloud_name=settings.cloudinary_cloud_name,
@@ -258,15 +257,14 @@ def _serialize(document: dict) -> dict:
 
 async def _ensure_job_work_addon_enabled(ctx: dict) -> None:
     """Production & Job Work is an independent, purchasable add-on — not tied
-    to plan tier. A tenant needs `production_job_work_enabled` set on their
-    tenant record; Enterprise-plan tenants are grandfathered in automatically
-    since Job Work used to be bundled into that plan."""
+    to plan tier, not even Enterprise. A tenant needs
+    `production_job_work_enabled` explicitly set on their tenant record via
+    the request/approval flow (production_addon_routes.py); a retailer can be
+    pure retail, pure job-work, or both, regardless of plan."""
     tenant = await tenants_collection.find_one(
-        {"tenant_id": ctx["tenant_id"]}, {"plan": 1, "production_job_work_enabled": 1}
+        {"tenant_id": ctx["tenant_id"]}, {"production_job_work_enabled": 1}
     )
     if (tenant or {}).get("production_job_work_enabled"):
-        return
-    if normalize_retailer_plan((tenant or {}).get("plan")) == "enterprise":
         return
     raise HTTPException(
         status_code=403,
