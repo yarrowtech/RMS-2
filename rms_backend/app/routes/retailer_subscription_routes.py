@@ -87,6 +87,36 @@ async def get_my_retailer_subscription(ctx: dict = Depends(get_tenant)):
     return _subscription_view(tenant)
 
 
+@router.get("/payment-return-status")
+async def get_payment_return_status(
+    payment_link_id: str,
+    ctx: dict = Depends(get_tenant),
+):
+    """Return the webhook-verified status of this tenant's own payment link."""
+    payment_link_id = str(payment_link_id or "").strip()
+    if not payment_link_id:
+        raise HTTPException(status_code=400, detail="payment_link_id is required.")
+
+    payment = await retailer_subscription_payments_collection.find_one(
+        {
+            "tenant_id": ctx["tenant_id"],
+            "razorpay_payment_link_id": payment_link_id,
+        },
+        {"status": 1, "payment_kind": 1, "plan": 1, "captured_at": 1},
+    )
+    if not payment:
+        # Never reveal whether a link belongs to another tenant.
+        raise HTTPException(status_code=404, detail="Payment link was not found for this retailer.")
+
+    verified = payment.get("status") == "captured"
+    return {
+        "verified": verified,
+        "payment_kind": payment.get("payment_kind", ""),
+        "plan": payment.get("plan", ""),
+        "captured_at": _serialize_date(payment.get("captured_at")),
+        "redirect_path": "/admin" if verified and ctx.get("scope") == "hq" else None,
+    }
+
 @router.post("/renew")
 async def create_retailer_renewal_link(ctx: dict = Depends(get_tenant)):
     """Create a short-lived Razorpay-hosted renewal link for the current plan."""

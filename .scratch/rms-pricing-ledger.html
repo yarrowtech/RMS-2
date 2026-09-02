@@ -1,0 +1,454 @@
+<title>RMS Pricing Ledger</title>
+<style>
+  :root {
+    --ink: #14181f;
+    --muted: #5b6472;
+    --faint: #8891a0;
+    --paper: #ffffff;
+    --surface: #ffffff;
+    --surface-2: #f7f8fb;
+    --border: #e1e4eb;
+    --border-strong: #cfd3dd;
+
+    --retailer: #4338ca;
+    --retailer-tint: #eef0fd;
+    --retailer-ink: #322c9e;
+
+    --vendor: #0f766e;
+    --vendor-tint: #eafaf6;
+    --vendor-ink: #0b5c56;
+
+    --live: #15803d;
+    --live-tint: #e9f7ee;
+    --live-border: #bfe6cc;
+
+    --estimate: #b45309;
+    --estimate-tint: #fdf1e2;
+    --estimate-border: #f2d5ab;
+
+    --shadow: 0 1px 2px rgba(20,24,31,.04), 0 8px 24px -12px rgba(20,24,31,.12);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Committed to a single light theme — always white, regardless of the
+     viewer's system/app theme setting. */
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: "Public Sans", -apple-system, "Segoe UI", sans-serif;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 56px 24px 96px; }
+
+  h1, h2, h3 { font-family: "Newsreader", Georgia, serif; font-weight: 600; text-wrap: balance; letter-spacing: -0.01em; }
+
+  /* ── Header ─────────────────────────────────────────── */
+  header.top { border-bottom: 1px solid var(--border); padding-bottom: 28px; margin-bottom: 36px; }
+  .eyebrow { font-family: "IBM Plex Mono", monospace; font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: var(--faint); margin: 0 0 12px; }
+  header.top h1 { font-size: 34px; margin: 0 0 10px; }
+  header.top p.lede { max-width: 62ch; color: var(--muted); font-size: 15.5px; margin: 0; }
+
+  /* ── Legend ─────────────────────────────────────────── */
+  .legend { display: flex; flex-wrap: wrap; gap: 10px; margin: 22px 0 0; }
+  .tag { display: inline-flex; align-items: center; gap: 6px; font-family: "IBM Plex Mono", monospace; font-size: 11px; font-weight: 500; letter-spacing: .02em; padding: 5px 10px 5px 8px; border-radius: 999px; border: 1px solid; }
+  .tag.live { color: var(--live); background: var(--live-tint); border-color: var(--live-border); }
+  .tag.estimate { color: var(--estimate); background: var(--estimate-tint); border-color: var(--estimate-border); }
+  .tag .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+  .legend-note { font-size: 12.5px; color: var(--faint); margin: 8px 0 0; }
+
+  /* ── Sections ───────────────────────────────────────── */
+  section.block { margin-top: 48px; }
+  .block-head { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; margin-bottom: 4px; flex-wrap: wrap; }
+  .block-head h2 { font-size: 21px; margin: 0; }
+  .block-head .status { flex-shrink: 0; }
+  .block-sub { color: var(--muted); font-size: 13.5px; margin: 4px 0 18px; max-width: 68ch; }
+
+  .table-scroll { overflow-x: auto; border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow); background: var(--surface); }
+  table { width: 100%; border-collapse: collapse; min-width: 560px; font-size: 13.5px; }
+  thead th {
+    text-align: left; font-family: "IBM Plex Mono", monospace; font-size: 10.5px; font-weight: 500;
+    letter-spacing: .08em; text-transform: uppercase; color: var(--faint);
+    padding: 13px 16px; background: var(--surface-2); border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+  }
+  tbody td { padding: 13px 16px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr:hover { background: var(--surface-2); }
+  td.figure, th.figure-h { font-family: "IBM Plex Mono", monospace; white-space: nowrap; }
+  td.name { font-weight: 600; }
+  td.desc { color: var(--muted); font-size: 12.5px; max-width: 30ch; }
+  .sub { display: block; color: var(--faint); font-size: 11.5px; font-weight: 400; margin-top: 2px; }
+
+  col.retailer-col { background: transparent; }
+  th.retailer, td.retailer-cell { background: var(--retailer-tint); }
+  th.retailer { color: var(--retailer-ink); }
+  th.vendor, td.vendor-cell { background: var(--vendor-tint); }
+  th.vendor { color: var(--vendor-ink); }
+
+  .audience-chip { display: inline-flex; align-items: center; gap: 5px; font-family: "IBM Plex Mono", monospace; font-size: 10px; letter-spacing: .06em; text-transform: uppercase; }
+  .audience-chip.retailer { color: var(--retailer); }
+  .audience-chip.vendor { color: var(--vendor); }
+  .audience-chip .sq { width: 7px; height: 7px; border-radius: 2px; background: currentColor; }
+
+  /* ── Footer ─────────────────────────────────────────── */
+  footer.notes { margin-top: 56px; padding-top: 24px; border-top: 1px solid var(--border); }
+  footer.notes h3 { font-size: 14px; margin: 0 0 10px; }
+  footer.notes ol { margin: 0; padding-left: 20px; color: var(--muted); font-size: 12.5px; line-height: 1.7; }
+  footer.notes li { margin-bottom: 4px; }
+
+  @media (max-width: 640px) {
+    .wrap { padding: 36px 16px 72px; }
+    header.top h1 { font-size: 27px; }
+  }
+</style>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:wght@500;600;700&family=Public+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+<div class="wrap">
+
+  <header class="top">
+    <p class="eyebrow">RMS · Retail Management System — Commercial Model</p>
+    <h1>Pricing Ledger</h1>
+    <p class="lede">Cost structure across both sides of the platform — retailers running stores through RMS, and vendors selling into them. Figures marked <strong>live</strong> are what the system actually bills today; figures marked <strong>estimate</strong> are proposed pricing for capabilities not yet metered.</p>
+    <div class="legend">
+      <span class="tag live"><span class="dot"></span>Live in system</span>
+      <span class="tag estimate"><span class="dot"></span>Proposed estimate</span>
+    </div>
+    <p class="legend-note">All figures in INR (₹). Retailer figures are per tenant; vendor figures are per vendor account, unless a table states otherwise.</p>
+  </header>
+
+  <!-- ============================================================ -->
+  <section class="block">
+    <div class="block-head">
+      <h2>User tiers &amp; per-seat cost</h2>
+      <span class="tag estimate"><span class="dot"></span>Estimate</span>
+    </div>
+    <p class="block-sub">RMS doesn't meter individual users today — access is bundled into a tenant's plan, with extra admin seats sold as a flat add-on. This models what a per-role seat price would look like if usage-based seat billing were introduced, benchmarked against today's ₹5,000 one-time seat add-on.</p>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>User tier</th>
+            <th>Who this is</th>
+            <th class="figure-h retailer">Retailer · ₹/user/mo</th>
+            <th class="figure-h vendor">Vendor · ₹/user/mo</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="name">Operational</td>
+            <td class="desc">Cashier, floor staff, GRN clerk, order picker — day-to-day transactions, no reports or settings access.</td>
+            <td class="figure retailer-cell">₹400<span class="sub">≈ ₹5,000 seat add-on ÷ 12mo</span></td>
+            <td class="figure vendor-cell" style="color:var(--faint)">—<span class="sub">no seat model exists for vendors</span></td>
+          </tr>
+          <tr>
+            <td class="name">Management</td>
+            <td class="desc">Department/store head, HQ admin, finance — approvals, staff management, standard reporting.</td>
+            <td class="figure retailer-cell">₹800</td>
+            <td class="figure vendor-cell">₹700<span class="sub">vendor-owner tier, Standard plan parity</span></td>
+          </tr>
+          <tr>
+            <td class="name">AI-powered</td>
+            <td class="desc">Access to forecasting, GenAI drafting, and risk-scoring tools layered on top of a management seat.</td>
+            <td class="figure retailer-cell">₹1,800</td>
+            <td class="figure vendor-cell">₹1,500</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ============================================================ -->
+  <section class="block">
+    <div class="block-head">
+      <h2>Implementation &amp; assisted onboarding <span style="font-family:'IBM Plex Mono',monospace;font-weight:400;font-size:15px;color:var(--faint)">— one-time</span></h2>
+      <span class="tag estimate"><span class="dot"></span>Estimate</span>
+    </div>
+    <p class="block-sub">Onboarding, data migration, and staff org-setup. Not currently charged — every retailer/vendor onboards through the same self-serve or superadmin-assisted flow at ₹0 today. The bulk-import tools (staff CSV, floor-staff CSV) already exist and do the heavy lifting either way.</p>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr><th>Tier</th><th class="desc">Scope</th><th class="figure-h retailer">Retailer</th><th class="figure-h vendor">Vendor</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="name">Self-serve</td>
+            <td class="desc">Single store / single vendor, no data migration</td>
+            <td class="figure retailer-cell">₹0</td>
+            <td class="figure vendor-cell">₹0</td>
+          </tr>
+          <tr>
+            <td class="name">Assisted onboarding</td>
+            <td class="desc">Multi-store setup, staff org-import, historical stock load — a person walks them through it</td>
+            <td class="figure retailer-cell">₹25,000</td>
+            <td class="figure vendor-cell">₹5,000</td>
+          </tr>
+          <tr>
+            <td class="name">Enterprise</td>
+            <td class="desc">Custom org hierarchy, ERP/POS data migration, dedicated rollout manager</td>
+            <td class="figure retailer-cell">₹1,50,000+<span class="sub">scoped per engagement</span></td>
+            <td class="figure vendor-cell">₹15,000</td>
+          </tr>
+          <tr>
+            <td class="name">Onboarding concierge</td>
+            <td class="desc">Ad-hoc setup calls beyond the package above — billed hourly, either audience</td>
+            <td class="figure" colspan="2" style="text-align:center;">₹2,000/hour</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ============================================================ -->
+  <section class="block">
+    <div class="block-head">
+      <h2>Annual platform license</h2>
+      <span class="tag live"><span class="dot"></span>Live in system</span>
+    </div>
+    <p class="block-sub">The actual billed plan tiers today — <code style="font-family:'IBM Plex Mono',monospace;font-size:12px">retailer_plans.py</code> and the vendor subscription tiers, annualised from their real monthly rate.</p>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr><th class="retailer">Retailer plan</th><th class="figure-h retailer">₹/month</th><th class="figure-h retailer">₹/year</th><th class="retailer">Stores</th><th class="retailer">Admin seats</th></tr>
+        </thead>
+        <tbody>
+          <tr><td class="name">Basic</td><td class="figure">₹50,000</td><td class="figure">₹6,00,000</td><td>1</td><td>3</td></tr>
+          <tr><td class="name">Professional</td><td class="figure">₹90,000</td><td class="figure">₹10,80,000</td><td>5</td><td>15</td></tr>
+          <tr><td class="name">Enterprise</td><td class="figure">₹1,25,000</td><td class="figure">₹15,00,000</td><td>Unlimited</td><td>Unlimited</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="table-scroll" style="margin-top: 14px;">
+      <table>
+        <thead>
+          <tr><th class="vendor">Vendor tier</th><th class="figure-h vendor">₹/month</th><th class="figure-h vendor">₹/year</th><th class="vendor">Catalogue photos</th><th class="vendor">Finance history</th></tr>
+        </thead>
+        <tbody>
+          <tr><td class="name">Free</td><td class="figure">₹0</td><td class="figure">₹0</td><td>5 items, 1 photo each</td><td>3 months</td></tr>
+          <tr><td class="name">Standard</td><td class="figure">₹1,499</td><td class="figure">₹17,988</td><td>10 items, 3 photos each</td><td>12 months</td></tr>
+          <tr><td class="name">Premium</td><td class="figure">₹3,499</td><td class="figure">₹41,988</td><td>25 items, unlimited photos</td><td>36 months</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="legend-note" style="margin-top:12px;">Retailer add-ons already live: extra admin seat ₹5,000 one-time · extra store slot ₹15,000/month recurring.</p>
+  </section>
+
+  <!-- ============================================================ -->
+  <section class="block">
+    <div class="block-head">
+      <h2>Business network, B2B trade &amp; vendor inventory</h2>
+      <span class="tag live"><span class="dot"></span>Partly live</span>
+    </div>
+    <p class="block-sub">Three separate vendor-side systems: <strong>Discovery</strong> (opt-in vendor-to-vendor browsing and connection requests) and <strong>Finance analytics</strong> (a vendor's own payment history with retailers) are already gated by the vendor tier above. <strong>B2B Trade</strong> (RFQs, orders, receipts, returns, stock ledger, and a finance ledger between vendors) and <strong>Vendor Inventory</strong> (stock, reservations, reorder levels) are fully built but not metered at all today — every vendor gets them unlimited regardless of tier.</p>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr><th>Capability</th><th class="figure-h vendor">Free</th><th class="figure-h vendor">Standard</th><th class="figure-h vendor">Premium</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="name">Discovery — results per page<span class="sub">business_network_routes.py</span></td>
+            <td class="figure">8</td><td class="figure">20</td><td class="figure">40</td>
+          </tr>
+          <tr>
+            <td class="name">Discovery — connection requests/mo</td>
+            <td class="figure">3</td><td class="figure">25</td><td class="figure">Unlimited</td>
+          </tr>
+          <tr>
+            <td class="name">Finance analytics — history<span class="sub">vendor_finance_routes.py</span></td>
+            <td class="figure">3 months</td><td class="figure">12 months</td><td class="figure">36 months</td>
+          </tr>
+          <tr>
+            <td class="name">Finance analytics — transaction limit</td>
+            <td class="figure">10</td><td class="figure">100</td><td class="figure">500</td>
+          </tr>
+          <tr>
+            <td class="name">Finance export, retailer breakdown, forecast</td>
+            <td class="figure">—</td><td class="figure">Export + breakdown</td><td class="figure">All three</td>
+          </tr>
+          <tr>
+            <td class="name">B2B Trade ledger<span class="sub">vendor_b2b_routes.py — RFQ, orders, stock &amp; finance ledger</span></td>
+            <td class="figure">Unmetered<span class="sub" style="color:var(--estimate)">est. ₹0</span></td>
+            <td class="figure">Unmetered<span class="sub" style="color:var(--estimate)">est. ₹0</span></td>
+            <td class="figure">Unmetered<span class="sub" style="color:var(--estimate)">included</span></td>
+          </tr>
+          <tr>
+            <td class="name">Vendor Inventory<span class="sub">vendor_inventory_routes.py — stock, reservations, reorder</span></td>
+            <td class="figure">Unmetered<span class="sub" style="color:var(--estimate)">est. ₹0</span></td>
+            <td class="figure">Unmetered<span class="sub" style="color:var(--estimate)">est. ₹0</span></td>
+            <td class="figure">Unmetered<span class="sub" style="color:var(--estimate)">included</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="legend-note" style="margin-top:12px;"><span class="tag estimate" style="margin-right:6px;"><span class="dot"></span>Estimate</span>Both are real, working modules given away free at every tier today — proposed standalone add-on pricing for a vendor who wants them without upgrading their whole plan:</p>
+    <div class="table-scroll" style="margin-top:10px;">
+      <table>
+        <thead>
+          <tr><th>Add-on (Free/Standard vendors)</th><th class="desc">What unlocks</th><th class="figure-h vendor">₹/month</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="name">B2B Trade — unlimited</td>
+            <td class="desc">Full RFQ history, unlimited concurrent orders, finance-ledger export</td>
+            <td class="figure vendor-cell">₹1,500</td>
+          </tr>
+          <tr>
+            <td class="name">Vendor Inventory — unlimited</td>
+            <td class="desc">Unlimited SKUs, full stock-ledger history, reorder automation</td>
+            <td class="figure vendor-cell">₹1,000</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ============================================================ -->
+  <section class="block">
+    <div class="block-head">
+      <h2>AI &amp; advanced modules</h2>
+      <span class="tag estimate"><span class="dot"></span>Estimate</span>
+    </div>
+    <p class="block-sub">Priced as tenant-wide add-ons on top of the base license. Demand forecasting has a working automation job today (<code style="font-family:'IBM Plex Mono',monospace;font-size:12px">forecast_analytics_routes.py</code>) but isn't currently sold separately — the rest are unbuilt.</p>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr><th>Module</th><th class="desc">What it does</th><th class="figure-h retailer">Retailer · ₹/mo</th><th class="figure-h vendor">Vendor · ₹/mo</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="name">Inventory Intelligence</td>
+            <td class="desc">Stockout prediction, auto-reorder drafts, dead-stock flagging across stores</td>
+            <td class="figure retailer-cell">₹10,000</td>
+            <td class="figure vendor-cell">—</td>
+          </tr>
+          <tr>
+            <td class="name">Demand Forecasting</td>
+            <td class="desc">Low-stock alerts and restock drafts, computed on a nightly cron</td>
+            <td class="figure retailer-cell">₹8,000</td>
+            <td class="figure vendor-cell">—</td>
+          </tr>
+          <tr>
+            <td class="name">Risk &amp; Fraud Detection</td>
+            <td class="desc">Anomaly scoring on payments, KYB documents, and vendor/retailer identity claims</td>
+            <td class="figure retailer-cell">₹12,000</td>
+            <td class="figure vendor-cell">₹1,000</td>
+          </tr>
+          <tr>
+            <td class="name">GenAI Assist</td>
+            <td class="desc">Auto-drafted product descriptions, campaign copy, and reply suggestions</td>
+            <td class="figure retailer-cell">₹6,000</td>
+            <td class="figure vendor-cell">₹2,000</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ============================================================ -->
+  <section class="block">
+    <div class="block-head">
+      <h2>Cloud, data &amp; API costing</h2>
+      <span class="tag estimate"><span class="dot"></span>Estimate</span>
+    </div>
+    <p class="block-sub">Infrastructure is bundled into the license today, with no metering per tenant. This is what a usage-based pass-through would look like as data volume grows.</p>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr><th>Item</th><th class="desc">Basis</th><th class="figure-h">Rate</th></tr>
+        </thead>
+        <tbody>
+          <tr><td class="name">Cloud &amp; data — Basic/Standard tier</td><td class="desc">Bundled in license</td><td class="figure">Included</td></tr>
+          <tr><td class="name">Cloud &amp; data — Professional/Premium tier</td><td class="desc">Storage &amp; DB scaling beyond bundled quota</td><td class="figure">₹5,000 – ₹20,000/mo</td></tr>
+          <tr><td class="name">API access — standard</td><td class="desc">Internal integrations (POS, GRN, catalogue sync)</td><td class="figure">10,000 calls/mo free</td></tr>
+          <tr><td class="name">API access — overage</td><td class="desc">Beyond the free monthly quota</td><td class="figure">₹0.50/call</td></tr>
+          <tr><td class="name">API access — unlimited</td><td class="desc">Third-party/ERP integration partners</td><td class="figure">₹5,000/mo flat</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ============================================================ -->
+  <section class="block">
+    <div class="block-head">
+      <h2>WhatsApp &amp; email credentials</h2>
+      <span class="tag estimate"><span class="dot"></span>Estimate</span>
+    </div>
+    <p class="block-sub">WhatsApp is a written, unwired skeleton today — <code style="font-family:'IBM Plex Mono',monospace;font-size:12px">whatsapp_routes.py</code> isn't even registered in <code style="font-family:'IBM Plex Mono',monospace;font-size:12px">main.py</code>, and has no Meta Business Account, phone number, or verify token configured. Email already works over plain SMTP (<code style="font-family:'IBM Plex Mono',monospace;font-size:12px">email_utils.py</code>) — whatever provider gets configured in the environment, at that provider's own rate, passed through rather than marked up here.</p>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr><th>Item</th><th class="desc">Basis</th><th class="figure-h">Rate</th></tr>
+        </thead>
+        <tbody>
+          <tr><td class="name">WhatsApp — setup</td><td class="desc">Meta Business verification + BSP account (Twilio/Gupshup/360dialog) — one-time</td><td class="figure">₹10,000 – ₹25,000</td></tr>
+          <tr><td class="name">WhatsApp — platform fee</td><td class="desc">BSP monthly platform/number fee, independent of volume</td><td class="figure">₹1,500 – ₹4,000/mo</td></tr>
+          <tr><td class="name">WhatsApp — utility conversation</td><td class="desc">Order/PO/GRN status pings — Meta's per-conversation rate, India</td><td class="figure">≈ ₹0.35/conversation</td></tr>
+          <tr><td class="name">WhatsApp — marketing conversation</td><td class="desc">Campaign broadcasts (would ride on the Marketing module)</td><td class="figure">≈ ₹0.80/conversation</td></tr>
+          <tr><td class="name">Email — transactional</td><td class="desc">Setup emails, KYB notices, invoices — SMTP pass-through, e.g. Amazon SES rate</td><td class="figure">≈ ₹8/1,000 emails</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="legend-note" style="margin-top:12px;">Both are pass-through costs set by Meta/the BSP/the SMTP provider — RMS doesn't control these rates, only whether to absorb them into the license or bill them through.</p>
+  </section>
+
+  <!-- ============================================================ -->
+  <section class="block">
+    <div class="block-head">
+      <h2>Automation &amp; scheduled jobs</h2>
+      <span class="tag live"><span class="dot"></span>Live in system</span>
+    </div>
+    <p class="block-sub">Five real cron-style jobs exist today, each gated by a shared <code style="font-family:'IBM Plex Mono',monospace;font-size:12px">X-Cron-Secret</code> header — but the backend process itself has no in-process scheduler, so every one of them sits idle until something external (a cloud scheduler, a cron VM) actually calls it daily. That trigger infrastructure is the one real gap.</p>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr><th>Job</th><th class="desc">What it does</th><th>Cadence</th></tr>
+        </thead>
+        <tbody>
+          <tr><td class="name">Forecast auto-run<span class="sub">forecast_analytics_routes.py</span></td><td class="desc">Recomputes low-stock alerts and restock drafts per tenant</td><td>Daily</td></tr>
+          <tr><td class="name">Vendor expiry reminders<span class="sub">subscription_routes.py</span></td><td class="desc">Emails vendors whose paid tier lapsed or renews within 7 days</td><td>Daily</td></tr>
+          <tr><td class="name">Retailer expiry reminders<span class="sub">retailer_subscription_routes.py</span></td><td class="desc">Emails retailers whose plan lapsed or renews within 14 days</td><td>Daily</td></tr>
+          <tr><td class="name">Store add-on sweep<span class="sub">retailer_store_addon_routes.py</span></td><td class="desc">Deactivates over-limit stores when a lapsed add-on isn't renewed</td><td>Daily</td></tr>
+          <tr><td class="name">Catalogue expire sweep<span class="sub">catalogue_routes.py</span></td><td class="desc">Retires vendor listings past their tier's visibility window</td><td>Daily</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="legend-note" style="margin-top:12px;"><span class="tag estimate" style="margin-right:6px;"><span class="dot"></span>Estimate</span>Scheduler infrastructure to actually fire these five (a managed cron service — cloud scheduler, GitHub Actions cron, or a small always-on VM): ≈ ₹1,000 – ₹3,000/month, flat regardless of tenant count.</p>
+  </section>
+
+  <!-- ============================================================ -->
+  <section class="block">
+    <div class="block-head">
+      <h2>Support &amp; AMC</h2>
+      <span class="tag estimate"><span class="dot"></span>Estimate</span>
+    </div>
+    <p class="block-sub">Annual Maintenance Contract, priced as a percentage of the annualised license value — standard SaaS convention.</p>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr><th>Tier</th><th class="desc">Coverage</th><th class="figure-h">Rate</th></tr>
+        </thead>
+        <tbody>
+          <tr><td class="name">Standard</td><td class="desc">Email support, next-business-day response, included with every plan</td><td class="figure">Included</td></tr>
+          <tr><td class="name">Priority</td><td class="desc">4-hour response SLA, dedicated escalation channel</td><td class="figure">12% of annual license</td></tr>
+          <tr><td class="name">Enterprise AMC</td><td class="desc">24/7 SLA, quarterly system review, named account engineer</td><td class="figure">18% of annual license</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <footer class="notes">
+    <h3>Methodology</h3>
+    <ol>
+      <li><strong>Live</strong> figures are read directly from the codebase's pricing constants — retailer plan tiers, admin-seat and store-slot add-ons, and vendor subscription tiers — not adjusted or rounded.</li>
+      <li><strong>Estimate</strong> figures are proposed pricing for capabilities that are either partially built (forecasting) or not yet built (fraud scoring, GenAI, per-seat billing, metered API/cloud) — anchored to the live figures' scale, not invented independently.</li>
+      <li>AMC percentages and per-seat estimates follow common Indian B2B SaaS conventions (10–20% AMC, seat pricing 1–4× the platform's own per-unit add-on cost) rather than being pulled from any RMS billing logic.</li>
+      <li>All figures exclude GST. Recompute before using in a customer-facing quote.</li>
+    </ol>
+  </footer>
+
+</div>

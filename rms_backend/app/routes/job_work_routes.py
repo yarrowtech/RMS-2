@@ -36,7 +36,6 @@ from .purchaseorder_routes import APP_BASE_URL, TOKEN_EXPIRY_DAYS, _clean_whatsa
 from .grn_routes import resolve_single_store_destination
 from .procurement_notification_routes import notify_vendor
 from ..email_utils import send_job_work_order_email
-from ..retailer_plans import normalize_retailer_plan
 
 cloudinary.config(
     cloud_name=settings.cloudinary_cloud_name,
@@ -258,15 +257,14 @@ def _serialize(document: dict) -> dict:
 
 async def _ensure_job_work_addon_enabled(ctx: dict) -> None:
     """Production & Job Work is an independent, purchasable add-on — not tied
-    to plan tier. A tenant needs `production_job_work_enabled` set on their
-    tenant record; Enterprise-plan tenants are grandfathered in automatically
-    since Job Work used to be bundled into that plan."""
+    to plan tier, not even Enterprise. A tenant needs
+    `production_job_work_enabled` explicitly set on their tenant record via
+    the request/approval flow (production_addon_routes.py); a retailer can be
+    pure retail, pure job-work, or both, regardless of plan."""
     tenant = await tenants_collection.find_one(
-        {"tenant_id": ctx["tenant_id"]}, {"plan": 1, "production_job_work_enabled": 1}
+        {"tenant_id": ctx["tenant_id"]}, {"production_job_work_enabled": 1}
     )
     if (tenant or {}).get("production_job_work_enabled"):
-        return
-    if normalize_retailer_plan((tenant or {}).get("plan")) == "enterprise":
         return
     raise HTTPException(
         status_code=403,
@@ -1850,7 +1848,10 @@ async def vendor_update_job_work_progress(order_id: str, payload: dict, authoriz
 async def receive_job_work(order_id: str, payload: dict, ctx: dict = Depends(_require_job_work)):
     tenant_id = ctx["tenant_id"]
     order = await _get_order(order_id, tenant_id)
-    if order.get("status") not in {"ISSUED", "PARTIALLY_RECEIVED"}:
+    # AWAITING_QC/REWORK_PENDING are allowed starting states too — a rework
+    # redo, or another batch, can physically arrive while an earlier
+    # receipt on this same order is still waiting on inspection.
+    if order.get("status") not in {"ISSUED", "PARTIALLY_RECEIVED", "AWAITING_QC", "REWORK_PENDING"}:
         raise HTTPException(status_code=400, detail="Issue material before recording a job work receipt.")
 
     store = await _stock_scope(tenant_id)
@@ -1891,8 +1892,17 @@ async def receive_job_work(order_id: str, payload: dict, ctx: dict = Depends(_re
     output_rate = _number(output.get("rate"))
     if output_qty > 0 and not output_barcode:
         raise HTTPException(status_code=400, detail="Finished output barcode is required when receiving finished quantity.")
-    if output_qty:
-        await _increase_central_stock(tenant_id, output_barcode, output_qty, output_product, output_rate, f"Job work output receipt {order['order_no']}", store=store)
+    # Finished goods from a job worker are NOT sellable stock yet — they sit
+    # here as "received, not inspected" until a retailer-side QC pass
+    # (POST .../receipts/{id}/qc below) accepts/rejects/sends-back-for-rework
+    # each unit. Only accepted_qty ever reaches _increase_central_stock.
+    output_doc = {
+        "barcode": output_barcode, "product": output_product, "rate": output_rate,
+        "quantity": output_qty, "received_qty": output_qty,
+        "qc_status": "pending" if output_qty > 0 else "not_applicable",
+        "accepted_qty": 0.0, "rejected_qty": 0.0, "rework_qty": 0.0,
+        "qc_notes": "", "qc_by": None, "qc_at": None,
+    }
 
     # ⚠️ NEW — BOM-vs-actual consumption check. The Style BOM (planned_materials,
     # snapshotted onto the order at creation from style_bom_plans_collection)
@@ -1931,12 +1941,11 @@ async def receive_job_work(order_id: str, payload: dict, ctx: dict = Depends(_re
         - _number(line.get("leftover_qty")) - _number(line.get("waste_qty")) <= 0.000001
         for line in materials
     )
-    status = "COMPLETED" if all_reconciled else "PARTIALLY_RECEIVED"
     receipt = {
         "tenant_id": tenant_id, "order_id": order["_id"], "order_no": order["order_no"],
         "receipt_no": f"JWR-{now.strftime('%y%m%d')}-{str(ObjectId())[-5:].upper()}",
         "materials": receipt_materials,
-        "output": {"barcode": output_barcode, "product": output_product, "quantity": output_qty, "rate": output_rate},
+        "output": output_doc,
         "consumption_warnings": consumption_warnings,
         "remarks": str(payload.get("remarks") or "").strip()[:1000],
         "received_by": ctx.get("admin_id"), "received_at": now,
@@ -1944,12 +1953,22 @@ async def receive_job_work(order_id: str, payload: dict, ctx: dict = Depends(_re
     result = await job_work_receipts_collection.insert_one(receipt)
     outputs = list(order.get("outputs") or [])
     if output_qty:
-        outputs.append({"receipt_id": str(result.inserted_id), **receipt["output"], "received_at": now.isoformat()})
+        outputs.append({"receipt_id": str(result.inserted_id), **output_doc, "received_at": now.isoformat()})
+
+    if any((o or {}).get("qc_status") == "pending" for o in outputs):
+        status = "AWAITING_QC"
+    elif all_reconciled:
+        status = "COMPLETED"
+    else:
+        status = "PARTIALLY_RECEIVED"
+
     await job_work_orders_collection.update_one(
         {"_id": order["_id"], "tenant_id": tenant_id},
         {"$set": {"materials": materials, "outputs": outputs, "status": status, "updated_at": now}},
     )
     message = f"Job work receipt recorded. Order status: {status.replace('_', ' ').title()}."
+    if output_qty:
+        message += f" {output_qty} {output_product or 'unit(s)'} received — run QC before it counts as sellable stock."
     if consumption_warnings:
         flagged = ", ".join(f"{w['material']} ({w['over_pct']}% over)" for w in consumption_warnings)
         message += f" Note: fabric use is above the design's expected consumption for {flagged}."
@@ -1957,3 +1976,86 @@ async def receive_job_work(order_id: str, payload: dict, ctx: dict = Depends(_re
         "message": message, "receipt_id": str(result.inserted_id), "status": status,
         "consumption_warnings": consumption_warnings,
     }
+
+
+@router.post("/orders/{order_id}/receipts/{receipt_id}/qc")
+async def qc_job_work_receipt(order_id: str, receipt_id: str, payload: dict, ctx: dict = Depends(_require_job_work)):
+    """Retailer-side quality check on finished goods a job worker sent back.
+    This is the gate that was missing: only accepted_qty ever becomes
+    sellable stock. rejected_qty is a permanent write-off (bad workmanship,
+    unusable). rework_qty goes back to the job worker — it stays out of
+    stock and out of waste; the retailer records another receipt against
+    this same order once the corrected batch comes back, which is why
+    receive_job_work above accepts AWAITING_QC/REWORK_PENDING as valid
+    starting states."""
+    tenant_id = ctx["tenant_id"]
+    order = await _get_order(order_id, tenant_id)
+    if not ObjectId.is_valid(receipt_id):
+        raise HTTPException(status_code=400, detail="Invalid receipt ID.")
+
+    outputs = list(order.get("outputs") or [])
+    target_index = next((i for i, o in enumerate(outputs) if o.get("receipt_id") == receipt_id), None)
+    if target_index is None:
+        raise HTTPException(status_code=404, detail="No finished-goods receipt found with that ID on this order.")
+    target = outputs[target_index]
+    if target.get("qc_status") != "pending":
+        raise HTTPException(status_code=400, detail="This receipt has already been QC'd.")
+
+    received_qty = _number(target.get("received_qty"))
+    accepted_qty = _number(payload.get("accepted_qty"))
+    rejected_qty = _number(payload.get("rejected_qty"))
+    rework_qty = _number(payload.get("rework_qty"))
+    if round(accepted_qty + rejected_qty + rework_qty, 3) != round(received_qty, 3):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Accepted + rejected + rework must add up to the received quantity ({received_qty}).",
+        )
+
+    store = await _stock_scope(tenant_id)
+    if accepted_qty > 0:
+        await _increase_central_stock(
+            tenant_id, target["barcode"], accepted_qty, target["product"], _number(target.get("rate")),
+            f"Job work QC accepted — {order['order_no']} / {target.get('receipt_id')}", store=store,
+        )
+
+    now = datetime.utcnow()
+    outputs[target_index] = {
+        **target,
+        "qc_status": "completed",
+        "accepted_qty": accepted_qty, "rejected_qty": rejected_qty, "rework_qty": rework_qty,
+        "qc_notes": str(payload.get("qc_notes") or "").strip()[:1000],
+        "qc_by": ctx.get("admin_id"), "qc_at": now.isoformat(),
+    }
+
+    materials = order.get("materials") or []
+    all_reconciled = all(
+        _number(line.get("issued_qty")) - _number(line.get("used_qty")) - _number(line.get("returned_qty"))
+        - _number(line.get("leftover_qty")) - _number(line.get("waste_qty")) <= 0.000001
+        for line in materials
+    )
+    if any((o or {}).get("qc_status") == "pending" for o in outputs):
+        status = "AWAITING_QC"
+    elif rework_qty > 0:
+        status = "REWORK_PENDING"
+    else:
+        status = "COMPLETED" if all_reconciled else "PARTIALLY_RECEIVED"
+
+    await job_work_orders_collection.update_one(
+        {"_id": order["_id"], "tenant_id": tenant_id},
+        {"$set": {"outputs": outputs, "status": status, "updated_at": now}},
+    )
+
+    if order.get("assigned_vendor_id") and rework_qty > 0:
+        await notify_vendor(
+            order["assigned_vendor_id"], "job_work_rework_requested", "Rework requested",
+            f"{rework_qty} unit(s) from job work order {order.get('order_no', '')} did not pass QC and need rework.",
+            tenant_id=tenant_id,
+            metadata={"order_id": str(order["_id"]), "order_no": order.get("order_no", ""), "rework_qty": rework_qty},
+            category="job_work",
+        )
+
+    message = f"QC recorded: {accepted_qty} accepted"
+    if rejected_qty: message += f", {rejected_qty} rejected"
+    if rework_qty: message += f", {rework_qty} sent back for rework"
+    message += "."
+    return {"message": message, "status": status, "accepted_qty": accepted_qty, "rejected_qty": rejected_qty, "rework_qty": rework_qty}

@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import {
-  ArrowRight, BarChart2, Boxes, Building2, CalendarClock, CheckCircle2, CircleDot, CreditCard, Crown, LogOut, PackagePlus, ShieldCheck, ShoppingCart, Store, Tags, UsersRound, X,
+  ArrowRight, BarChart2, Boxes, Building2, CalendarClock, CheckCircle2, CircleDot, CreditCard, Crown, LogOut, PackagePlus, Settings, ShieldCheck, ShoppingCart, Store, Tags, UsersRound, X,
 } from "lucide-react";
 import { clearAuthData } from "../../utils/authRedirect.js";
 import { API_BASE_URL } from "../../config/api.js";
@@ -98,6 +98,13 @@ const WORKSPACES = [
     path: "/dashboard/store-owner/usage-analytics",
     icon: BarChart2,
     color: "from-indigo-500 to-violet-600",
+  },
+  {
+    title: "Settings",
+    description: "Edit your store name, contact details, password and document settings.",
+    path: "/dashboard/store-owner/settings",
+    icon: Settings,
+    color: "from-slate-500 to-slate-700",
   },
 ];
 

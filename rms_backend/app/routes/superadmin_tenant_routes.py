@@ -117,7 +117,7 @@ async def list_tenants(
             "admin_limit":  retailer_plan_config(t.get("plan", "basic")).get("admins"),
             "billing_mode": t.get("billing_mode", "manual"),
             "subscription_status": t.get("subscription_status", "active"),
-            "production_job_work_enabled": bool(t.get("production_job_work_enabled")) or normalize_retailer_plan(t.get("plan", "basic")) == "enterprise",
+            "production_job_work_enabled": bool(t.get("production_job_work_enabled")),
             "logistics_enabled": bool(t.get("logistics_enabled")),
             "hq_admin_email": t.get("hq_admin_email", ""),
             "hq_admin_name":  t.get("hq_admin_name", ""),
@@ -340,9 +340,10 @@ async def update_production_addon(
     payload: ProductionAddonUpdate,
     current_admin: CurrentAdmin = Depends(get_current_superadmin),
 ):
-    """Activate/deactivate the Production & Job Work add-on for a tenant,
-    independent of their plan tier. Enterprise-plan tenants already have it
-    grandfathered in (see job_work_routes.py) regardless of this flag."""
+    """Activate/deactivate the Production & Job Work add-on for a tenant.
+    Pure opt-in, independent of plan tier — not even Enterprise gets it
+    automatically (see job_work_routes.py's _ensure_job_work_addon_enabled).
+    A retailer can be pure retail, pure job-work, or both."""
     tenant = await tenants_collection.find_one({"tenant_id": tenant_id})
     if not tenant:
         raise HTTPException(status_code=404, detail="Tenant not found")
@@ -364,8 +365,8 @@ async def update_logistics_addon(
     payload: ProductionAddonUpdate,
     current_admin: CurrentAdmin = Depends(get_current_superadmin),
 ):
-    """Activate/deactivate the Logistics add-on for a tenant. Pure opt-in —
-    no plan-tier grandfather, unlike Production & Job Work."""
+    """Activate/deactivate the Logistics add-on for a tenant. Pure opt-in,
+    no plan-tier grandfather — same as Production & Job Work."""
     tenant = await tenants_collection.find_one({"tenant_id": tenant_id})
     if not tenant:
         raise HTTPException(status_code=404, detail="Tenant not found")

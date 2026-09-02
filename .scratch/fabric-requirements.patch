@@ -1,0 +1,75 @@
+*** Begin Patch
+*** Update File: rms_backend/app/routes/job_work_routes.py
+@@
+ async def _get_theme(theme_id: str, tenant_id: str) -> dict:
+@@
+     return theme
++
++
++def _material_key(value: Any) -> str:
++    """Create a forgiving key when matching BOM fabric to received stock."""
++    return " ".join(str(value or "").lower().replace("-", " ").split())
++
++
++async def _theme_requirement_summary(theme: dict, tenant_id: str) -> list[dict]:
++    """Planning-only requirement, stock and supplier-allocation summary."""
++    plan_ids = [plan_id for plan_id in (theme.get("plan_ids") or []) if ObjectId.is_valid(plan_id)]
++    requirements: dict[str, dict] = {}
++    if plan_ids:
++        object_ids = [ObjectId(plan_id) for plan_id in plan_ids]
++        async for plan in style_bom_plans_collection.find({"_id": {"$in": object_ids}, "tenant_id": tenant_id}):
++            for material in plan.get("materials") or []:
++                name = str(material.get("material_name") or "").strip()
++                if not name:
++                    continue
++                key = _material_key(name)
++                row = requirements.setdefault(key, {"material_name": name, "unit": str(material.get("unit") or "m"), "required_qty": 0.0, "available_qty": 0.0, "selected_qty": 0.0, "plans": []})
++                row["required_qty"] += _number(material.get("required_quantity"))
++                row["plans"].append({"plan_no": plan.get("plan_no") or "", "style_name": plan.get("style_name") or "", "quantity": _number(material.get("required_quantity"))})
++
++    store = await _stock_scope(tenant_id)
++    query: dict = {"tenant_id": tenant_id, "stockQty": {"$gt": 0}}
++    if store:
++        query["store_id"] = store["id"]
++        query["$or"] = [{"is_fabric": True}, {"is_leftover": True}]
++    cursor = _stock_collection(store).find(query, {"description": 1, "product": 1, "stockQty": 1})
++    async for stock in cursor:
++        key = _material_key(stock.get("description") or stock.get("product"))
++        if key in requirements:
++            requirements[key]["available_qty"] += _number(stock.get("stockQty"))
++
++    for line in theme.get("lines") or []:
++        key = _material_key(line.get("fabric_name"))
++        if key in requirements:
++            requirements[key]["selected_qty"] += _number(line.get("quantity"))
++
++    rows = []
++    for row in requirements.values():
++        row["required_qty"] = round(row["required_qty"], 3)
++        row["available_qty"] = round(row["available_qty"], 3)
++        row["selected_qty"] = round(row["selected_qty"], 3)
++        row["to_buy_qty"] = round(max(0, row["required_qty"] - row["available_qty"]), 3)
++        row["unallocated_qty"] = round(max(0, row["to_buy_qty"] - row["selected_qty"]), 3)
++        rows.append(row)
++    return sorted(rows, key=lambda row: row["material_name"].lower())
+@@
+ async def create_fabric_theme(payload: dict, ctx: dict = Depends(_require_job_work_or_buyer)):
+@@
+-    now = datetime.utcnow()
++    raw_plan_ids = payload.get("plan_ids") or []
++    if not isinstance(raw_plan_ids, list):
++        raw_plan_ids = []
++    plan_ids = list(dict.fromkeys(str(plan_id) for plan_id in raw_plan_ids if ObjectId.is_valid(str(plan_id))))[:50]
++    now = datetime.utcnow()
+@@
+         "target_date": str(payload.get("target_date") or "").strip(),
+         "notes": str(payload.get("notes") or "").strip(),
++        "plan_ids": plan_ids,
+@@
+ async def get_fabric_theme(theme_id: str, ctx: dict = Depends(_require_job_work_or_buyer)):
+     theme = await _get_theme(theme_id, ctx["tenant_id"])
+-    return {"data": _serialize_theme(theme)}
++    data = _serialize_theme(theme)
++    data["requirements"] = await _theme_requirement_summary(theme, ctx["tenant_id"])
++    return {"data": data}
+*** End Patch

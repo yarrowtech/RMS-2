@@ -500,6 +500,8 @@ async def lookup_barcode(
 
     p = await product_collection.find_one({"barcode": barcode, "tenant_id": tenant_id})
     if p and not p.get("has_variants"):
+        if p.get("is_fabric"):
+            raise HTTPException(status_code=404, detail="This is raw fabric stock, not a sellable product.")
         if _is_vendor_only(p):
             inv = await inventory_collection.find_one({"barcode": barcode, "tenant_id": tenant_id})
             if not inv:
@@ -511,6 +513,8 @@ async def lookup_barcode(
         return JSONResponse({"status": "success", "data": _product_to_pos(p, qty)})
 
     p = await product_collection.find_one({"variants.barcode": barcode, "tenant_id": tenant_id})
+    if p and p.get("is_fabric"):
+        raise HTTPException(status_code=404, detail="This is raw fabric stock, not a sellable product.")
     if p:
         for v in p.get("variants", []):
             if (v.get("barcode") or "").strip() == barcode:
@@ -546,6 +550,7 @@ async def search_products(
 
     async for p in product_collection.find({
         "tenant_id": tenant_id,
+        "is_fabric": {"$ne": True},
         "$or": [{"product_name": regex}, {"barcode": regex}, {"sku": regex}]
     }).limit(30):
         if not p.get("has_variants"):
@@ -577,7 +582,7 @@ async def search_products(
             break
 
     if len(results) < 5:
-        async for p in product_collection.find({"variants.barcode": regex, "tenant_id": tenant_id}).limit(10):
+        async for p in product_collection.find({"variants.barcode": regex, "tenant_id": tenant_id, "is_fabric": {"$ne": True}}).limit(10):
             for v in p.get("variants", []):
                 bc = (v.get("barcode") or "").strip()
                 if bc and bc not in seen and q.lower() in bc.lower():
@@ -609,7 +614,7 @@ async def product_cache(
 
     results = []
     seen = set()
-    cursor = product_collection.find({"tenant_id": tenant_id}).limit(limit)
+    cursor = product_collection.find({"tenant_id": tenant_id, "is_fabric": {"$ne": True}}).limit(limit)
     async for p in cursor:
         if not p.get("has_variants"):
             bc = (p.get("barcode") or "").strip()
