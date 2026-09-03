@@ -12,6 +12,30 @@ import toast from "react-hot-toast";
 import BulkStaffImportModal from "../../utils/BulkStaffImportModal.jsx";
 
 const API   = APP_API_URL;
+
+const formatApiError = (detail, fallback = "Request failed") => {
+  if (Array.isArray(detail)) {
+    const messages = detail
+      .map((entry) => {
+        const field = Array.isArray(entry?.loc)
+          ? entry.loc.filter((part) => part !== "body").join(".")
+          : "";
+        const message = entry?.msg || "Invalid value";
+        return field ? `${field}: ${message}` : message;
+      })
+      .filter(Boolean);
+
+    return messages.join("; ") || fallback;
+  }
+
+  if (typeof detail === "string" && detail.trim()) return detail;
+  if (detail && typeof detail === "object" && typeof detail.message === "string") {
+    return detail.message;
+  }
+
+  return fallback;
+};
+
 const api = async (path, opts = {}) => {
   const token = localStorage.getItem("admin_token") || "";
   const res   = await fetch(`${API}${path}`, {
@@ -22,8 +46,8 @@ const api = async (path, opts = {}) => {
     },
     ...opts,
   });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.detail || "Request failed");
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(formatApiError(data.detail, "Request failed"));
   return data;
 };
 
@@ -225,6 +249,9 @@ function AddAdminModal({ onClose, onCreated, stores = [], deptConfig, admins = [
     const e = {};
     if (!form.name.trim())                e.name  = "Name is required";
     if (!form.email.trim())               e.email = "Email is required";
+    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) {
+      e.email = "Enter a valid email address, for example name@example.com";
+    }
     if (!form.managedDepartments.length)  e.depts = "Select at least one department";
     if (isStoreScope && !form.store_id)   e.store = "Select a store/branch for a store-level admin";
     setErrors(e);
