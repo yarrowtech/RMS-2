@@ -573,6 +573,7 @@ class HQAdminCreate(BaseModel):
     permissions:        List[str]    = []
     # Required when scope == "store"
     store_id:           Optional[str] = None
+    store_department:   Optional[str] = ""
     # Finer org placement within a department — purely descriptive, doesn't
     # affect access/permissions. is_department_head marks this person as the
     # one head of their primary department (see _promote_department_head).
