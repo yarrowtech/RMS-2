@@ -123,6 +123,13 @@ job_work_orders_collection = db["job_work_orders"]
 job_work_receipts_collection = db["job_work_receipts"]
 style_bom_plans_collection = db["style_bom_plans"]
 tech_packs_collection = db["tech_packs"]
+design_projects_collection = db["design_projects"]
+design_patterns_collection = db["design_patterns"]
+design_samples_collection = db["design_samples"]
+design_queries_collection = db["design_queries"]
+design_research_collection = db["design_research"]
+design_artworks_collection = db["design_artworks"]
+design_change_requests_collection = db["design_change_requests"]
 
 # HR module. Employees are NOT duplicated here — admins_collection is the
 # single source of truth for who works at this tenant (name, department,
@@ -150,6 +157,14 @@ hr_floor_staff_collection       = db["hr_floor_staff"]
 # so the UI doesn't have to wait for a live computation to show alerts.
 forecast_low_stock_alerts_collection = db["forecast_low_stock_alerts"]
 forecast_restock_drafts_collection   = db["forecast_restock_drafts"]
+
+# Raphaa pilot Sales & Stock Data Hub — audit + rollback log for every
+# spreadsheet import run that wrote into inventory / store_stock / sales.
+# Purely additive: nothing outside forecast_data_hub_routes.py reads or
+# writes this collection, and it exists only so a bad import can be listed
+# and reverted (stored previous quantities per location for stock runs,
+# batch id for sales runs).
+data_hub_imports_collection = db["data_hub_imports"]
 
 # Product-usage analytics (page views, feature clicks, session start/end,
 # device type) — separate from audit_logs_collection, which is a
@@ -221,6 +236,14 @@ async def ensure_procurement_indexes():
     await job_work_receipts_collection.create_index([("tenant_id", 1), ("order_id", 1), ("received_at", -1)], name="job_work_receipt_order_created")
     await style_bom_plans_collection.create_index([("tenant_id", 1), ("style_name", 1), ("created_at", -1)], name="style_bom_tenant_style_created")
     await tech_packs_collection.create_index([("tenant_id", 1), ("design_no", 1), ("version", -1)], name="tech_pack_tenant_design_version")
+    await design_projects_collection.create_index([("tenant_id", 1), ("design_no", 1)], unique=True, name="design_project_tenant_number")
+    await design_projects_collection.create_index([("tenant_id", 1), ("status", 1), ("updated_at", -1)], name="design_project_tenant_status")
+    await design_patterns_collection.create_index([("tenant_id", 1), ("project_id", 1), ("created_at", -1)], name="design_pattern_project_created")
+    await design_samples_collection.create_index([("tenant_id", 1), ("project_id", 1), ("created_at", -1)], name="design_sample_project_created")
+    await design_queries_collection.create_index([("tenant_id", 1), ("status", 1), ("created_at", -1)], name="design_query_tenant_status")
+    await design_research_collection.create_index([("tenant_id", 1), ("category", 1), ("created_at", -1)], name="design_research_tenant_category")
+    await design_artworks_collection.create_index([("tenant_id", 1), ("project_id", 1), ("updated_at", -1)], name="design_artwork_project_updated")
+    await design_change_requests_collection.create_index([("tenant_id", 1), ("status", 1), ("created_at", -1)], name="design_change_tenant_status")
     await onboarding_requests_collection.create_index([("status", 1), ("created_at", -1)], name="onboarding_status_created")
     await onboarding_requests_collection.create_index([("email", 1), ("account_type", 1), ("created_at", -1)], name="onboarding_email_type_created")
     await store_upgrade_requests_collection.create_index([("tenant_id", 1), ("status", 1), ("created_at", -1)], name="store_upgrade_tenant_status_created")

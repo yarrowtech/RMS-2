@@ -285,6 +285,19 @@ async def _require_job_work(ctx: dict = Depends(get_hq_tenant)) -> dict:
     return ctx
 
 
+async def _require_design_or_job_work(ctx: dict = Depends(get_hq_tenant)) -> dict:
+    """Share tech packs without exposing Production orders or inventory."""
+    permissions = set(ctx.get("_permissions") or [])
+    departments = set(ctx.get("_managed_departments") or [])
+    is_design = "design_pattern" in permissions or "Design & Pattern" in departments
+    is_job_work = "job_work" in permissions or "Production & Job Work" in departments
+    if not (is_design or is_job_work):
+        raise HTTPException(status_code=403, detail="Design & Pattern or Production & Job Work access is required.")
+    if is_job_work and not is_design:
+        await _ensure_job_work_addon_enabled(ctx)
+    return ctx
+
+
 async def _require_job_work_or_buyer(ctx: dict = Depends(get_hq_tenant)) -> dict:
     """Same as _require_job_work, but also lets a Merchandiser Buyer through —
     used only for the fabric-supplier list and manual fabric PO creation, so
@@ -1295,9 +1308,15 @@ async def _linked_theme_swatch(tenant_id: str, material_plan_id: str | None) -> 
 
 
 @router.get("/tech-packs")
-async def list_tech_packs(ctx: dict = Depends(_require_job_work)):
+async def list_tech_packs(ctx: dict = Depends(_require_design_or_job_work)):
     rows = []
-    async for pack in tech_packs_collection.find({"tenant_id": ctx["tenant_id"]}).sort("updated_at", -1).limit(300):
+    departments = set(ctx.get("_managed_departments") or [])
+    permissions = set(ctx.get("_permissions") or [])
+    is_design = "Design & Pattern" in departments or "design_pattern" in permissions
+    query = {"tenant_id": ctx["tenant_id"]}
+    if not is_design:
+        query["$or"] = [{"origin_department": {"$ne": "Design & Pattern"}}, {"status": "Released to Production"}]
+    async for pack in tech_packs_collection.find(query).sort("updated_at", -1).limit(300):
         row = _serialize(pack)
         row["linked_theme"] = await _linked_theme_swatch(ctx["tenant_id"], pack.get("material_plan_id"))
         rows.append(row)
@@ -1305,7 +1324,7 @@ async def list_tech_packs(ctx: dict = Depends(_require_job_work)):
 
 
 @router.post("/tech-packs", status_code=201)
-async def create_tech_pack(request: Request, ctx: dict = Depends(_require_job_work)):
+async def create_tech_pack(request: Request, ctx: dict = Depends(_require_design_or_job_work)):
     payload, uploaded_by_category = await _tech_pack_payload_from_request(request)
     design_no = str(payload.get("design_no") or "").strip()[:120]
     style_name = str(payload.get("style_name") or "").strip()[:160]
@@ -1346,6 +1365,7 @@ async def create_tech_pack(request: Request, ctx: dict = Depends(_require_job_wo
         "department": str(payload.get("department") or "").strip()[:80],
         "version": version,
         "status": "Draft",
+        "origin_department": "Design & Pattern" if ("Design & Pattern" in set(ctx.get("_managed_departments") or []) or "design_pattern" in set(ctx.get("_permissions") or [])) else "Production & Job Work",
         "theme_name": str(payload.get("theme_name") or "").strip()[:120],
         "collection": str(payload.get("collection") or "").strip()[:120],
         "designer_name": str(payload.get("designer_name") or "").strip()[:120],
@@ -1389,7 +1409,7 @@ async def create_tech_pack(request: Request, ctx: dict = Depends(_require_job_wo
 
 
 @router.get("/tech-packs/{tech_pack_id}")
-async def get_tech_pack(tech_pack_id: str, ctx: dict = Depends(_require_job_work)):
+async def get_tech_pack(tech_pack_id: str, ctx: dict = Depends(_require_design_or_job_work)):
     if not ObjectId.is_valid(tech_pack_id):
         raise HTTPException(status_code=400, detail="Invalid tech pack.")
     pack = await tech_packs_collection.find_one({"_id": ObjectId(tech_pack_id), "tenant_id": ctx["tenant_id"]})
@@ -1401,7 +1421,7 @@ async def get_tech_pack(tech_pack_id: str, ctx: dict = Depends(_require_job_work
 
 
 @router.post("/tech-packs/{tech_pack_id}/comments", status_code=201)
-async def add_tech_pack_comment(tech_pack_id: str, payload: dict, ctx: dict = Depends(_require_job_work)):
+async def add_tech_pack_comment(tech_pack_id: str, payload: dict, ctx: dict = Depends(_require_design_or_job_work)):
     """A dated, appended note — for a small correction ('use the right
     button reference') that doesn't warrant cutting a whole new version.
     Never edited or removed once added, so it stays a genuine history."""
@@ -1597,6 +1617,8 @@ async def create_order(request: Request, ctx: dict = Depends(_require_job_work))
         tech_pack = await tech_packs_collection.find_one({"_id": ObjectId(tech_pack_id), "tenant_id": ctx["tenant_id"]})
         if not tech_pack:
             raise HTTPException(status_code=404, detail="Selected tech pack was not found.")
+        if tech_pack.get("origin_department") == "Design & Pattern" and tech_pack.get("status") != "Released to Production":
+            raise HTTPException(status_code=400, detail="Design-owned tech packs must be approved and released before Production can use them.")
         line["tech_pack"] = {
             "id": str(tech_pack["_id"]), "tech_pack_no": tech_pack.get("tech_pack_no", ""),
             "version": tech_pack.get("version", ""), "design_no": tech_pack.get("design_no", ""),

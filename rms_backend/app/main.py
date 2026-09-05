@@ -32,6 +32,7 @@ from .routes.onboarding_routes import router as onboarding_router
 from .routes.store_upgrade_routes import router as store_upgrade_router
 from .routes.retailer_signup_routes import router as retailer_signup_router
 from .routes.forecast_analytics_routes import router as forecast_analytics_router
+from .routes.forecast_data_hub_routes import router as forecast_data_hub_router
 from .routes.retailer_subscription_routes import router as retailer_subscription_router
 from .routes.vendor_role_operations_routes import router as vendor_role_operations_router
 from .routes.vendor_b2b_routes import router as vendor_b2b_router
@@ -49,6 +50,7 @@ from .routes.staff_task_routes import router as staff_task_router
 from .routes.production_addon_routes import router as production_addon_router
 from .routes.logistics_addon_routes import router as logistics_addon_router
 from .routes.logistics_routes import router as logistics_router
+from .routes.design_pattern_routes import router as design_pattern_router
    
 
 
@@ -133,10 +135,12 @@ app.include_router(job_work_router)
 app.include_router(production_addon_router)
 app.include_router(logistics_addon_router)
 app.include_router(logistics_router)
+app.include_router(design_pattern_router)
 app.include_router(onboarding_router)
 app.include_router(store_upgrade_router)
 app.include_router(retailer_signup_router)
 app.include_router(forecast_analytics_router)
+app.include_router(forecast_data_hub_router)
 app.include_router(retailer_subscription_router)
 app.include_router(vendor_role_operations_router)
 app.include_router(vendor_b2b_router)

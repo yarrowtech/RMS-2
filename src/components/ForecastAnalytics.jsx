@@ -4,6 +4,7 @@ import { API_BASE_URL } from "../config/api.js";
 import {
   LineChart, TrendingUp, TrendingDown, Minus, Building2, Wallet, LogOut,
   Search, RefreshCw, AlertTriangle, ShoppingCart, BarChart3,
+  UploadCloud, FileSpreadsheet, CheckCircle2, XCircle, Undo2, History, Download,
 } from "lucide-react";
 
 function getAdminToken() {
@@ -24,6 +25,38 @@ async function faFetch(path, options = {}) {
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.detail || "Request failed.");
   return data;
+}
+
+/* multipart upload — no JSON Content-Type header, FastAPI sets the boundary */
+async function faUpload(path, file, extra = {}) {
+  const token = getAdminToken();
+  const form = new FormData();
+  form.append("file", file);
+  Object.entries(extra).forEach(([key, value]) => form.append(key, value));
+  const res = await fetch(`${API_BASE_URL}${path}`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: form,
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const detail = data.detail;
+    throw new Error(typeof detail === "string" ? detail : detail?.message || "Upload failed.");
+  }
+  return data;
+}
+
+async function faDownload(path, filename) {
+  const token = getAdminToken();
+  const res = await fetch(`${API_BASE_URL}${path}`, { headers: { Authorization: `Bearer ${token}` } });
+  if (!res.ok) throw new Error("Could not download the template.");
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
 }
 
 const MENU = [
@@ -453,13 +486,367 @@ function PurchasePlanView() {
   );
 }
 
+/* ── Data Import (Raphaa pilot only) ── */
+function StatTile({ label, value, tone = "slate" }) {
+  const tones = {
+    slate: "text-slate-900",
+    emerald: "text-emerald-700",
+    rose: "text-rose-700",
+    amber: "text-amber-700",
+  };
+  return (
+    <div className="fa-stat-card p-4">
+      <p className="text-xs font-bold uppercase tracking-wide text-slate-400">{label}</p>
+      <p className={`mt-1 text-xl font-black ${tones[tone] || tones.slate}`}>{value}</p>
+    </div>
+  );
+}
+
+function RowErrorsTable({ kind, rows }) {
+  const flagged = rows.filter((r) => r.errors && r.errors.length);
+  const shown = (flagged.length ? flagged : rows).slice(0, 25);
+  if (!shown.length) return null;
+  return (
+    <div className="fa-panel overflow-hidden">
+      <div className="border-b border-slate-100 bg-slate-50 px-4 py-2.5 text-xs font-bold uppercase tracking-wide text-slate-500">
+        {flagged.length ? `${flagged.length} row(s) with problems` : "Sample of parsed rows"}
+      </div>
+      <div className="max-h-80 overflow-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr>
+              {["Row", kind === "stock" ? "Item / barcode" : "Bill No.", kind === "stock" ? "Warehouse + stores" : "Store / qty", "Issues"].map((h) => (
+                <th key={h} className="whitespace-nowrap px-4 py-2.5 text-left font-bold uppercase">{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {shown.map((r) => (
+              <tr key={r.row_no}>
+                <td className="px-4 py-2.5 font-mono text-xs text-slate-400">{r.row_no}</td>
+                <td className="px-4 py-2.5 font-semibold text-slate-800">
+                  {kind === "stock" ? (r.product || r.barcode || r.item_code || "—") : (r.bill_no || "—")}
+                  <span className="ml-1 block font-mono text-[11px] font-normal text-slate-400">{r.barcode || r.item_code}</span>
+                </td>
+                <td className="px-4 py-2.5 text-xs text-slate-600">
+                  {kind === "stock"
+                    ? Object.entries(r.allocation || {}).map(([loc, q]) => `${loc}: ${q}`).join("  ·  ")
+                    : `${r.store || "—"}  ·  qty ${r.bill_qty ?? 0}`}
+                </td>
+                <td className="px-4 py-2.5">
+                  {r.errors && r.errors.length
+                    ? <span className="text-xs font-semibold text-rose-600">{r.errors.join(" ")}</span>
+                    : <span className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-600"><CheckCircle2 size={12} /> ok</span>}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function ImportPanel({ kind, title, blurb, onCommitted }) {
+  const [file, setFile] = useState(null);
+  const [preview, setPreview] = useState(null);
+  const [result, setResult] = useState(null);
+  const [error, setError] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [committing, setCommitting] = useState(false);
+
+  const reset = () => { setFile(null); setPreview(null); setResult(null); setError(null); };
+
+  const onPick = async (e) => {
+    const picked = e.target.files?.[0];
+    e.target.value = "";
+    if (!picked) return;
+    setError(null); setResult(null); setPreview(null); setFile(picked); setLoading(true);
+    try {
+      setPreview(await faUpload(`/api/forecast-analytics/data-hub/${kind}/preview`, picked));
+    } catch (err) {
+      setError(err.message); setFile(null);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const commit = async () => {
+    if (!file) return;
+    const msg = kind === "stock"
+      ? "Commit this stock snapshot? It sets central (HQ warehouse) + per-store on-hand quantities for every matched product. Items not in the file are left untouched."
+      : "Commit these sales? Historical bills are added for forecasting and missing products are created in the catalogue. Stock levels are not changed.";
+    if (!window.confirm(msg)) return;
+    setCommitting(true); setError(null);
+    try {
+      const r = await faUpload(`/api/forecast-analytics/data-hub/${kind}/commit`, file, { confirm: "true" });
+      setResult(r); setPreview(null); setFile(null);
+      onCommitted?.();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setCommitting(false);
+    }
+  };
+
+  const s = preview?.summary;
+  const canCommit = Boolean(preview) && (s?.valid_count ?? 0) > 0 && !committing;
+
+  return (
+    <div className="space-y-5">
+      <ErrorBanner message={error} />
+
+      <div className="fa-panel p-5">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h4 className="flex items-center gap-2 text-sm font-bold text-slate-900"><FileSpreadsheet size={15} className="text-indigo-600" /> {title}</h4>
+            <p className="mt-1 max-w-2xl text-xs leading-5 text-slate-500">{blurb}</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => faDownload(`/api/forecast-analytics/data-hub/template/${kind}`, `raphaa-${kind}-template.csv`).catch((e) => setError(e.message))}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-bold text-slate-600 hover:bg-slate-50"
+          >
+            <Download size={13} /> Template
+          </button>
+        </div>
+
+        <label className="mt-4 flex cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed border-indigo-200 bg-indigo-50/40 px-4 py-8 text-center transition hover:bg-indigo-50">
+          <UploadCloud className="h-7 w-7 text-indigo-500" />
+          <span className="text-sm font-semibold text-slate-700">{file ? file.name : "Choose a .xlsx / .xls / .csv file"}</span>
+          <span className="text-xs text-slate-400">{loading ? "Validating…" : "Nothing is written until you press Commit"}</span>
+          <input type="file" accept=".xlsx,.xls,.csv" onChange={onPick} disabled={loading || committing} className="hidden" />
+        </label>
+      </div>
+
+      {preview && (
+        <>
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <StatTile label={kind === "stock" ? "Rows / products" : "Rows in file"} value={kind === "stock" ? `${preview.rows?.length ?? 0} → ${s?.products_in_snapshot ?? 0}` : (s?.row_count ?? 0)} />
+            <StatTile label={kind === "stock" ? "Ready to write" : "Ready to import"} value={s?.valid_count ?? 0} tone="emerald" />
+            <StatTile label="Will be skipped" value={s?.invalid_count ?? 0} tone={s?.invalid_count ? "rose" : "slate"} />
+            {kind === "stock"
+              ? <StatTile label="Matched via category" value={s?.resolved_via_category ?? 0} tone="amber" />
+              : <StatTile label="New products to create" value={s?.new_products ?? 0} tone={s?.new_products ? "amber" : "slate"} />}
+          </div>
+
+          {kind === "stock" && (s?.catalogue_size ?? 0) === 0 && (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs font-semibold text-amber-800">
+              ⚠ No products in the catalogue yet — import the <b>sales file first</b>. Stock rows are matched to products the sales import creates.
+            </div>
+          )}
+
+          {kind === "stock" && s?.location_totals && (
+            <div className="fa-panel p-4">
+              <p className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-400">Quantity that will be set per location (Ageing rows summed)</p>
+              <div className="flex flex-wrap gap-2">
+                {Object.entries(s.location_totals).map(([loc, qty]) => (
+                  <span key={loc} className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-600">{loc}: <b className="text-slate-900">{qty}</b></span>
+                ))}
+              </div>
+            </div>
+          )}
+          {kind === "sales" && (
+            <div className="fa-panel p-4 text-xs font-semibold text-slate-500">
+              {s?.bill_count ?? 0} distinct bill(s) · {s?.new_products ?? 0} new product(s) will be added to the catalogue · stock levels are not affected
+            </div>
+          )}
+
+          <RowErrorsTable kind={kind} rows={preview.rows || []} />
+          {preview.truncated && <p className="text-xs text-slate-400">Preview shows the first {(preview.rows || []).length} rows — all rows in the file are validated and committed.</p>}
+
+          <div className="flex items-center gap-3">
+            <button
+              onClick={commit}
+              disabled={!canCommit}
+              className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-5 py-2.5 text-sm font-bold text-white hover:bg-indigo-700 disabled:opacity-50"
+            >
+              <CheckCircle2 size={15} /> {committing ? "Committing…" : `Commit ${s?.valid_count ?? 0} row(s)`}
+            </button>
+            <button onClick={reset} className="rounded-lg border border-slate-200 px-4 py-2.5 text-sm font-bold text-slate-600 hover:bg-slate-50">Cancel</button>
+          </div>
+        </>
+      )}
+
+      {result && (
+        <div className="fa-panel border-l-4 border-emerald-400 p-5">
+          <h4 className="flex items-center gap-2 text-sm font-bold text-emerald-800"><CheckCircle2 size={15} /> Import committed</h4>
+          <div className="mt-2 grid gap-2 text-xs text-slate-600 sm:grid-cols-2">
+            {kind === "stock" ? (
+              <>
+                <p>Rows applied: <b className="text-slate-900">{result.rows_applied}</b></p>
+                <p>Location writes: <b className="text-slate-900">{result.locations_written}</b></p>
+                <p>Rows skipped: <b className="text-slate-900">{result.rows_skipped}</b></p>
+                <p>Batch: <span className="font-mono">{result.batch_id?.slice(0, 12)}</span></p>
+              </>
+            ) : (
+              <>
+                <p>Bills inserted: <b className="text-slate-900">{result.bills_inserted}</b></p>
+                <p>Line items: <b className="text-slate-900">{result.line_items}</b></p>
+                <p>Products created: <b className="text-slate-900">{result.products_created}</b></p>
+                <p>Duplicate bills skipped: <b className="text-slate-900">{result.duplicate_bills_skipped}</b></p>
+                <p>Rows skipped: <b className="text-slate-900">{result.rows_skipped}</b></p>
+              </>
+            )}
+          </div>
+          <p className="mt-3 text-xs text-slate-400">You can undo this run from the History tab.</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ImportHistory({ refreshKey }) {
+  const [rows, setRows] = useState([]);
+  const [error, setError] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [busyId, setBusyId] = useState("");
+
+  const load = useCallback(() => {
+    setLoading(true); setError(null);
+    faFetch("/api/forecast-analytics/data-hub/imports")
+      .then((r) => setRows(r.imports || []))
+      .catch((e) => setError(e.message))
+      .finally(() => setLoading(false));
+  }, []);
+
+  useEffect(() => { load(); }, [load, refreshKey]);
+
+  const rollback = async (batchId) => {
+    if (!window.confirm("Roll back this import? Stock lines are restored to their previous values; imported bills are deleted, along with any products that import created (unless stock has since been written against them).")) return;
+    setBusyId(batchId); setError(null);
+    try {
+      await faFetch(`/api/forecast-analytics/data-hub/imports/${batchId}/rollback`, { method: "POST" });
+      load();
+    } catch (e) { setError(e.message); } finally { setBusyId(""); }
+  };
+
+  return (
+    <div className="space-y-5">
+      <ErrorBanner message={error} />
+      <div className="fa-panel flex items-center justify-between p-5">
+        <div>
+          <h4 className="text-sm font-bold text-slate-900">Import history</h4>
+          <p className="mt-0.5 text-xs text-slate-500">Every committed stock / sales import, newest first. Rollback is exact — it only touches rows this batch still owns.</p>
+        </div>
+        <button onClick={load} className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-bold text-indigo-700 hover:bg-indigo-100"><RefreshCw size={13} /> Refresh</button>
+      </div>
+
+      <div className="fa-panel overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr>{["When", "Type", "File", "By", "Result", "Skipped", "Status", ""].map((h) => <th key={h} className="whitespace-nowrap px-4 py-2.5 text-left font-bold uppercase">{h}</th>)}</tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {loading ? <tr><td colSpan={8} className="px-4 py-8 text-center text-slate-400">Loading…</td></tr>
+                : rows.length === 0 ? <tr><td colSpan={8} className="px-4 py-8 text-center text-slate-400">No imports committed yet.</td></tr>
+                : rows.map((row) => (
+                  <tr key={row.batch_id}>
+                    <td className="px-4 py-2.5 text-xs text-slate-500">{row.created_at ? new Date(row.created_at).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" }) : "—"}</td>
+                    <td className="px-4 py-2.5"><span className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] font-bold ${row.kind === "stock" ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-blue-200 bg-blue-50 text-blue-700"}`}>{row.kind}</span></td>
+                    <td className="px-4 py-2.5 max-w-[220px] truncate text-xs text-slate-600" title={row.file_name}>{row.file_name || "—"}</td>
+                    <td className="px-4 py-2.5 text-xs text-slate-600">{row.created_by_name || "—"}</td>
+                    <td className="px-4 py-2.5 text-xs font-semibold text-slate-800">
+                      {row.kind === "stock"
+                        ? `${row.rows_applied ?? 0} products`
+                        : `${row.bills_inserted ?? 0} bills · ${row.line_items ?? 0} lines${row.products_created_count ? ` · +${row.products_created_count} products` : ""}`}
+                    </td>
+                    <td className="px-4 py-2.5 text-xs text-slate-500">{(row.rows_skipped ?? 0) + (row.duplicate_bills_skipped ?? 0)}</td>
+                    <td className="px-4 py-2.5">
+                      {row.rolled_back
+                        ? <span className="inline-flex items-center gap-1 text-[11px] font-bold text-slate-400"><XCircle size={12} /> rolled back</span>
+                        : <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-600"><CheckCircle2 size={12} /> active</span>}
+                    </td>
+                    <td className="px-4 py-2.5 text-right">
+                      {!row.rolled_back && (
+                        <button
+                          onClick={() => rollback(row.batch_id)}
+                          disabled={busyId === row.batch_id}
+                          className="inline-flex items-center gap-1.5 rounded-lg border border-rose-200 bg-rose-50 px-3 py-1.5 text-xs font-bold text-rose-700 hover:bg-rose-100 disabled:opacity-60"
+                        >
+                          <Undo2 size={12} /> {busyId === row.batch_id ? "Rolling back…" : "Roll back"}
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const IMPORT_TABS = [
+  { id: "sales", label: "1 · Sales history" },
+  { id: "stock", label: "2 · Stock snapshot" },
+  { id: "history", label: "History" },
+];
+
+function DataImportView() {
+  const [tab, setTab] = useState("sales");
+  const [historyKey, setHistoryKey] = useState(0);
+  const bumpHistory = () => setHistoryKey((k) => k + 1);
+
+  return (
+    <div className="space-y-5">
+      <section className="overflow-hidden rounded-[22px] border border-slate-200 bg-gradient-to-br from-indigo-950 via-violet-900 to-fuchsia-900 px-6 py-6 text-white shadow-[0_16px_35px_rgba(15,23,42,.14)] sm:px-8">
+        <p className="text-[11px] font-bold uppercase tracking-[.18em] text-indigo-200">Sales &amp; Stock Data Hub</p>
+        <h3 className="mt-1 text-xl font-bold">Import spreadsheet exports into RMS</h3>
+        <p className="mt-1 text-sm text-indigo-100/75">Upload → review the preview → commit. Do <b>sales first</b> (it also builds the product catalogue), then the stock snapshot. Sales load historical bills for forecasting; stock sets central (HQ warehouse) + per-store on-hand. Finance, GST and POS are never touched.</p>
+      </section>
+
+      <div className="inline-flex rounded-xl border border-slate-200 bg-white p-1 shadow-sm">
+        {IMPORT_TABS.map((t) => (
+          <button
+            key={t.id}
+            onClick={() => setTab(t.id)}
+            className={`rounded-lg px-4 py-2 text-sm font-bold transition ${tab === t.id ? "bg-indigo-600 text-white shadow" : "text-slate-600 hover:bg-slate-50"}`}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {tab === "sales" && (
+        <ImportPanel
+          kind="sales"
+          title="1 · Historical POS sales"
+          blurb="One row per bill line: Bill Date, Bill No., Store, Barcode and Bill Qty are required. Bills are grouped by Bill No. and dated from Bill Date. Any barcode not in the catalogue is created as a product from Description / Division / Section / Department / Cat-1 / Vendor / Std Rate / RSP / MRP — this is also what lets the stock file match. Re-uploading the same bill numbers is a no-op."
+          onCommitted={bumpHistory}
+        />
+      )}
+      {tab === "stock" && (
+        <ImportPanel
+          kind="stock"
+          title="2 · Physical stock count"
+          blurb="No barcode needed — each row is matched to a product by DIVISION / SECTION / DEPARTMENT / VENDOR / CATEGORY1-5 (CATEGORY6 = Ageing is ignored, and rows that collapse to the same product per location are summed). WAREHOUSE → Raphaaa HQ / central; the store columns → each store. Quantities are set as an absolute snapshot; products absent from the file keep their current stock. Import the sales file first."
+          onCommitted={bumpHistory}
+        />
+      )}
+      {tab === "history" && <ImportHistory refreshKey={historyKey} />}
+    </div>
+  );
+}
+
 export default function ForecastAnalytics() {
   const [activeSection, setActiveSection] = useState("dashboard");
+  const [dataHubEnabled, setDataHubEnabled] = useState(false);
   const isStoreWorkspace = getAdminScope() !== "hq";
   const workspaceName = isStoreWorkspace ? (getStoreName() || "Store workspace") : "Head office workspace";
   const adminName = getAdminName() || "Analytics Administrator";
-  const activeLabel = MENU.find((item) => item.id === activeSection)?.label || "Overview";
   const handleLogout = () => logoutOrReturnToDepartmentSelector();
+
+  useEffect(() => {
+    faFetch("/api/forecast-analytics/data-hub/status")
+      .then((r) => setDataHubEnabled(Boolean(r.enabled)))
+      .catch(() => setDataHubEnabled(false));
+  }, []);
+
+  const menu = dataHubEnabled ? [...MENU, { id: "import", label: "Data Import", icon: UploadCloud }] : MENU;
+  const activeLabel = menu.find((item) => item.id === activeSection)?.label || "Overview";
 
   const renderContent = () => {
     switch (activeSection) {
@@ -468,6 +855,7 @@ export default function ForecastAnalytics() {
       case "vendors": return <VendorRankingView />;
       case "purchase": return <PurchasePlanView />;
       case "alerts": return <AlertsView />;
+      case "import": return dataHubEnabled ? <DataImportView /> : <DashboardView onNavigate={setActiveSection} />;
       default: return <DashboardView onNavigate={setActiveSection} />;
     }
   };
@@ -493,7 +881,7 @@ export default function ForecastAnalytics() {
 
         <nav className="mt-6 flex-1 space-y-1.5 overflow-y-auto pr-1">
           <p className="fa-sidebar-note px-3 pb-2 text-[10px] font-bold uppercase tracking-[.18em] text-slate-400">Workspace</p>
-          {MENU.map(({ id, label, icon: Icon }) => (
+          {menu.map(({ id, label, icon: Icon }) => (
             <button
               key={id}
               onClick={() => setActiveSection(id)}

@@ -1,527 +1,98 @@
-import React, { useState } from "react";
-import { 
-  Palette, Search, TrendingUp, Sparkles, Camera, Scissors, 
-  Layers, ShoppingBag, Eye, BookOpen, Package, Users, 
-  Cpu, ShoppingCart, BarChart3, Megaphone, Target,
-  ChevronRight, Plus, FileText, Download, Upload, Filter
-} from "lucide-react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { AlertCircle, BookOpen, CheckCircle2, ClipboardCheck, Factory, FileText, LayoutDashboard, MessageSquare, Palette, Plus, RefreshCw, Ruler, Search, Send, X } from "lucide-react";
+import { API_BASE_URL } from "../config/api.js";
+import { logoutOrReturnToDepartmentSelector } from "../utils/authRedirect.js";
+import TechPackLibrary from "./Production/TechPackLibrary.jsx";
 
-const DesignPattern = () => {
-  const [activeTab, setActiveTab] = useState("research");
-  const [searchQuery, setSearchQuery] = useState("");
-
-  // Research Categories
-  const researchCategories = [
-    {
-      id: "forecasting",
-      title: "Research Forecasting",
-      icon: <TrendingUp className="w-6 h-6" />,
-      color: "from-blue-500 to-cyan-500",
-      items: ["Market Analysis", "Consumer Behavior", "Seasonal Predictions", "Industry Reports"]
-    },
-    {
-      id: "trends",
-      title: "Trends",
-      icon: <Sparkles className="w-6 h-6" />,
-      color: "from-purple-500 to-pink-500",
-      items: ["Global Fashion Trends", "Street Style", "Runway Analysis", "Social Media Trends"]
-    },
-    {
-      id: "fashion",
-      title: "Fashion",
-      icon: <ShoppingBag className="w-6 h-6" />,
-      color: "from-rose-500 to-orange-500",
-      items: ["Collection Analysis", "Designer Insights", "Fashion Week", "Editorial Looks"]
-    },
-    {
-      id: "design",
-      title: "Design",
-      icon: <Palette className="w-6 h-6" />,
-      color: "from-emerald-500 to-teal-500",
-      items: ["CAD Designs", "Sketches", "Mood Boards", "Design Archives"]
-    },
-    {
-      id: "style",
-      title: "Style",
-      icon: <Eye className="w-6 h-6" />,
-      color: "from-indigo-500 to-blue-500",
-      items: ["Style Guides", "Lookbooks", "Styling Tips", "Silhouettes"]
-    },
-    {
-      id: "colour",
-      title: "Colour",
-      icon: <Palette className="w-6 h-6" />,
-      color: "from-pink-500 to-rose-500",
-      items: ["Pantone Forecast", "Color Palettes", "Color Theory", "Seasonal Colors"]
-    },
-    {
-      id: "effects",
-      title: "Effects",
-      icon: <Sparkles className="w-6 h-6" />,
-      color: "from-amber-500 to-yellow-500",
-      items: ["Finishing Techniques", "Surface Treatments", "Textile Effects", "Embellishments"]
-    }
-  ];
-
-  // Technical Research
-  const technicalResearch = [
-    {
-      category: "Stitching Methods",
-      icon: <Scissors className="w-5 h-5" />,
-      items: ["Lock Stitch", "Chain Stitch", "Overlock", "Flatlock", "Blind Stitch", "Decorative Stitching"]
-    },
-    {
-      category: "Embroidery",
-      icon: <Sparkles className="w-5 h-5" />,
-      items: ["Hand Embroidery", "Machine Embroidery", "Zardozi", "Thread Work", "Bead Work", "Sequin Work"]
-    },
-    {
-      category: "Fabric",
-      icon: <Layers className="w-5 h-5" />,
-      items: ["Cotton", "Silk", "Wool", "Synthetics", "Blends", "Technical Fabrics", "Sustainable Materials"]
-    },
-    {
-      category: "Neck Variation",
-      icon: <Target className="w-5 h-5" />,
-      items: ["Round Neck", "V-Neck", "Boat Neck", "Collar Styles", "Cowl Neck", "Halter", "Off-Shoulder"]
-    },
-    {
-      category: "Sleeve Variation",
-      icon: <Target className="w-5 h-5" />,
-      items: ["Full Sleeve", "Half Sleeve", "Cap Sleeve", "Bell Sleeve", "Bishop Sleeve", "Puff Sleeve", "Raglan"]
-    },
-    {
-      category: "Pattern Variation",
-      icon: <BookOpen className="w-5 h-5" />,
-      items: ["Basic Blocks", "Dart Manipulation", "Pleats", "Gathers", "Draping", "Grading", "Marker Making"]
-    },
-    {
-      category: "Pocket Styles",
-      icon: <Package className="w-5 h-5" />,
-      items: ["Patch Pocket", "Welt Pocket", "Flap Pocket", "In-seam Pocket", "Kangaroo Pocket", "Hidden Pocket"]
-    }
-  ];
-
-  // Associated Teams
-  const associatedTeams = [
-    {
-      id: 1,
-      name: "IT Department",
-      icon: <Cpu className="w-8 h-8" />,
-      color: "bg-blue-500",
-      role: "Digital Tools & CAD Support",
-      tasks: ["Software Management", "Digital Asset Storage", "Tech Infrastructure", "Data Analytics"]
-    },
-    {
-      id: 2,
-      name: "Procurement",
-      icon: <ShoppingCart className="w-8 h-8" />,
-      color: "bg-green-500",
-      role: "Material Sourcing",
-      tasks: ["Fabric Procurement", "Trim Sourcing", "Vendor Management", "Quality Control"]
-    },
-    {
-      id: 3,
-      name: "Managing",
-      icon: <BarChart3 className="w-8 h-8" />,
-      color: "bg-purple-500",
-      role: "Project Oversight",
-      tasks: ["Timeline Management", "Resource Allocation", "Budget Control", "Team Coordination"]
-    },
-    {
-      id: 4,
-      name: "Marketing",
-      icon: <Megaphone className="w-8 h-8" />,
-      color: "bg-orange-500",
-      role: "Brand Strategy",
-      tasks: ["Market Research", "Campaign Planning", "Brand Positioning", "Consumer Insights"]
-    },
-    {
-      id: 5,
-      name: "IMC",
-      icon: <Target className="w-8 h-8" />,
-      color: "bg-pink-500",
-      role: "Integrated Communications",
-      tasks: ["Content Strategy", "Visual Communications", "Brand Messaging", "Campaign Integration"]
-    }
-  ];
-
-  const tabs = [
-    { id: "research", label: "Research Hub", icon: <Search className="w-4 h-4" /> },
-    { id: "technical", label: "Technical Library", icon: <BookOpen className="w-4 h-4" /> },
-    { id: "brands", label: "Brand Research", icon: <ShoppingBag className="w-4 h-4" /> },
-    { id: "prints", label: "Print Patterns", icon: <Layers className="w-4 h-4" /> },
-    { id: "teams", label: "Collaboration", icon: <Users className="w-4 h-4" /> }
-  ];
-
-  return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-50 via-white to-gray-100">
-      {/* Header */}
-      <header className="bg-white border-b border-gray-200 sticky top-0 z-50 shadow-sm">
-        <div className="max-w-7xl mx-auto px-6 py-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-4">
-              <div className="bg-gradient-to-br from-purple-500 to-pink-500 p-3 rounded-xl">
-                <Palette className="w-8 h-8 text-white" />
-              </div>
-              <div>
-                <h1 className="text-2xl font-bold text-gray-900">Design & Pattern Department</h1>
-                <p className="text-sm text-gray-600">Creative Innovation & Technical Excellence</p>
-              </div>
-            </div>
-            <div className="flex items-center space-x-3">
-              <button className="flex items-center space-x-2 px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors">
-                <Upload className="w-4 h-4" />
-                <span className="text-sm font-medium">Upload</span>
-              </button>
-              <button className="flex items-center space-x-2 px-4 py-2 bg-gradient-to-r from-purple-500 to-pink-500 text-white rounded-lg hover:shadow-lg transition-all">
-                <Plus className="w-4 h-4" />
-                <span className="text-sm font-medium">New Project</span>
-              </button>
-            </div>
-          </div>
-
-          {/* Search Bar */}
-          <div className="mt-4 relative">
-            <Search className="absolute left-4 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
-            <input
-              type="text"
-              placeholder="Search trends, patterns, techniques, brands..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-12 pr-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-            />
-            <button className="absolute right-3 top-1/2 transform -translate-y-1/2 px-4 py-1.5 bg-purple-500 text-white rounded-lg text-sm font-medium hover:bg-purple-600 transition-colors">
-              Search
-            </button>
-          </div>
-
-          {/* Tabs */}
-          <div className="flex items-center space-x-2 mt-4 overflow-x-auto pb-2">
-            {tabs.map((tab) => (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
-                className={`flex items-center space-x-2 px-4 py-2 rounded-lg font-medium transition-all whitespace-nowrap ${
-                  activeTab === tab.id
-                    ? "bg-gradient-to-r from-purple-500 to-pink-500 text-white shadow-md"
-                    : "bg-gray-100 text-gray-700 hover:bg-gray-200"
-                }`}
-              >
-                {tab.icon}
-                <span>{tab.label}</span>
-              </button>
-            ))}
-          </div>
-        </div>
-      </header>
-
-      {/* Main Content */}
-      <main className="max-w-7xl mx-auto px-6 py-8">
-        {/* Research Hub Tab */}
-        {activeTab === "research" && (
-          <div className="space-y-6">
-            <div className="flex items-center justify-between">
-              <h2 className="text-2xl font-bold text-gray-900">Research Hub</h2>
-              <div className="flex items-center space-x-2">
-                <button className="flex items-center space-x-2 px-4 py-2 bg-white border border-gray-300 rounded-lg hover:bg-gray-50">
-                  <Filter className="w-4 h-4" />
-                  <span className="text-sm">Filter</span>
-                </button>
-                <button className="flex items-center space-x-2 px-4 py-2 bg-white border border-gray-300 rounded-lg hover:bg-gray-50">
-                  <Download className="w-4 h-4" />
-                  <span className="text-sm">Export</span>
-                </button>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-              {researchCategories.map((category) => (
-                <div
-                  key={category.id}
-                  className="bg-white rounded-xl border border-gray-200 hover:shadow-xl transition-all duration-300 overflow-hidden group cursor-pointer"
-                >
-                  <div className={`bg-gradient-to-br ${category.color} p-6`}>
-                    <div className="text-white">{category.icon}</div>
-                  </div>
-                  <div className="p-6">
-                    <h3 className="text-lg font-bold text-gray-900 mb-3">{category.title}</h3>
-                    <ul className="space-y-2">
-                      {category.items.map((item, idx) => (
-                        <li key={idx} className="flex items-center text-sm text-gray-600">
-                          <ChevronRight className="w-4 h-4 text-purple-500 mr-2 flex-shrink-0" />
-                          <span>{item}</span>
-                        </li>
-                      ))}
-                    </ul>
-                    <button className="mt-4 w-full py-2 bg-gray-100 hover:bg-gradient-to-r hover:from-purple-500 hover:to-pink-500 hover:text-white rounded-lg font-medium transition-all text-sm">
-                      Explore
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            {/* Trendy Content Section */}
-            <div className="mt-8 bg-white rounded-xl border border-gray-200 p-6">
-              <h3 className="text-xl font-bold text-gray-900 mb-4">Trending Now</h3>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div className="border-2 border-dashed border-purple-300 rounded-lg p-6 text-center hover:border-purple-500 transition-all cursor-pointer">
-                  <Camera className="w-12 h-12 text-purple-500 mx-auto mb-3" />
-                  <h4 className="font-semibold text-gray-900 mb-1">Trendy Pictures</h4>
-                  <p className="text-sm text-gray-600">Visual inspiration & references</p>
-                </div>
-                <div className="border-2 border-dashed border-pink-300 rounded-lg p-6 text-center hover:border-pink-500 transition-all cursor-pointer">
-                  <FileText className="w-12 h-12 text-pink-500 mx-auto mb-3" />
-                  <h4 className="font-semibold text-gray-900 mb-1">Trending Terms</h4>
-                  <p className="text-sm text-gray-600">Industry vocabulary & keywords</p>
-                </div>
-                <div className="border-2 border-dashed border-orange-300 rounded-lg p-6 text-center hover:border-orange-500 transition-all cursor-pointer">
-                  <Sparkles className="w-12 h-12 text-orange-500 mx-auto mb-3" />
-                  <h4 className="font-semibold text-gray-900 mb-1">Style Photos</h4>
-                  <p className="text-sm text-gray-600">Different photography techniques</p>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Technical Library Tab */}
-        {activeTab === "technical" && (
-          <div className="space-y-6">
-            <div className="flex items-center justify-between">
-              <h2 className="text-2xl font-bold text-gray-900">Technical Library</h2>
-              <button className="flex items-center space-x-2 px-4 py-2 bg-gradient-to-r from-purple-500 to-pink-500 text-white rounded-lg hover:shadow-lg">
-                <Plus className="w-4 h-4" />
-                <span className="text-sm font-medium">Add Reference</span>
-              </button>
-            </div>
-
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              {technicalResearch.map((section, idx) => (
-                <div key={idx} className="bg-white rounded-xl border border-gray-200 p-6 hover:shadow-lg transition-all">
-                  <div className="flex items-center space-x-3 mb-4">
-                    <div className="bg-gradient-to-br from-purple-500 to-pink-500 p-3 rounded-lg text-white">
-                      {section.icon}
-                    </div>
-                    <h3 className="text-lg font-bold text-gray-900">{section.category}</h3>
-                  </div>
-                  <div className="grid grid-cols-2 gap-3">
-                    {section.items.map((item, i) => (
-                      <div
-                        key={i}
-                        className="px-3 py-2 bg-gray-50 hover:bg-purple-50 rounded-lg text-sm text-gray-700 hover:text-purple-700 transition-all cursor-pointer border border-gray-200 hover:border-purple-300"
-                      >
-                        {item}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Brand Research Tab */}
-        {activeTab === "brands" && (
-          <div className="space-y-6">
-            <div className="flex items-center justify-between">
-              <h2 className="text-2xl font-bold text-gray-900">Brand Research</h2>
-              <button className="flex items-center space-x-2 px-4 py-2 bg-gradient-to-r from-purple-500 to-pink-500 text-white rounded-lg hover:shadow-lg">
-                <Plus className="w-4 h-4" />
-                <span className="text-sm font-medium">Add Brand</span>
-              </button>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {["Luxury Brands", "Contemporary Brands", "Fast Fashion", "Sustainable Brands", "Emerging Designers", "Heritage Brands"].map((brandType, idx) => (
-                <div key={idx} className="bg-white rounded-xl border border-gray-200 p-6 hover:shadow-xl transition-all cursor-pointer group">
-                  <div className="flex items-center justify-between mb-4">
-                    <ShoppingBag className="w-8 h-8 text-purple-500 group-hover:text-pink-500 transition-colors" />
-                    <span className="text-xs bg-purple-100 text-purple-700 px-3 py-1 rounded-full font-medium">
-                      Research
-                    </span>
-                  </div>
-                  <h3 className="text-lg font-bold text-gray-900 mb-2">{brandType}</h3>
-                  <p className="text-sm text-gray-600 mb-4">Comprehensive analysis and insights</p>
-                  <div className="flex items-center text-sm text-purple-600 font-medium group-hover:text-pink-600">
-                    <span>View Details</span>
-                    <ChevronRight className="w-4 h-4 ml-1 group-hover:translate-x-1 transition-transform" />
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            <div className="bg-gradient-to-br from-purple-50 to-pink-50 rounded-xl border border-purple-200 p-6">
-              <div className="flex items-start space-x-4">
-                <div className="bg-purple-500 p-3 rounded-lg">
-                  <Eye className="w-6 h-6 text-white" />
-                </div>
-                <div className="flex-1">
-                  <h3 className="text-lg font-bold text-gray-900 mb-2">Competitive Analysis</h3>
-                  <p className="text-gray-600 mb-4">
-                    Track competitor strategies, product launches, pricing, and market positioning across all major brands
-                  </p>
-                  <button className="px-6 py-2 bg-purple-500 text-white rounded-lg hover:bg-purple-600 transition-colors font-medium">
-                    Start Analysis
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Print Patterns Tab */}
-        {activeTab === "prints" && (
-          <div className="space-y-6">
-            <div className="flex items-center justify-between">
-              <h2 className="text-2xl font-bold text-gray-900">Upcoming Print Patterns</h2>
-              <button className="flex items-center space-x-2 px-4 py-2 bg-gradient-to-r from-purple-500 to-pink-500 text-white rounded-lg hover:shadow-lg">
-                <Plus className="w-4 h-4" />
-                <span className="text-sm font-medium">Upload Pattern</span>
-              </button>
-            </div>
-
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              {["Florals", "Geometric", "Abstract", "Animal Print", "Checks", "Stripes", "Digital Prints", "Ethnic Motifs"].map((pattern, idx) => (
-                <div key={idx} className="aspect-square bg-gradient-to-br from-purple-100 to-pink-100 rounded-xl border-2 border-purple-200 hover:border-purple-400 transition-all cursor-pointer group relative overflow-hidden">
-                  <div className="absolute inset-0 bg-gradient-to-br from-purple-500/20 to-pink-500/20 opacity-0 group-hover:opacity-100 transition-opacity" />
-                  <div className="absolute bottom-0 left-0 right-0 bg-white/90 backdrop-blur-sm p-4 transform translate-y-full group-hover:translate-y-0 transition-transform">
-                    <h4 className="font-bold text-gray-900">{pattern}</h4>
-                    <p className="text-xs text-gray-600 mt-1">View Collection</p>
-                  </div>
-                  <div className="absolute top-4 right-4">
-                    <span className="bg-purple-500 text-white text-xs px-2 py-1 rounded-full font-medium">
-                      {Math.floor(Math.random() * 50) + 10}
-                    </span>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            <div className="bg-white rounded-xl border border-gray-200 p-6">
-              <h3 className="text-xl font-bold text-gray-900 mb-4">Seasonal Forecast</h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                {["Spring/Summer 2026", "Fall/Winter 2026"].map((season, idx) => (
-                  <div key={idx} className="border-2 border-gray-200 rounded-lg p-6 hover:border-purple-300 transition-all">
-                    <h4 className="font-bold text-gray-900 mb-3">{season}</h4>
-                    <ul className="space-y-2">
-                      {["Print Trends", "Color Forecasts", "Texture Innovations", "Pattern Directions"].map((item, i) => (
-                        <li key={i} className="flex items-center text-sm text-gray-600">
-                          <div className="w-2 h-2 bg-purple-500 rounded-full mr-3" />
-                          {item}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Collaboration Tab */}
-        {activeTab === "teams" && (
-          <div className="space-y-6">
-            <div>
-              <h2 className="text-2xl font-bold text-gray-900 mb-2">Associated Teams</h2>
-              <p className="text-gray-600">Cross-functional collaboration for design excellence</p>
-            </div>
-
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              {associatedTeams.map((team) => (
-                <div
-                  key={team.id}
-                  className="bg-white rounded-xl border border-gray-200 hover:shadow-xl transition-all overflow-hidden group"
-                >
-                  <div className="p-6">
-                    <div className="flex items-start space-x-4 mb-4">
-                      <div className={`${team.color} p-4 rounded-xl text-white`}>
-                        {team.icon}
-                      </div>
-                      <div className="flex-1">
-                        <h3 className="text-xl font-bold text-gray-900">{team.name}</h3>
-                        <p className="text-sm text-gray-600 mt-1">{team.role}</p>
-                      </div>
-                      <button className="px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg text-sm font-medium transition-colors">
-                        Connect
-                      </button>
-                    </div>
-                    <div className="border-t border-gray-200 pt-4">
-                      <h4 className="text-sm font-semibold text-gray-900 mb-3">Key Responsibilities:</h4>
-                      <div className="grid grid-cols-2 gap-2">
-                        {team.tasks.map((task, idx) => (
-                          <div
-                            key={idx}
-                            className="px-3 py-2 bg-gray-50 rounded-lg text-xs text-gray-700 border border-gray-200"
-                          >
-                            {task}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                  <div className="bg-gradient-to-r from-purple-50 to-pink-50 px-6 py-3 border-t border-gray-200">
-                    <button className="flex items-center text-sm font-medium text-purple-600 hover:text-purple-700 group-hover:translate-x-1 transition-all">
-                      <span>View Collaboration Details</span>
-                      <ChevronRight className="w-4 h-4 ml-1" />
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            {/* Collaboration Workflow */}
-            <div className="bg-gradient-to-br from-purple-500 to-pink-500 rounded-xl p-8 text-white">
-              <h3 className="text-2xl font-bold mb-4">Integrated Workflow</h3>
-              <p className="mb-6 text-purple-100">
-                Seamless coordination between Design & Pattern Department and all associated teams for efficient project execution
-              </p>
-              <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-                {associatedTeams.map((team, idx) => (
-                  <div key={team.id} className="text-center">
-                    <div className="bg-white/20 backdrop-blur-sm rounded-lg p-4 mb-2">
-                      <div className="text-white mb-2">{team.icon}</div>
-                      <p className="text-xs font-medium">{team.name}</p>
-                    </div>
-                    {idx < associatedTeams.length - 1 && (
-                      <div className="hidden md:block">
-                        <ChevronRight className="w-5 h-5 mx-auto text-white/60" />
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
-      </main>
-
-      {/* Footer Stats */}
-      <footer className="bg-white border-t border-gray-200 mt-12">
-        <div className="max-w-7xl mx-auto px-6 py-6">
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-6 text-center">
-            <div>
-              <div className="text-3xl font-bold text-purple-600">2.5K+</div>
-              <div className="text-sm text-gray-600 mt-1">Design References</div>
-            </div>
-            <div>
-              <div className="text-3xl font-bold text-pink-600">500+</div>
-              <div className="text-sm text-gray-600 mt-1">Pattern Libraries</div>
-            </div>
-            <div>
-              <div className="text-3xl font-bold text-orange-600">150+</div>
-              <div className="text-sm text-gray-600 mt-1">Brand Studies</div>
-            </div>
-            <div>
-              <div className="text-3xl font-bold text-blue-600">5</div>
-              <div className="text-sm text-gray-600 mt-1">Team Collaborations</div>
-            </div>
-          </div>
-        </div>
-      </footer>
-    </div>
-  );
+const TABS = [
+  ["dashboard", "Dashboard", LayoutDashboard], ["research", "Research & Mood Boards", Search], ["projects", "Design Projects", Palette], ["patterns", "Patterns", Ruler],
+  ["artwork", "Print & Artwork", FileText], ["samples", "Samples & Approval", ClipboardCheck], ["techpacks", "Tech Packs", BookOpen], ["handoff", "Production Handoff", Factory], ["queries", "Queries", MessageSquare], ["changes", "Change Control", AlertCircle], ["reports", "Reports", CheckCircle2],
+];
+const GUIDES={
+dashboard:["Review live counts and Production Readiness.","Open the tab connected to any missing item.","Next: start Research or create a Design Project."],
+research:["Add season, market, department, tags and findings.","Attach source, image and document links.","Next: turn the approved direction into a Design Project."],
+projects:["Create one master project per style and keep its design number unchanged.","Set owner, priority, quantity, cost and launch date; update status as work progresses.","Next: add the first Pattern Version."],
+patterns:["Choose the project; record base size, sizes, width, consumption and wastage.","Enter grading as Point | Base | S:value,M:value and upload CAD/DXF/PDF files.","Use Create Revision for V2/V3. Next: develop artwork and sample."],
+artwork:["Link the print/embroidery to a project.","Record version, dimensions, placement, technique, colours and file links.","Next: validate it on a sample and include the approved version in the Tech Pack."],
+samples:["Choose project, pattern, sample type, assignee, materials, cost and due date.","On receipt, record fit/construction results and the decision.","Approved continues to Tech Pack; Revision/Resample returns to Pattern or Artwork."],
+techpacks:["Use the exact Design Project number.","Complete Sketch, Spec Sheet, Details, Artwork, Trims/Labels and Colourways; upload references.","Download/review the PDF. Use a new version for major changes. Next: Handoff."],
+handoff:["Confirm approved sample and matching Tech Pack.","Record Design Head approval; Production separately records feasibility.","Choose an existing BOM or auto-create one from pattern consumption, then Release to Production."],
+queries:["Select the affected design, category and priority.","Describe one clear technical issue; Design and Production share the same feed.","Resolve with a written answer. Use Change Control if released instructions change."],
+changes:["Record reason, previous spec, new spec, and material/cost/delivery impact.","The system identifies affected open job orders.","Production accepts/rejects and acknowledges; accepted changes require a new controlled version."],
+reports:["Review release rate, sample cost and revisions.","Balance work using Designer Workload and Deadline Calendar.","Compare target, BOM material and sample cost with matched sales units."]
 };
+const DEPARTMENTS = ["Men", "Women", "Kids Boys", "Kids Girls", "Infant", "Accessories", "Other"];
+const PROJECT_STATUSES = ["IDEA", "IN_DEVELOPMENT", "PATTERN_DEVELOPMENT", "SAMPLE_DEVELOPMENT", "REVISION_REQUIRED", "AWAITING_APPROVAL", "APPROVED_FOR_PRODUCTION", "ON_HOLD", "REJECTED", "ARCHIVED"];
+const SAMPLE_TYPES = ["Proto sample", "Development sample", "Fit sample", "Size-set sample", "Print / embroidery sample", "Wash sample", "Pre-production sample", "Production sample"];
+const DECISIONS = ["PENDING", "APPROVED", "APPROVED_WITH_COMMENTS", "REVISION_REQUIRED", "REJECTED", "RESAMPLE_REQUIRED"];
+const emptyProject = { design_no:"", style_name:"", department:"Women", category:"", theme:"", collection:"", season:"", designer:"", target_customer:"", target_cost:"", planned_quantity:"", launch_date:"", priority:"MEDIUM", description:"" };
+const emptyPattern = { project_id:"", pattern_no:"", pattern_name:"", version:"v1", base_size:"M", sizes:"S, M, L, XL", fabric_width:"", consumption_per_unit:"", wastage_pct:"5", marker_length:"", marker_efficiency:"", seam_allowance:"", shrinkage_allowance:"", measurement_rows:"", file_urls:"", notes:"" };
+const emptySample = { project_id:"", pattern_id:"", sample_type:"Development sample", quantity:"1", required_date:"", received_date:"", assigned_to:"", estimated_cost:"", actual_cost:"", materials:"", image_urls:"", decision:"PENDING", fit_result:"", construction_result:"", review_notes:"" };
+const emptyQuery = { project_id:"", category:"Measurement clarification", description:"", priority:"MEDIUM" };
+const emptyResearch = { title:"", category:"Fashion trend", season:"", department:"Women", market_segment:"", tags:"", reference_urls:"", notes:"" };
+const emptyArtwork = { project_id:"", name:"", kind:"Print", version:"v1", width:"", height:"", placement:"", technique:"", colours:"", file_urls:"", notes:"", status:"DRAFT" };
+const emptyChange = { project_id:"", reason:"", previous_spec:"", new_spec:"", material_impact:"", cost_impact:"", delivery_impact:"" };
 
-export default DesignPattern;
+function headers(){ const token=localStorage.getItem("admin_token")||localStorage.getItem("access_token")||localStorage.getItem("token")||""; return {"Content-Type":"application/json", ...(token?{Authorization:`Bearer ${token}`}:{})}; }
+async function api(path, options={}){ const response=await fetch(`${API_BASE_URL}/api/design-pattern${path}`,{...options,headers:{...headers(),...(options.headers||{})}}); const data=await response.json().catch(()=>({})); if(!response.ok) throw new Error(data.detail||"Unable to complete this action."); return data; }
+const gradingRows=(text)=>String(text||"").split("\n").map(line=>{const [point,base,raw=""]=line.split("|");return {point:point?.trim(),base_value:base?.trim(),grades:Object.fromEntries(raw.split(",").map(x=>x.split(":").map(v=>v.trim())).filter(x=>x[0]))};}).filter(x=>x.point);
+const pretty=(value)=>String(value||"").replaceAll("_"," ").toLowerCase().replace(/\b\w/g,(c)=>c.toUpperCase());
+const tone=(status)=> status?.includes("APPROVED")||status?.includes("RELEASED")||status==="RESOLVED"||status==="CLOSED" ? "bg-emerald-50 text-emerald-700 ring-emerald-200" : status?.includes("REVISION")||status==="REJECTED" ? "bg-rose-50 text-rose-700 ring-rose-200" : status?.includes("AWAITING")||status==="PENDING" ? "bg-amber-50 text-amber-700 ring-amber-200" : "bg-violet-50 text-violet-700 ring-violet-200";
+function Badge({value}){ return <span className={`inline-flex rounded-full px-2.5 py-1 text-[11px] font-bold ring-1 ${tone(value)}`}>{pretty(value)}</span>; }
+function Field({label,children,wide=false}){ return <label className={wide?"md:col-span-2":""}><span className="mb-1.5 block text-xs font-black uppercase tracking-wide text-slate-500">{label}</span>{React.cloneElement(children,{className:`w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100 ${children.props.className||""}`})}</label>; }
+function Modal({title,onClose,children}){ return <div className="fixed inset-0 z-[1000] grid place-items-center bg-slate-950/55 p-3 backdrop-blur-sm"><section className="max-h-[94vh] w-full max-w-3xl overflow-y-auto rounded-3xl bg-white shadow-2xl"><header className="sticky top-0 z-10 flex items-center justify-between border-b bg-white px-6 py-4"><h2 className="text-xl font-black text-slate-900">{title}</h2><button onClick={onClose} className="grid h-9 w-9 place-items-center rounded-xl border"><X className="h-4 w-4"/></button></header>{children}</section></div>; }
+function Empty({children}){ return <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-10 text-center text-sm text-slate-500">{children}</div>; }
+function TabGuide({tab}){const steps=GUIDES[tab]||[];return <details open className="mb-5 overflow-hidden rounded-2xl border border-indigo-200 bg-white shadow-sm"><summary className="cursor-pointer bg-gradient-to-r from-indigo-50 to-fuchsia-50 px-5 py-3 text-sm font-black text-indigo-950">How to use this tab · Features and next step</summary><div className="grid gap-3 p-5 md:grid-cols-3">{steps.map((step,index)=><div key={step} className="flex gap-3 rounded-xl bg-slate-50 p-3 text-sm leading-6 text-slate-600"><span className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-violet-600 text-xs font-black text-white">{index+1}</span><p>{step}</p></div>)}</div></details>}
+
+export default function DesignPattern(){
+  const [active,setActive]=useState("dashboard"), [data,setData]=useState({projects:[],patterns:[],samples:[],queries:[],research:[],artworks:[],change_requests:[],tech_packs:[],material_plans:[]});
+  const [loading,setLoading]=useState(true), [error,setError]=useState(""), [notice,setNotice]=useState(""), [modal,setModal]=useState(""), [search,setSearch]=useState("");
+  const [projectForm,setProjectForm]=useState(emptyProject), [patternForm,setPatternForm]=useState(emptyPattern), [sampleForm,setSampleForm]=useState(emptySample), [queryForm,setQueryForm]=useState(emptyQuery), [releaseForm,setReleaseForm]=useState({project_id:"",tech_pack_id:"",material_plan_id:""});
+  const [researchForm,setResearchForm]=useState(emptyResearch), [artworkForm,setArtworkForm]=useState(emptyArtwork), [changeForm,setChangeForm]=useState(emptyChange);
+  const load=useCallback(async()=>{ setLoading(true);setError("");try{const [workspace,insights]=await Promise.all([api("/workspace"),api("/insights")]);setData({...workspace,insights:insights.data||[]});}catch(e){setError(e.message);}finally{setLoading(false);}},[]);
+  useEffect(()=>{load();},[load]);
+  const run=async(path,payload,message)=>{try{const result=await api(path,{method:"POST",body:JSON.stringify(payload)});setNotice(result.message||message);setModal("");await load();}catch(e){setError(e.message);}};
+  const projects=useMemo(()=>data.projects.filter(p=>`${p.design_no} ${p.style_name} ${p.collection} ${p.designer}`.toLowerCase().includes(search.toLowerCase())),[data.projects,search]);
+  const projectName=(id)=>{const p=data.projects.find(x=>x.id===id);return p?`${p.design_no} · ${p.style_name}`:"Unknown design";};
+  const approvedSamples=new Set(data.samples.filter(s=>["APPROVED","APPROVED_WITH_COMMENTS"].includes(s.decision)).map(s=>s.project_id));
+  const stats={active:data.projects.filter(p=>!["RELEASED_TO_PRODUCTION","ARCHIVED","REJECTED"].includes(p.status)).length,patterns:data.patterns.length,pending:data.samples.filter(s=>s.decision==="PENDING").length,approved:data.projects.filter(p=>p.status==="RELEASED_TO_PRODUCTION").length,queries:data.queries.filter(q=>!["RESOLVED","CLOSED"].includes(q.status)).length};
+  const openFor=(kind,id)=>{if(kind==="pattern")setPatternForm({...emptyPattern,project_id:id});if(kind==="sample")setSampleForm({...emptySample,project_id:id});if(kind==="query")setQueryForm({...emptyQuery,project_id:id});setModal(kind);};
+  const updateStatus=async(project,status)=>{try{await api(`/projects/${project.id}`,{method:"PATCH",body:JSON.stringify({status})});setNotice(`${project.design_no} updated.`);await load();}catch(e){setError(e.message);}};
+
+  return <main className="min-h-screen bg-[radial-gradient(circle_at_top_right,_rgba(236,72,153,.14),_transparent_30%),linear-gradient(135deg,_#f8fafc,_#faf5ff_48%,_#ecfeff)] p-4 sm:p-6 lg:p-8">
+    <div className="mx-auto max-w-7xl">
+      <header className="relative overflow-hidden rounded-[28px] bg-gradient-to-br from-slate-950 via-violet-950 to-fuchsia-800 p-6 text-white shadow-2xl"><div className="absolute -right-20 -top-20 h-72 w-72 rounded-full bg-pink-400/25 blur-3xl"/><div className="relative flex flex-col justify-between gap-5 lg:flex-row lg:items-center"><div><p className="text-xs font-black uppercase tracking-[.2em] text-fuchsia-200">Product development control centre</p><h1 className="mt-1 text-3xl font-black">Design & Pattern</h1><p className="mt-2 max-w-2xl text-sm text-violet-100">Develop the style, control pattern and sample versions, approve the specification, then release one locked technical reference to Production.</p><p className="mt-3 text-xs font-bold text-cyan-200">Design → Pattern → Sample → Approval → Tech Pack → Production</p></div><div className="flex gap-2"><button onClick={load} className="flex items-center gap-2 rounded-xl border border-white/20 bg-white/10 px-4 py-2.5 text-sm font-bold"><RefreshCw className="h-4 w-4"/>Refresh</button><button onClick={()=>logoutOrReturnToDepartmentSelector()} className="rounded-xl border border-rose-300/30 bg-rose-400/10 px-4 py-2.5 text-sm font-bold text-rose-100">Logout</button></div></div></header>
+      {notice&&<div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 p-3 text-sm font-bold text-emerald-800">✓ {notice}</div>}{error&&<div className="mt-4 flex gap-2 rounded-2xl border border-rose-200 bg-rose-50 p-3 text-sm font-bold text-rose-800"><AlertCircle className="h-5 w-5 shrink-0"/>{error}</div>}
+      <nav className="my-5 flex gap-2 overflow-x-auto pb-1">{TABS.map(([id,label,TabIcon])=><button key={id} onClick={()=>setActive(id)} className={`flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold ${active===id?"bg-violet-600 text-white shadow-lg shadow-violet-200":"border border-slate-200 bg-white text-slate-600"}`}>{React.createElement(TabIcon,{className:"h-4 w-4"})}{label}</button>)}</nav>
+      <TabGuide tab={active}/>
+      {loading?<div className="p-20 text-center text-slate-400">Loading Design & Pattern workspace…</div>:<>
+        {active==="dashboard"&&<div className="space-y-6"><section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">{[["Active designs",stats.active,"bg-violet-600"],["Pattern versions",stats.patterns,"bg-cyan-600"],["Samples pending",stats.pending,"bg-amber-500"],["Released",stats.approved,"bg-emerald-600"],["Open queries",stats.queries,"bg-rose-500"]].map(([l,v,c])=><article key={l} className="rounded-2xl border border-white bg-white/90 p-5 shadow-lg"><span className={`block h-1.5 w-10 rounded-full ${c}`}/><p className="mt-4 text-sm font-bold text-slate-500">{l}</p><p className="mt-1 text-3xl font-black text-slate-900">{v}</p></article>)}</section><section className="rounded-3xl border bg-white p-6 shadow-xl"><div className="flex items-center justify-between"><div><h2 className="text-xl font-black">Production readiness</h2><p className="text-sm text-slate-500">A design needs an approved sample and matching tech pack before release.</p></div><button onClick={()=>{setProjectForm(emptyProject);setModal("project");}} className="rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-bold text-white">+ New design</button></div><div className="mt-5 space-y-3">{data.projects.slice(0,6).map(p=><div key={p.id} className="flex flex-col justify-between gap-3 rounded-2xl border p-4 sm:flex-row sm:items-center"><div><p className="font-black">{p.design_no} · {p.style_name}</p><p className="text-xs text-slate-500">{p.department||"No department"} · {p.collection||"No collection"}</p></div><div className="flex items-center gap-2"><span className={`text-xs font-bold ${approvedSamples.has(p.id)?"text-emerald-600":"text-amber-600"}`}>{approvedSamples.has(p.id)?"Sample approved":"Sample approval needed"}</span><Badge value={p.status}/></div></div>)}</div></section></div>}
+        {active==="research"&&<Panel title="Research & Mood Boards" subtitle="Store season, market, trend and visual references that can be used in design projects." action={()=>{setResearchForm(emptyResearch);setModal("research");}} actionText="+ Add research">{data.research.length?data.research.map(r=><Card key={r.id} title={r.title} meta={`${r.category||"Research"} · ${r.season||"No season"} · ${r.department||"All departments"}`}><p className="text-sm text-slate-600">{r.notes||"No notes"}</p><p className="text-xs text-violet-600">{r.tags?.join(" · ")}{r.reference_urls?.length?` · ${r.reference_urls.length} reference(s)`:""}</p></Card>):<Empty>No research references yet.</Empty>}</Panel>}
+        {active==="projects"&&<section className="rounded-3xl border bg-white shadow-xl"><div className="flex flex-col justify-between gap-3 border-b p-5 sm:flex-row sm:items-center"><div><h2 className="text-xl font-black">Design Projects</h2><p className="text-sm text-slate-500">One traceable record from idea to production release.</p></div><div className="flex gap-2"><label className="flex items-center gap-2 rounded-xl border px-3"><Search className="h-4 w-4 text-slate-400"/><input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search designs" className="w-40 py-2.5 text-sm outline-none"/></label><button onClick={()=>{setProjectForm(emptyProject);setModal("project");}} className="rounded-xl bg-violet-600 px-4 text-sm font-bold text-white">+ New project</button></div></div><div className="divide-y">{projects.length?projects.map(p=><article key={p.id} className="p-5"><div className="flex flex-col justify-between gap-4 lg:flex-row"><div><div className="flex flex-wrap items-center gap-2"><h3 className="font-black text-slate-900">{p.design_no} · {p.style_name}</h3><Badge value={p.status}/><span className="rounded-full bg-slate-100 px-2 py-1 text-[11px] font-bold">{p.priority}</span></div><p className="mt-1 text-sm text-slate-500">{[p.department,p.category,p.collection,p.season,p.designer].filter(Boolean).join(" · ")}</p><p className="mt-2 max-w-3xl text-sm text-slate-600">{p.description||"No design brief entered."}</p></div><div className="flex flex-wrap gap-2 lg:justify-end"><button onClick={()=>openFor("pattern",p.id)} className="rounded-xl border px-3 py-2 text-xs font-bold">Add pattern</button><button onClick={()=>openFor("sample",p.id)} className="rounded-xl border px-3 py-2 text-xs font-bold">Review sample</button><button onClick={()=>openFor("query",p.id)} className="rounded-xl border px-3 py-2 text-xs font-bold">Raise query</button><select value={p.status} onChange={e=>updateStatus(p,e.target.value)} className="rounded-xl border px-3 py-2 text-xs font-bold">{PROJECT_STATUSES.map(s=><option key={s}>{s}</option>)}</select></div></div></article>):<Empty>Create the first real design project.</Empty>}</div></section>}
+        {active==="patterns"&&<Panel title="Pattern Versions" subtitle="Controlled pattern, grading and consumption records." action={()=>setModal("pattern")} actionText="+ Add pattern">{data.patterns.length?data.patterns.map(p=><Card key={p.id} title={`${p.pattern_no} · ${p.pattern_name||"Pattern"}`} meta={`${projectName(p.project_id)} · ${p.version} · Base ${p.base_size||"—"}`}><p className="text-xs text-slate-500">Sizes: {p.sizes?.join(", ")||"Not set"} · {p.measurement_rows?.length||0} graded points · Consumption: {p.consumption_per_unit||0} · Wastage: {p.wastage_pct||0}%</p><div className="flex gap-2"><Badge value={p.status}/><button onClick={async()=>{const version=window.prompt("New version",`v${(Number(String(p.version).replace(/\D/g,""))||1)+1}`);if(!version)return;const reason=window.prompt("Revision reason")||"Technical revision";await run(`/patterns/${p.id}/revision`,{version,reason});}} className="rounded-lg border px-2 py-1 text-xs font-bold">Create revision</button></div></Card>):<Empty>No pattern versions yet.</Empty>}</Panel>}
+        {active==="artwork"&&<Panel title="Print & Artwork Library" subtitle="Versioned print, embroidery and placement references linked to designs." action={()=>{setArtworkForm(emptyArtwork);setModal("artwork");}} actionText="+ Add artwork">{data.artworks.length?data.artworks.map(a=><Card key={a.id} title={`${a.artwork_no} · ${a.name}`} meta={`${projectName(a.project_id)} · ${a.kind} · ${a.version}`}><p className="text-xs text-slate-500">{[a.width&&`${a.width} wide`,a.height&&`${a.height} high`,a.placement,a.technique].filter(Boolean).join(" · ")}</p><Badge value={a.status}/></Card>):<Empty>No print or artwork records yet.</Empty>}</Panel>}
+        {active==="samples"&&<Panel title="Samples & Approval" subtitle="Record every sample round and the decision that gates Production." action={()=>setModal("sample")} actionText="+ Review sample">{data.samples.length?data.samples.map(s=><Card key={s.id} title={`${s.sample_no} · ${s.sample_type}`} meta={`${projectName(s.project_id)} · Qty ${s.quantity}`}><p className="text-sm text-slate-600">{s.review_notes||s.fit_result||"No review notes."}</p><Badge value={s.decision}/></Card>):<Empty>No sample reviews yet.</Empty>}</Panel>}
+        {active==="techpacks"&&<><div className="mb-4 rounded-2xl border border-fuchsia-200 bg-fuchsia-50 p-4 text-sm text-fuchsia-900"><b>Shared with Production:</b> tech packs created here are the same records visible in Production & Job Work. Use the exact project design number, approve a sample, then release it from Production Handoff.</div><TechPackLibrary plans={data.material_plans||[]} onSelectForOrder={()=>{setActive("handoff");setNotice("Tech pack ready. Select its design project below to release it.");}}/></>}
+        {active==="handoff"&&<Panel title="Approval & Production Handoff" subtitle="Requires approved sample, Design Head sign-off, Production feasibility, and a matching Tech Pack.">{data.projects.length?data.projects.map(p=>{const packs=data.tech_packs.filter(t=>t.design_no===p.design_no);const approvals=Object.fromEntries((p.approvals||[]).map(a=>[a.type,a.decision]));const ready=approvedSamples.has(p.id)&&packs.length&&approvals.DESIGN_HEAD==="APPROVED"&&approvals.PRODUCTION_FEASIBILITY==="APPROVED";return <Card key={p.id} title={`${p.design_no} · ${p.style_name}`} meta={`${packs.length} tech pack(s) · Sample ${approvedSamples.has(p.id)?"approved":"missing"}`}><div className="flex flex-wrap items-center gap-2"><Badge value={p.status}/><Badge value={`Design: ${approvals.DESIGN_HEAD||"PENDING"}`}/><Badge value={`Production: ${approvals.PRODUCTION_FEASIBILITY||"PENDING"}`}/>{approvals.DESIGN_HEAD!=="APPROVED"&&<button onClick={async()=>{const note=window.prompt("Design approval note")||"Approved for production review";try{await api(`/projects/${p.id}/approval`,{method:"POST",body:JSON.stringify({approval_type:"DESIGN_HEAD",decision:"APPROVED",note})});await load();}catch(e){setError(e.message);}}} className="rounded-xl border border-violet-200 px-3 py-2 text-xs font-bold text-violet-700">Design Head approve</button>}{p.status!=="RELEASED_TO_PRODUCTION"&&<button disabled={!ready} onClick={()=>{setReleaseForm({project_id:p.id,tech_pack_id:packs[0]?.id||"",material_plan_id:p.material_plan_id||""});setModal("release");}} className="rounded-xl bg-emerald-600 px-3 py-2 text-xs font-bold text-white disabled:opacity-40"><Send className="mr-1 inline h-3.5 w-3.5"/>Release to Production</button>}</div></Card>}):<Empty>Create a design project first.</Empty>}</Panel>}
+        {active==="queries"&&<Panel title="Design & Production Queries" subtitle="Keep technical clarifications and revisions attached to the design." action={()=>setModal("query")} actionText="+ Raise query">{data.queries.length?data.queries.map(q=><Card key={q.id} title={`${q.query_no} · ${q.category}`} meta={`${projectName(q.project_id)} · ${q.priority}`}><p className="text-sm text-slate-600">{q.description}</p>{q.response&&<p className="rounded-lg bg-emerald-50 p-2 text-xs text-emerald-800"><b>Response:</b> {q.response}</p>}<div className="flex gap-2"><Badge value={q.status}/>{!["RESOLVED","CLOSED"].includes(q.status)&&<button onClick={async()=>{const response=window.prompt("Resolution / clarification");if(!response)return;try{await api(`/queries/${q.id}`,{method:"PATCH",body:JSON.stringify({status:"RESOLVED",response})});await load();}catch(e){setError(e.message);}}} className="rounded-lg border border-emerald-200 px-2 py-1 text-xs font-bold text-emerald-700">Resolve</button>}</div></Card>):<Empty>No open design or production queries.</Empty>}</Panel>}
+        {active==="changes"&&<Panel title="Post-release Change Control" subtitle="Record specification changes and their material, cost and delivery impact." action={()=>{setChangeForm(emptyChange);setModal("change");}} actionText="+ Change request">{data.change_requests.length?data.change_requests.map(c=><Card key={c.id} title={`${c.change_no} · ${projectName(c.project_id)}`} meta={`Raised by ${c.raised_by||"Unknown"}`}><p className="text-sm text-slate-600">{c.reason}</p><p className="text-xs text-slate-500">Material: {c.material_impact||"None"} · Cost: {c.cost_impact||"None"} · Delivery: {c.delivery_impact||"None"}</p><Badge value={c.status}/></Card>):<Empty>No formal change requests.</Empty>}</Panel>}
+        {active==="reports"&&<Reports data={data} projectName={projectName}/>}
+      </>}
+    </div>
+    {modal==="project"&&<FormModal title="Create design project" onClose={()=>setModal("")} onSubmit={e=>{e.preventDefault();run("/projects",projectForm)}}><div className="grid gap-4 md:grid-cols-2"><Field label="Design no. (auto if blank)"><input value={projectForm.design_no} onChange={e=>setProjectForm({...projectForm,design_no:e.target.value})}/></Field><Field label="Style name *"><input required value={projectForm.style_name} onChange={e=>setProjectForm({...projectForm,style_name:e.target.value})}/></Field><Field label="Department"><select value={projectForm.department} onChange={e=>setProjectForm({...projectForm,department:e.target.value})}>{DEPARTMENTS.map(x=><option key={x}>{x}</option>)}</select></Field>{["category","theme","collection","season","designer","target_customer"].map(k=><Field key={k} label={pretty(k)}><input value={projectForm[k]} onChange={e=>setProjectForm({...projectForm,[k]:e.target.value})}/></Field>)}<Field label="Planned quantity"><input type="number" min="0" value={projectForm.planned_quantity} onChange={e=>setProjectForm({...projectForm,planned_quantity:e.target.value})}/></Field><Field label="Target cost"><input type="number" min="0" value={projectForm.target_cost} onChange={e=>setProjectForm({...projectForm,target_cost:e.target.value})}/></Field><Field label="Launch date"><input type="date" value={projectForm.launch_date} onChange={e=>setProjectForm({...projectForm,launch_date:e.target.value})}/></Field><Field label="Priority"><select value={projectForm.priority} onChange={e=>setProjectForm({...projectForm,priority:e.target.value})}><option>LOW</option><option>MEDIUM</option><option>HIGH</option><option>URGENT</option></select></Field><Field label="Design brief" wide><textarea rows="3" value={projectForm.description} onChange={e=>setProjectForm({...projectForm,description:e.target.value})}/></Field></div></FormModal>}
+    {modal==="pattern"&&<FormModal title="Add pattern version" onClose={()=>setModal("")} onSubmit={e=>{e.preventDefault();run("/patterns",{...patternForm,sizes:patternForm.sizes.split(",").map(x=>x.trim()).filter(Boolean),measurement_rows:gradingRows(patternForm.measurement_rows),file_urls:patternForm.file_urls.split("\n").filter(Boolean)})}}><div className="grid gap-4 md:grid-cols-2"><ProjectSelect value={patternForm.project_id} onChange={v=>setPatternForm({...patternForm,project_id:v})} projects={data.projects}/>{["pattern_no","pattern_name","version","base_size","sizes","fabric_width","consumption_per_unit","wastage_pct","marker_length","marker_efficiency","seam_allowance","shrinkage_allowance"].map(k=><Field key={k} label={pretty(k)}><input required={["pattern_name","version"].includes(k)} type={["consumption_per_unit","wastage_pct","marker_efficiency"].includes(k)?"number":"text"} value={patternForm[k]} onChange={e=>setPatternForm({...patternForm,[k]:e.target.value})}/></Field>)}<Field label="Measurement grading (Point | Base | S:36,M:38...)" wide><textarea rows="4" value={patternForm.measurement_rows} onChange={e=>setPatternForm({...patternForm,measurement_rows:e.target.value})} placeholder={'Chest | 40 | S:36, M:38, L:40, XL:42\nLength | 28 | S:27, M:28, L:29, XL:30'}/></Field><AssetUploader label="Upload CAD / DXF / PDF files" onUploaded={urls=>setPatternForm({...patternForm,file_urls:[patternForm.file_urls,...urls].filter(Boolean).join("\n")})}/><Field label="Technical file links" wide><textarea rows="2" value={patternForm.file_urls} onChange={e=>setPatternForm({...patternForm,file_urls:e.target.value})}/></Field><Field label="Pattern / grading notes" wide><textarea rows="3" value={patternForm.notes} onChange={e=>setPatternForm({...patternForm,notes:e.target.value})}/></Field></div></FormModal>}
+    {modal==="sample"&&<FormModal title="Record sample request / review" onClose={()=>setModal("")} onSubmit={e=>{e.preventDefault();run("/samples",{...sampleForm,image_urls:sampleForm.image_urls.split("\n").filter(Boolean)})}}><div className="grid gap-4 md:grid-cols-2"><ProjectSelect value={sampleForm.project_id} onChange={v=>setSampleForm({...sampleForm,project_id:v})} projects={data.projects}/><Field label="Pattern version"><select value={sampleForm.pattern_id} onChange={e=>setSampleForm({...sampleForm,pattern_id:e.target.value})}><option value="">No pattern linked</option>{data.patterns.filter(p=>p.project_id===sampleForm.project_id).map(p=><option key={p.id} value={p.id}>{p.pattern_no} · {p.version}</option>)}</select></Field>{["sample_type","quantity","required_date","received_date","assigned_to","estimated_cost","actual_cost"].map(k=><Field key={k} label={pretty(k)}><input type={k.includes("date")?"date":["quantity","estimated_cost","actual_cost"].includes(k)?"number":"text"} value={sampleForm[k]} onChange={e=>setSampleForm({...sampleForm,[k]:e.target.value})}/></Field>)}<Field label="Decision"><select value={sampleForm.decision} onChange={e=>setSampleForm({...sampleForm,decision:e.target.value})}>{DECISIONS.map(x=><option key={x}>{x}</option>)}</select></Field>{["materials","fit_result","construction_result"].map(k=><Field key={k} label={pretty(k)}><input value={sampleForm[k]} onChange={e=>setSampleForm({...sampleForm,[k]:e.target.value})}/></Field>)}<Field label="Sample image links" wide><textarea rows="2" value={sampleForm.image_urls} onChange={e=>setSampleForm({...sampleForm,image_urls:e.target.value})}/></Field><Field label="Review / correction notes" wide><textarea required rows="3" value={sampleForm.review_notes} onChange={e=>setSampleForm({...sampleForm,review_notes:e.target.value})}/></Field></div></FormModal>}
+    {modal==="query"&&<FormModal title="Raise design query" onClose={()=>setModal("")} onSubmit={e=>{e.preventDefault();run("/queries",queryForm)}}><div className="grid gap-4 md:grid-cols-2"><ProjectSelect value={queryForm.project_id} onChange={v=>setQueryForm({...queryForm,project_id:v})} projects={data.projects}/><Field label="Category"><select value={queryForm.category} onChange={e=>setQueryForm({...queryForm,category:e.target.value})}>{["Measurement clarification","Pattern file missing","Fabric specification","Artwork placement","Trim unavailable","Consumption concern","Construction feasibility","Other"].map(x=><option key={x}>{x}</option>)}</select></Field><Field label="Priority"><select value={queryForm.priority} onChange={e=>setQueryForm({...queryForm,priority:e.target.value})}><option>LOW</option><option>MEDIUM</option><option>HIGH</option><option>URGENT</option></select></Field><Field label="Question / issue" wide><textarea required rows="4" value={queryForm.description} onChange={e=>setQueryForm({...queryForm,description:e.target.value})}/></Field></div></FormModal>}
+    {modal==="release"&&<FormModal title="Release approved design to Production" onClose={()=>setModal("")} onSubmit={e=>{e.preventDefault();run(`/projects/${releaseForm.project_id}/release`,releaseForm)}}><div className="space-y-4"><div className="rounded-xl bg-emerald-50 p-3 text-sm text-emerald-900">This locks the selected Tech Pack as the Production reference. Active job orders retain their own snapshot.</div><Field label="Approved tech pack"><select required value={releaseForm.tech_pack_id} onChange={e=>setReleaseForm({...releaseForm,tech_pack_id:e.target.value})}>{data.tech_packs.filter(t=>t.design_no===data.projects.find(p=>p.id===releaseForm.project_id)?.design_no).map(t=><option key={t.id} value={t.id}>{t.tech_pack_no} · {t.version}</option>)}</select></Field><Field label="Style BOM / material plan"><select value={releaseForm.material_plan_id} onChange={e=>setReleaseForm({...releaseForm,material_plan_id:e.target.value,auto_create_bom:false})}><option value="">No existing BOM selected</option>{data.material_plans.map(p=><option key={p.id} value={p.id}>{p.plan_no} · {p.style_name}</option>)}</select></Field><label className="flex items-start gap-3 rounded-xl border p-3 text-sm"><input type="checkbox" checked={Boolean(releaseForm.auto_create_bom)} onChange={e=>setReleaseForm({...releaseForm,auto_create_bom:e.target.checked,material_plan_id:e.target.checked?"":releaseForm.material_plan_id})}/><span><b>Automatically create Style BOM</b><br/><span className="text-slate-500">Uses planned quantity and the latest pattern consumption/wastage.</span></span></label>{releaseForm.auto_create_bom&&<Field label="Main material name"><input value={releaseForm.material_name||""} onChange={e=>setReleaseForm({...releaseForm,material_name:e.target.value})} placeholder="Main fabric"/></Field>}</div></FormModal>}
+    {modal==="research"&&<FormModal title="Add research reference" onClose={()=>setModal("")} onSubmit={e=>{e.preventDefault();run("/research",{...researchForm,tags:researchForm.tags.split(",").map(x=>x.trim()).filter(Boolean),reference_urls:researchForm.reference_urls.split("\n").filter(Boolean)})}}><div className="grid gap-4 md:grid-cols-2">{["title","category","season","market_segment"].map(k=><Field key={k} label={pretty(k)}><input required={k==="title"} value={researchForm[k]} onChange={e=>setResearchForm({...researchForm,[k]:e.target.value})}/></Field>)}<Field label="Department"><select value={researchForm.department} onChange={e=>setResearchForm({...researchForm,department:e.target.value})}>{DEPARTMENTS.map(x=><option key={x}>{x}</option>)}</select></Field><Field label="Tags (comma separated)"><input value={researchForm.tags} onChange={e=>setResearchForm({...researchForm,tags:e.target.value})}/></Field><Field label="Image / document / source links" wide><textarea rows="3" value={researchForm.reference_urls} onChange={e=>setResearchForm({...researchForm,reference_urls:e.target.value})}/></Field><Field label="Research findings" wide><textarea rows="4" value={researchForm.notes} onChange={e=>setResearchForm({...researchForm,notes:e.target.value})}/></Field></div></FormModal>}
+    {modal==="artwork"&&<FormModal title="Add print or artwork" onClose={()=>setModal("")} onSubmit={e=>{e.preventDefault();run("/artworks",{...artworkForm,file_urls:artworkForm.file_urls.split("\n").filter(Boolean)})}}><div className="grid gap-4 md:grid-cols-2"><ProjectSelect value={artworkForm.project_id} onChange={v=>setArtworkForm({...artworkForm,project_id:v})} projects={data.projects}/>{["name","kind","version","width","height","placement","technique","colours","status"].map(k=><Field key={k} label={pretty(k)}><input required={k==="name"} value={artworkForm[k]} onChange={e=>setArtworkForm({...artworkForm,[k]:e.target.value})}/></Field>)}<Field label="Artwork file / preview links" wide><textarea rows="3" value={artworkForm.file_urls} onChange={e=>setArtworkForm({...artworkForm,file_urls:e.target.value})}/></Field><Field label="Instructions" wide><textarea rows="3" value={artworkForm.notes} onChange={e=>setArtworkForm({...artworkForm,notes:e.target.value})}/></Field></div></FormModal>}
+    {modal==="change"&&<FormModal title="Create formal change request" onClose={()=>setModal("")} onSubmit={e=>{e.preventDefault();run("/change-requests",changeForm)}}><div className="grid gap-4 md:grid-cols-2"><ProjectSelect value={changeForm.project_id} onChange={v=>setChangeForm({...changeForm,project_id:v})} projects={data.projects}/>{["reason","previous_spec","new_spec","material_impact","cost_impact","delivery_impact"].map(k=><Field key={k} label={pretty(k)} wide={["reason","previous_spec","new_spec"].includes(k)}><textarea required={["reason","previous_spec","new_spec"].includes(k)} rows="2" value={changeForm[k]} onChange={e=>setChangeForm({...changeForm,[k]:e.target.value})}/></Field>)}</div></FormModal>}
+  </main>;
+}
+
+function Panel({title,subtitle,action,actionText,children}){return <section className="overflow-hidden rounded-3xl border bg-white shadow-xl"><header className="flex flex-col justify-between gap-3 border-b bg-gradient-to-r from-white to-violet-50 p-5 sm:flex-row sm:items-center"><div><h2 className="text-xl font-black">{title}</h2><p className="text-sm text-slate-500">{subtitle}</p></div>{action&&<button onClick={action} className="rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-bold text-white">{actionText}</button>}</header><div className="space-y-3 p-5">{children}</div></section>}
+function Card({title,meta,children}){return <article className="flex flex-col justify-between gap-3 rounded-2xl border border-slate-200 p-4 lg:flex-row lg:items-center"><div><h3 className="font-black text-slate-900">{title}</h3><p className="mt-1 text-xs text-slate-500">{meta}</p></div><div className="flex max-w-2xl flex-col items-start gap-2 lg:items-end">{children}</div></article>}
+function FormModal({title,onClose,onSubmit,children}){return <Modal title={title} onClose={onClose}><form onSubmit={onSubmit} className="p-6">{children}<div className="mt-6 flex justify-end gap-3"><button type="button" onClick={onClose} className="rounded-xl border px-4 py-2.5 text-sm font-bold">Cancel</button><button className="rounded-xl bg-violet-600 px-5 py-2.5 text-sm font-bold text-white">Save</button></div></form></Modal>}
+function ProjectSelect({value,onChange,projects}){return <Field label="Design project *"><select required value={value} onChange={e=>onChange(e.target.value)}><option value="">Select design</option>{projects.map(p=><option key={p.id} value={p.id}>{p.design_no} · {p.style_name}</option>)}</select></Field>}
+function AssetUploader({label,onUploaded}){const [busy,setBusy]=useState(false),[message,setMessage]=useState("");const upload=async(files)=>{if(!files?.length)return;setBusy(true);try{const body=new FormData();[...files].forEach(f=>body.append("files",f));const token=localStorage.getItem("admin_token")||localStorage.getItem("access_token")||localStorage.getItem("token")||"";const response=await fetch(`${API_BASE_URL}/api/design-pattern/assets`,{method:"POST",headers:token?{Authorization:`Bearer ${token}`}:{},body});const result=await response.json();if(!response.ok)throw new Error(result.detail||"Upload failed");onUploaded(result.data.map(x=>x.url));setMessage(`${result.data.length} uploaded`);}catch(e){setMessage(e.message);}finally{setBusy(false);}};return <label className="md:col-span-2 rounded-xl border border-dashed border-violet-300 bg-violet-50 p-3"><span className="block text-xs font-black uppercase text-violet-700">{label}</span><input type="file" multiple onChange={e=>upload(e.target.files)} className="mt-2 text-sm" disabled={busy}/>{message&&<span className="ml-2 text-xs text-slate-600">{message}</span>}</label>}
+function Reports({data}){const byDesigner=Object.entries(data.projects.reduce((a,p)=>{const k=p.designer||"Unassigned";a[k]=(a[k]||0)+1;return a;},{}));const sampleCost=data.samples.reduce((s,x)=>s+Number(x.actual_cost||x.estimated_cost||0),0);const deadlines=[...data.projects.filter(p=>p.launch_date).map(p=>({date:p.launch_date,label:`Launch · ${p.design_no}`})),...data.samples.filter(s=>s.required_date&&s.decision==="PENDING").map(s=>({date:s.required_date,label:`Sample · ${s.design_no}`}))].sort((a,b)=>a.date.localeCompare(b.date));return <div className="space-y-5"><section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">{[["Designs",data.projects.length],["Release rate",`${data.projects.length?Math.round(data.projects.filter(p=>p.status==="RELEASED_TO_PRODUCTION").length/data.projects.length*100):0}%`],["Sample cost",`₹${sampleCost.toLocaleString("en-IN")}`],["Revisions",data.samples.filter(s=>s.decision?.includes("REVISION")||s.decision==="RESAMPLE_REQUIRED").length]].map(([l,v])=><article key={l} className="rounded-2xl border bg-white p-5 shadow"><p className="text-sm font-bold text-slate-500">{l}</p><p className="mt-1 text-3xl font-black">{v}</p></article>)}</section><div className="grid gap-5 xl:grid-cols-2"><Panel title="Designer workload" subtitle="Current project ownership.">{byDesigner.length?byDesigner.map(([name,count])=><div key={name} className="flex justify-between rounded-xl border p-3"><b>{name}</b><span>{count} project(s)</span></div>):<Empty>No workload data.</Empty>}</Panel><Panel title="Deadline calendar" subtitle="Upcoming sample and launch commitments.">{deadlines.length?deadlines.slice(0,12).map(x=><div key={`${x.date}${x.label}`} className="flex justify-between rounded-xl border p-3"><b>{x.label}</b><span>{x.date}</span></div>):<Empty>No dated commitments.</Empty>}</Panel></div><Panel title="Design cost & sales performance" subtitle="BOM material estimate, sampling cost and matched sales units.">{(data.insights||[]).length?(data.insights||[]).map(x=><div key={x.project_id} className="grid gap-2 rounded-xl border p-3 text-sm sm:grid-cols-5"><b>{x.design_no} · {x.style_name}</b><span>Target ₹{x.target_cost}</span><span>Material ₹{x.material_cost}</span><span>Samples ₹{x.sample_cost}</span><span className="font-bold text-emerald-700">Sales {x.sales_units} units</span></div>):<Empty>No linked costing or sales data.</Empty>}</Panel></div>}

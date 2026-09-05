@@ -5,7 +5,7 @@ import {
   Factory, Globe2, Handshake, Layers3, LockKeyhole, Mail, Menu, PackageCheck,
   ShieldCheck, ShoppingCart, Store, Truck, UserPlus, Users, Workflow,
   Zap, Crown, TrendingUp, Sparkles, Rocket, Bot, MessageCircle, X, ChevronRight,
-  GitBranch,
+  GitBranch, Palette, Megaphone, HeartHandshake,
 } from "lucide-react";
 import { API_BASE_URL } from "../config/api.js";
 
@@ -30,7 +30,11 @@ const capabilities = [
   ["Inventory & Warehouse", "GRN/GRC, stock allocation, transfers, adjustments and item movement", Boxes, "emerald"],
   ["Finance", "Invoices, payments, debit notes, vouchers, revenue and financial reporting", BarChart3, "amber"],
   ["Cashier & Store", "Store-based POS, billing, returns, customer records and daily operations", Store, "cyan"],
-  ["HR & Operations", "Employees, tasks, logistics, design workflows and third-party coordination", Users, "rose"],
+  ["Design & Pattern", "Design projects from idea through pattern and sample approval to release-for-production", Palette, "fuchsia"],
+  ["Production & Job Work", "Job-work orders to external workers, receipts and production tracking", Factory, "amber"],
+  ["HR & Operations", "Employees, staff tasks, logistics and third-party coordination", Users, "rose"],
+  ["Marketing", "Campaigns, offers, redemptions and engagement tracking", Megaphone, "violet"],
+  ["Customer CRM", "Customer profiles, follow-ups and feedback — beyond the POS bill", HeartHandshake, "rose"],
   ["Planning & Forecasting", "Demand planning, stock gaps, purchase plans and replenishment insights", Workflow, "blue"],
   ["Reports & Visibility", "Role-scoped dashboards, performance indicators and operational reports", Layers3, "slate"],
 ];
@@ -54,6 +58,7 @@ const tone = {
   emerald: "bg-emerald-50 text-emerald-700 ring-emerald-100", amber: "bg-amber-50 text-amber-700 ring-amber-100",
   cyan: "bg-cyan-50 text-cyan-700 ring-cyan-100", rose: "bg-rose-50 text-rose-700 ring-rose-100",
   blue: "bg-blue-50 text-blue-700 ring-blue-100", slate: "bg-slate-100 text-slate-700 ring-slate-200",
+  fuchsia: "bg-fuchsia-50 text-fuchsia-700 ring-fuchsia-100",
 };
 
 const VENDOR_THEME = {
@@ -306,6 +311,7 @@ export default function ProfessionalRoleSelector() {
           <div className="relative mx-auto max-w-7xl px-5 sm:px-8 lg:px-10">
             <div className="grid gap-8 lg:grid-cols-[1fr_auto] lg:items-end"><div className="max-w-3xl"><p className="text-xs font-extrabold uppercase tracking-[0.2em] text-cyan-300">Retail capabilities</p><h2 className="mt-4 text-3xl font-black tracking-tight sm:text-4xl">Departments work independently, data works together.</h2><p className="mt-4 leading-7 text-slate-300">These are platform capabilities - not public login options. After authentication, a user sees only the departments assigned by their retailer administrator.</p></div><span className="inline-flex h-fit items-center gap-2 rounded-full border border-emerald-300/30 bg-emerald-300/10 px-4 py-2 text-xs font-bold text-emerald-200 shadow-lg shadow-emerald-950/20"><ShieldCheck size={15}/> Access controlled</span></div>
             <div className="mt-10 grid gap-5 md:grid-cols-2 xl:grid-cols-4">{capabilities.map(([title,text,Icon,color], index) => <div key={title} className="group relative overflow-hidden rounded-3xl border border-white/10 bg-white/[0.07] p-5 shadow-[0_20px_70px_rgba(0,0,0,0.18)] backdrop-blur transition duration-300 hover:-translate-y-1 hover:bg-white/[0.11]"><span className={`absolute inset-x-0 top-0 h-1 bg-gradient-to-r ${index % 4 === 0 ? "from-indigo-400 to-violet-400" : index % 4 === 1 ? "from-violet-400 to-fuchsia-400" : index % 4 === 2 ? "from-emerald-400 to-teal-400" : "from-amber-300 to-orange-400"}`} /><span className={`grid h-12 w-12 place-items-center rounded-2xl bg-white text-slate-900 ring-1 ${tone[color]}`}><Icon size={20}/></span><h3 className="mt-5 font-extrabold text-white">{title}</h3><p className="mt-2 text-sm leading-6 text-slate-300">{text}</p><div className="mt-5 flex items-center justify-between border-t border-white/10 pt-4"><span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Module {String(index + 1).padStart(2, "0")}</span><span className="grid h-7 w-7 place-items-center rounded-full bg-white/10 text-cyan-200 transition group-hover:translate-x-1"><ArrowRight size={13}/></span></div></div>)}</div>
+            <p className="mx-auto mt-8 max-w-2xl text-center text-xs leading-5 text-slate-400">Production & Job Work and Logistics are opt-in modules any HQ Admin can request in-app after signup — not tied to a plan tier and not a separate charge.</p>
           </div>
         </section>
 
