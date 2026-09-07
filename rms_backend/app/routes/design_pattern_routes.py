@@ -262,6 +262,7 @@ async def create_query(payload: dict, ctx: dict = Depends(require_design_or_prod
     seq = await design_queries_collection.count_documents({"tenant_id": ctx["tenant_id"]}) + 1
     row = {"tenant_id": ctx["tenant_id"], "project_id": str(project["_id"]), "design_no": project["design_no"], "query_no": f"DQ-{now.strftime('%y%m%d')}-{seq:04d}",
            "category": clean(payload.get("category"), 80), "description": clean(payload.get("description"), 2000), "priority": clean(payload.get("priority"), 30) or "MEDIUM",
+           "attachment_urls": [clean(x, 1000) for x in payload.get("attachment_urls", []) if clean(x)][:20],
            "response": "", "status": "OPEN", "source_department": ctx.get("department") or "", "raised_by": ctx.get("admin_name"), "created_at": now, "updated_at": now}
     result = await design_queries_collection.insert_one(row); row["_id"] = result.inserted_id
     return {"message": f"Query {row['query_no']} created.", "data": serialize(row)}
@@ -307,6 +308,7 @@ async def create_change_request(payload: dict, ctx: dict = Depends(require_desig
     row = {"tenant_id": ctx["tenant_id"], "project_id": str(project["_id"]), "design_no": project["design_no"], "change_no": f"DCR-{now.strftime('%y%m%d')}-{seq:04d}",
         "reason": clean(payload.get("reason"), 1000), "previous_spec": clean(payload.get("previous_spec"), 1500), "new_spec": clean(payload.get("new_spec"), 1500),
         "material_impact": clean(payload.get("material_impact"), 1000), "cost_impact": clean(payload.get("cost_impact"), 500), "delivery_impact": clean(payload.get("delivery_impact"), 500),
+        "before_urls": [clean(x, 1000) for x in payload.get("before_urls", []) if clean(x)][:20], "after_urls": [clean(x, 1000) for x in payload.get("after_urls", []) if clean(x)][:20],
         "affected_orders":affected, "status": "PENDING_PRODUCTION_REVIEW", "raised_by": ctx.get("admin_name"), "decision_note": "", "created_at": now, "updated_at": now}
     result = await design_change_requests_collection.insert_one(row); row["_id"] = result.inserted_id
     return {"message": f"Change request {row['change_no']} submitted.", "data": serialize(row)}
