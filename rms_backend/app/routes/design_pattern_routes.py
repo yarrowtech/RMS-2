@@ -12,6 +12,7 @@ from ..db import (
     design_artworks_collection, design_change_requests_collection,
     design_patterns_collection, design_projects_collection,
     design_queries_collection, design_research_collection, design_samples_collection,
+    design_settings_collection,
     job_work_orders_collection, sales_collection, style_bom_plans_collection, tech_packs_collection,
 )
 from .deps import get_hq_tenant
@@ -21,6 +22,14 @@ cloudinary.config(cloud_name=settings.cloudinary_cloud_name, api_key=settings.cl
 
 PROJECT_STATUSES = {"IDEA", "IN_DEVELOPMENT", "PATTERN_DEVELOPMENT", "SAMPLE_DEVELOPMENT", "REVISION_REQUIRED", "AWAITING_APPROVAL", "APPROVED_FOR_PRODUCTION", "RELEASED_TO_PRODUCTION", "ON_HOLD", "REJECTED", "ARCHIVED"}
 SAMPLE_DECISIONS = {"PENDING", "APPROVED", "APPROVED_WITH_COMMENTS", "REVISION_REQUIRED", "REJECTED", "RESAMPLE_REQUIRED"}
+
+DEFAULT_SETTINGS = {
+    "departments": ["Men", "Women", "Kids Boys", "Kids Girls", "Infant", "Accessories", "Other"],
+    "sample_types": ["Proto sample", "Development sample", "Fit sample", "Size-set sample", "Print / embroidery sample", "Wash sample", "Pre-production sample", "Production sample"],
+    "default_base_size": "M",
+    "default_size_run": "S, M, L, XL",
+    "default_wastage_pct": 5,
+}
 
 def clean(value: Any, limit: int = 500) -> str:
     return str(value or "").strip()[:limit]
@@ -112,6 +121,41 @@ async def insights(ctx: dict = Depends(require_design)):
         sample_cost=sum(number(s.get("actual_cost") or s.get("estimated_cost")) for s in samples if s.get("project_id")==str(p["_id"]))
         rows.append({"project_id":str(p["_id"]),"design_no":p.get("design_no"),"style_name":p.get("style_name"),"status":p.get("status"),"material_cost":round(material_cost,2),"sample_cost":round(sample_cost,2),"target_cost":number(p.get("target_cost")),"sales_units":round(sales_by_design.get(p.get("design_no"),0),2)})
     return {"data":rows}
+
+def _merge_settings(stored: dict) -> dict:
+    merged = dict(DEFAULT_SETTINGS)
+    for key in DEFAULT_SETTINGS:
+        value = (stored or {}).get(key)
+        if isinstance(DEFAULT_SETTINGS[key], list):
+            if isinstance(value, list) and value:
+                merged[key] = value
+        elif value not in (None, ""):
+            merged[key] = value
+    return merged
+
+@router.get("/settings")
+async def get_settings(ctx: dict = Depends(require_design)):
+    stored = await design_settings_collection.find_one({"tenant_id": ctx["tenant_id"]})
+    return {"status": "success", "data": _merge_settings(stored or {})}
+
+@router.put("/settings")
+async def save_settings(payload: dict, ctx: dict = Depends(require_design)):
+    def string_list(raw, fallback):
+        items = [clean(x, 60) for x in raw] if isinstance(raw, list) else []
+        items = [x for x in items if x][:60]
+        return items or fallback
+    doc = {
+        "departments": string_list(payload.get("departments"), DEFAULT_SETTINGS["departments"]),
+        "sample_types": string_list(payload.get("sample_types"), DEFAULT_SETTINGS["sample_types"]),
+        "default_base_size": clean(payload.get("default_base_size"), 16) or DEFAULT_SETTINGS["default_base_size"],
+        "default_size_run": clean(payload.get("default_size_run"), 160) or DEFAULT_SETTINGS["default_size_run"],
+        "default_wastage_pct": min(100.0, number(payload.get("default_wastage_pct"), DEFAULT_SETTINGS["default_wastage_pct"])),
+        "tenant_id": ctx["tenant_id"],
+        "updated_at": datetime.utcnow(),
+        "updated_by": ctx.get("admin_name") or ctx.get("admin_email") or "",
+    }
+    await design_settings_collection.update_one({"tenant_id": ctx["tenant_id"]}, {"$set": doc}, upsert=True)
+    return {"status": "success", "message": "Design & Pattern settings saved.", "data": _merge_settings(doc)}
 
 @router.post("/projects", status_code=201)
 async def create_project(payload: dict, ctx: dict = Depends(require_design)):

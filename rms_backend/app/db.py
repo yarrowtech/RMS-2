@@ -130,6 +130,7 @@ design_queries_collection = db["design_queries"]
 design_research_collection = db["design_research"]
 design_artworks_collection = db["design_artworks"]
 design_change_requests_collection = db["design_change_requests"]
+design_settings_collection = db["design_settings"]
 
 # HR module. Employees are NOT duplicated here — admins_collection is the
 # single source of truth for who works at this tenant (name, department,
