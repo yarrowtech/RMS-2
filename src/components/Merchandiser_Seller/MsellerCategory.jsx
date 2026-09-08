@@ -44,7 +44,6 @@ const BUSINESS_TYPES = [
   { key: "wholesaler",      label: "Wholesaler",      hint: "Bulk sales to retailers" },
   { key: "manufacturer",    label: "Manufacturer",    hint: "Makes the goods directly" },
   { key: "distributor",     label: "Distributor",     hint: "Distributes brands across a territory" },
-  { key: "retailer",        label: "Retailer",        hint: "Sells to end customers too" },
   { key: "fabric_supplier", label: "Fabric supplier", hint: "Raw material / fabric" },
   { key: "exporter",        label: "Exporter",        hint: "Ships outside the country" },
   { key: "job_worker",      label: "Job-work partner", hint: "Provides cutting, stitching, embroidery, washing, finishing or packing for retailer-owned material" },

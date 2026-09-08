@@ -801,7 +801,7 @@ const RegisterVendor = () => {
               options={["Private Limited", "Public Limited", "LLP", "Partnership", "Proprietorship", "One Person Company (OPC)"]} />
             <SelectOrOtherField label="Industry Type" value={vendorForm.industryType}
               onChange={handleChange("industryType")} otherPlaceholder="e.g. Home Decor, Footwear"
-              options={["Retail", "Manufacturing", "Wholesale / Distribution", "Textile & Apparel", "FMCG", "Electronics", "Import / Export", "Services"]} />
+              options={["General Vendor", "Wholesaler", "Manufacturer", "Distributor", "Fabric Supplier", "Exporter", "Job-work Partner", "FMCG Vendor"]} />
             <InputField label="Product Type*" value={vendorForm.productType}
               onChange={handleChange("productType")} placeholder="Apparel / Electronics / FMCG etc."
               prefilled={!!inviteInfo?.product_type} />
