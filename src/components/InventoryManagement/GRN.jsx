@@ -1025,6 +1025,16 @@ const EMPTY_ITEM = (grcItem = {}) => ({
   batchNo:     "",
   expiryDate:  null,
   remarks:     "",
+  product_type: grcItem.product_type || "",
+  brand: grcItem.brand || "",
+  manufacturer: grcItem.manufacturer || "",
+  pack_size: grcItem.pack_size || "",
+  requires_expiry: Boolean(grcItem.requires_expiry),
+  batch_tracking: Boolean(grcItem.batch_tracking),
+  shelf_life_days: grcItem.shelf_life_days || 0,
+  barcode_policy: grcItem.barcode_policy || "",
+  stock_identity: grcItem.stock_identity || "",
+  barcodeMismatchReason: grcItem.barcodeMismatchReason || "",
 });
 
 /* ─── Status display config — light theme ────────────────────────── */

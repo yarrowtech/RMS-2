@@ -65,7 +65,7 @@ async function authFetch(url, options = {}) {
 
 const BUSINESS_TYPES = [
   ["", "All types"], ["general_vendor", "General vendor"], ["wholesaler", "Wholesaler"], ["manufacturer", "Manufacturer"],
-  ["distributor", "Distributor"], ["retailer", "Retailer"], ["fabric_supplier", "Fabric supplier"], ["exporter", "Exporter"],
+  ["distributor", "Distributor"], ["retailer", "Retailer"], ["fabric_supplier", "Fabric supplier"], ["exporter", "Exporter"], ["fmcg_vendor", "FMCG vendor"],
 ];
 
 const today = () => new Date().toISOString().slice(0, 10);

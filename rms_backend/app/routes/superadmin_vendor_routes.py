@@ -43,7 +43,7 @@ CurrentAdmin = Dict[str, Any]
 
 VALID_BUSINESS_TYPES = {
     "general_vendor", "wholesaler", "manufacturer", "distributor",
-    "exporter", "fabric_supplier", "retailer",
+    "exporter", "fabric_supplier", "retailer", "job_worker", "fmcg_vendor",
 }
 VALID_RELATIONSHIP_STATUSES = {"Pending", "Approved", "Rejected", "Deactivated", "Suspended"}
 VALID_SUBSCRIPTION_STATUSES = {"active", "pending_payment", "suspended", "cancelled", "expired"}

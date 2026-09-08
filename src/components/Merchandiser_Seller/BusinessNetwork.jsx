@@ -11,6 +11,7 @@ const BUSINESS_TYPES = [
   ["manufacturer", "Manufacturer"], ["distributor", "Distributor"],
   ["exporter", "Exporter"], ["fabric_supplier", "Fabric supplier"],
   ["job_worker", "Job-work partner"],
+  ["fmcg_vendor", "FMCG vendor"],
   ["retailer", "Retailer / store owner"],
 ];
 

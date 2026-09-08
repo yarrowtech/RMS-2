@@ -375,6 +375,47 @@ export default function InventoryDashboard() {
             </Panel>
           </div>
 
+          {/* ── Stock by store (multi-store tenants only) ── */}
+          {data.store_stock?.length > 0 && (
+            <div style={{ marginBottom: 16 }}>
+              <Panel title="Stock by Store" sub={`On-hand across ${data.store_stock.length} store${data.store_stock.length > 1 ? "s" : ""} · central warehouse shown in the cards above`} icon={<FaWarehouse />} accent="#10B981" delay={280}>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 12 }}>
+                  {data.store_stock.map((st) => (
+                    <div key={st.store_id || st.store} style={{ background: "#0F1923", border: "1px solid #1E2D3A", borderRadius: 12, padding: "14px 16px" }}>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: "#F0F4F8", marginBottom: 8 }}>{st.store}</div>
+                      <div style={{ display: "flex", gap: 14, marginBottom: 10, flexWrap: "wrap" }}>
+                        <div>
+                          <div style={{ fontFamily: "monospace", fontSize: 16, fontWeight: 800, color: "#00D4FF" }}>{fmt(st.skus)}</div>
+                          <div style={{ fontSize: 10, color: "#4A6070" }}>SKUs</div>
+                        </div>
+                        <div>
+                          <div style={{ fontFamily: "monospace", fontSize: 16, fontWeight: 800, color: "#7C3AED" }}>{fmt(st.qty)}</div>
+                          <div style={{ fontSize: 10, color: "#4A6070" }}>units</div>
+                        </div>
+                        <div>
+                          <div style={{ fontFamily: "monospace", fontSize: 16, fontWeight: 800, color: "#F0F4F8" }}>{fmtV(st.value)}</div>
+                          <div style={{ fontSize: 10, color: "#4A6070" }}>value</div>
+                        </div>
+                      </div>
+                      <div style={{ display: "flex", gap: 6 }}>
+                        {[
+                          { label: "In", val: st.in_stock, color: "#10B981" },
+                          { label: "Low", val: st.low_stock, color: "#F59E0B" },
+                          { label: "Out", val: st.out_of_stock, color: "#EF4444" },
+                        ].map(({ label, val, color }) => (
+                          <div key={label} style={{ flex: 1, background: `${color}12`, border: `1px solid ${color}30`, borderRadius: 8, padding: "5px 6px", textAlign: "center" }}>
+                            <div style={{ fontFamily: "monospace", fontSize: 13, fontWeight: 800, color }}>{fmt(val)}</div>
+                            <div style={{ fontSize: 9, color: "#4A6070" }}>{label}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </Panel>
+            </div>
+          )}
+
           {/* ── Row 3: Alerts + Movements + Top ── */}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16 }}>
 

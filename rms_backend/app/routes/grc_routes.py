@@ -7,6 +7,7 @@ import secrets
 from bson import ObjectId
 
 from app.db import grc_collection, purchaseorders_collection, product_collection
+from app.product_identity import barcode_policy, identity_fields, is_valid_gtin
 from .deps import get_receiving_tenant
 
 router = APIRouter(prefix="/grc", tags=["Goods Receipt Certificate"])
@@ -49,6 +50,21 @@ class GRCItemModel(BaseModel):
     unit:              str = ""
     image_url:         str = ""
     catalogue_item_id: str = ""
+    product_id:        str = ""
+    variant_id:        str = ""
+    design_no:         str = ""
+    material_code:     str = ""
+    sku:               str = ""
+    barcode_policy:    str = ""
+    stock_identity:    str = ""
+    product_type:      str = ""
+    brand:             str = ""
+    manufacturer:      str = ""
+    pack_size:         str = ""
+    requires_expiry:   bool = False
+    batch_tracking:    bool = False
+    shelf_life_days:   int = 0
+    barcodeMismatchReason: str = ""
 
 
 class GRCModel(BaseModel):
@@ -280,6 +296,44 @@ async def generate_rms_barcode(tenant_id: str) -> str:
     raise HTTPException(status_code=500, detail="Could not allocate a unique RMS barcode. Please retry.")
 
 
+async def enrich_item_identity(item: dict, tenant_id: str) -> None:
+    """Attach stable identity without changing the existing barcode decision."""
+    barcode = (item.get("barcode") or "").strip()
+    product = None
+    if barcode:
+        product = await product_collection.find_one({
+            "tenant_id": tenant_id,
+            "$or": [{"barcode": barcode}, {"variants.barcode": barcode}],
+        })
+    if product:
+        defaults = {
+            "product_id": str(product["_id"]),
+            "design_no": product.get("design_no") or product.get("designNo") or "",
+            "material_code": product.get("material_code") or product.get("fabric_code") or "",
+            "sku": product.get("sku") or "",
+            "barcode_policy": product.get("barcode_policy") or "",
+            "product_type": product.get("product_type") or "",
+            "brand": product.get("brand") or "",
+            "manufacturer": product.get("manufacturer") or "",
+            "pack_size": product.get("pack_size") or "",
+            "requires_expiry": bool(product.get("requires_expiry")),
+            "batch_tracking": bool(product.get("batch_tracking")),
+            "shelf_life_days": int(product.get("shelf_life_days") or 0),
+            "vendorBarcode": product.get("vendor_barcode") or "",
+        }
+        for key, value in defaults.items():
+            if not item.get(key) and value:
+                item[key] = value
+        for variant in product.get("variants") or []:
+            if (variant.get("barcode") or "").strip() == barcode:
+                item["variant_id"] = str(variant.get("id") or variant.get("_id") or variant.get("sku") or "")
+                item["sku"] = item.get("sku") or variant.get("sku") or ""
+                item["size"] = item.get("size") or variant.get("size") or ""
+                item["color"] = item.get("color") or variant.get("color") or ""
+                break
+    item.update(identity_fields(item))
+
+
 # ─────────────────────────────────────────────
 # CREATE GRC  — supports PO-linked AND Direct/Walk-in
 # ─────────────────────────────────────────────
@@ -331,14 +385,29 @@ async def create_grc(grc: GRCModel, ctx: dict = Depends(get_receiving_tenant)):
         item["vendorBarcode"] = (item.get("vendorBarcode") or "").strip()
         if is_po_linked and not (item.get("poBarcode") or "").strip():
             item["poBarcode"] = (item.get("barcode") or "").strip()
+        po_match = po_item_map.get((item.get("poBarcode") or item.get("barcode") or "").strip()) if is_po_linked else None
+        if po_match:
+            expected_gtin = (po_match.get("vendorBarcode") or po_match.get("vendor_barcode") or "").strip()
+            received_gtin = item["vendorBarcode"]
+            if expected_gtin and received_gtin and expected_gtin != received_gtin and not (item.get("barcodeMismatchReason") or "").strip():
+                raise HTTPException(status_code=400, detail=f"Vendor barcode mismatch for '{item.get('description', '')}'. Enter barcodeMismatchReason to authorize the receipt.")
+            item["vendorBarcode"] = received_gtin or expected_gtin
+            for field in ("product_type", "brand", "manufacturer", "pack_size", "requires_expiry", "batch_tracking", "shelf_life_days", "barcode_policy"):
+                if po_match.get(field) not in (None, ""):
+                    item[field] = po_match[field]
+        if item.get("product_type") == "fmcg" and item["vendorBarcode"] and not is_valid_gtin(item["vendorBarcode"]):
+            raise HTTPException(status_code=400, detail=f"Invalid FMCG GTIN for '{item.get('description', '')}'.")
         item["barcode"] = await resolve_real_barcode_for_grc(item, ctx["tenant_id"])
+        if (not item["barcode"] or item["barcode"].startswith("ITEM/")) and barcode_policy(item) == "VENDOR_GTIN" and item["vendorBarcode"]:
+            item["barcode"] = item["vendorBarcode"]
         if not item["barcode"] or item["barcode"].startswith("ITEM/"):
             item["barcode"] = await generate_rms_barcode(ctx["tenant_id"])
+        await enrich_item_identity(item, ctx["tenant_id"])
 
         # rate inherit is strictly inside is_po_linked block, po_match
         # check is properly nested
         if is_po_linked:
-            po_match = po_item_map.get((item.get("poBarcode") or item["barcode"]).strip())
+            po_match = po_match or po_item_map.get((item.get("poBarcode") or item["barcode"]).strip())
             if po_match:
                 if not float(item.get("rate", 0)):
                     # Prefer vendorRate (locked-in agreed rate after buyer approval)
@@ -352,7 +421,7 @@ async def create_grc(grc: GRCModel, ctx: dict = Depends(get_receiving_tenant)):
                 # Unconditional, unlike rate above: these are descriptive
                 # metadata, not a value the retailer would ever want to
                 # override at receipt time.
-                for field in ("fabric_type", "gsm", "width", "color", "unit", "image_url", "catalogue_item_id"):
+                for field in ("fabric_type", "gsm", "width", "color", "unit", "image_url", "catalogue_item_id", "product_id", "variant_id", "design_no", "material_code", "sku", "barcode_policy", "stock_identity", "product_type", "brand", "manufacturer", "pack_size", "requires_expiry", "batch_tracking", "shelf_life_days"):
                     if po_match.get(field):
                         item[field] = po_match[field]
 
@@ -488,19 +557,34 @@ async def update_grc(grc_id: str, grc: GRCModel, ctx: dict = Depends(get_receivi
         item["vendorBarcode"] = (item.get("vendorBarcode") or "").strip()
         if is_po_linked and not (item.get("poBarcode") or "").strip():
             item["poBarcode"] = (item.get("barcode") or "").strip()
+        po_match = po_item_map.get((item.get("poBarcode") or item.get("barcode") or "").strip()) if is_po_linked else None
+        if po_match:
+            expected_gtin = (po_match.get("vendorBarcode") or po_match.get("vendor_barcode") or "").strip()
+            received_gtin = item["vendorBarcode"]
+            if expected_gtin and received_gtin and expected_gtin != received_gtin and not (item.get("barcodeMismatchReason") or "").strip():
+                raise HTTPException(status_code=400, detail=f"Vendor barcode mismatch for '{item.get('description', '')}'. Enter barcodeMismatchReason to authorize the receipt.")
+            item["vendorBarcode"] = received_gtin or expected_gtin
+            for field in ("product_type", "brand", "manufacturer", "pack_size", "requires_expiry", "batch_tracking", "shelf_life_days", "barcode_policy"):
+                if po_match.get(field) not in (None, ""):
+                    item[field] = po_match[field]
+        if item.get("product_type") == "fmcg" and item["vendorBarcode"] and not is_valid_gtin(item["vendorBarcode"]):
+            raise HTTPException(status_code=400, detail=f"Invalid FMCG GTIN for '{item.get('description', '')}'.")
         item["barcode"] = await resolve_real_barcode_for_grc(item, ctx["tenant_id"])
-        if not item["barcode"] or item["barcode"].startswith("ITEM/"):
+        if (not item["barcode"] or item["barcode"].startswith("ITEM/")) and barcode_policy(item) == "VENDOR_GTIN" and item["vendorBarcode"]:
+            item["barcode"] = item["vendorBarcode"]
+        elif not item["barcode"] or item["barcode"].startswith("ITEM/"):
             item["barcode"] = await generate_rms_barcode(ctx["tenant_id"])
         # ⚠️ NEW — re-derive fabric spec fields from the PO on every save,
         # same reasoning as create_grc: authoritative metadata, always
         # re-filled from the source PO item rather than trusted to survive
         # whatever the client's edit form happened to send.
         if is_po_linked:
-            po_match = po_item_map.get((item.get("poBarcode") or item["barcode"]).strip())
+            po_match = po_match or po_item_map.get((item.get("poBarcode") or item["barcode"]).strip())
             if po_match:
-                for field in ("fabric_type", "gsm", "width", "color", "unit", "image_url", "catalogue_item_id"):
+                for field in ("fabric_type", "gsm", "width", "color", "unit", "image_url", "catalogue_item_id", "product_id", "variant_id", "design_no", "material_code", "sku", "barcode_policy", "stock_identity", "product_type", "brand", "manufacturer", "pack_size", "requires_expiry", "batch_tracking", "shelf_life_days"):
                     if po_match.get(field):
                         item[field] = po_match[field]
+        await enrich_item_identity(item, ctx["tenant_id"])
 
     if is_po_linked:
         await enforce_po_receipt_tolerance(grc_dict, ctx["tenant_id"])

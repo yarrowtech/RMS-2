@@ -50,7 +50,7 @@ const NAV_ITEMS = [
 
 const PRODUCT_BUSINESS_TYPES = new Set([
   "general_vendor", "wholesaler", "manufacturer", "distributor",
-  "retailer", "fabric_supplier", "exporter",
+  "retailer", "fabric_supplier", "exporter", "fmcg_vendor",
 ]);
 
 const ROLE_LABELS = {
@@ -62,6 +62,7 @@ const ROLE_LABELS = {
   fabric_supplier: "Fabric supplier workspace",
   exporter: "Export partner workspace",
   job_worker: "Job-work workspace",
+  fmcg_vendor: "FMCG vendor workspace",
 };
 
 const ROLE_OPERATION_TYPES = new Set([

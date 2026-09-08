@@ -19,6 +19,7 @@ from pydantic import BaseModel
 from ..auth import decode_token
 from .deps import get_hq_tenant
 from .grn_routes import resolve_single_store_destination
+from ..product_identity import identity_fields, is_valid_gtin
 
 router = APIRouter(prefix="/api/products", tags=["Products"])
 
@@ -308,6 +309,12 @@ async def get_all_barcodes_public(tenant: str = Query(..., description="Tenant/r
 @router.post("/add")
 async def add_product(
     product_name:    str             = Form(...),
+    product_type:    str             = Form("general"),
+    vendor_barcode:  str             = Form(""),
+    brand:           str             = Form(""),
+    manufacturer:    str             = Form(""),
+    pack_size:       str             = Form(""),
+    batch_tracking:  bool            = Form(False),
     division:        str             = Form(""),
     section:         str             = Form(""),
     department:      str             = Form(""),
@@ -385,8 +392,33 @@ async def add_product(
         if not tenant_id:
             raise HTTPException(status_code=403, detail="No tenant assigned to this admin.")
 
+    normalized_type = (product_type or "general").strip().lower()
+    if normalized_type not in {"general", "garment", "fabric", "fmcg"}:
+        raise HTTPException(status_code=400, detail="product_type must be general, garment, fabric or fmcg.")
+    if normalized_type == "fmcg" and has_variants:
+        raise HTTPException(status_code=400, detail="Create each FMCG pack size as a separate product because every retail pack requires its own GTIN.")
+    vendor_gtin = (vendor_barcode or "").strip()
+    if vendor_gtin and not is_valid_gtin(vendor_gtin):
+        raise HTTPException(status_code=400, detail="Vendor barcode must be a valid GTIN-8, UPC-A, EAN-13 or GTIN-14 with a correct check digit.")
+    if vendor_gtin:
+        duplicate = await product_collection.find_one({
+            "tenant_id": tenant_id,
+            "$or": [
+                {"barcode": vendor_gtin}, {"vendor_barcode": vendor_gtin},
+                {"variants.barcode": vendor_gtin}, {"variants.vendor_barcode": vendor_gtin},
+            ],
+        }, {"_id": 1, "product_name": 1})
+        if duplicate:
+            raise HTTPException(status_code=409, detail=f"GTIN {vendor_gtin} is already assigned to '{duplicate.get('product_name', 'another product')}' for this retailer.")
+
     sku     = await generate_base_sku(division, product_name, tenant_id)
-    barcode = generate_barcode()
+    barcode = vendor_gtin if normalized_type == "fmcg" and vendor_gtin else generate_barcode()
+    effective_batch_tracking = bool(batch_tracking or requires_expiry or (normalized_type == "fmcg" and not vendor_gtin))
+    tracking = identity_fields({
+        "product_type": normalized_type, "sku": sku, "barcode": barcode,
+        "vendor_barcode": vendor_gtin, "requires_expiry": requires_expiry,
+        "batch_tracking": effective_batch_tracking,
+    })
 
     vendor_name = ""
     if user["role"] == "VENDOR" and user.get("vendor_id"):
@@ -414,13 +446,17 @@ async def add_product(
 
     if not has_variants:
         doc = {
-            "product_name": product_name, "division": division, "section": section, "department": department,
+            "product_name": product_name, "product_type": normalized_type,
+            "vendor_barcode": vendor_gtin, "brand": brand.strip(), "manufacturer": manufacturer.strip(),
+            "pack_size": pack_size.strip(), "batch_tracking": effective_batch_tracking,
+            "division": division, "section": section, "department": department,
             "hsn_code": hsn_code, "gst_rate": gst_rate, "cgst_rate": round(gst_rate/2,2), "sgst_rate": round(gst_rate/2,2), "igst_rate": gst_rate,
             "requires_expiry": requires_expiry, "expiry_date": expiry_date if requires_expiry else "", "shelf_life_days": shelf_life_days if requires_expiry else 0,
             "batch_no": batch_no, "mfg_date": mfg_date,
             "sku": sku, "barcode": barcode, "cost_price": cost_price, "mrp": mrp, "selling_price": selling_price if selling_price > 0 else mrp,
             "quantity": quantity, "unit": unit, "description": description, "specification": specification,
-            "has_variants": False, "variant_type": "none", "variants": [], "images": uploaded_images, **audit,
+            "has_variants": False, "variant_type": "none", "variants": [], "images": uploaded_images,
+            **tracking, **audit,
         }
         await product_collection.insert_one(doc)
         return {"message": "Product added successfully", "sku": sku}
@@ -444,9 +480,15 @@ async def add_product(
                 variant_docs.append({"sku": generate_variant_sku(sku, size=size_label, color=color), "barcode": generate_barcode(), "size_label": size_label, "size_value": size_value, "color": color, "cost_price": cp, "mrp": mrp_v, "selling_price": sp, "stock": int(c.get("stock", 0) or 0), "unit": c.get("unit", "pcs") or "pcs"})
 
     doc = {
-        "product_name": product_name, "division": division, "section": section, "department": department,
+        "product_name": product_name, "product_type": normalized_type,
+        "vendor_barcode": vendor_gtin, "brand": brand.strip(), "manufacturer": manufacturer.strip(),
+        "pack_size": pack_size.strip(), "batch_tracking": effective_batch_tracking,
+        "requires_expiry": requires_expiry, "expiry_date": expiry_date if requires_expiry else "",
+        "shelf_life_days": shelf_life_days if requires_expiry else 0,
+        "division": division, "section": section, "department": department,
         "hsn_code": hsn_code, "base_sku": sku, "base_barcode": barcode, "description": description, "specification": specification,
-        "has_variants": True, "variant_type": variant_type, "variants": variant_docs, "images": uploaded_images, **audit,
+        "has_variants": True, "variant_type": variant_type, "variants": variant_docs, "images": uploaded_images,
+        **tracking, **audit,
     }
     await product_collection.insert_one(doc)
     await _remember_custom_units(tenant_id, [v.get("unit") for v in variant_docs])
@@ -730,6 +772,12 @@ async def get_product(sku: str, authorization: str = Header(None)):
 async def update_product(
     sku: str,
     product_name:    Optional[str]   = Form(None),
+    product_type:    Optional[str]   = Form(None),
+    vendor_barcode:  Optional[str]   = Form(None),
+    brand:           Optional[str]   = Form(None),
+    manufacturer:    Optional[str]   = Form(None),
+    pack_size:       Optional[str]   = Form(None),
+    batch_tracking:  Optional[bool]  = Form(None),
     division:        Optional[str]   = Form(None),
     section:         Optional[str]   = Form(None),
     department:      Optional[str]   = Form(None),
@@ -768,6 +816,19 @@ async def update_product(
     product = await product_collection.find_one(sku_clause)
     if not product:
         raise HTTPException(status_code=404, detail="Product not found or unauthorized")
+    effective_tenant_id = tenant_id or product.get("tenant_id")
+    if product_type is not None and product_type.strip().lower() not in {"general", "garment", "fabric", "fmcg"}:
+        raise HTTPException(status_code=400, detail="product_type must be general, garment, fabric or fmcg.")
+    if vendor_barcode is not None and vendor_barcode.strip():
+        candidate_gtin = vendor_barcode.strip()
+        if not is_valid_gtin(candidate_gtin):
+            raise HTTPException(status_code=400, detail="Vendor barcode must be a valid GTIN-8, UPC-A, EAN-13 or GTIN-14.")
+        duplicate = await product_collection.find_one({
+            "_id": {"$ne": product["_id"]}, "tenant_id": effective_tenant_id,
+            "$or": [{"barcode": candidate_gtin}, {"vendor_barcode": candidate_gtin}, {"variants.barcode": candidate_gtin}],
+        }, {"_id": 1})
+        if duplicate:
+            raise HTTPException(status_code=409, detail=f"GTIN {candidate_gtin} is already assigned to another product for this retailer.")
 
     # A single-store tenant's REAL sellable stock lives in
     # store_stock_collection (see _seed_single_store_stock in add_product) —
@@ -797,6 +858,12 @@ async def update_product(
     update_data: dict = {"updated_at": datetime.utcnow(), "images": image_list}
 
     if product_name    is not None: update_data["product_name"]    = product_name
+    if product_type    is not None: update_data["product_type"]    = product_type.strip().lower()
+    if vendor_barcode  is not None: update_data["vendor_barcode"]  = vendor_barcode.strip()
+    if brand           is not None: update_data["brand"]           = brand.strip()
+    if manufacturer    is not None: update_data["manufacturer"]    = manufacturer.strip()
+    if pack_size       is not None: update_data["pack_size"]       = pack_size.strip()
+    if batch_tracking  is not None: update_data["batch_tracking"]  = batch_tracking
     if hsn_code        is not None: update_data["hsn_code"]        = hsn_code
     if gst_rate        is not None:
         update_data["gst_rate"]  = gst_rate
@@ -810,6 +877,12 @@ async def update_product(
     if mfg_date        is not None: update_data["mfg_date"] = mfg_date
     if description     is not None: update_data["description"]     = description
     if specification   is not None: update_data["specification"]   = specification
+
+    if str(update_data.get("product_type", product.get("product_type", ""))).lower() == "fmcg" and not str(update_data.get("vendor_barcode", product.get("vendor_barcode", ""))).strip():
+        update_data["batch_tracking"] = True
+
+    identity_source = {**product, **update_data}
+    update_data.update(identity_fields(identity_source))
 
     if division   is not None: update_data["division"]   = division
     if section    is not None: update_data["section"]    = section

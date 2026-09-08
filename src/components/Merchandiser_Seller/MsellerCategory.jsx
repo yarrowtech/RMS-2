@@ -48,6 +48,7 @@ const BUSINESS_TYPES = [
   { key: "fabric_supplier", label: "Fabric supplier", hint: "Raw material / fabric" },
   { key: "exporter",        label: "Exporter",        hint: "Ships outside the country" },
   { key: "job_worker",      label: "Job-work partner", hint: "Provides cutting, stitching, embroidery, washing, finishing or packing for retailer-owned material" },
+  { key: "fmcg_vendor",     label: "FMCG vendor", hint: "Packaged food, beverages, grocery, cosmetics and other fast-moving consumer goods" },
 ];
 
 export default function MSellerCategory() {

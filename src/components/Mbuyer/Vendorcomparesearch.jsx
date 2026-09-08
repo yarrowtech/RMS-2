@@ -442,6 +442,7 @@ const BUSINESS_TYPES = [
   ["retailer", "Retailer"],
   ["fabric_supplier", "Fabric supplier"],
   ["exporter", "Exporter"],
+  ["fmcg_vendor", "FMCG vendor"],
 ];
 
 function CompareRequestForm({ selectedItems, onClose, onSent }) {

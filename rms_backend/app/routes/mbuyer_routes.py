@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 from bson import ObjectId
 from .forecast_analytics_routes import _compute_demand_forecast
 from app.email_utils import send_sample_request_email
+from app.product_identity import stock_identity
 
 from app.db import (
     purchaseorders_collection,
@@ -937,6 +938,18 @@ async def get_purchase_plan(
     tenant_id = ctx["tenant_id"]
     now = datetime.utcnow()
     thirty_days_ago = now - timedelta(days=30)
+    inventory_groups = {}
+    barcode_to_identity = {}
+    async for inventory in inventory_collection.find({"tenant_id": tenant_id}):
+        barcode = (inventory.get("barcode") or "").strip()
+        identity = inventory.get("stock_identity") or stock_identity(inventory) or (f"barcode:{barcode.lower()}" if barcode else "")
+        if not identity:
+            continue
+        barcode_to_identity[barcode] = identity
+        group = inventory_groups.setdefault(identity, {**inventory, "stock_identity": identity, "stockQty": 0.0, "barcodes": []})
+        group["stockQty"] += _float(inventory.get("stockQty") or inventory.get("stock_qty") or inventory.get("quantity") or 0)
+        if barcode and barcode not in group["barcodes"]:
+            group["barcodes"].append(barcode)
 
     # Reuse the Forecast & Analytics demand engine so M-Buyer and the
     # Forecast department don't produce conflicting buying suggestions.
@@ -946,7 +959,7 @@ async def get_purchase_plan(
     try:
         forecast_rows = await _compute_demand_forecast(tenant_id, None, lookback_days=90, limit=500)
         forecast_by_barcode = {
-            (row.get("barcode") or "").strip(): row
+            (row.get("stock_identity") or barcode_to_identity.get((row.get("barcode") or "").strip()) or (row.get("barcode") or "").strip()): row
             for row in forecast_rows
             if (row.get("barcode") or "").strip()
         }
@@ -962,12 +975,13 @@ async def get_purchase_plan(
         }):
             for item in (sale.get("items") or sale.get("cart") or []):
                 barcode = (item.get("barcode") or "").strip()
-                if not barcode:
+                identity = item.get("stock_identity") or barcode_to_identity.get(barcode) or stock_identity(item)
+                if not identity:
                     continue
                 qty = _float(item.get("qty") or item.get("quantity") or 0)
                 price = _float(item.get("price") or item.get("selling_price") or item.get("mrp") or 0)
-                sales_qty[barcode] = sales_qty.get(barcode, 0.0) + qty
-                sales_value[barcode] = sales_value.get(barcode, 0.0) + (qty * price)
+                sales_qty[identity] = sales_qty.get(identity, 0.0) + qty
+                sales_value[identity] = sales_value.get(identity, 0.0) + (qty * price)
     except Exception:
         pass
 
@@ -978,9 +992,10 @@ async def get_purchase_plan(
     }):
         for item in po.get("items", []):
             barcode = (item.get("barcode") or "").strip()
-            if not barcode:
+            identity = item.get("stock_identity") or barcode_to_identity.get(barcode) or stock_identity(item)
+            if not identity:
                 continue
-            pending_qty[barcode] = pending_qty.get(barcode, 0.0) + _float(
+            pending_qty[identity] = pending_qty.get(identity, 0.0) + _float(
                 item.get("amendedQty") or item.get("quantity") or item.get("qty") or 0
             )
 
@@ -993,7 +1008,7 @@ async def get_purchase_plan(
         for item in po.get("items", []):
             barcode = (item.get("barcode") or "").strip()
             description = (item.get("description") or item.get("product_name") or "").strip()
-            key = barcode or description.lower()
+            key = item.get("stock_identity") or barcode_to_identity.get(barcode) or stock_identity(item) or description.lower()
             if not key:
                 continue
             rate = _float(item.get("vendorRate") or item.get("rate") or 0)
@@ -1015,8 +1030,9 @@ async def get_purchase_plan(
                 record["lastPODate"] = created_str
 
     suggestions = []
-    async for inv in inventory_collection.find({"tenant_id": tenant_id}):
+    for inv in inventory_groups.values():
         barcode = (inv.get("barcode") or "").strip()
+        identity = inv.get("stock_identity") or stock_identity(inv)
         sku = inv.get("sku") or inv.get("base_sku") or ""
         product_name = inv.get("productName") or inv.get("product_name") or inv.get("name") or inv.get("description") or ""
         division = inv.get("division", "")
@@ -1030,13 +1046,13 @@ async def get_purchase_plan(
         stock_qty = _float(inv.get("stockQty") or inv.get("stock_qty") or inv.get("quantity") or 0)
         reorder_level = _float(inv.get("reorderLevel") or inv.get("reorder_level") or inv.get("reorder_qty") or 0)
         target_cover_days = _int(inv.get("targetCoverDays") or inv.get("cover_days") or 30, 30)
-        forecast_row = forecast_by_barcode.get(barcode, {})
-        recent_qty = sales_qty.get(barcode, 0.0) or _float(forecast_row.get("total_qty_sold") or 0)
+        forecast_row = forecast_by_barcode.get(identity, forecast_by_barcode.get(barcode, {}))
+        recent_qty = sales_qty.get(identity, sales_qty.get(barcode, 0.0)) or _float(forecast_row.get("total_qty_sold") or 0)
         forecast_avg_daily = _float(forecast_row.get("avg_weekly_qty") or 0) / 7
         avg_daily_sales = round(max(recent_qty / 30, forecast_avg_daily), 2)
         forecast_next_period_qty = _float(forecast_row.get("forecast_next_period_qty") or 0)
         forecast_qty = max(avg_daily_sales * target_cover_days, forecast_next_period_qty)
-        open_po_qty = pending_qty.get(barcode, 0.0)
+        open_po_qty = pending_qty.get(identity, pending_qty.get(barcode, 0.0))
         need_qty = max(reorder_level, forecast_qty) - stock_qty - open_po_qty
 
         if reorder_level <= 0 and avg_daily_sales <= 0 and stock_qty > 0:
@@ -1064,7 +1080,7 @@ async def get_purchase_plan(
         if priority and priority.lower() != priority_value.lower():
             continue
 
-        vendor_candidates = list(vendor_history.get(barcode, {}).values())
+        vendor_candidates = list(vendor_history.get(identity, vendor_history.get(barcode, {})).values())
         if not vendor_candidates and product_name:
             vendor_candidates = list(vendor_history.get(product_name.lower(), {}).values())
         vendor_candidates.sort(key=lambda v: (-v["poCount"], v["lastRate"] or 999999999))
@@ -1074,6 +1090,8 @@ async def get_purchase_plan(
 
         suggestions.append({
             "barcode": barcode,
+            "barcodes": inv.get("barcodes", [barcode]),
+            "stockIdentity": identity,
             "sku": sku,
             "productName": product_name,
             "division": division,

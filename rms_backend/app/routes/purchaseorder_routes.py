@@ -3,6 +3,7 @@ from fastapi import APIRouter, HTTPException, status, Depends, Header, File, For
 from jose import jwt, JWTError
 from ..config import settings, frontend_url
 from pydantic import BaseModel, Field
+from ..product_identity import identity_fields
 from typing import Any, Dict, List, Optional
 from datetime import datetime, timedelta
 from bson import ObjectId
@@ -90,6 +91,7 @@ def _ensure_buyer_line_snapshot(item: dict, recorded_at: Optional[datetime] = No
     if not any(entry.get("event") == "buyer_requested" for entry in history):
         history.append({"event": "buyer_requested", "quantity": requested_qty, "rate": float(item.get("buyerRequestedRate") or 0), "at": item["buyerRequestedAt"]})
     item["quantityHistory"] = history
+    item.update(identity_fields(item))
     return item
 
 
@@ -99,10 +101,24 @@ def _record_line_event(item: dict, event: str, quantity: float, rate: float, not
     item["quantityHistory"] = history
 
 class ItemModel(BaseModel):
+    product_type: Optional[str] = ""
+    brand: Optional[str] = ""
+    manufacturer: Optional[str] = ""
+    pack_size: Optional[str] = ""
+    requires_expiry: Optional[bool] = False
+    batch_tracking: Optional[bool] = False
+    shelf_life_days: Optional[int] = 0
     sku: Optional[str] = None
     size: Optional[str] = None
     color: Optional[str] = None
     catalogue_item_id: Optional[str] = None
+    product_id: Optional[str] = None
+    variant_id: Optional[str] = None
+    design_no: Optional[str] = None
+    material_code: Optional[str] = None
+    vendorBarcode: Optional[str] = None
+    barcode_policy: Optional[str] = None
+    stock_identity: Optional[str] = None
     direct_variant_label: Optional[str] = ""
     rfq_inquiry_id: Optional[str] = None
     rfq_award_id: Optional[str] = None
@@ -803,6 +819,11 @@ async def create_po(po: PurchaseOrderModel, ctx: dict = Depends(get_hq_tenant)):
                 stock_reserved = True
             item["description"] = listing.get("item_name") or item.get("description")
             item["rate"] = float(listing.get("price") or 0)
+            item["vendorBarcode"] = item.get("vendorBarcode") or listing.get("barcode") or listing.get("vendor_barcode") or ""
+            for field in ("product_type", "brand", "manufacturer", "pack_size", "requires_expiry", "batch_tracking", "shelf_life_days"):
+                if listing.get(field) not in (None, ""):
+                    item[field] = listing[field]
+            item.update(identity_fields({**listing, **item, "catalogue_item_id": catalogue_item_id}))
             item["direct_offer_snapshot"] = {"catalogue_item_id": catalogue_item_id, "price": item["rate"], "moq": moq, "size": size, "color": color, "variant_label": variant_label, "validated_at": datetime.utcnow().isoformat(), "stock_known": stock_known, "stock_reserved": stock_reserved}
             direct_reservations.append({"catalogue_item_id": catalogue_item_id, "quantity": quantity, "size": size, "color": color, "variant_label": variant_label, "reserved_at": datetime.utcnow().isoformat(), "stock_known": stock_known, "stock_reserved": stock_reserved})
         po_dict["direct_catalogue_reservations"] = direct_reservations
@@ -1075,6 +1096,11 @@ async def update_purchase_order(po_id: str, po: PurchaseOrderModel, ctx: dict = 
                 raise HTTPException(status_code=400, detail="Choose an available colour from the catalogue listing.")
             item["description"] = listing.get("item_name") or item.get("description")
             item["rate"] = float(listing.get("price") or 0)
+            item["vendorBarcode"] = item.get("vendorBarcode") or listing.get("barcode") or listing.get("vendor_barcode") or ""
+            for field in ("product_type", "brand", "manufacturer", "pack_size", "requires_expiry", "batch_tracking", "shelf_life_days"):
+                if listing.get(field) not in (None, ""):
+                    item[field] = listing[field]
+            item.update(identity_fields({**listing, **item, "catalogue_item_id": catalogue_item_id}))
             item["direct_offer_snapshot"] = {"catalogue_item_id": catalogue_item_id, "price": item["rate"], "moq": moq, "validated_at": datetime.utcnow().isoformat()}
 
     for item in po_dict.get("items", []):

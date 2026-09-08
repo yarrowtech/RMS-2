@@ -59,6 +59,7 @@ from ..db import (
 )
 from ..config import settings, frontend_url
 from ..utils import gstin_checksum_valid, hash_password, verify_password
+from ..product_identity import identity_fields
 from ..email_utils import (
     send_vendor_confirmation_email,
     send_vendor_invite_email,
@@ -1017,6 +1018,7 @@ async def review_vendor_kyb(link_id: str, request: Request, ctx: dict = Depends(
 VALID_BUSINESS_TYPES = {
     "general_vendor", "wholesaler", "manufacturer", "retailer",
     "fabric_supplier", "exporter", "distributor", "job_worker",
+    "fmcg_vendor",
 }
 
 
@@ -1548,6 +1550,7 @@ async def vendor_submit_po(po_id: str, authorization: str = Header(None)):
         item["vendorBarcode"] = (
             item.get("vendorBarcode") or item.get("barcode") or ""
         ).strip()
+        item.update(identity_fields(item))
 
     merged_items = list(po.get("items", []))
 

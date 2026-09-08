@@ -17,7 +17,7 @@ router = APIRouter(prefix="/api/business-network", tags=["Business Network"])
 
 VALID_BUSINESS_TYPES = {
     "general_vendor", "wholesaler", "manufacturer", "distributor", "exporter",
-    "fabric_supplier", "retailer",
+    "fabric_supplier", "retailer", "job_worker", "fmcg_vendor",
 }
 
 

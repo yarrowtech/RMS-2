@@ -6,6 +6,7 @@ const TYPES = [
   ["manufacturer", "Manufacturer"], ["distributor", "Distributor"],
   ["exporter", "Exporter"], ["fabric_supplier", "Fabric supplier"],
   ["retailer", "Retailer / store owner"],
+  ["job_worker", "Job-work partner"], ["fmcg_vendor", "FMCG vendor"],
 ];
 
 const toLocalDate = (value) => value ? String(value).slice(0, 16) : "";

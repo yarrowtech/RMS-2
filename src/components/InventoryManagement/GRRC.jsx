@@ -1159,6 +1159,8 @@ const today  = () => new Date().toISOString().slice(0, 10);
 const EMPTY_ITEM = (poItem = {}) => ({
   barcode:         poItem.barcode      || "",
   vendorBarcode:   poItem.vendorBarcode || poItem.vendor_barcode || "",
+  expectedVendorBarcode: poItem.vendorBarcode || poItem.vendor_barcode || "",
+  barcodeMismatchReason: poItem.barcodeMismatchReason || "",
   poBarcode:       poItem.barcode      || "",
   description:     poItem.description  || "",
   poQty:           poItem.amendedQty   || poItem.quantity || 0,
@@ -1170,6 +1172,15 @@ const EMPTY_ITEM = (poItem = {}) => ({
   // fall back to rate (buyer's original if PO not yet approved)
   rate:            poItem.vendorRate   || poItem.rate || 0,
   remarks:         "",
+  product_type:    poItem.product_type || "",
+  brand:           poItem.brand || "",
+  manufacturer:    poItem.manufacturer || "",
+  pack_size:       poItem.pack_size || "",
+  requires_expiry: Boolean(poItem.requires_expiry),
+  batch_tracking:  Boolean(poItem.batch_tracking),
+  shelf_life_days: poItem.shelf_life_days || 0,
+  barcode_policy:  poItem.barcode_policy || "",
+  stock_identity:  poItem.stock_identity || "",
 });
 
 /* ─── Status config ────────────────────────────────────────────── */
@@ -2020,7 +2031,12 @@ function GRCForm({ initialGRC, onClose, onSave }) {
                           >Generate</button>
                         </div>
                       </td>
-                      <td style={{ padding: "4px 6px", minWidth: 145 }}><ICell value={it.vendorBarcode} onChange={(e) => updateItem(idx, "vendorBarcode", e.target.value)} placeholder="Supplier barcode / SKU" /></td>
+                      <td style={{ padding: "4px 6px", minWidth: 175 }}>
+                        <ICell value={it.vendorBarcode} onChange={(e) => updateItem(idx, "vendorBarcode", e.target.value)} placeholder="Supplier barcode / SKU" />
+                        {it.expectedVendorBarcode && it.vendorBarcode && it.expectedVendorBarcode !== it.vendorBarcode && (
+                          <div style={{ marginTop: 4 }}><ICell value={it.barcodeMismatchReason} onChange={(e) => updateItem(idx, "barcodeMismatchReason", e.target.value)} placeholder="Mismatch reason required" /></div>
+                        )}
+                      </td>
                       <td style={{ padding: "4px 6px" }}><ICell value={it.description}  onChange={(e) => updateItem(idx, "description", e.target.value)} wide /></td>
                       {isPoLinked && (
                         <td style={{ padding: "4px 10px", fontFamily: "'DM Mono',monospace", fontSize: 12, color: "#64748B", whiteSpace: "nowrap" }}>{n0(it.poQty).toFixed(3)}</td>

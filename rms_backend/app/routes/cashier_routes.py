@@ -12,6 +12,7 @@ from ..db import db, product_collection, inventory_collection, sales_collection,
 from .store_helper import get_store_context
 from ..error_log import log_error
 from ..email_utils import send_customer_pos_invoice_email
+from ..product_identity import identity_fields
 
 router = APIRouter(prefix="/cashier", tags=["Cashier POS"])
 
@@ -177,6 +178,7 @@ async def _get_product_info(barcode: str, tenant_id: str) -> dict:
             "unit":         p.get("unit", "pcs"),
             "quantity":     _float(p.get("quantity", 0)),
             "source":       (p.get("source") or "admin"),
+            **identity_fields({**p, "product_id": str(p["_id"]), "barcode": barcode}),
         }
 
     p = await product_collection.find_one({"variants.barcode": barcode, "tenant_id": tenant_id})
@@ -190,6 +192,7 @@ async def _get_product_info(barcode: str, tenant_id: str) -> dict:
                     _float(p.get("mrp")) or
                     _float(p.get("cost_price"))
                 )
+                variant_id = str(v.get("id") or v.get("_id") or v.get("sku") or "")
                 return {
                     "product_name": p.get("product_name", ""),
                     "sku":          v.get("sku", ""),
@@ -202,6 +205,7 @@ async def _get_product_info(barcode: str, tenant_id: str) -> dict:
                     "unit":         v.get("unit", "pcs"),
                     "quantity":     _float(v.get("stock", 0)),
                     "source":       (p.get("source") or "admin"),
+                    **identity_fields({**p, **v, "product_id": str(p["_id"]), "variant_id": variant_id, "barcode": barcode}),
                 }
     return {}
 
@@ -293,6 +297,7 @@ async def _ensure_inventory_record(
         "adjustments": [],
         "createdAt":   datetime.utcnow(),
         "createdBy":   "pos_auto_init",
+        **identity_fields({**product_info, "barcode": barcode}),
     }
     result = await inventory_collection.insert_one(new_doc)
     new_doc["_id"] = result.inserted_id
@@ -379,6 +384,7 @@ def _product_to_pos(p: dict, inv_qty: float = 0.0) -> dict:
         "unit":         p.get("unit", "pcs"),
         "stock":        round(inv_qty, 2),
         "has_variants": False,
+        **identity_fields({**p, "product_id": _str(p.get("_id"))}),
     }
 
 
@@ -391,6 +397,7 @@ def _variant_to_pos(p: dict, v: dict, inv_qty: float = 0.0) -> dict:
         _float(p.get("selling_price")) or _float(p.get("mrp")) or
         _float(p.get("cost_price"))
     )
+    variant_id = _str(v.get("id") or v.get("_id") or v.get("sku"))
     return {
         "_id":          _str(p.get("_id")) + "_" + (v.get("barcode", "").strip()),
         "name":         " | ".join(filter(None, parts)),
@@ -410,6 +417,7 @@ def _variant_to_pos(p: dict, v: dict, inv_qty: float = 0.0) -> dict:
         "has_variants": True,
         "size_label":   v.get("size_label", ""),
         "color":        v.get("color", ""),
+        **identity_fields({**p, **v, "product_id": _str(p.get("_id")), "variant_id": variant_id}),
     }
 
 
@@ -741,6 +749,8 @@ async def save_bill(
         qty = abs(_int(item.get("qty", 0)))
         if not bc or qty == 0:
             continue
+        product_info = await _get_product_info(bc, tenant_id)
+        identity = identity_fields({**product_info, **item, "barcode": bc})
         clean_items.append({
             "barcode": bc,
             "sku": item.get("sku", ""),
@@ -756,6 +766,7 @@ async def save_bill(
             "division": item.get("division", ""),
             "section": item.get("section", ""),
             "department": item.get("department", ""),
+            **identity,
         })
 
     if not clean_items:

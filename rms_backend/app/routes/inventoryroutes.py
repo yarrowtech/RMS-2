@@ -6,6 +6,7 @@ from datetime import datetime
 from bson import ObjectId
 from ..db import product_collection, inventory_collection, grn_collection, vendors_collection, reorder_rules_collection, stock_adjustments_collection, damage_return_collection, store_stock_collection, barcode_label_settings_collection
 from .deps import get_hq_tenant, get_any_tenant
+from ..product_identity import identity_fields, stock_identity
 
 router = APIRouter(prefix="/inventory", tags=["Inventory Management"])
 
@@ -900,10 +901,13 @@ async def get_reorder_rules(
     tenant_id = ctx["tenant_id"]
 
     stock_map: dict = {}
-    async for doc in inventory_collection.find({"tenant_id": tenant_id}, {"barcode": 1, "stockQty": 1, "_id": 0}):
+    async for doc in inventory_collection.find({"tenant_id": tenant_id}):
         bc = (doc.get("barcode") or "").strip()
+        identity = doc.get("stock_identity") or stock_identity(doc)
         if bc:
             stock_map[bc] = float(doc.get("stockQty", 0) or 0)
+        if identity:
+            stock_map[identity] = stock_map.get(identity, 0) + float(doc.get("stockQty", 0) or 0)
 
     product_qty_map: dict = {}
     async for p in product_collection.find(
@@ -921,7 +925,8 @@ async def get_reorder_rules(
         reorder_qty   = float(doc.get("reorder_qty", 0) or 0)
         lead_time     = int(doc.get("lead_time_days", 0) or 0)
 
-        current_stock = stock_map.get(bc, product_qty_map.get(bc, 0))
+        identity = doc.get("stock_identity") or stock_identity(doc)
+        current_stock = stock_map.get(identity, stock_map.get(bc, product_qty_map.get(bc, 0)))
 
         status = reorder_status(current_stock, reorder_level)
 
@@ -932,6 +937,7 @@ async def get_reorder_rules(
             "department":    doc.get("department", ""),
             "sku":           doc.get("sku", ""),
             "barcode":       bc,
+            "stock_identity": identity,
             "product":       doc.get("product", ""),
             "warehouse":     doc.get("warehouse", ""),
             "current_stock": round(current_stock, 3),
@@ -980,8 +986,10 @@ async def create_reorder_rule(payload: dict, ctx: dict = Depends(get_hq_tenant))
         raise HTTPException(status_code=400, detail="barcode or sku is required")
 
     warehouse = (payload.get("warehouse") or "").strip()
+    inventory = await inventory_collection.find_one({"barcode": barcode, "tenant_id": tenant_id}) if barcode else None
+    identity = identity_fields({**(inventory or {}), **payload, "barcode": barcode})
     existing  = await reorder_rules_collection.find_one(
-        {"barcode": barcode, "warehouse": warehouse, "tenant_id": tenant_id}
+        {"tenant_id": tenant_id, "warehouse": warehouse, "$or": [{"stock_identity": identity["stock_identity"]}, {"barcode": barcode}]}
     )
     if existing:
         raise HTTPException(
@@ -1005,6 +1013,7 @@ async def create_reorder_rule(payload: dict, ctx: dict = Depends(get_hq_tenant))
         "tenant_id":      tenant_id,
         "created_at":     datetime.utcnow(),
         "updated_at":     datetime.utcnow(),
+        **identity,
     }
 
     result = await reorder_rules_collection.insert_one(doc)
@@ -1022,6 +1031,9 @@ async def update_reorder_rule(rule_id: str, payload: dict, ctx: dict = Depends(g
     if not existing:
         raise HTTPException(status_code=404, detail="Reorder rule not found")
 
+    barcode = (payload.get("barcode") or "").strip()
+    inventory = await inventory_collection.find_one({"barcode": barcode, "tenant_id": ctx["tenant_id"]}) if barcode else None
+    identity = identity_fields({**(inventory or {}), **payload, "barcode": barcode})
     update = {
         "division":       (payload.get("division")    or "").strip(),
         "section":        (payload.get("section")     or "").strip(),
@@ -1036,6 +1048,7 @@ async def update_reorder_rule(rule_id: str, payload: dict, ctx: dict = Depends(g
         "supplier":       (payload.get("supplier") or "").strip(),
         "remarks":        (payload.get("remarks")  or "").strip(),
         "updated_at":     datetime.utcnow(),
+        **identity,
     }
 
     await reorder_rules_collection.update_one({"_id": oid, "tenant_id": ctx["tenant_id"]}, {"$set": update})
@@ -1575,6 +1588,38 @@ async def get_inventory_dashboard(ctx: dict = Depends(get_hq_tenant)):
     recent_movements.sort(key=lambda x: x["date"], reverse=True)
     recent_movements = recent_movements[:12]
 
+    # Per-store on-hand. Everything above is the central / HQ warehouse
+    # (inventory_collection). A multi-store tenant also holds stock in each
+    # store's own ledger (store_stock_collection) — roll that up per store so
+    # the Overview can show a "Stock by store" strip. A single-store tenant
+    # (or one whose stores hold nothing yet) just gets an empty list; no
+    # other number on this dashboard changes.
+    store_map: dict = {}
+    async for doc in store_stock_collection.find({"tenant_id": tenant_id}):
+        bc = (doc.get("barcode") or "").strip()
+        if not bc:
+            continue
+        sname = doc.get("store_name") or "Store"
+        pm    = product_master.get(bc, {})
+        qty   = float(doc.get("stockQty", 0) or 0)
+        rate  = float(doc.get("rate", 0) or 0) or pm.get("cost_price", 0)
+        row   = store_map.setdefault(sname, {
+            "store": sname, "store_id": doc.get("store_id", ""),
+            "skus": 0, "qty": 0.0, "value": 0.0,
+            "in_stock": 0, "low_stock": 0, "out_of_stock": 0,
+        })
+        st = stock_status(qty)["label"]
+        row["skus"]  += 1
+        row["qty"]   += qty
+        row["value"] += qty * rate
+        if st == "In Stock":    row["in_stock"]     += 1
+        elif st == "Low Stock": row["low_stock"]    += 1
+        else:                   row["out_of_stock"] += 1
+    store_stock_breakdown = sorted(
+        ({**r, "qty": round(r["qty"], 2), "value": round(r["value"], 2)} for r in store_map.values()),
+        key=lambda x: x["value"], reverse=True,
+    )
+
     return JSONResponse({
         "status": "success",
         "data": {
@@ -1590,6 +1635,7 @@ async def get_inventory_dashboard(ctx: dict = Depends(get_hq_tenant)):
             },
             "division_chart":    division_chart,
             "source_breakdown":  source_breakdown,
+            "store_stock":       store_stock_breakdown,
             "low_stock_items":   low_stock_items[:10],
             "out_stock_items":   out_stock_items[:10],
             "top_value_items":   top_items,

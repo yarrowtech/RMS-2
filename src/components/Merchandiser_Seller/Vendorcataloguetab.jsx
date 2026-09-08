@@ -978,6 +978,8 @@ function SpecsPanel({ kind, form, setForm }) {
 
 const EMPTY_ITEM_FORM = {
   item_name: "", category: "", description: "",
+  product_type: "general", vendor_barcode: "", brand: "", manufacturer: "", pack_size: "",
+  requires_expiry: false, batch_tracking: false, shelf_life_days: "",
   price_range_min: "", price_range_max: "",
   price: "", direct_purchase_enabled: false, stock: "",
   available_sizes: "", available_colors: "", moq: "",
@@ -988,7 +990,7 @@ const EMPTY_ITEM_FORM = {
 };
 
 function AddItemModal({ onClose, onAdded, businessTypes = [] }) {
-  const [form, setForm] = useState(() => ({ ...EMPTY_ITEM_FORM, catalogue_kind: suggestedCatalogueKind(businessTypes) }));
+  const [form, setForm] = useState(() => ({ ...EMPTY_ITEM_FORM, product_type: businessTypes.includes("fmcg_vendor") ? "fmcg" : "general", catalogue_kind: suggestedCatalogueKind(businessTypes) }));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
   const [assistantPrompt, setAssistantPrompt] = useState("");
@@ -1043,6 +1045,14 @@ const askCatalogueAssistant = async () => {
       const fd = new FormData();
       fd.append("item_name", form.item_name);
       fd.append("category", form.category);
+      fd.append("product_type", form.product_type || "general");
+      fd.append("vendor_barcode", form.vendor_barcode || "");
+      fd.append("brand", form.brand || "");
+      fd.append("manufacturer", form.manufacturer || "");
+      fd.append("pack_size", form.pack_size || "");
+      fd.append("requires_expiry", form.requires_expiry);
+      fd.append("batch_tracking", Boolean(form.batch_tracking || form.requires_expiry));
+      fd.append("shelf_life_days", form.shelf_life_days || 0);
       fd.append("description", form.description);
       fd.append("price_range_min", form.price_range_min || 0);
       fd.append("price_range_max", form.price_range_max || 0);
@@ -1113,6 +1123,20 @@ const askCatalogueAssistant = async () => {
                 placeholder={copy.moqPlaceholder} />
             </div>
           </div>
+
+          {isFinishedGoods && <div className="rounded-xl border border-indigo-100 bg-indigo-50/50 p-3 space-y-3">
+            <p className="text-xs font-black text-indigo-950">Product and barcode tracking</p>
+            <div className="grid grid-cols-2 gap-3">
+              <label className="text-xs font-bold text-slate-600">Product type<select value={form.product_type} onChange={e => setForm(f => ({...f, product_type:e.target.value}))} className="mt-1 h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm"><option value="general">General</option><option value="fmcg">FMCG</option><option value="garment">Garment</option></select></label>
+              <label className="text-xs font-bold text-slate-600">GTIN / EAN / UPC<input inputMode="numeric" value={form.vendor_barcode} onChange={e => setForm(f => ({...f, vendor_barcode:e.target.value.replace(/\D/g, "").slice(0,14)}))} className="mt-1 h-10 w-full rounded-lg border border-slate-200 bg-white px-3 font-mono text-sm" placeholder="Barcode on pack" /></label>
+              <label className="text-xs font-bold text-slate-600">Brand<input value={form.brand} onChange={e => setForm(f => ({...f, brand:e.target.value}))} className="mt-1 h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm" /></label>
+              <label className="text-xs font-bold text-slate-600">Pack size<input value={form.pack_size} onChange={e => setForm(f => ({...f, pack_size:e.target.value}))} className="mt-1 h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm" placeholder="500 ml / 1 kg" /></label>
+              <label className="text-xs font-bold text-slate-600">Manufacturer<input value={form.manufacturer} onChange={e => setForm(f => ({...f, manufacturer:e.target.value}))} className="mt-1 h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm" /></label>
+              <label className="flex items-center gap-2 text-xs font-bold text-slate-700"><input type="checkbox" checked={form.batch_tracking} onChange={e => setForm(f => ({...f, batch_tracking:e.target.checked}))} /> Track batches</label>
+              <label className="flex items-center gap-2 text-xs font-bold text-slate-700"><input type="checkbox" checked={form.requires_expiry} onChange={e => setForm(f => ({...f, requires_expiry:e.target.checked, batch_tracking:e.target.checked || f.batch_tracking}))} /> Requires expiry</label>
+              {form.requires_expiry && <label className="text-xs font-bold text-slate-600">Shelf life (days)<input type="number" min="0" value={form.shelf_life_days} onChange={e => setForm(f => ({...f, shelf_life_days:e.target.value}))} className="mt-1 h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm" /></label>}
+            </div>
+          </div>}
 
           <div className="grid grid-cols-2 gap-3">
             <div>
@@ -1337,6 +1361,14 @@ function EditDetailsModal({ item, onClose, onSaved }) {
     catalogue_kind:   item.catalogue_kind || suggestedCatalogueKind(item.business_type || []),
     fabric_specs:     item.fabric_specs || {},
     service_specs:    item.service_specs || {},
+    product_type:     item.product_type || "general",
+    vendor_barcode:   item.vendor_barcode || item.barcode || "",
+    brand:            item.brand || "",
+    manufacturer:     item.manufacturer || "",
+    pack_size:        item.pack_size || "",
+    requires_expiry:  Boolean(item.requires_expiry),
+    batch_tracking:   Boolean(item.batch_tracking),
+    shelf_life_days:  item.shelf_life_days || "",
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
@@ -1368,6 +1400,14 @@ function EditDetailsModal({ item, onClose, onSaved }) {
           catalogue_kind:   form.catalogue_kind || "finished_goods",
           fabric_specs:     form.fabric_specs || {},
           service_specs:    form.service_specs || {},
+          product_type:     form.product_type,
+          vendor_barcode:   form.vendor_barcode,
+          brand:            form.brand,
+          manufacturer:     form.manufacturer,
+          pack_size:        form.pack_size,
+          requires_expiry:  form.requires_expiry,
+          batch_tracking:   form.batch_tracking || form.requires_expiry,
+          shelf_life_days:  Number(form.shelf_life_days) || 0,
         }),
       });
       const data = await res.json();
@@ -1451,6 +1491,19 @@ function EditDetailsModal({ item, onClose, onSaved }) {
               <p className="mt-0.5 text-[10px] leading-4 text-slate-500">{copy.helpText}</p>
             </div>
           </div>
+          {isFinishedGoods && <div className="rounded-xl border border-indigo-100 bg-indigo-50/50 p-3 space-y-2">
+            <p className="text-xs font-black text-indigo-950">FMCG / barcode tracking</p>
+            <div className="grid grid-cols-2 gap-2">
+              <select value={form.product_type} onChange={e => setForm(f => ({...f, product_type:e.target.value}))} className="h-9 rounded-lg border border-slate-200 bg-white px-2 text-xs"><option value="general">General</option><option value="fmcg">FMCG</option><option value="garment">Garment</option></select>
+              <input inputMode="numeric" value={form.vendor_barcode} onChange={e => setForm(f => ({...f, vendor_barcode:e.target.value.replace(/\D/g, "").slice(0,14)}))} placeholder="GTIN / EAN / UPC" className="h-9 rounded-lg border border-slate-200 px-2 font-mono text-xs" />
+              <input value={form.brand} onChange={e => setForm(f => ({...f, brand:e.target.value}))} placeholder="Brand" className="h-9 rounded-lg border border-slate-200 px-2 text-xs" />
+              <input value={form.manufacturer} onChange={e => setForm(f => ({...f, manufacturer:e.target.value}))} placeholder="Manufacturer" className="h-9 rounded-lg border border-slate-200 px-2 text-xs" />
+              <input value={form.pack_size} onChange={e => setForm(f => ({...f, pack_size:e.target.value}))} placeholder="Pack size" className="h-9 rounded-lg border border-slate-200 px-2 text-xs" />
+              <input type="number" min="0" value={form.shelf_life_days} onChange={e => setForm(f => ({...f, shelf_life_days:e.target.value}))} placeholder="Shelf life days" className="h-9 rounded-lg border border-slate-200 px-2 text-xs" />
+              <label className="flex items-center gap-2 text-xs font-bold text-slate-700"><input type="checkbox" checked={form.batch_tracking} onChange={e => setForm(f => ({...f, batch_tracking:e.target.checked}))} /> Track batches</label>
+              <label className="flex items-center gap-2 text-xs font-bold text-slate-700"><input type="checkbox" checked={form.requires_expiry} onChange={e => setForm(f => ({...f, requires_expiry:e.target.checked, batch_tracking:e.target.checked || f.batch_tracking}))} /> Requires expiry</label>
+            </div>
+          </div>}
 
           <SpecsPanel kind={form.catalogue_kind} form={form} setForm={setForm} />
 

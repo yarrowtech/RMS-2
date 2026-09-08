@@ -423,6 +423,7 @@ const BUSINESS_TYPES = [
   ["exporter", "Exporter"],
   ["fabric_supplier", "Fabric supplier"],
   ["job_worker", "Job-work partner"],
+  ["fmcg_vendor", "FMCG vendor"],
 ];
 
 // [vendorForm field, human label shown in the "missing field" toast] —

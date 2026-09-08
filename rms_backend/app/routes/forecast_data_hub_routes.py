@@ -107,13 +107,51 @@ async def _pilot_context(ctx: TenantCtx = Depends(_forecast_context)) -> TenantC
     return ctx
 
 
+# Header keys that appear in the sales and/or stock layouts. A workbook sheet
+# is treated as data only when it carries at least three of these — so cover
+# pages, filter-parameter tabs and pivot summaries in the same file are skipped.
+_KNOWN_COLUMN_KEYS = {
+    # shared
+    "barcode", "itemcode", "division", "section", "department", "vendor",
+    "rsp", "mrp", "description",
+    # sales layout
+    "billdate", "billtime", "billno", "store", "billqty", "gramt", "netamt",
+    "taxrate", "stdrate", "isvoid",
+    # stock layout — wide (one row per product, a column per location)
+    "standardrate", "warehouse", "grandtotal",
+    "category1", "category2", "category3", "category4", "category5", "category6",
+    "cat1designno", "cat2brand", "cat3style", "cat4planefshs", "cat5size",
+    # stock layout — long (one row per product × site: Locname + a qty column)
+    "locname", "sourcesite", "closingqty", "closingamt", "lastinwardrate", "wsp", "uom",
+}
+
+# Long-format stock: the on-hand quantity column and the site/location column.
+_STOCK_QTY_ALIASES = (
+    "closing_qty", "closingqty", "closing qty", "closing stock", "closing_stock",
+    "qty", "quantity", "stock qty", "stockqty", "on hand", "onhand", "balance qty", "balqty",
+)
+_STOCK_LOC_ALIASES = (
+    "locname", "loc name", "location", "location name", "source site", "sourcesite",
+    "site", "site name", "branch", "store", "store name", "outlet", "godown",
+)
+
+
+def _looks_like_data(frame: "pd.DataFrame") -> bool:
+    known = sum(1 for column in frame.columns if column in _KNOWN_COLUMN_KEYS)
+    return known >= 3 and len(frame.index) > 0
+
+
 def _read_rows(filename: str, content: bytes) -> List[dict]:
     name = (filename or "").lower()
     try:
         if name.endswith(".csv"):
-            frame = pd.read_csv(io.BytesIO(content), dtype=str)
+            frames = [pd.read_csv(io.BytesIO(content), dtype=str)]
         elif name.endswith((".xlsx", ".xls")):
-            frame = pd.read_excel(io.BytesIO(content), dtype=str)
+            # sheet_name=None → read every tab. Retail POS/stock exports often
+            # split a large report across "Sheet1 / Sheet2 …" or keep the rows
+            # on one tab and a filter/summary on another; we want all the rows.
+            sheets = pd.read_excel(io.BytesIO(content), dtype=str, sheet_name=None)
+            frames = list(sheets.values())
         else:
             raise HTTPException(status_code=400, detail="Upload a CSV or Excel file (.csv, .xlsx, .xls).")
     except HTTPException:
@@ -121,7 +159,20 @@ def _read_rows(filename: str, content: bytes) -> List[dict]:
     except Exception:
         raise HTTPException(status_code=400, detail="The file could not be read. Download a template and keep the headers unchanged.")
 
-    frame.columns = [_key(column) for column in frame.columns]
+    for frame in frames:
+        frame.columns = [_key(column) for column in frame.columns]
+
+    data_frames = [frame for frame in frames if _looks_like_data(frame)]
+    if not data_frames:
+        # No sheet matched the expected layout — fall back to the first sheet so
+        # the "headers changed" error below is still raised on real data.
+        data_frames = frames[:1]
+
+    frame = (
+        pd.concat(data_frames, ignore_index=True, sort=False)
+        if len(data_frames) > 1
+        else data_frames[0]
+    )
     frame = frame.where(pd.notnull(frame), "")
     if len(frame.index) == 0:
         raise HTTPException(status_code=400, detail="The uploaded file has no data rows.")
@@ -177,17 +228,18 @@ def _parse_dt(date_text: str, time_text: str = "") -> Optional[datetime]:
     return None
 
 
-async def _catalogue(tenant_id: str) -> tuple[dict, dict, dict, set]:
+async def _catalogue(tenant_id: str) -> tuple[dict, dict, dict]:
     """Indexes over the tenant's products:
         barcode_index[_key(barcode)] -> payload
         sku_index[_key(item_code)]   -> payload
-        cat_index[cat_key]           -> payload   (category tuple -> product)
-        ambiguous                    -> {cat_key, ...} that map to >1 barcode
+        cat_index[cat_key]           -> [payload, ...]  every product sharing that
+                                        DIVISION|SECTION|DEPARTMENT|VENDOR|CAT1-5 tuple.
+    A tuple with more than one payload is ambiguous; _resolve_by_category breaks
+    the tie with the stock row's RSP / MRP before falling back to the first one.
     """
     barcode_index: dict = {}
     sku_index: dict = {}
-    cat_index: dict = {}
-    ambiguous: set = set()
+    cat_index: Dict[str, List[dict]] = {}
     projection = {
         "barcode": 1, "sku": 1, "base_sku": 1, "product_name": 1, "description": 1, "variants": 1,
         "design_no": 1, "division": 1, "section": 1, "department": 1, "vendor_name": 1,
@@ -204,6 +256,7 @@ async def _catalogue(tenant_id: str) -> tuple[dict, dict, dict, set]:
             "section": _text(product.get("section")),
             "department": _text(product.get("department")),
             "cost_price": float(product.get("cost_price") or 0),
+            "rsp": float(product.get("selling_price") or 0),
             "mrp": float(product.get("mrp") or product.get("selling_price") or 0),
         }
         if payload["barcode"]:
@@ -222,11 +275,44 @@ async def _catalogue(tenant_id: str) -> tuple[dict, dict, dict, set]:
         cats = [_text(product.get(f"category{n}")) for n in range(1, 6)]
         ck = _cat_key(payload["division"], payload["section"], payload["department"], _text(product.get("vendor_name")), cats)
         if ck and payload["barcode"]:
-            if ck in cat_index and cat_index[ck]["barcode"] != payload["barcode"]:
-                ambiguous.add(ck)
-            else:
-                cat_index[ck] = payload
-    return barcode_index, sku_index, cat_index, ambiguous
+            bucket = cat_index.setdefault(ck, [])
+            if not any(existing["barcode"] == payload["barcode"] for existing in bucket):
+                bucket.append(payload)
+    return barcode_index, sku_index, cat_index
+
+
+def _resolve_by_category(raw: dict, cat_index: Dict[str, List[dict]]) -> tuple[Optional[dict], Optional[str]]:
+    """Resolve a stock row that has no Barcode / Item Code to a product via its
+    category tuple. When the tuple maps to several products, use the row's
+    MRP -> RSP -> Standard Rate to pick one. Returns (payload, warning); warning
+    is None when the match is unambiguous or a price narrowed it to exactly one."""
+    candidates = cat_index.get(_row_cat_key(raw)) or []
+    if not candidates:
+        return None, None
+    if len(candidates) == 1:
+        return candidates[0], None
+
+    rsp = _number(_column(raw, "rsp", "selling price")) or 0.0
+    mrp = _number(_column(raw, "mrp")) or 0.0
+    std = _number(_column(raw, "standard_rate", "standard rate", "std rate")) or 0.0
+
+    def near(a: float, b: float) -> bool:
+        return b > 0 and abs(a - b) <= 1.0
+
+    for field, value in (("mrp", mrp), ("rsp", rsp), ("cost_price", std)):
+        hits = [c for c in candidates if near(c.get(field, 0.0), value)]
+        if len(hits) == 1:
+            return hits[0], None
+
+    picked = candidates[0]
+    shown = ", ".join(f"{c['barcode']} (RSP {c['rsp']:g}/MRP {c['mrp']:g})" for c in candidates[:3])
+    warning = (
+        f"Category combination matches {len(candidates)} products: {shown}"
+        + ("…" if len(candidates) > 3 else "")
+        + f". This row's RSP {rsp:g}/MRP {mrp:g}/Std {std:g} did not match exactly one; "
+        f"used {picked['barcode']}. Add an Item Code column to this row to resolve it exactly."
+    )
+    return picked, warning
 
 
 async def _stores(tenant_id: str) -> List[dict]:
@@ -247,6 +333,46 @@ def _match_store(value: str, stores: List[dict]) -> Optional[dict]:
     for store in stores:
         if wanted in store["aliases"]:
             return store
+    return None
+
+
+# Substring tokens are long enough to be unambiguous inside a location name;
+# the exact set catches short abbreviations that would be unsafe as substrings.
+_CENTRAL_TOKENS = (
+    "warehouse", "warehse", "wrhouse", "godown", "central", "headoffice",
+    "mainstore", "mainwh", "distributioncentre", "distributioncenter",
+)
+_CENTRAL_EXACT = {"ho", "wh", "hq", "cw", "cwh", "cws", "main"}
+
+# ERP location names that carry no textual resemblance to the RMS store they
+# belong to, so no heuristic could match them. Key = normalised substring of the
+# file's Locname, value = a normalised substring of the target RMS store name.
+# (Raphaa's Chowringhee outlet is booked as "Megashop" in their stock system.)
+_LOCNAME_OVERRIDES = {
+    "megashop": "chowringhee",
+}
+
+
+def _match_location(value: str, stores: List[dict]) -> Optional[str]:
+    """Map a long-format Locname / Source Site string to a location label —
+    the HQ warehouse (CENTRAL_LABEL) or one of the tenant's store names.
+    Returns None when it matches neither."""
+    wanted = _key(value)
+    if not wanted:
+        return None
+    for src, dst in _LOCNAME_OVERRIDES.items():
+        if src in wanted:
+            for store in stores:
+                if dst in _key(store["name"]) or dst in store["aliases"]:
+                    return store["name"]
+    exact = _match_store(value, stores)
+    if exact:
+        return exact["name"]
+    for store in stores:
+        if any(len(alias) >= 4 and alias in wanted for alias in store["aliases"]):
+            return store["name"]
+    if any(token in wanted for token in _CENTRAL_TOKENS) or wanted in _CENTRAL_EXACT:
+        return CENTRAL_LABEL
     return None
 
 
@@ -342,10 +468,32 @@ def _sales_rows(raw_rows: List[dict], barcode_index: dict, sku_index: dict, stor
     return rows
 
 
-def _stock_rows(raw_rows: List[dict], barcode_index: dict, sku_index: dict, cat_index: dict, ambiguous: set, stores: List[dict]):
-    """Returns (rows, totals). Rows are aggregated by resolved barcode — every
-    file row that collapses to the same product (e.g. different Ageing) is summed
-    per location. Rows that can't be resolved are kept individually with errors."""
+def _stock_is_long_format(raw_rows: List[dict]) -> bool:
+    """A long-format stock export has one row per product × site: a Locname /
+    Source Site column plus a single closing-quantity column, and NO per-location
+    quantity columns. Ginesys / most ERP stock exports look like this."""
+    if not raw_rows:
+        return False
+    keys = set(raw_rows[0].keys())
+    has_qty = any(_key(a) in keys for a in _STOCK_QTY_ALIASES)
+    has_loc = any(_key(a) in keys for a in _STOCK_LOC_ALIASES)
+    has_wide = "warehouse" in keys or "grandtotal" in keys
+    return has_qty and has_loc and not has_wide
+
+
+def _stock_rows(raw_rows: List[dict], barcode_index: dict, sku_index: dict, cat_index: dict, stores: List[dict]):
+    """Returns (rows, totals, store_by_label, meta). Rows are aggregated by resolved barcode — every
+    file row that collapses to the same product (e.g. different Ageing, or a
+    long-format file's repeated product across sites) is summed per location.
+    Rows that can't be resolved are kept individually with errors.
+
+    Two file shapes are accepted:
+      • wide — one row per product, a column per location (WAREHOUSE + stores)
+      • long — one row per product × site: a Locname / Source Site column and a
+        single CLOSING_QTY column. Location is read from the row, not the header.
+    """
+    long_format = _stock_is_long_format(raw_rows)
+
     location_columns = {"central": ["warehouse", "central", "central warehouse", "hq inventory"]}
     for store in stores:
         location_columns[store["id"]] = list(store["aliases"])
@@ -355,6 +503,7 @@ def _stock_rows(raw_rows: List[dict], barcode_index: dict, sku_index: dict, cat_
 
     agg: Dict[str, dict] = {}
     unresolved: List[dict] = []
+    location_map: Dict[str, Optional[str]] = {}
 
     for index, raw in enumerate(raw_rows, start=2):
         row_errors: List[str] = []
@@ -362,28 +511,40 @@ def _stock_rows(raw_rows: List[dict], barcode_index: dict, sku_index: dict, cat_
         product = _match_product(raw, barcode_index, sku_index)
         matched_via = "barcode"
         if not product and not has_id_col:
-            ck = _row_cat_key(raw)
-            product = cat_index.get(ck)
+            product, warning = _resolve_by_category(raw, cat_index)
             matched_via = "category"
-            if product and ck in ambiguous:
-                row_errors.append("This category combination maps to more than one product; used the most common.")
+            if product and warning:
+                row_errors.append(warning)
             if not product:
-                row_errors.append("No Barcode column, and this DIVISION/SECTION/DEPARTMENT/VENDOR/CAT1-5 combination was not found in imported sales.")
+                row_errors.append("No Barcode / Item Code column, and this DIVISION/SECTION/DEPARTMENT/VENDOR/CAT1-5 combination was not found in imported sales.")
         elif not product:
             row_errors.append("Barcode / Item Code in this row does not match any product.")
 
-        loc_qty: Dict[str, float] = {}
-        for location_id, aliases in location_columns.items():
-            value = ""
-            for alias in aliases:
-                if alias in raw:
-                    value = raw.get(alias, "")
-                    break
-            qty = _number(value)
+        loc_qty: Dict[str, float] = {label: 0.0 for label in all_labels}
+        if long_format:
+            loc_raw = _column(raw, *_STOCK_LOC_ALIASES)
+            label = _match_location(loc_raw, stores)
+            location_map.setdefault(loc_raw or "(blank)", label)
+            qty = _number(_column(raw, *_STOCK_QTY_ALIASES))
             if qty is None or qty < 0:
-                row_errors.append(f"{'Warehouse' if location_id == 'central' else 'Store'} quantity must be zero or greater.")
+                row_errors.append("Closing quantity must be zero or greater.")
                 qty = 0.0
-            loc_qty[label_for[location_id]] = qty
+            if label is None:
+                row_errors.append(f"Location '{loc_raw or '(blank)'}' does not match the HQ warehouse or any store.")
+            else:
+                loc_qty[label] = qty
+        else:
+            for location_id, aliases in location_columns.items():
+                value = ""
+                for alias in aliases:
+                    if alias in raw:
+                        value = raw.get(alias, "")
+                        break
+                qty = _number(value)
+                if qty is None or qty < 0:
+                    row_errors.append(f"{'Warehouse' if location_id == 'central' else 'Store'} quantity must be zero or greater.")
+                    qty = 0.0
+                loc_qty[label_for[location_id]] = qty
 
         if product:
             bucket = agg.setdefault(product["barcode"], {
@@ -433,7 +594,11 @@ def _stock_rows(raw_rows: List[dict], barcode_index: dict, sku_index: dict, cat_
         for label, value in row["allocation"].items():
             totals[label] += value
     rows.extend(unresolved)
-    return rows, {label: round(value, 2) for label, value in totals.items()}, store_by_label
+    meta = {
+        "format": "long" if long_format else "wide",
+        "location_map": dict(sorted(location_map.items())) if long_format else {},
+    }
+    return rows, {label: round(value, 2) for label, value in totals.items()}, store_by_label, meta
 
 
 def _summary(rows: List[dict]) -> dict:
@@ -482,7 +647,7 @@ async def get_data_hub_status(ctx: TenantCtx = Depends(_forecast_context)):
         "status": "success",
         "enabled": enabled,
         "mode": "preview_then_commit",
-        "message": "Import the sales file first (it also builds the product catalogue), then the stock file. Finance, GST and POS flows are never touched.",
+        "message": "Import the sales file first (it also builds the product catalogue), then the stock file. Multi-sheet workbooks are read in full — every tab whose headers match is combined, cover/filter/summary tabs are skipped. The stock file can be wide (a column per location: WAREHOUSE + store columns) or long (one row per product per site: a Locname / Source Site column plus CLOSING_QTY) — both are auto-detected. Matching uses ITEM_CODE / BARCODE first, then DIVISION/SECTION/DEPARTMENT/VENDOR/CAT1-5 with RSP/MRP. Finance, GST and POS flows are never touched.",
         "catalogue_size": catalogue_size,
         "locations": [{"id": "central", "name": CENTRAL_LABEL}, *[{"id": store["id"], "name": store["name"]} for store in stores]],
     }
@@ -498,7 +663,7 @@ async def download_template(kind: str, ctx: TenantCtx = Depends(_pilot_context))
                    "Description", "Bill Qty", "Gr Amt", "Net Amt", "Tax Rate", "Std Rate", "RSP", "Mrp", "IsVoid"]
     elif kind == "stock":
         store_headers = [store["name"].split("-", 1)[-1].strip() or store["name"] for store in stores]
-        headers = ["Division", "Section", "Department", "Vendor",
+        headers = ["Item Code", "Barcode", "Division", "Section", "Department", "Vendor",
                    "Category1", "Category2", "Category3", "Category4", "Category5", "Category6",
                    "Standard_Rate", "RSP", "MRP", *store_headers, "WAREHOUSE", "Grand Total"]
     else:
@@ -514,7 +679,7 @@ async def download_template(kind: str, ctx: TenantCtx = Depends(_pilot_context))
 @router.post("/sales/preview")
 async def preview_sales_history(file: UploadFile = File(...), ctx: TenantCtx = Depends(_pilot_context)):
     raw_rows = _read_rows(file.filename or "", await file.read())
-    barcode_index, sku_index, _, _ = await _catalogue(ctx["tenant_id"])
+    barcode_index, sku_index, _ = await _catalogue(ctx["tenant_id"])
     stores = await _stores(ctx["tenant_id"])
     rows = _sales_rows(raw_rows, barcode_index, sku_index, stores)
     clean = [row for row in rows if not row["errors"] and not row["is_void"]]
@@ -538,9 +703,9 @@ async def preview_sales_history(file: UploadFile = File(...), ctx: TenantCtx = D
 @router.post("/stock/preview")
 async def preview_stock_snapshot(file: UploadFile = File(...), ctx: TenantCtx = Depends(_pilot_context)):
     raw_rows = _read_rows(file.filename or "", await file.read())
-    barcode_index, sku_index, cat_index, ambiguous = await _catalogue(ctx["tenant_id"])
+    barcode_index, sku_index, cat_index = await _catalogue(ctx["tenant_id"])
     stores = await _stores(ctx["tenant_id"])
-    rows, totals, _ = _stock_rows(raw_rows, barcode_index, sku_index, cat_index, ambiguous, stores)
+    rows, totals, _, meta = _stock_rows(raw_rows, barcode_index, sku_index, cat_index, stores)
     resolved_via_category = sum(1 for row in rows if row.get("matched_via") == "category")
     return {
         "status": "success",
@@ -553,6 +718,8 @@ async def preview_stock_snapshot(file: UploadFile = File(...), ctx: TenantCtx = 
             "unresolved_rows": sum(1 for row in rows if row["errors"] and not row.get("matched_via")),
             "catalogue_size": len(barcode_index),
             "location_totals": totals,
+            "file_format": meta["format"],
+            "location_map": meta["location_map"],
         },
         "rows": [_public(row) for row in rows[:PREVIEW_ROWS]],
         "truncated": len(rows) > PREVIEW_ROWS,
@@ -574,7 +741,7 @@ async def commit_sales_history(
 
     tenant_id = ctx["tenant_id"]
     raw_rows = _read_rows(file.filename or "", await file.read())
-    barcode_index, sku_index, _, _ = await _catalogue(tenant_id)
+    barcode_index, sku_index, _ = await _catalogue(tenant_id)
     stores = await _stores(tenant_id)
     rows = _sales_rows(raw_rows, barcode_index, sku_index, stores)
 
@@ -704,9 +871,9 @@ async def commit_stock_snapshot(
 
     tenant_id = ctx["tenant_id"]
     raw_rows = _read_rows(file.filename or "", await file.read())
-    barcode_index, sku_index, cat_index, ambiguous = await _catalogue(tenant_id)
+    barcode_index, sku_index, cat_index = await _catalogue(tenant_id)
     stores = await _stores(tenant_id)
-    rows, totals, store_by_label = _stock_rows(raw_rows, barcode_index, sku_index, cat_index, ambiguous, stores)
+    rows, totals, store_by_label, _ = _stock_rows(raw_rows, barcode_index, sku_index, cat_index, stores)
 
     blocking = ("does not match any product", "was not found in imported sales", "must be zero or greater")
     batch_id = uuid.uuid4().hex
@@ -837,3 +1004,18 @@ async def rollback_import(batch_id: str, ctx: TenantCtx = Depends(_pilot_context
                   "rollback_touched": reverted, "rollback_products_removed": products_removed}},
     )
     return {"status": "success", "batch_id": batch_id, "kind": doc["kind"], "reverted": reverted, "products_removed": products_removed}
+
+
+@router.delete("/imports/{batch_id}")
+async def delete_import_log(batch_id: str, ctx: TenantCtx = Depends(_pilot_context)):
+    """Remove a history entry. Only permitted once the import has been rolled
+    back — deleting an active entry would leave its committed sales/stock in RMS
+    with no audit trail and no way to revert it. Touches nothing but the log."""
+    tenant_id = ctx["tenant_id"]
+    doc = await data_hub_imports_collection.find_one({"tenant_id": tenant_id, "batch_id": batch_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Import batch not found for this tenant.")
+    if not doc.get("rolled_back"):
+        raise HTTPException(status_code=400, detail="Roll this import back before deleting its history entry.")
+    await data_hub_imports_collection.delete_one({"_id": doc["_id"]})
+    return {"status": "success", "batch_id": batch_id, "deleted": True}

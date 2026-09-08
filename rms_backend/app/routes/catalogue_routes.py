@@ -59,6 +59,7 @@ import cloudinary
 import cloudinary.uploader
 
 from ..config import settings
+from ..product_identity import identity_fields, is_valid_gtin
 from ..db import (
     vendor_catalogue_collection,
     catalogue_inquiries_collection,
@@ -307,6 +308,14 @@ async def add_catalogue_item(
     authorization:      str            = Header(None),
     item_name:           str            = Form(...),
     category:            str            = Form(""),
+    product_type:        str            = Form("general"),
+    vendor_barcode:      str            = Form(""),
+    brand:               str            = Form(""),
+    manufacturer:        str            = Form(""),
+    pack_size:           str            = Form(""),
+    requires_expiry:     bool           = Form(False),
+    batch_tracking:      bool           = Form(False),
+    shelf_life_days:     int            = Form(0),
     description:         str            = Form(""),
     price_range_min:      float          = Form(0),
     price_range_max:      float          = Form(0),
@@ -338,6 +347,14 @@ async def add_catalogue_item(
 
     if not item_name.strip():
         raise HTTPException(status_code=400, detail="item_name is required.")
+    normalized_type = (product_type or "general").strip().lower()
+    if normalized_type not in {"general", "garment", "fabric", "fmcg"}:
+        raise HTTPException(status_code=400, detail="product_type must be general, garment, fabric or fmcg.")
+    vendor_gtin = (vendor_barcode or "").strip()
+    if vendor_gtin and not is_valid_gtin(vendor_gtin):
+        raise HTTPException(status_code=400, detail="Vendor barcode must be a valid GTIN-8, UPC-A, EAN-13 or GTIN-14.")
+    if vendor_gtin and await vendor_catalogue_collection.find_one({"vendor_id": ObjectId(vendor_id), "vendor_barcode": vendor_gtin, "active": True}, {"_id": 1}):
+        raise HTTPException(status_code=409, detail=f"GTIN {vendor_gtin} is already used by another active catalogue item.")
     direct_purchase_enabled = price > 0
 
     # ── Tier check BEFORE any Cloudinary upload — no point burning upload
@@ -400,6 +417,15 @@ async def add_catalogue_item(
         "vendor_id":         ObjectId(vendor_id),
         "item_name":         item_name.strip(),
         "category":          category.strip(),
+        "product_type":      normalized_type,
+        "vendor_barcode":    vendor_gtin,
+        "barcode":           vendor_gtin,
+        "brand":             brand.strip(),
+        "manufacturer":      manufacturer.strip(),
+        "pack_size":         pack_size.strip(),
+        "requires_expiry":   bool(requires_expiry),
+        "batch_tracking":    bool(batch_tracking or requires_expiry or (normalized_type == "fmcg" and not vendor_gtin)),
+        "shelf_life_days":   max(0, shelf_life_days),
         "description":       description.strip(),
         "images":            image_urls,
         "price_range_min":   max(0.0, price_range_min),
@@ -426,6 +452,7 @@ async def add_catalogue_item(
         # beat) — see that route's docstring.
         "expires_at":        now + timedelta(days=tier["visibility_days"]),
     }
+    doc.update(identity_fields(doc))
     result = await vendor_catalogue_collection.insert_one(doc)
     return {
         "status": "success",
@@ -735,8 +762,27 @@ async def update_catalogue_item(item_id: str, payload: dict, authorization: str 
     allowed = {"item_name", "category", "description", "price_range_min", "price_range_max",
                "price", "direct_purchase_enabled", "stock",
                "available_sizes", "available_colors", "moq", "variants", "active",
-               "catalogue_kind", "fabric_specs", "service_specs"}
+               "catalogue_kind", "fabric_specs", "service_specs", "product_type",
+               "vendor_barcode", "brand", "manufacturer", "pack_size",
+               "requires_expiry", "batch_tracking", "shelf_life_days"}
     patch = {k: v for k, v in payload.items() if k in allowed}
+    if "product_type" in patch:
+        patch["product_type"] = str(patch["product_type"] or "general").strip().lower()
+        if patch["product_type"] not in {"general", "garment", "fabric", "fmcg"}:
+            raise HTTPException(status_code=400, detail="product_type must be general, garment, fabric or fmcg.")
+    if "vendor_barcode" in patch:
+        patch["vendor_barcode"] = str(patch["vendor_barcode"] or "").strip()
+        if patch["vendor_barcode"] and not is_valid_gtin(patch["vendor_barcode"]):
+            raise HTTPException(status_code=400, detail="Vendor barcode must be a valid GTIN-8, UPC-A, EAN-13 or GTIN-14.")
+        if patch["vendor_barcode"] and await vendor_catalogue_collection.find_one({"_id": {"$ne": item["_id"]}, "vendor_id": ObjectId(vendor_id), "vendor_barcode": patch["vendor_barcode"], "active": True}, {"_id": 1}):
+            raise HTTPException(status_code=409, detail=f"GTIN {patch['vendor_barcode']} is already used by another active catalogue item.")
+        patch["barcode"] = patch["vendor_barcode"]
+    if patch.get("requires_expiry"):
+        patch["batch_tracking"] = True
+    effective_type = str(patch.get("product_type", item.get("product_type", ""))).lower()
+    effective_gtin = str(patch.get("vendor_barcode", item.get("vendor_barcode", ""))).strip()
+    if effective_type == "fmcg" and not effective_gtin:
+        patch["batch_tracking"] = True
     if "price" in patch or "direct_purchase_enabled" in patch:
         try:
             effective_price = float(patch.get("price", item.get("price", 0)) or 0)
@@ -752,6 +798,7 @@ async def update_catalogue_item(item_id: str, payload: dict, authorization: str 
     if "service_specs" in patch:
         patch["service_specs"] = _normalise_catalogue_specs(patch["service_specs"], {"service_type", "rate_basis", "capacity_per_day", "machine_type", "accepted_materials", "lead_time", "quality_notes"})
     patch["updated_at"] = datetime.utcnow()
+    patch.update(identity_fields({**item, **patch}))
 
     # Reactivating a previously-expired item ("active": False -> True) must
     # also refresh its visibility window — otherwise the next expire-sweep

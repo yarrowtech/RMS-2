@@ -16,6 +16,7 @@ from app.db import (
     stores_collection,
     tenants_collection,
 )
+from app.product_identity import check_fmcg_receipt, identity_fields
 from .deps import get_hq_tenant, get_receiving_tenant
 
 router = APIRouter(prefix="/grn", tags=["Goods Receipt Note"])
@@ -27,6 +28,14 @@ router = APIRouter(prefix="/grn", tags=["Goods Receipt Note"])
 
 def objid(v):
     return str(v) if isinstance(v, ObjectId) else v
+
+
+def validate_fmcg_receipt(grn: dict) -> List[str]:
+    """Strict only for newly classified FMCG lines; legacy lines remain valid."""
+    errors, warnings = check_fmcg_receipt(grn.get("items") or [])
+    if errors:
+        raise HTTPException(status_code=400, detail=errors[0])
+    return warnings
 
 
 # ─────────────────────────────────────────────
@@ -55,6 +64,21 @@ class GRNItemModel(BaseModel):
     unit:              str = ""
     image_url:         str = ""
     catalogue_item_id: str = ""
+    product_id:        str = ""
+    variant_id:        str = ""
+    design_no:         str = ""
+    material_code:     str = ""
+    sku:               str = ""
+    barcode_policy:    str = ""
+    stock_identity:    str = ""
+    product_type:      str = ""
+    brand:             str = ""
+    manufacturer:      str = ""
+    pack_size:         str = ""
+    requires_expiry:   bool = False
+    batch_tracking:    bool = False
+    shelf_life_days:   int = 0
+    barcodeMismatchReason: str = ""
 
 
 class GRNModel(BaseModel):
@@ -263,10 +287,18 @@ async def ensure_product_exists(item: dict, grn_dict: dict, initial_quantity: fl
         "cgst_rate":       0.0,
         "sgst_rate":       0.0,
         "igst_rate":       0.0,
-        "requires_expiry": False,
-        "expiry_date":     "",
-        "shelf_life_days": 0,
-        "sku":             "",
+        "product_type":    item.get("product_type") or "general",
+        "brand":           item.get("brand") or "",
+        "manufacturer":    item.get("manufacturer") or "",
+        "pack_size":       item.get("pack_size") or "",
+        "requires_expiry": bool(item.get("requires_expiry")),
+        "batch_tracking":  bool(item.get("batch_tracking")),
+        "expiry_date":     item.get("expiryDate") or "",
+        "shelf_life_days": int(item.get("shelf_life_days") or 0),
+        "sku":             item.get("sku") or "",
+        "vendor_barcode":  item.get("vendor_barcode") or item.get("vendorBarcode") or "",
+        "barcode_policy":  item.get("barcode_policy") or "",
+        "stock_identity":  item.get("stock_identity") or "",
         "barcode":         barcode,
         "cost_price":      rate,
         "mrp":             rate,
@@ -431,6 +463,7 @@ async def update_inventory(grn_dict: dict, reverse: bool = False) -> None:
                 print(f"[update_inventory] DIRECT GRC — synthetic barcode '{barcode}' for desc='{desc}'")
 
         item["_effective_barcode"] = barcode
+        item.update(identity_fields({**item, "barcode": barcode}))
 
         is_walkin = barcode.startswith("WALKIN/") or barcode.startswith("ITEM/")
         meta = {} if is_walkin else await get_product_meta(barcode, tenant_id)
@@ -487,6 +520,21 @@ async def update_inventory(grn_dict: dict, reverse: bool = False) -> None:
                     "color":       item.get("color") or "",
                     "image_url":   item.get("image_url") or "",
                     "catalogue_item_id": item.get("catalogue_item_id") or "",
+                    "product_id": item.get("product_id") or "",
+                    "variant_id": item.get("variant_id") or "",
+                    "design_no": item.get("design_no") or "",
+                    "material_code": item.get("material_code") or "",
+                    "vendor_barcode": item.get("vendor_barcode") or item.get("vendorBarcode") or "",
+                    "barcode_policy": item.get("barcode_policy") or "",
+                    "stock_identity": item.get("stock_identity") or "",
+                    "product_type": item.get("product_type") or "general",
+                    "brand": item.get("brand") or "",
+                    "manufacturer": item.get("manufacturer") or "",
+                    "pack_size": item.get("pack_size") or "",
+                    "requires_expiry": bool(item.get("requires_expiry")),
+                    "batch_tracking": bool(item.get("batch_tracking")),
+                    "last_batch_no": item.get("batchNo") or "",
+                    "last_expiry_date": item.get("expiryDate") or "",
                     "grn_date":    grn_dict.get("grnDate", ""),
                     "flow_type":   "po_linked" if is_po_linked else "direct",
                 },
@@ -584,6 +632,7 @@ async def update_single_store_stock(grn_dict: dict, destination: dict, reverse: 
         raw_barcode = (item.get("barcode") or "").strip()
         barcode = raw_barcode if raw_barcode and not raw_barcode.startswith("ITEM/") else f"WALKIN/{grn_no}/{index + 1}"
         item["_effective_barcode"] = barcode
+        item.update(identity_fields({**item, "barcode": barcode}))
         existing = await store_stock_collection.find_one({
             "barcode": barcode,
             "tenant_id": tenant_id,
@@ -627,6 +676,21 @@ async def update_single_store_stock(grn_dict: dict, destination: dict, reverse: 
                 "color":       item.get("color") or "",
                 "image_url":   item.get("image_url") or "",
                 "catalogue_item_id": item.get("catalogue_item_id") or "",
+                "product_id":       item.get("product_id") or "",
+                "variant_id":       item.get("variant_id") or "",
+                "design_no":        item.get("design_no") or "",
+                "material_code":    item.get("material_code") or "",
+                "vendor_barcode":   item.get("vendor_barcode") or item.get("vendorBarcode") or "",
+                "barcode_policy":   item.get("barcode_policy") or "",
+                "stock_identity":   item.get("stock_identity") or "",
+                "product_type":     item.get("product_type") or "general",
+                "brand":            item.get("brand") or "",
+                "manufacturer":     item.get("manufacturer") or "",
+                "pack_size":        item.get("pack_size") or "",
+                "requires_expiry":  bool(item.get("requires_expiry")),
+                "batch_tracking":   bool(item.get("batch_tracking")),
+                "last_batch_no":    item.get("batchNo") or "",
+                "last_expiry_date": item.get("expiryDate") or "",
             },
             "$setOnInsert": {"createdAt": datetime.utcnow()},
         }
@@ -663,7 +727,7 @@ async def create_grn(grn: GRNModel, ctx: dict = Depends(get_receiving_tenant)):
     grn_dict["po_id"]      = str(grc.get("po_id", "")) if grc.get("po_id") else ""
     grn_dict["vendorName"] = grc.get("vendorName", "")
 
-    _fabric_fields = ("fabric_type", "gsm", "width", "color", "unit", "image_url", "catalogue_item_id")
+    _fabric_fields = ("fabric_type", "gsm", "width", "color", "unit", "image_url", "catalogue_item_id", "product_id", "variant_id", "design_no", "material_code", "sku", "barcode_policy", "stock_identity", "product_type", "brand", "manufacturer", "pack_size", "requires_expiry", "batch_tracking", "shelf_life_days", "barcodeMismatchReason")
 
     if not grn_dict.get("items"):
         grn_dict["items"] = [
@@ -1051,6 +1115,8 @@ async def post_grn(grn_id: str, ctx: dict = Depends(get_receiving_tenant)):
             detail=f"GRN is already '{grn.get('status')}'. Only Draft GRNs can be posted."
         )
 
+    receipt_warnings = validate_fmcg_receipt(grn)
+
     destination = (
         await resolve_recorded_store_destination(ctx["tenant_id"], grn["receiving_store_id"])
         if grn.get("receiving_store_id")
@@ -1068,6 +1134,7 @@ async def post_grn(grn_id: str, ctx: dict = Depends(get_receiving_tenant)):
             "receiving_store_id": destination["id"] if destination else None,
             "receiving_store_name": destination["name"] if destination else "",
             "updatedAt": datetime.utcnow(),
+            "receipt_warnings": receipt_warnings,
         }}
     )
 
@@ -1087,6 +1154,7 @@ async def post_grn(grn_id: str, ctx: dict = Depends(get_receiving_tenant)):
         "stock_destination": destination["name"] if destination else "Central Inventory",
         "totalInwardQty": grn.get("totalInwardQty"),
         "totalAmount":    grn.get("totalAmount"),
+        "warnings":       receipt_warnings,
     }
 
 

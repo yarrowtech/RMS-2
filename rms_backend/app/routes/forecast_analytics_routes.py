@@ -28,6 +28,7 @@ from .procurement_notification_routes import notify_vendor
 from ..config import settings
 from ..email_utils import send_demand_signal_email
 from ..error_log import log_error
+from ..product_identity import stock_identity
 from ..db import (
     admins_collection, grn_collection, inventory_collection, product_collection,
     procurement_notifications_collection, purchaseorders_collection, sales_collection,
@@ -53,11 +54,41 @@ async def _require_forecast_context(ctx: TenantCtx = Depends(get_hq_tenant)) -> 
 # DEMAND FORECAST — simple moving average over real sales history
 # ═══════════════════════════════════════════════════════════════════════════
 
+async def _barcode_identity_aliases(tenant_id: str) -> Dict[str, str]:
+    """Map every known current/legacy catalogue barcode to a stable stock key."""
+    aliases: Dict[str, str] = {}
+    projection = {
+        "barcode": 1, "sku": 1, "design_no": 1, "material_code": 1,
+        "vendor_barcode": 1, "barcode_policy": 1, "variants": 1,
+    }
+    async for product in product_collection.find({"tenant_id": tenant_id}, projection):
+        product_id = str(product.get("_id") or "")
+        barcode = (product.get("barcode") or "").strip()
+        if barcode:
+            aliases[barcode] = stock_identity({**product, "product_id": product_id})
+        for variant in product.get("variants") or []:
+            variant_barcode = (variant.get("barcode") or "").strip()
+            if not variant_barcode:
+                continue
+            variant_id = str(variant.get("id") or variant.get("_id") or variant.get("sku") or "")
+            aliases[variant_barcode] = stock_identity({
+                **product, **variant, "product_id": product_id, "variant_id": variant_id,
+            })
+    return aliases
+
+
 async def _compute_demand_forecast(tenant_id: str, store_id: Optional[str], lookback_days: int, limit: int) -> List[dict]:
     since = datetime.utcnow() - timedelta(days=max(1, lookback_days))
     match: Dict[str, Any] = {"tenant_id": tenant_id, "type": "sale", "created_at": {"$gte": since}}
     if store_id:
         match["store_id"] = store_id
+
+    barcode_aliases = await _barcode_identity_aliases(tenant_id)
+    async for inventory in inventory_collection.find({"tenant_id": tenant_id}, {"barcode": 1, "stock_identity": 1, "product_id": 1, "variant_id": 1, "design_no": 1, "material_code": 1, "sku": 1, "vendor_barcode": 1, "barcode_policy": 1}):
+        barcode = (inventory.get("barcode") or "").strip()
+        identity = inventory.get("stock_identity") or barcode_aliases.get(barcode) or stock_identity(inventory)
+        if barcode and identity:
+            barcode_aliases[barcode] = identity
 
     weekly: Dict[str, Dict[tuple, float]] = defaultdict(lambda: defaultdict(float))
     meta: Dict[str, Dict[str, Any]] = {}
@@ -71,11 +102,13 @@ async def _compute_demand_forecast(tenant_id: str, store_id: Optional[str], look
             bc = (item.get("barcode") or "").strip()
             if not bc:
                 continue
+            identity = item.get("stock_identity") or barcode_aliases.get(bc) or stock_identity(item) or f"barcode:{bc.lower()}"
             qty = float(item.get("qty") or 0)
             price = float(item.get("price") or 0)
             cost = float(item.get("cost_price") or 0)
-            weekly[bc][week_key] += qty
-            m = meta.setdefault(bc, {
+            weekly[identity][week_key] += qty
+            m = meta.setdefault(identity, {
+                "barcode": bc, "stock_identity": identity,
                 "name": item.get("name", ""), "sku": item.get("sku", ""),
                 "division": item.get("division", ""), "total_qty": 0.0,
                 "total_revenue": 0.0, "total_cost": 0.0,
@@ -85,8 +118,9 @@ async def _compute_demand_forecast(tenant_id: str, store_id: Optional[str], look
             m["total_cost"] += qty * cost
 
     rows: List[dict] = []
-    for bc, weeks in weekly.items():
-        m = meta[bc]
+    for identity, weeks in weekly.items():
+        m = meta[identity]
+        bc = m["barcode"]
         ordered = [weeks[k] for k in sorted(weeks.keys())]
         weeks_active = len(ordered)
         avg_weekly_qty = m["total_qty"] / weeks_active if weeks_active else 0.0
@@ -110,7 +144,7 @@ async def _compute_demand_forecast(tenant_id: str, store_id: Optional[str], look
             avg_cost = float((product or {}).get("cost_price") or 0)
 
         rows.append({
-            "barcode": bc, "name": m["name"], "sku": m["sku"], "division": m["division"],
+            "barcode": bc, "stock_identity": identity, "name": m["name"], "sku": m["sku"], "division": m["division"],
             "weeks_active": weeks_active,
             "total_qty_sold": round(m["total_qty"], 2),
             "avg_weekly_qty": round(avg_weekly_qty, 2),
@@ -292,7 +326,8 @@ def _lines_from_forecast(rows: List[dict]) -> List[dict]:
         expected_profit = round(recommended_qty * row["margin_per_unit"], 2)
         roi = round(expected_profit / line_cost, 3) if line_cost else 0.0
         lines.append({
-            "barcode": row["barcode"], "name": row["name"], "sku": row["sku"],
+            "barcode": row["barcode"], "stock_identity": row.get("stock_identity", ""),
+            "name": row["name"], "sku": row["sku"],
             "recommended_qty": recommended_qty, "unit_cost": unit_cost,
             "line_cost": line_cost, "expected_profit": expected_profit, "roi": roi,
             "trend": row["trend"],
@@ -398,11 +433,13 @@ async def _stock_map(tenant_id: str, store_id: Optional[str]) -> Dict[str, float
     if store_id:
         query["store_id"] = store_id
 
+    barcode_aliases = await _barcode_identity_aliases(tenant_id)
     stock_by_barcode: Dict[str, float] = {}
-    async for doc in collection.find(query, {"barcode": 1, "stockQty": 1}):
+    async for doc in collection.find(query, {"barcode": 1, "stockQty": 1, "stock_identity": 1, "product_id": 1, "variant_id": 1, "design_no": 1, "material_code": 1, "sku": 1, "vendor_barcode": 1, "barcode_policy": 1}):
         bc = (doc.get("barcode") or "").strip()
-        if bc:
-            stock_by_barcode[bc] = float(doc.get("stockQty", 0) or 0)
+        identity = doc.get("stock_identity") or barcode_aliases.get(bc) or stock_identity(doc) or (f"barcode:{bc.lower()}" if bc else "")
+        if identity:
+            stock_by_barcode[identity] = stock_by_barcode.get(identity, 0.0) + float(doc.get("stockQty", 0) or 0)
     return stock_by_barcode
 
 
@@ -412,7 +449,8 @@ def _build_alerts(
 ) -> List[dict]:
     alerts = []
     for row in forecast_rows:
-        stock_qty = stock_by_barcode.get(row["barcode"], 0.0)
+        identity = row.get("stock_identity") or stock_identity(row)
+        stock_qty = stock_by_barcode.get(identity, stock_by_barcode.get(f"barcode:{row['barcode'].lower()}", 0.0))
         daily_qty = row["avg_weekly_qty"] / 7 if row["avg_weekly_qty"] else 0.0
         if daily_qty <= 0:
             continue
@@ -421,7 +459,7 @@ def _build_alerts(
             continue
         alerts.append({
             "tenant_id": tenant_id, "store_id": store_id, "store_name": store_name,
-            "barcode": row["barcode"], "name": row["name"], "sku": row["sku"],
+            "barcode": row["barcode"], "stock_identity": identity, "name": row["name"], "sku": row["sku"],
             "stock_qty": round(stock_qty, 2), "avg_weekly_qty": row["avg_weekly_qty"],
             "days_remaining": days_remaining,
             "severity": "critical" if days_remaining < LOW_STOCK_CRITICAL_DAYS else "warning",

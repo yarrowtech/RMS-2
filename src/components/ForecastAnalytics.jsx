@@ -4,7 +4,7 @@ import { API_BASE_URL } from "../config/api.js";
 import {
   LineChart, TrendingUp, TrendingDown, Minus, Building2, Wallet, LogOut,
   Search, RefreshCw, AlertTriangle, ShoppingCart, BarChart3,
-  UploadCloud, FileSpreadsheet, CheckCircle2, XCircle, Undo2, History, Download,
+  UploadCloud, FileSpreadsheet, CheckCircle2, XCircle, Undo2, History, Download, Trash2,
 } from "lucide-react";
 
 function getAdminToken() {
@@ -638,12 +638,27 @@ function ImportPanel({ kind, title, blurb, onCommitted }) {
 
           {kind === "stock" && s?.location_totals && (
             <div className="fa-panel p-4">
-              <p className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-400">Quantity that will be set per location (Ageing rows summed)</p>
+              <p className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-400">
+                Quantity that will be set per location (Ageing rows summed)
+                {s.file_format && <span className="ml-2 rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[10px] font-semibold text-slate-500">{s.file_format} format</span>}
+              </p>
               <div className="flex flex-wrap gap-2">
                 {Object.entries(s.location_totals).map(([loc, qty]) => (
                   <span key={loc} className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-600">{loc}: <b className="text-slate-900">{qty}</b></span>
                 ))}
               </div>
+              {s.location_map && Object.keys(s.location_map).length > 0 && (
+                <div className="mt-3 border-t border-slate-100 pt-3">
+                  <p className="mb-1.5 text-[11px] font-bold uppercase tracking-wide text-slate-400">Locations found in the file</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {Object.entries(s.location_map).map(([raw, mapped]) => (
+                      <span key={raw} className={`rounded-md border px-2 py-0.5 text-[11px] font-medium ${mapped ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-rose-200 bg-rose-50 text-rose-700"}`}>
+                        {raw} {mapped ? `→ ${mapped}` : "→ not mapped (qty dropped)"}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           )}
           {kind === "sales" && (
@@ -721,13 +736,22 @@ function ImportHistory({ refreshKey }) {
     } catch (e) { setError(e.message); } finally { setBusyId(""); }
   };
 
+  const remove = async (batchId) => {
+    if (!window.confirm("Delete this history entry? It has already been rolled back, so no stock or sales data is affected — only the log line is removed.")) return;
+    setBusyId(batchId); setError(null);
+    try {
+      await faFetch(`/api/forecast-analytics/data-hub/imports/${batchId}`, { method: "DELETE" });
+      load();
+    } catch (e) { setError(e.message); } finally { setBusyId(""); }
+  };
+
   return (
     <div className="space-y-5">
       <ErrorBanner message={error} />
       <div className="fa-panel flex items-center justify-between p-5">
         <div>
           <h4 className="text-sm font-bold text-slate-900">Import history</h4>
-          <p className="mt-0.5 text-xs text-slate-500">Every committed stock / sales import, newest first. Rollback is exact — it only touches rows this batch still owns.</p>
+          <p className="mt-0.5 text-xs text-slate-500">Every committed stock / sales import, newest first. Rollback is exact — it only touches rows this batch still owns. A rolled-back entry can then be deleted from the log.</p>
         </div>
         <button onClick={load} className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-bold text-indigo-700 hover:bg-indigo-100"><RefreshCw size={13} /> Refresh</button>
       </div>
@@ -759,7 +783,15 @@ function ImportHistory({ refreshKey }) {
                         : <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-600"><CheckCircle2 size={12} /> active</span>}
                     </td>
                     <td className="px-4 py-2.5 text-right">
-                      {!row.rolled_back && (
+                      {row.rolled_back ? (
+                        <button
+                          onClick={() => remove(row.batch_id)}
+                          disabled={busyId === row.batch_id}
+                          className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-bold text-slate-600 hover:bg-slate-100 disabled:opacity-60"
+                        >
+                          <Trash2 size={12} /> {busyId === row.batch_id ? "Deleting…" : "Delete"}
+                        </button>
+                      ) : (
                         <button
                           onClick={() => rollback(row.batch_id)}
                           disabled={busyId === row.batch_id}
@@ -814,7 +846,7 @@ function DataImportView() {
         <ImportPanel
           kind="sales"
           title="1 · Historical POS sales"
-          blurb="One row per bill line: Bill Date, Bill No., Store, Barcode and Bill Qty are required. Bills are grouped by Bill No. and dated from Bill Date. Any barcode not in the catalogue is created as a product from Description / Division / Section / Department / Cat-1 / Vendor / Std Rate / RSP / MRP — this is also what lets the stock file match. Re-uploading the same bill numbers is a no-op."
+          blurb="One row per bill line: Bill Date, Bill No., Store, Barcode and Bill Qty are required. Bills are grouped by Bill No. and dated from Bill Date. Any barcode not in the catalogue is created as a product from Description / Division / Section / Department / Cat-1 / Vendor / Std Rate / RSP / MRP — this is also what lets the stock file match. Multi-sheet workbooks import in full — every data tab is combined and cover / filter / summary tabs are skipped. Re-uploading the same bill numbers is a no-op."
           onCommitted={bumpHistory}
         />
       )}
@@ -822,7 +854,7 @@ function DataImportView() {
         <ImportPanel
           kind="stock"
           title="2 · Physical stock count"
-          blurb="No barcode needed — each row is matched to a product by DIVISION / SECTION / DEPARTMENT / VENDOR / CATEGORY1-5 (CATEGORY6 = Ageing is ignored, and rows that collapse to the same product per location are summed). WAREHOUSE → Raphaaa HQ / central; the store columns → each store. Quantities are set as an absolute snapshot; products absent from the file keep their current stock. Import the sales file first."
+          blurb="Two layouts are auto-detected: wide (WAREHOUSE + one column per store) or long (a Locname / Source Site column plus CLOSING_QTY, one row per product per site — rows are summed per location). Matching uses ITEM_CODE / BARCODE first; failing that, DIVISION / SECTION / DEPARTMENT / VENDOR / CATEGORY1-5, and when that maps to more than one product the row's RSP / MRP picks one (CATEGORY6 = Ageing is ignored). WAREHOUSE / a warehouse Locname → Raphaaa HQ / central. Multi-sheet workbooks import in full — cover / filter / summary tabs are skipped. Quantities are set as an absolute snapshot; products absent from the file keep their current stock. Import the sales file first."
           onCommitted={bumpHistory}
         />
       )}

@@ -83,6 +83,12 @@ const emptyPricing = () => ({
 
 const emptyProduct = () => ({
   product_name:    "",
+  product_type:    "general",
+  vendor_barcode:  "",
+  brand:           "",
+  manufacturer:    "",
+  pack_size:       "",
+  batch_tracking:  false,
   division:        "",
   section:         "",
   department:      "",
@@ -458,6 +464,10 @@ export default function AddProduct({ onSuccess, onClose } = {}) {
     e.preventDefault();
 
     for (let i = 0; i < products.length; i++) {
+      if (products[i].product_type === "fmcg" && products[i].has_variants) {
+        alert(`Create each FMCG pack size as a separate product with its own barcode (product #${i + 1}).`);
+        return;
+      }
       if (products[i].requires_expiry && !products[i].expiry_date) {
         alert(`Please enter an expiry date for product #${i + 1}`);
         return;
@@ -498,6 +508,12 @@ export default function AddProduct({ onSuccess, onClose } = {}) {
 
         // division/section/department intentionally omitted — admin fills later via enrich
         fd.append("product_name",    p.product_name);
+        fd.append("product_type",    p.product_type || "general");
+        fd.append("vendor_barcode",  p.vendor_barcode || "");
+        fd.append("brand",           p.brand || "");
+        fd.append("manufacturer",    p.manufacturer || "");
+        fd.append("pack_size",       p.pack_size || "");
+        fd.append("batch_tracking",  String(Boolean(p.batch_tracking || p.requires_expiry)));
         fd.append("division",        "");
         fd.append("section",         "");
         fd.append("department",      "");
@@ -638,6 +654,46 @@ export default function AddProduct({ onSuccess, onClose } = {}) {
               </div>
 
               {/* ── EXPIRY & SHELF LIFE ───────────────────────────────────── */}
+              <Sec label="Product tracking" />
+              <div className="mb-5 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+                <div>
+                  <Label>Product Type</Label>
+                  <Select value={form.product_type} onChange={(e) => handleChange(idx, "product_type", e.target.value)}>
+                    <option value="general">General product</option>
+                    <option value="fmcg">FMCG</option>
+                    <option value="garment">Garment</option>
+                    <option value="fabric">Fabric</option>
+                  </Select>
+                </div>
+                <div>
+                  <Label>Manufacturer / Vendor Barcode</Label>
+                  <Input mono inputMode="numeric" placeholder="GTIN / EAN / UPC" value={form.vendor_barcode}
+                    onChange={(e) => handleChange(idx, "vendor_barcode", e.target.value.replace(/\D/g, "").slice(0, 14))} />
+                  <p className="mt-1 text-[11px] text-slate-400">For FMCG, enter the barcode printed on the retail pack.</p>
+                </div>
+                <div>
+                  <Label>Pack Size</Label>
+                  <Input placeholder="e.g. 500 ml, 1 kg, pack of 6" value={form.pack_size}
+                    onChange={(e) => handleChange(idx, "pack_size", e.target.value)} />
+                </div>
+                <div>
+                  <Label>Brand</Label>
+                  <Input placeholder="Brand name" value={form.brand}
+                    onChange={(e) => handleChange(idx, "brand", e.target.value)} />
+                </div>
+                <div>
+                  <Label>Manufacturer</Label>
+                  <Input placeholder="Manufacturer name" value={form.manufacturer}
+                    onChange={(e) => handleChange(idx, "manufacturer", e.target.value)} />
+                </div>
+                <label className="flex items-center gap-3 rounded-xl border border-slate-200 px-3 py-2">
+                  <input type="checkbox" checked={form.batch_tracking}
+                    onChange={(e) => handleChange(idx, "batch_tracking", e.target.checked)}
+                    className="h-4 w-4 accent-indigo-600" />
+                  <span><b className="block text-xs text-slate-800">Track batches</b><span className="text-[11px] text-slate-400">Recommended for FMCG; automatic when expiry is enabled.</span></span>
+                </label>
+              </div>
+
               <div className="mb-4">
                 <label className="flex cursor-pointer items-start gap-3">
                   <input type="checkbox" checked={form.requires_expiry}
