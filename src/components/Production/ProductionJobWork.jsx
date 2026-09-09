@@ -129,6 +129,8 @@ const STEP_STYLES = {
   bom:      { active: "border-indigo-500 bg-gradient-to-r from-indigo-600 to-violet-600 text-white shadow-lg shadow-indigo-200", chipActive: "border-indigo-500 bg-indigo-600 text-white", dot: "bg-indigo-600" },
   fabric:   { active: "border-cyan-500 bg-gradient-to-r from-cyan-600 to-teal-600 text-white shadow-lg shadow-cyan-200", chipActive: "border-cyan-500 bg-cyan-600 text-white", dot: "bg-cyan-600" },
   orders:   { active: "border-amber-400 bg-gradient-to-r from-amber-500 to-orange-500 text-white shadow-lg shadow-amber-200", chipActive: "border-amber-400 bg-amber-500 text-white", dot: "bg-amber-500" },
+  vendors:  { active: "border-violet-500 bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white shadow-lg shadow-violet-200", chipActive: "border-violet-500 bg-violet-600 text-white", dot: "bg-violet-600" },
+  "po-list": { active: "border-emerald-500 bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-lg shadow-emerald-200", chipActive: "border-emerald-500 bg-emerald-600 text-white", dot: "bg-emerald-600" },
   "design-collab": { active: "border-fuchsia-500 bg-gradient-to-r from-fuchsia-600 to-pink-600 text-white shadow-lg shadow-fuchsia-200", chipActive: "border-fuchsia-500 bg-fuchsia-600 text-white", dot: "bg-fuchsia-600" },
 };
 
