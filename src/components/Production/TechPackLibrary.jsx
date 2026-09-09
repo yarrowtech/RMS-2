@@ -33,7 +33,7 @@ const emptyPack = {
 
 const emptyMeasurementRow = (sizes) => ({ point: "", sample_value: "", grades: Object.fromEntries(sizes.map((s) => [s, ""])) });
 const emptyTrimRow = () => ({ description: "", color: "", size: "", supplier: "", quantity: "", price: "" });
-const emptyColourway = () => ({ name: "", fabric_ref: "", thread_ref: "" });
+const emptyColourway = () => ({ name: "", fabric_ref: "", thread_ref: "", image_file: null, image_preview: "" });
 
 async function imageToDataUrl(url) {
   try {
@@ -154,7 +154,9 @@ export async function downloadTechPackPdf(pack, plans = []) {
   y = table(["Description", "Colour", "Size", "Supplier", "Qty", "Price"], (pack.trims_items || []).map((item) => [item.description, item.color, item.size, item.supplier, item.quantity, item.price]), y, [150, 72, 55, 105, 52, 63]); y = textBox("Trim / label notes", pack.trims_labels_notes, y, 44); y = await imageGrid(imageGroups.trims, y, 160); footer();
 
   doc.addPage(); header("6. Colourways, Comments & Handover", 6); y = 108; y = sectionBar("Colour and fabric combinations", y);
-  y = table(["Colourway", "Fabric reference", "Thread / trim reference"], (pack.colourways || []).map((row) => [row.name, row.fabric_ref, row.thread_ref]), y, [150, 180, 197]); y = textBox("Colourway notes", pack.colourway_notes, y, 42); y = await imageGrid(imageGroups.colourway, y, 125);
+  y = table(["Colourway", "Fabric reference", "Thread / trim reference"], (pack.colourways || []).map((row) => [row.name, row.fabric_ref, row.thread_ref]), y, [150, 180, 197]);
+  y = await imageGrid((pack.colourways || []).map((row) => row.image_url).filter(Boolean), y, 90);
+  y = textBox("Colourway notes", pack.colourway_notes, y, 42); y = await imageGrid(imageGroups.colourway, y, 125);
   y = sectionBar("Job worker acknowledgement", y); doc.setDrawColor(148, 163, 184); doc.rect(margin, y, contentWidth, 100); doc.setFont("helvetica", "normal"); doc.setFontSize(9); doc.setTextColor(51, 65, 85);
   doc.text("I have reviewed this Tech Pack, all supplied references and the stated version. I will request clarification before starting work if any item is unclear.", margin + 10, y + 18, { maxWidth: contentWidth - 20 });
   doc.line(margin + 10, y + 62, margin + 205, y + 62); doc.line(margin + 225, y + 62, margin + 375, y + 62); doc.line(margin + 395, y + 62, pageWidth - margin - 10, y + 62);
@@ -211,6 +213,11 @@ function PackModal({ plans, onClose, onSaved }) {
   }));
   const changeTrim = (index, key, value) => setTrimRows((rows) => rows.map((row, i) => i === index ? { ...row, [key]: value } : row));
   const changeColourway = (index, key, value) => setColourways((rows) => rows.map((row, i) => i === index ? { ...row, [key]: value } : row));
+  const setColourwayImage = (index, files) => {
+    const file = Array.from(files || []).find((item) => item.type.startsWith("image/"));
+    if (!file) return;
+    setColourways((rows) => rows.map((row, i) => i === index ? { ...row, image_file: file, image_preview: URL.createObjectURL(file) } : row));
+  };
 
   const addImages = (category, files) => {
     const accepted = Array.from(files || []).filter((file) => file.type.startsWith("image/"));
@@ -229,7 +236,8 @@ function PackModal({ plans, onClose, onSaved }) {
       const cleanMeasurementRows = measurementRows.filter((row) => row.point.trim());
       const cleanTrimRows = trimRows.filter((row) => row.description.trim());
       const cleanColourways = colourways.filter((row) => row.name.trim());
-      const imageCount = Object.values(images).reduce((sum, list) => sum + (list?.length || 0), 0);
+      const serializableColourways = cleanColourways.map(({ image_file, image_preview, ...row }) => row);
+      const imageCount = Object.values(images).reduce((sum, list) => sum + (list?.length || 0), 0) + cleanColourways.filter((row) => row.image_file).length;
       let result;
       if (imageCount > 0) {
         // Multipart: every field must be a single string value (repeated
@@ -245,8 +253,9 @@ function PackModal({ plans, onClose, onSaved }) {
         body.append("sizes", JSON.stringify(sizeList));
         body.append("measurement_rows", JSON.stringify(cleanMeasurementRows));
         body.append("trims_items", JSON.stringify(cleanTrimRows));
-        body.append("colourways", JSON.stringify(cleanColourways));
+        body.append("colourways", JSON.stringify(serializableColourways));
         Object.entries(images).forEach(([category, files]) => (files || []).forEach((file) => body.append(`pack_image_${category}`, file)));
+        cleanColourways.forEach((row, index) => { if (row.image_file) body.append(`pack_image_colourway_row_${index}`, row.image_file); });
         result = await api("/tech-packs", { method: "POST", body });
       } else {
         const jsonPayload = {
@@ -256,7 +265,7 @@ function PackModal({ plans, onClose, onSaved }) {
           sizes: JSON.stringify(sizeList),
           measurement_rows: JSON.stringify(cleanMeasurementRows),
           trims_items: JSON.stringify(cleanTrimRows),
-          colourways: JSON.stringify(cleanColourways),
+          colourways: JSON.stringify(serializableColourways),
         };
         result = await api("/tech-packs", { method: "POST", body: JSON.stringify(jsonPayload) });
       }
@@ -358,13 +367,14 @@ function PackModal({ plans, onClose, onSaved }) {
       <Section number="6" title="Colorways" subtitle="Color and fabric references for each combo - swatches should match the corresponding order.">
         <div className="overflow-x-auto rounded-2xl border border-slate-200">
           <table className="w-full text-xs">
-            <thead className="bg-slate-50"><tr>{["Colourway name", "Fabric reference", "Thread reference", ""].map((h) => <th key={h} className="px-3 py-2 text-left font-bold text-slate-500">{h}</th>)}</tr></thead>
+            <thead className="bg-slate-50"><tr>{["Colourway name", "Fabric reference", "Thread reference", "Image (optional)", ""].map((h) => <th key={h} className="px-3 py-2 text-left font-bold text-slate-500">{h}</th>)}</tr></thead>
             <tbody>
               {colourways.map((row, index) => (
                 <tr key={index} className="border-t border-slate-100">
                   {["name", "fabric_ref", "thread_ref"].map((key) => (
                     <td key={key} className="px-3 py-1.5"><input value={row[key]} onChange={(e) => changeColourway(index, key, e.target.value)} className="w-full min-w-[90px] rounded-lg border border-slate-200 px-2 py-1.5" /></td>
                   ))}
+                  <td className="min-w-[150px] px-3 py-1.5"><input type="file" accept="image/*" onChange={(e) => { setColourwayImage(index, e.target.files); e.target.value = ""; }} className="w-full text-[10px] file:mr-2 file:rounded-lg file:border-0 file:bg-violet-600 file:px-2 file:py-1.5 file:text-[10px] file:font-bold file:text-white" />{row.image_preview && <div className="relative mt-2 w-fit"><img src={row.image_preview} alt={`${row.name || "Colourway"} preview`} className="h-12 w-12 rounded-lg border object-cover" /><button type="button" onClick={() => setColourways((rows) => rows.map((item, i) => i === index ? { ...item, image_file: null, image_preview: "" } : item))} className="absolute -right-2 -top-2 grid h-5 w-5 place-items-center rounded-full bg-rose-600 text-[10px] font-bold text-white">x</button></div>}</td>
                   <td><button type="button" disabled={colourways.length === 1} onClick={() => setColourways((rows) => rows.filter((_, i) => i !== index))} className="px-2 text-lg font-bold text-rose-500 disabled:text-slate-300">x</button></td>
                 </tr>
               ))}
@@ -453,7 +463,7 @@ function PackDetail({ pack, plans, onClose, onUpdated }) {
       )}
       {pack.colourways?.length > 0 && (
         <div><p className="mb-2 text-xs font-black uppercase tracking-wide text-slate-500">Colourways</p>
-          <div className="overflow-x-auto rounded-xl border border-slate-200"><table className="w-full text-xs"><thead className="bg-slate-50"><tr>{["Colourway", "Fabric ref", "Thread ref"].map((h) => <th key={h} className="px-3 py-2 text-left">{h}</th>)}</tr></thead><tbody>{pack.colourways.map((row, i) => <tr key={i} className="border-t border-slate-100"><td className="px-3 py-1.5 font-bold">{row.name}</td><td className="px-3 py-1.5">{row.fabric_ref}</td><td className="px-3 py-1.5">{row.thread_ref}</td></tr>)}</tbody></table></div>
+          <div className="overflow-x-auto rounded-xl border border-slate-200"><table className="w-full text-xs"><thead className="bg-slate-50"><tr>{["Colourway", "Fabric ref", "Thread ref", "Image"].map((h) => <th key={h} className="px-3 py-2 text-left">{h}</th>)}</tr></thead><tbody>{pack.colourways.map((row, i) => <tr key={i} className="border-t border-slate-100"><td className="px-3 py-1.5 font-bold">{row.name}</td><td className="px-3 py-1.5">{row.fabric_ref}</td><td className="px-3 py-1.5">{row.thread_ref}</td><td className="px-3 py-1.5">{row.image_url ? <img src={row.image_url} alt={`${row.name} colourway`} className="h-12 w-12 rounded-lg border object-cover" /> : <span className="text-slate-400">—</span>}</td></tr>)}</tbody></table></div>
         </div>
       )}
       {(pack.artwork_width_cm || pack.artwork_height_cm || pack.artwork_placement) && (

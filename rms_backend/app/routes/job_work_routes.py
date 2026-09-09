@@ -150,6 +150,7 @@ def _parse_colourways(raw: Any) -> list[dict]:
             "name": name,
             "fabric_ref": str(row.get("fabric_ref") or "").strip()[:120],
             "thread_ref": str(row.get("thread_ref") or "").strip()[:120],
+            "image_url": str(row.get("image_url") or "").strip()[:1000],
         })
     return rows
 
@@ -175,7 +176,8 @@ async def _tech_pack_payload_from_request(request: Request) -> tuple[dict, dict[
             if not key.startswith("pack_image_"):
                 continue
             category = key[len("pack_image_"):]
-            if category not in TECH_PACK_IMAGE_CATEGORIES:
+            is_colourway_row = category.startswith("colourway_row_") and category[len("colourway_row_"):].isdigit()
+            if category not in TECH_PACK_IMAGE_CATEGORIES and not is_colourway_row:
                 continue
             try:
                 result = cloudinary.uploader.upload(
@@ -1391,7 +1393,10 @@ async def create_tech_pack(request: Request, ctx: dict = Depends(_require_design
         "artwork_height_cm": str(payload.get("artwork_height_cm") or "").strip()[:20],
         "artwork_placement": str(payload.get("artwork_placement") or "").strip()[:300],
         # Structured colourways — one row per fabric/thread combo.
-        "colourways": _parse_colourways(payload.get("colourways")),
+        "colourways": [
+            {**row, "image_url": (uploaded_by_category.get(f"colourway_row_{index}") or [row.get("image_url", "")])[0]}
+            for index, row in enumerate(_parse_colourways(payload.get("colourways")))
+        ],
         # Per-guide-page image slots (Sketch / Details / Artwork / Trims & Label / Colourways).
         "sketch_images": _category_images("sketch"),
         "details_images": _category_images("details"),
