@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { AlertCircle, BookOpen, CheckCircle2, ClipboardCheck, Factory, FileText, LayoutDashboard, MessageSquare, Palette, Plus, RefreshCw, Ruler, Search, Send, Settings, X } from "lucide-react";
+import { AlertCircle, BookOpen, CheckCircle2, ClipboardCheck, Factory, FileText, Gauge, LayoutDashboard, MessageSquare, Palette, Plus, RefreshCw, Ruler, Search, Send, Settings, X } from "lucide-react";
 import { API_BASE_URL } from "../config/api.js";
 import { logoutOrReturnToDepartmentSelector, getAdminName, getAdminScope, getStoreName } from "../utils/authRedirect.js";
 import TechPackLibrary from "./Production/TechPackLibrary.jsx";
@@ -7,7 +7,9 @@ import AdminSettings from "./Admin/AdminSettings.jsx";
 
 const TABS = [
   ["dashboard", "Dashboard", LayoutDashboard], ["research", "Research & Mood Boards", Search], ["projects", "Design Projects", Palette], ["patterns", "Patterns", Ruler],
-  ["artwork", "Print & Artwork", FileText], ["samples", "Samples & Approval", ClipboardCheck], ["techpacks", "Tech Packs", BookOpen], ["handoff", "Production Handoff", Factory], ["queries", "Queries", MessageSquare], ["changes", "Change Control", AlertCircle], ["reports", "Reports", CheckCircle2],
+  ["artwork", "Print & Artwork", FileText], ["samples", "Samples & Approval", ClipboardCheck], ["techpacks", "Tech Packs", BookOpen], ["handoff", "Production Handoff", Factory],
+  ["floorops", "Daily Floor Log", Gauge],
+  ["queries", "Queries", MessageSquare], ["changes", "Change Control", AlertCircle], ["reports", "Reports", CheckCircle2],
 ];
 const GUIDES={
 dashboard:["Review live counts and Production Readiness.","Open the tab connected to any missing item.","Next: start Research or create a Design Project."],
@@ -18,6 +20,7 @@ artwork:["Link the print/embroidery to a project.","Record version, dimensions, 
 samples:["Choose project, pattern, sample type, assignee, materials, cost and due date.","On receipt, record fit/construction results and the decision.","Approved continues to Tech Pack; Revision/Resample returns to Pattern or Artwork."],
 techpacks:["Use the exact Design Project number.","Complete Sketch, Spec Sheet, Details, Artwork, Trims/Labels and Colourways; upload references.","Download/review the PDF. Use a new version for major changes. Next: Handoff."],
 handoff:["Confirm approved sample and matching Tech Pack.","Record Design Head approval; Production separately records feasibility.","Choose an existing BOM or auto-create one from pattern consumption, then Release to Production."],
+floorops:["Floor workers have no login — a supervisor logs each entry on their behalf; pick a name or type one for a walk-in.","Choose the department first; the form only shows the fields that department needs (set these up under Settings).","Switch to KPI Summary for efficiency, rework, rejection and on-time % by department, worker or style."],
 queries:["Select the affected design, category and priority.","Describe one clear technical issue; Design and Production share the same feed.","Resolve with a written answer. Use Change Control if released instructions change."],
 changes:["Record reason, previous spec, new spec, and material/cost/delivery impact.","The system identifies affected open job orders.","Production accepts/rejects and acknowledges; accepted changes require a new controlled version."],
 reports:["Review release rate, sample cost and revisions.","Balance work using Designer Workload and Deadline Calendar.","Compare target, BOM material and sample cost with matched sales units."]
@@ -31,6 +34,7 @@ const SUBTITLES = {
   samples: "Every sample round and the decision that gates Production.",
   techpacks: "The locked technical reference shared with Production.",
   handoff: "Approvals, feasibility and release to Production.",
+  floorops: "Daily shop-floor entries and KPIs — Pattern, Layering, Cutting, Stitching, Embroidery and more.",
   queries: "Technical clarifications shared with Production.",
   changes: "Post-release specification changes and their impact.",
   reports: "Workload, deadlines, cost and sales performance.",
@@ -60,6 +64,26 @@ const emptyResearch = { title:"", category:"Fashion trend", season:"", departmen
 const emptyArtwork = { project_id:"", name:"", kind:"Print", version:"v1", width:"", height:"", placement:"", technique:"", colours:"", file_urls:"", notes:"", status:"DRAFT" };
 const emptyChange = { project_id:"", reason:"", previous_spec:"", new_spec:"", material_impact:"", cost_impact:"", delivery_impact:"", before_urls:"", after_urls:"" };
 
+// ── Daily shop-floor KPI logging ──────────────────────────────────────────
+// Floor workers have no login; a supervisor fills this on their behalf. One
+// form adapts its fields per department instead of a hardcoded form each.
+const DEFAULT_FLOOR_DEPARTMENTS = [
+  { name:"Pattern Making", fields:["target_qty","completed_qty","rework_qty","on_time","remarks"], labels:{target_qty:"Target patterns",completed_qty:"Completed patterns",rework_qty:"Rework qty"} },
+  { name:"Layering", fields:["fabric_used_mtrs","wastage_mtrs","vendor_name","on_time","remarks"], labels:{fabric_used_mtrs:"Fabric used (mtrs)",wastage_mtrs:"Wastage (mtrs)",vendor_name:"Vendor (fabric source)"} },
+  { name:"Cutting", fields:["fabric_used_mtrs","vendor_name","target_qty","completed_qty","rejected_qty","wastage_mtrs","on_time","remarks"], labels:{target_qty:"Target pcs",completed_qty:"Cut pcs",rejected_qty:"Rejected pcs",fabric_used_mtrs:"Fabric used (mtrs)",wastage_mtrs:"Wastage (mtrs)",vendor_name:"Vendor (fabric source)"} },
+  { name:"Stitching", fields:["target_qty","completed_qty","rework_qty","rejected_qty","on_time","remarks"], labels:{target_qty:"Target pcs",completed_qty:"Stitched pcs",rework_qty:"Rework pcs",rejected_qty:"Rejected pcs"} },
+  { name:"Embroidery", fields:["target_qty","completed_qty","rejected_qty","on_time","remarks"], labels:{target_qty:"Target pcs",completed_qty:"Embroidered pcs",rejected_qty:"Rejected pcs"} },
+];
+const FLOOR_FIELD_META = {
+  target_qty:{label:"Target qty",type:"number"}, completed_qty:{label:"Completed qty",type:"number"},
+  rework_qty:{label:"Rework qty",type:"number"}, rejected_qty:{label:"Rejected qty",type:"number"},
+  fabric_used_mtrs:{label:"Fabric used (mtrs)",type:"number"}, wastage_mtrs:{label:"Wastage (mtrs)",type:"number"},
+  vendor_name:{label:"Vendor (fabric source)",type:"text"}, on_time:{label:"On time",type:"bool"}, remarks:{label:"Remarks",type:"text"},
+};
+const todayISO = () => new Date().toISOString().slice(0,10);
+const emptyFloorLog = () => ({ date:todayISO(), time:"", department:"", worker_id:"", worker_name:"", design_no:"", vendor_name:"", job_work_order_id:"", target_qty:"", completed_qty:"", rework_qty:"", rejected_qty:"", fabric_used_mtrs:"", wastage_mtrs:"", on_time:true, remarks:"" });
+const emptyFloorWorker = { name:"", phone:"", departments:[], notes:"" };
+
 function headers(){ const token=localStorage.getItem("admin_token")||localStorage.getItem("access_token")||localStorage.getItem("token")||""; return {"Content-Type":"application/json", ...(token?{Authorization:`Bearer ${token}`}:{})}; }
 async function api(path, options={}){ const response=await fetch(`${API_BASE_URL}/api/design-pattern${path}`,{...options,headers:{...headers(),...(options.headers||{})}}); const data=await response.json().catch(()=>({})); if(!response.ok) throw new Error(data.detail||"Unable to complete this action."); return data; }
 const gradingRows=(text)=>String(text||"").split("\n").map(line=>{const [point,base,raw=""]=line.split("|");return {point:point?.trim(),base_value:base?.trim(),grades:Object.fromEntries(raw.split(",").map(x=>x.split(":").map(v=>v.trim())).filter(x=>x[0]))};}).filter(x=>x.point);
@@ -79,9 +103,22 @@ export default function DesignPattern(){
   const [settings,setSettings]=useState(null);
   const [projectForm,setProjectForm]=useState(emptyProject), [patternForm,setPatternForm]=useState(emptyPattern), [sampleForm,setSampleForm]=useState(emptySample), [queryForm,setQueryForm]=useState(emptyQuery), [releaseForm,setReleaseForm]=useState({project_id:"",tech_pack_id:"",material_plan_id:""});
   const [researchForm,setResearchForm]=useState(emptyResearch), [artworkForm,setArtworkForm]=useState(emptyArtwork), [changeForm,setChangeForm]=useState(emptyChange);
+  const [floorDepts,setFloorDepts]=useState(DEFAULT_FLOOR_DEPARTMENTS), [floorWorkers,setFloorWorkers]=useState([]), [floorLogs,setFloorLogs]=useState([]), [floorKpis,setFloorKpis]=useState(null);
+  const [floorSection,setFloorSection]=useState("log"), [floorLoaded,setFloorLoaded]=useState(false);
+  const [floorFilters,setFloorFilters]=useState({date_from:"",date_to:"",department:"",worker_id:"",design_no:""});
+  const [floorLogForm,setFloorLogForm]=useState(emptyFloorLog()), [floorWorkerForm,setFloorWorkerForm]=useState(emptyFloorWorker);
   const load=useCallback(async()=>{ setLoading(true);setError("");try{const [workspace,insights]=await Promise.all([api("/workspace"),api("/insights")]);setData({...workspace,insights:insights.data||[]});api("/settings").then(r=>setSettings(r.data)).catch(()=>setSettings(DEFAULT_SETTINGS));}catch(e){setError(e.message);}finally{setLoading(false);}},[]);
   useEffect(()=>{load();},[load]);
   const run=async(path,payload,message)=>{try{const result=await api(path,{method:"POST",body:JSON.stringify(payload)});setNotice(result.message||message);setModal("");await load();}catch(e){setError(e.message);}};
+  const loadFloorOps=useCallback(async()=>{try{const [depts,workers]=await Promise.all([api("/floor-departments"),api("/floor-workers")]);setFloorDepts(depts.data?.length?depts.data:DEFAULT_FLOOR_DEPARTMENTS);setFloorWorkers(workers.data||[]);}catch(e){setError(e.message);}},[]);
+  const loadFloorLogs=useCallback(async(filters)=>{try{const q=new URLSearchParams(Object.entries(filters||{}).filter(([,v])=>v));const [logs,kpis]=await Promise.all([api(`/floor-logs?${q}`),api(`/floor-kpis?date_from=${filters?.date_from||""}&date_to=${filters?.date_to||""}`)]);setFloorLogs(logs.data||[]);setFloorKpis(kpis);}catch(e){setError(e.message);}},[]);
+  useEffect(()=>{if(active==="floorops"&&!floorLoaded){setFloorLoaded(true);loadFloorOps();loadFloorLogs(floorFilters);}},[active,floorLoaded,loadFloorOps,loadFloorLogs,floorFilters]);
+  const applyFloorFilters=()=>loadFloorLogs(floorFilters);
+  const currentFloorDept=floorDepts.find(d=>d.name===floorLogForm.department);
+  const currentFloorFields=currentFloorDept?.fields||[];
+  const submitFloorLog=async(e)=>{e.preventDefault();try{await api("/floor-logs",{method:"POST",body:JSON.stringify(floorLogForm)});setNotice("Floor log entry saved.");setModal("");setFloorLogForm(emptyFloorLog());await loadFloorLogs(floorFilters);}catch(e2){setError(e2.message);}};
+  const submitFloorWorker=async(e)=>{e.preventDefault();try{const result=await api("/floor-workers",{method:"POST",body:JSON.stringify(floorWorkerForm)});setNotice(result.message||"Worker added.");setModal("");setFloorWorkerForm(emptyFloorWorker);await loadFloorOps();}catch(e2){setError(e2.message);}};
+  const toggleFloorWorker=async(w)=>{try{await api(`/floor-workers/${w.id}`,{method:"PATCH",body:JSON.stringify({active:!w.active})});await loadFloorOps();}catch(e2){setError(e2.message);}};
   const projects=useMemo(()=>data.projects.filter(p=>`${p.design_no} ${p.style_name} ${p.collection} ${p.designer}`.toLowerCase().includes(search.toLowerCase())),[data.projects,search]);
   const projectName=(id)=>{const p=data.projects.find(x=>x.id===id);return p?`${p.design_no} · ${p.style_name}`:"Unknown design";};
   const approvedSamples=new Set(data.samples.filter(s=>["APPROVED","APPROVED_WITH_COMMENTS"].includes(s.decision)).map(s=>s.project_id));
@@ -147,6 +184,7 @@ export default function DesignPattern(){
         {active==="samples"&&<Panel title="Samples & Approval" subtitle="Record every sample round and the decision that gates Production." action={()=>{setSampleForm({...emptySample,sample_type:sampleTypeOptions[1]||sampleTypeOptions[0]});setModal("sample");}} actionText="+ Review sample">{data.samples.length?data.samples.map(s=><Card key={s.id} title={`${s.sample_no} · ${s.sample_type}`} meta={`${projectName(s.project_id)} · Qty ${s.quantity}`}><p className="text-sm text-slate-600">{s.review_notes||s.fit_result||"No review notes."}</p><AttachmentGallery urls={s.image_urls} label="Sample photo"/><Badge value={s.decision}/></Card>):<Empty>No sample reviews yet.</Empty>}</Panel>}
         {active==="techpacks"&&<><div className="mb-4 rounded-2xl border border-fuchsia-200 bg-fuchsia-50 p-4 text-sm text-fuchsia-900"><b>Shared with Production:</b> tech packs created here are the same records visible in Production & Job Work. Use the exact project design number, approve a sample, then release it from Production Handoff.</div><TechPackLibrary plans={data.material_plans||[]} onSelectForOrder={()=>{setActive("handoff");setNotice("Tech pack ready. Select its design project below to release it.");}}/></>}
         {active==="handoff"&&<Panel title="Approval & Production Handoff" subtitle="Requires approved sample, Design Head sign-off, Production feasibility, and a matching Tech Pack.">{data.projects.length?data.projects.map(p=>{const packs=data.tech_packs.filter(t=>t.design_no===p.design_no);const approvals=Object.fromEntries((p.approvals||[]).map(a=>[a.type,a.decision]));const ready=approvedSamples.has(p.id)&&packs.length&&approvals.DESIGN_HEAD==="APPROVED"&&approvals.PRODUCTION_FEASIBILITY==="APPROVED";return <Card key={p.id} title={`${p.design_no} · ${p.style_name}`} meta={`${packs.length} tech pack(s) · Sample ${approvedSamples.has(p.id)?"approved":"missing"}`}><AttachmentGallery urls={[...(p.moodboard_urls||[]),...packs.flatMap(t=>[...(t.sketch_urls||[]),...(t.detail_images||[]),...(t.artwork_urls||[]),...(t.trim_images||[]),...(t.colourway_images||[])])]} label="Handoff preview"/><div className="flex flex-wrap items-center gap-2"><Badge value={p.status}/><Badge value={`Design: ${approvals.DESIGN_HEAD||"PENDING"}`}/><Badge value={`Production: ${approvals.PRODUCTION_FEASIBILITY||"PENDING"}`}/>{approvals.DESIGN_HEAD!=="APPROVED"&&<button onClick={async()=>{const note=window.prompt("Design approval note")||"Approved for production review";try{await api(`/projects/${p.id}/approval`,{method:"POST",body:JSON.stringify({approval_type:"DESIGN_HEAD",decision:"APPROVED",note})});await load();}catch(e){setError(e.message);}}} className="rounded-xl border border-violet-200 px-3 py-2 text-xs font-bold text-violet-700">Design Head approve</button>}{p.status!=="RELEASED_TO_PRODUCTION"&&<button disabled={!ready} onClick={()=>{setReleaseForm({project_id:p.id,tech_pack_id:packs[0]?.id||"",material_plan_id:p.material_plan_id||""});setModal("release");}} className="rounded-xl bg-emerald-600 px-3 py-2 text-xs font-bold text-white disabled:opacity-40"><Send className="mr-1 inline h-3.5 w-3.5"/>Release to Production</button>}</div></Card>}):<Empty>Create a design project first.</Empty>}</Panel>}
+        {active==="floorops"&&<FloorOpsView section={floorSection} setSection={setFloorSection} depts={floorDepts} workers={floorWorkers} logs={floorLogs} kpis={floorKpis} filters={floorFilters} setFilters={setFloorFilters} onApplyFilters={applyFloorFilters} onAddLog={()=>{setFloorLogForm(emptyFloorLog());setModal("floorlog");}} onAddWorker={()=>{setFloorWorkerForm(emptyFloorWorker);setModal("floorworker");}} onToggleWorker={toggleFloorWorker}/>}
         {active==="queries"&&<Panel title="Design & Production Queries" subtitle="Keep technical clarifications and revisions attached to the design." action={()=>setModal("query")} actionText="+ Raise query">{data.queries.length?data.queries.map(q=><Card key={q.id} title={`${q.query_no} · ${q.category}`} meta={`${projectName(q.project_id)} · ${q.priority}`}><p className="text-sm text-slate-600">{q.description}</p><AttachmentGallery urls={q.attachment_urls} label="Query attachment"/>{q.response&&<p className="rounded-lg bg-emerald-50 p-2 text-xs text-emerald-800"><b>Response:</b> {q.response}</p>}<div className="flex gap-2"><Badge value={q.status}/>{!["RESOLVED","CLOSED"].includes(q.status)&&<button onClick={async()=>{const response=window.prompt("Resolution / clarification");if(!response)return;try{await api(`/queries/${q.id}`,{method:"PATCH",body:JSON.stringify({status:"RESOLVED",response})});await load();}catch(e){setError(e.message);}}} className="rounded-lg border border-emerald-200 px-2 py-1 text-xs font-bold text-emerald-700">Resolve</button>}</div></Card>):<Empty>No open design or production queries.</Empty>}</Panel>}
         {active==="changes"&&<Panel title="Post-release Change Control" subtitle="Record specification changes and their material, cost and delivery impact." action={()=>{setChangeForm(emptyChange);setModal("change");}} actionText="+ Change request">{data.change_requests.length?data.change_requests.map(c=><Card key={c.id} title={`${c.change_no} · ${projectName(c.project_id)}`} meta={`Raised by ${c.raised_by||"Unknown"}`}><p className="text-sm text-slate-600">{c.reason}</p><p className="text-xs text-slate-500">Material: {c.material_impact||"None"} · Cost: {c.cost_impact||"None"} · Delivery: {c.delivery_impact||"None"}</p><div className="grid gap-3 sm:grid-cols-2"><div><p className="mb-1 text-[10px] font-black uppercase text-slate-400">Before</p><AttachmentGallery urls={c.before_urls} label="Before change"/></div><div><p className="mb-1 text-[10px] font-black uppercase text-slate-400">Proposed</p><AttachmentGallery urls={c.after_urls} label="Proposed change"/></div></div><Badge value={c.status}/></Card>):<Empty>No formal change requests.</Empty>}</Panel>}
         {active==="reports"&&<Reports data={data} projectName={projectName}/>}
@@ -161,6 +199,36 @@ export default function DesignPattern(){
     {modal==="research"&&<FormModal title="Add research reference" onClose={()=>setModal("")} onSubmit={e=>{e.preventDefault();run("/research",{...researchForm,tags:researchForm.tags.split(",").map(x=>x.trim()).filter(Boolean),reference_urls:researchForm.reference_urls.split("\n").filter(Boolean)})}}><div className="grid gap-4 md:grid-cols-2">{["title","category","season","market_segment"].map(k=><Field key={k} label={pretty(k)}><input required={k==="title"} value={researchForm[k]} onChange={e=>setResearchForm({...researchForm,[k]:e.target.value})}/></Field>)}<Field label="Department"><select value={researchForm.department} onChange={e=>setResearchForm({...researchForm,department:e.target.value})}>{deptOptions.map(x=><option key={x}>{x}</option>)}</select></Field><Field label="Tags (comma separated)"><input value={researchForm.tags} onChange={e=>setResearchForm({...researchForm,tags:e.target.value})}/></Field><AttachmentEditor label="Attach mood-board images and research documents" accept="image/*,.pdf" value={researchForm.reference_urls} onChange={v=>setResearchForm({...researchForm,reference_urls:v})}/><Field label="Research findings" wide><textarea rows="4" value={researchForm.notes} onChange={e=>setResearchForm({...researchForm,notes:e.target.value})}/></Field></div></FormModal>}
     {modal==="artwork"&&<FormModal title="Add print or artwork" onClose={()=>setModal("")} onSubmit={e=>{e.preventDefault();run("/artworks",{...artworkForm,file_urls:artworkForm.file_urls.split("\n").filter(Boolean)})}}><div className="grid gap-4 md:grid-cols-2"><ProjectSelect value={artworkForm.project_id} onChange={v=>setArtworkForm({...artworkForm,project_id:v})} projects={data.projects}/>{["name","kind","version","width","height","placement","technique","colours","status"].map(k=><Field key={k} label={pretty(k)}><input required={k==="name"} value={artworkForm[k]} onChange={e=>setArtworkForm({...artworkForm,[k]:e.target.value})}/></Field>)}<AttachmentEditor label="Attach artwork previews and source files" accept="image/*,.pdf,.ai,.psd,.cdr" value={artworkForm.file_urls} onChange={v=>setArtworkForm({...artworkForm,file_urls:v})}/><Field label="Instructions" wide><textarea rows="3" value={artworkForm.notes} onChange={e=>setArtworkForm({...artworkForm,notes:e.target.value})}/></Field></div></FormModal>}
     {modal==="change"&&<FormModal title="Create formal change request" onClose={()=>setModal("")} onSubmit={e=>{e.preventDefault();run("/change-requests",{...changeForm,before_urls:changeForm.before_urls.split("\n").filter(Boolean),after_urls:changeForm.after_urls.split("\n").filter(Boolean)})}}><div className="grid gap-4 md:grid-cols-2"><ProjectSelect value={changeForm.project_id} onChange={v=>setChangeForm({...changeForm,project_id:v})} projects={data.projects}/>{["reason","previous_spec","new_spec","material_impact","cost_impact","delivery_impact"].map(k=><Field key={k} label={pretty(k)} wide={["reason","previous_spec","new_spec"].includes(k)}><textarea required={["reason","previous_spec","new_spec"].includes(k)} rows="2" value={changeForm[k]} onChange={e=>setChangeForm({...changeForm,[k]:e.target.value})}/></Field>)}<AttachmentEditor label="Attach photos of the current specification" value={changeForm.before_urls} onChange={v=>setChangeForm({...changeForm,before_urls:v})}/><AttachmentEditor label="Attach marked-up or proposed revision images" value={changeForm.after_urls} onChange={v=>setChangeForm({...changeForm,after_urls:v})}/></div></FormModal>}
+    {modal==="floorlog"&&<FormModal title="Log a floor entry" onClose={()=>setModal("")} onSubmit={submitFloorLog}>
+      <div className="mb-4 rounded-xl bg-violet-50 p-3 text-xs text-violet-900">Floor workers have no login — fill this in on their behalf. Pick a name from the directory, or type a walk-in's name below.</div>
+      <div className="grid gap-4 md:grid-cols-2">
+        <Field label="Date"><input type="date" required value={floorLogForm.date} onChange={e=>setFloorLogForm({...floorLogForm,date:e.target.value})}/></Field>
+        <Field label="Time"><input type="time" value={floorLogForm.time} onChange={e=>setFloorLogForm({...floorLogForm,time:e.target.value})}/></Field>
+        <Field label="Department *"><select required value={floorLogForm.department} onChange={e=>setFloorLogForm({...floorLogForm,department:e.target.value})}><option value="">Select department</option>{floorDepts.map(d=><option key={d.name} value={d.name}>{d.name}</option>)}</select></Field>
+        <Field label="Worker (from directory)"><select value={floorLogForm.worker_id} onChange={e=>{const w=floorWorkers.find(x=>x.id===e.target.value);setFloorLogForm({...floorLogForm,worker_id:e.target.value,worker_name:w?w.name:floorLogForm.worker_name});}}><option value="">— Not in directory, type below —</option>{floorWorkers.filter(w=>w.active!==false).map(w=><option key={w.id} value={w.id}>{w.name}</option>)}</select></Field>
+        <Field label="Worker name *"><input required value={floorLogForm.worker_name} onChange={e=>setFloorLogForm({...floorLogForm,worker_name:e.target.value,worker_id:""})} placeholder="Full name"/></Field>
+        <Field label="Style / Design no."><input list="dp-floor-design-list" value={floorLogForm.design_no} onChange={e=>setFloorLogForm({...floorLogForm,design_no:e.target.value})}/></Field>
+        <Field label="Job Work Order # (blank for in-house staff)"><input value={floorLogForm.job_work_order_id} onChange={e=>setFloorLogForm({...floorLogForm,job_work_order_id:e.target.value})} placeholder="Only if this is a job worker's output"/></Field>
+        {!currentFloorFields.length&&<p className="md:col-span-2 rounded-xl border border-dashed border-slate-300 bg-slate-50 p-3 text-xs text-slate-500">Choose a department to see its fields.</p>}
+        {currentFloorFields.map(key=>{
+          const meta=FLOOR_FIELD_META[key]||{label:pretty(key),type:"text"};
+          const label=currentFloorDept?.labels?.[key]||meta.label;
+          if(key==="remarks") return <Field key={key} label={label} wide><textarea rows="2" value={floorLogForm.remarks} onChange={e=>setFloorLogForm({...floorLogForm,remarks:e.target.value})}/></Field>;
+          if(key==="on_time") return <Field key={key} label={label}><select value={floorLogForm.on_time?"yes":"no"} onChange={e=>setFloorLogForm({...floorLogForm,on_time:e.target.value==="yes"})}><option value="yes">Yes</option><option value="no">No</option></select></Field>;
+          if(meta.type==="number") return <Field key={key} label={label}><input type="number" min="0" step="0.01" value={floorLogForm[key]} onChange={e=>setFloorLogForm({...floorLogForm,[key]:e.target.value})}/></Field>;
+          return <Field key={key} label={label}><input value={floorLogForm[key]} onChange={e=>setFloorLogForm({...floorLogForm,[key]:e.target.value})}/></Field>;
+        })}
+      </div>
+      <datalist id="dp-floor-design-list">{data.projects.map(p=><option key={p.id} value={p.design_no}/>)}</datalist>
+    </FormModal>}
+    {modal==="floorworker"&&<FormModal title="Add floor worker" onClose={()=>setModal("")} onSubmit={submitFloorWorker}>
+      <div className="grid gap-4 md:grid-cols-2">
+        <Field label="Name *"><input required value={floorWorkerForm.name} onChange={e=>setFloorWorkerForm({...floorWorkerForm,name:e.target.value})}/></Field>
+        <Field label="Phone (optional)"><input value={floorWorkerForm.phone} onChange={e=>setFloorWorkerForm({...floorWorkerForm,phone:e.target.value})}/></Field>
+        <Field label="Departments this worker does" wide><div className="flex flex-wrap gap-2">{floorDepts.map(d=><label key={d.name} className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-bold text-slate-700"><input type="checkbox" checked={floorWorkerForm.departments.includes(d.name)} onChange={e=>setFloorWorkerForm({...floorWorkerForm,departments:e.target.checked?[...floorWorkerForm.departments,d.name]:floorWorkerForm.departments.filter(x=>x!==d.name)})}/>{d.name}</label>)}</div></Field>
+        <Field label="Notes" wide><textarea rows="2" value={floorWorkerForm.notes} onChange={e=>setFloorWorkerForm({...floorWorkerForm,notes:e.target.value})}/></Field>
+      </div>
+    </FormModal>}
   </div>;
 }
 
@@ -231,3 +299,77 @@ function FormModal({title,onClose,onSubmit,children}){return <Modal title={title
 function ProjectSelect({value,onChange,projects}){return <Field label="Design project *"><select required value={value} onChange={e=>onChange(e.target.value)}><option value="">Select design</option>{projects.map(p=><option key={p.id} value={p.id}>{p.design_no} · {p.style_name}</option>)}</select></Field>}
 function AssetUploader({label,onUploaded,accept="image/*"}){const [busy,setBusy]=useState(false),[message,setMessage]=useState("");const upload=async(files)=>{if(!files?.length)return;setBusy(true);setMessage("Uploading "+files.length+" file"+(files.length===1?"":"s")+"...");try{const body=new FormData();[...files].forEach(f=>body.append("files",f));const token=localStorage.getItem("admin_token")||localStorage.getItem("access_token")||localStorage.getItem("token")||"";const response=await fetch(API_BASE_URL+"/api/design-pattern/assets",{method:"POST",headers:token?{Authorization:"Bearer "+token}:{},body});const result=await response.json();if(!response.ok)throw new Error(result.detail||"Upload failed");onUploaded(result.data.map(x=>x.url));setMessage(result.data.length+" file"+(result.data.length===1?"":"s")+" uploaded successfully");}catch(e){setMessage(e.message);}finally{setBusy(false);}};const failed=message.toLowerCase().includes("failed")||message.toLowerCase().includes("error");return <div className="w-full min-w-0 md:col-span-2"><div className="w-full min-w-0 overflow-hidden rounded-2xl border border-dashed border-violet-300 bg-violet-50/70 p-4"><p className="break-words text-xs font-black uppercase tracking-wide text-violet-700">{label}</p><p className="mt-1 text-xs text-slate-500">Choose one or more files. They upload immediately and appear below.</p><input type="file" multiple accept={accept} onChange={e=>{upload(e.target.files);e.target.value="";}} className="mt-3 block w-full min-w-0 cursor-pointer overflow-hidden rounded-xl border border-violet-200 bg-white text-sm text-slate-600 file:mr-3 file:cursor-pointer file:border-0 file:bg-violet-600 file:px-4 file:py-2.5 file:text-sm file:font-bold file:text-white hover:file:bg-violet-700 disabled:cursor-wait disabled:opacity-60" disabled={busy}/>{message&&<p className={"mt-2 break-words text-xs font-semibold "+(failed?"text-rose-600":"text-slate-600")}>{message}</p>}</div></div>}
 function Reports({data}){const byDesigner=Object.entries(data.projects.reduce((a,p)=>{const k=p.designer||"Unassigned";a[k]=(a[k]||0)+1;return a;},{}));const sampleCost=data.samples.reduce((s,x)=>s+Number(x.actual_cost||x.estimated_cost||0),0);const deadlines=[...data.projects.filter(p=>p.launch_date).map(p=>({date:p.launch_date,label:`Launch · ${p.design_no}`})),...data.samples.filter(s=>s.required_date&&s.decision==="PENDING").map(s=>({date:s.required_date,label:`Sample · ${s.design_no}`}))].sort((a,b)=>a.date.localeCompare(b.date));return <div className="space-y-5"><section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">{[["Designs",data.projects.length],["Release rate",`${data.projects.length?Math.round(data.projects.filter(p=>p.status==="RELEASED_TO_PRODUCTION").length/data.projects.length*100):0}%`],["Sample cost",`₹${sampleCost.toLocaleString("en-IN")}`],["Revisions",data.samples.filter(s=>s.decision?.includes("REVISION")||s.decision==="RESAMPLE_REQUIRED").length]].map(([l,v])=><article key={l} className="rounded-2xl border bg-white p-5 shadow"><p className="text-sm font-bold text-slate-500">{l}</p><p className="mt-1 text-3xl font-black">{v}</p></article>)}</section><div className="grid gap-5 xl:grid-cols-2"><Panel title="Designer workload" subtitle="Current project ownership.">{byDesigner.length?byDesigner.map(([name,count])=><div key={name} className="flex justify-between rounded-xl border p-3"><b>{name}</b><span>{count} project(s)</span></div>):<Empty>No workload data.</Empty>}</Panel><Panel title="Deadline calendar" subtitle="Upcoming sample and launch commitments.">{deadlines.length?deadlines.slice(0,12).map(x=><div key={`${x.date}${x.label}`} className="flex justify-between rounded-xl border p-3"><b>{x.label}</b><span>{x.date}</span></div>):<Empty>No dated commitments.</Empty>}</Panel></div><Panel title="Design cost & sales performance" subtitle="BOM material estimate, sampling cost and matched sales units.">{(data.insights||[]).length?(data.insights||[]).map(x=><div key={x.project_id} className="grid gap-2 rounded-xl border p-3 text-sm sm:grid-cols-5"><b>{x.design_no} · {x.style_name}</b><span>Target ₹{x.target_cost}</span><span>Material ₹{x.material_cost}</span><span>Samples ₹{x.sample_cost}</span><span className="font-bold text-emerald-700">Sales {x.sales_units} units</span></div>):<Empty>No linked costing or sales data.</Empty>}</Panel></div>}
+
+function FloorOpsView({section,setSection,depts,workers,logs,kpis,filters,setFilters,onApplyFilters,onAddLog,onAddWorker,onToggleWorker}){
+  const sectionBtn=(v)=>"rounded-xl px-4 py-2.5 text-sm font-bold transition "+(section===v?"bg-violet-600 text-white shadow-sm":"text-slate-600 hover:bg-slate-50");
+  return <div className="space-y-5">
+    <nav className="flex flex-wrap gap-2 rounded-2xl border border-slate-200 bg-white p-2 shadow-sm" aria-label="Floor operations sections">
+      <button type="button" onClick={()=>setSection("log")} className={sectionBtn("log")}>Daily Log</button>
+      <button type="button" onClick={()=>setSection("workers")} className={sectionBtn("workers")}>Floor Workers</button>
+      <button type="button" onClick={()=>setSection("kpi")} className={sectionBtn("kpi")}>KPI Summary</button>
+    </nav>
+    {section==="log"&&<section className="overflow-hidden rounded-3xl border bg-white shadow-xl">
+      <div className="flex flex-col justify-between gap-3 border-b p-5 sm:flex-row sm:items-center">
+        <div><h2 className="text-xl font-black">Daily production log</h2><p className="text-sm text-slate-500">One entry per worker, per department, per day — including outsourced job workers.</p></div>
+        <button onClick={onAddLog} className="rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-bold text-white">+ Log entry</button>
+      </div>
+      <div className="grid gap-3 border-b bg-slate-50 p-4 sm:grid-cols-5">
+        <label className="block"><span className="mb-1 block text-[11px] font-black uppercase text-slate-500">From</span><input type="date" value={filters.date_from} onChange={e=>setFilters({...filters,date_from:e.target.value})} className="w-full rounded-lg border border-slate-200 px-2 py-1.5 text-sm"/></label>
+        <label className="block"><span className="mb-1 block text-[11px] font-black uppercase text-slate-500">To</span><input type="date" value={filters.date_to} onChange={e=>setFilters({...filters,date_to:e.target.value})} className="w-full rounded-lg border border-slate-200 px-2 py-1.5 text-sm"/></label>
+        <label className="block"><span className="mb-1 block text-[11px] font-black uppercase text-slate-500">Department</span><select value={filters.department} onChange={e=>setFilters({...filters,department:e.target.value})} className="w-full rounded-lg border border-slate-200 px-2 py-1.5 text-sm"><option value="">All</option>{depts.map(d=><option key={d.name} value={d.name}>{d.name}</option>)}</select></label>
+        <label className="block"><span className="mb-1 block text-[11px] font-black uppercase text-slate-500">Style / Design no.</span><input value={filters.design_no} onChange={e=>setFilters({...filters,design_no:e.target.value})} className="w-full rounded-lg border border-slate-200 px-2 py-1.5 text-sm"/></label>
+        <div className="flex items-end"><button onClick={onApplyFilters} className="w-full rounded-lg border border-violet-200 bg-violet-50 px-3 py-2 text-sm font-bold text-violet-700">Apply filters</button></div>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead className="bg-slate-50 text-left text-[11px] font-black uppercase text-slate-500"><tr>{["Date","Dept","Worker","Style","Target","Done","Rework","Rejected","Fabric(m)","Waste(m)","On-time","Remarks"].map(h=><th key={h} className="whitespace-nowrap px-3 py-2.5">{h}</th>)}</tr></thead>
+          <tbody className="divide-y divide-slate-100">
+            {logs.length?logs.map(l=><tr key={l.id}>
+              <td className="whitespace-nowrap px-3 py-2.5 text-xs text-slate-500">{l.date}{l.time?` · ${l.time}`:""}</td>
+              <td className="whitespace-nowrap px-3 py-2.5 text-xs font-bold text-slate-800">{l.department}</td>
+              <td className="whitespace-nowrap px-3 py-2.5 text-xs text-slate-700">{l.worker_name}{l.source==="JOB_WORK"?<span className="ml-1.5 rounded-full bg-amber-100 px-1.5 py-0.5 text-[9px] font-bold text-amber-700">Job worker</span>:null}</td>
+              <td className="whitespace-nowrap px-3 py-2.5 text-xs text-slate-600">{l.design_no||"—"}</td>
+              <td className="px-3 py-2.5 text-xs">{l.target_qty||0}</td>
+              <td className="px-3 py-2.5 text-xs font-bold text-slate-900">{l.completed_qty||0}</td>
+              <td className="px-3 py-2.5 text-xs">{l.rework_qty||0}</td>
+              <td className="px-3 py-2.5 text-xs text-rose-600">{l.rejected_qty||0}</td>
+              <td className="px-3 py-2.5 text-xs">{l.fabric_used_mtrs||0}</td>
+              <td className="px-3 py-2.5 text-xs">{l.wastage_mtrs||0}</td>
+              <td className="px-3 py-2.5 text-xs">{l.on_time?"Yes":"No"}</td>
+              <td className="max-w-[220px] truncate px-3 py-2.5 text-xs text-slate-500" title={l.remarks}>{l.remarks||"—"}</td>
+            </tr>):<tr><td colSpan={12} className="p-10 text-center text-sm text-slate-400">No entries yet for this filter.</td></tr>}
+          </tbody>
+        </table>
+      </div>
+    </section>}
+    {section==="workers"&&<section className="overflow-hidden rounded-3xl border bg-white shadow-xl">
+      <div className="flex flex-col justify-between gap-3 border-b p-5 sm:flex-row sm:items-center">
+        <div><h2 className="text-xl font-black">Floor worker directory</h2><p className="text-sm text-slate-500">Names only — no login or email needed. A worker can be tagged to more than one department.</p></div>
+        <button onClick={onAddWorker} className="rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-bold text-white">+ Add worker</button>
+      </div>
+      <div className="divide-y divide-slate-100">
+        {workers.length?workers.map(w=><div key={w.id} className="flex flex-col justify-between gap-3 p-4 sm:flex-row sm:items-center">
+          <div><p className="font-black text-slate-900">{w.name}</p><p className="text-xs text-slate-500">{w.phone||"No phone on file"} · {(w.departments||[]).join(", ")||"No department set"}</p></div>
+          <div className="flex items-center gap-2"><span className={`text-xs font-bold ${w.active!==false?"text-emerald-600":"text-slate-400"}`}>{w.active!==false?"Active":"Inactive"}</span><button onClick={()=>onToggleWorker(w)} className="rounded-lg border px-3 py-1.5 text-xs font-bold">{w.active!==false?"Deactivate":"Activate"}</button></div>
+        </div>):<Empty>No floor workers added yet.</Empty>}
+      </div>
+    </section>}
+    {section==="kpi"&&<div className="space-y-5">
+      <div className="flex flex-wrap items-end gap-3 rounded-2xl border bg-white p-4 shadow-sm">
+        <label className="block"><span className="mb-1 block text-[11px] font-black uppercase text-slate-500">From</span><input type="date" value={filters.date_from} onChange={e=>setFilters({...filters,date_from:e.target.value})} className="rounded-lg border border-slate-200 px-2 py-1.5 text-sm"/></label>
+        <label className="block"><span className="mb-1 block text-[11px] font-black uppercase text-slate-500">To</span><input type="date" value={filters.date_to} onChange={e=>setFilters({...filters,date_to:e.target.value})} className="rounded-lg border border-slate-200 px-2 py-1.5 text-sm"/></label>
+        <button onClick={onApplyFilters} className="rounded-lg border border-violet-200 bg-violet-50 px-4 py-2 text-sm font-bold text-violet-700">Refresh KPIs</button>
+      </div>
+      {kpis?.totals?<section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+        {[["Entries",kpis.entry_count],["Efficiency",kpis.totals.efficiency_pct!=null?`${kpis.totals.efficiency_pct}%`:"—"],["Rework",kpis.totals.rework_pct!=null?`${kpis.totals.rework_pct}%`:"—"],["Rejection",kpis.totals.rejection_pct!=null?`${kpis.totals.rejection_pct}%`:"—"],["On-time",kpis.totals.on_time_pct!=null?`${kpis.totals.on_time_pct}%`:"—"]].map(([l,v])=><article key={l} className="rounded-2xl border bg-white p-5 shadow"><p className="text-sm font-bold text-slate-500">{l}</p><p className="mt-1 text-3xl font-black">{v}</p></article>)}
+      </section>:<Empty>No entries yet for this range.</Empty>}
+      <div className="grid gap-5 xl:grid-cols-3">
+        <KpiTable title="By department" rows={kpis?.by_department}/>
+        <KpiTable title="By worker" rows={kpis?.by_worker}/>
+        <KpiTable title="By style" rows={kpis?.by_design}/>
+      </div>
+    </div>}
+  </div>;
+}
+function KpiTable({title,rows}){return <Panel title={title} subtitle="Efficiency = completed/target · rework & rejection = % of completed.">{rows?.length?rows.map(r=><div key={r.key} className="flex items-center justify-between gap-2 rounded-xl border p-3 text-sm"><b className="truncate">{r.key}</b><span className="shrink-0 text-xs font-bold text-slate-500">{r.entries} entr{r.entries===1?"y":"ies"} · Eff {r.efficiency_pct!=null?`${r.efficiency_pct}%`:"—"} · Rej {r.rejection_pct!=null?`${r.rejection_pct}%`:"—"}</span></div>):<Empty>No data.</Empty>}</Panel>}
+

@@ -132,6 +132,13 @@ design_artworks_collection = db["design_artworks"]
 design_change_requests_collection = db["design_change_requests"]
 design_settings_collection = db["design_settings"]
 
+# Daily shop-floor KPI logging (Pattern/Layering/Cutting/Stitching/Embroidery…).
+# Floor workers have no login — a supervisor logs entries on their behalf, so
+# floor_workers is a plain name directory, not a user/account collection.
+floor_workers_collection = db["floor_workers"]
+floor_ops_settings_collection = db["floor_ops_settings"]
+daily_production_logs_collection = db["daily_production_logs"]
+
 # HR module. Employees are NOT duplicated here — admins_collection is the
 # single source of truth for who works at this tenant (name, department,
 # store, status). These collections only hold HR-specific data layered on

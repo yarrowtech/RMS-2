@@ -1,6 +1,6 @@
 """Operational Design & Pattern workflow linked to Production tech packs."""
 from datetime import datetime
-from typing import Any
+from typing import Any, Dict
 
 from bson import ObjectId
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
@@ -13,6 +13,7 @@ from ..db import (
     design_patterns_collection, design_projects_collection,
     design_queries_collection, design_research_collection, design_samples_collection,
     design_settings_collection,
+    daily_production_logs_collection, floor_ops_settings_collection, floor_workers_collection,
     job_work_orders_collection, sales_collection, style_bom_plans_collection, tech_packs_collection,
 )
 from .deps import get_hq_tenant
@@ -30,6 +31,36 @@ DEFAULT_SETTINGS = {
     "default_size_run": "S, M, L, XL",
     "default_wastage_pct": 5,
 }
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Daily shop-floor KPI logging — Pattern / Layering / Cutting / Stitching /
+# Embroidery etc. Floor workers have no login, so a supervisor (Design &
+# Pattern or Production & Job Work) logs each entry on their behalf against a
+# plain name directory (floor_workers), not a user account. One field set,
+# adapted per department via config below, rather than a form per department.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Every numeric/boolean/text field the log form can show. A department's
+# config picks a subset of these — adding a new department needs a config
+# entry, not new code.
+FLOOR_LOG_FIELD_KEYS = {
+    "target_qty", "completed_qty", "rework_qty", "rejected_qty",
+    "fabric_used_mtrs", "wastage_mtrs", "vendor_name", "on_time", "remarks",
+}
+FLOOR_LOG_NUMERIC_FIELDS = ("target_qty", "completed_qty", "rework_qty", "rejected_qty", "fabric_used_mtrs", "wastage_mtrs")
+
+DEFAULT_FLOOR_DEPARTMENTS = [
+    {"name": "Pattern Making", "fields": ["target_qty", "completed_qty", "rework_qty", "on_time", "remarks"],
+     "labels": {"target_qty": "Target patterns", "completed_qty": "Completed patterns", "rework_qty": "Rework qty"}},
+    {"name": "Layering", "fields": ["fabric_used_mtrs", "wastage_mtrs", "vendor_name", "on_time", "remarks"],
+     "labels": {"fabric_used_mtrs": "Fabric used (mtrs)", "wastage_mtrs": "Wastage (mtrs)", "vendor_name": "Vendor (fabric source)"}},
+    {"name": "Cutting", "fields": ["fabric_used_mtrs", "vendor_name", "target_qty", "completed_qty", "rejected_qty", "wastage_mtrs", "on_time", "remarks"],
+     "labels": {"target_qty": "Target pcs", "completed_qty": "Cut pcs", "rejected_qty": "Rejected pcs", "fabric_used_mtrs": "Fabric used (mtrs)", "wastage_mtrs": "Wastage (mtrs)", "vendor_name": "Vendor (fabric source)"}},
+    {"name": "Stitching", "fields": ["target_qty", "completed_qty", "rework_qty", "rejected_qty", "on_time", "remarks"],
+     "labels": {"target_qty": "Target pcs", "completed_qty": "Stitched pcs", "rework_qty": "Rework pcs", "rejected_qty": "Rejected pcs"}},
+    {"name": "Embroidery", "fields": ["target_qty", "completed_qty", "rejected_qty", "on_time", "remarks"],
+     "labels": {"target_qty": "Target pcs", "completed_qty": "Embroidered pcs", "rejected_qty": "Rejected pcs"}},
+]
 
 def clean(value: Any, limit: int = 500) -> str:
     return str(value or "").strip()[:limit]
@@ -393,3 +424,203 @@ async def release_project(project_id: str, payload: dict, ctx: dict = Depends(re
     await tech_packs_collection.update_one({"_id": pack["_id"]}, {"$set": {"status": "Released to Production", "approved_by": ctx.get("admin_name"), "approved_at": now, "design_project_id": project_id, "material_plan_id": plan_id or pack.get("material_plan_id"), "updated_at": now}})
     await design_projects_collection.update_one({"_id": project["_id"]}, {"$set": {"status": "RELEASED_TO_PRODUCTION", "tech_pack_id": tech_pack_id, "material_plan_id": plan_id, "released_by": ctx.get("admin_name"), "released_at": now, "updated_at": now}})
     return {"message": f"{project['design_no']} released to Production with tech pack {pack.get('tech_pack_no', '')}."}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Daily shop-floor KPI logging
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.get("/floor-departments")
+async def get_floor_departments(ctx: dict = Depends(require_design_or_production)):
+    stored = await floor_ops_settings_collection.find_one({"tenant_id": ctx["tenant_id"]})
+    departments = (stored or {}).get("departments") or DEFAULT_FLOOR_DEPARTMENTS
+    return {"status": "success", "data": departments}
+
+
+@router.put("/floor-departments")
+async def save_floor_departments(payload: dict, ctx: dict = Depends(require_design)):
+    raw = payload.get("departments")
+    if not isinstance(raw, list) or not raw:
+        raise HTTPException(status_code=400, detail="At least one department is required.")
+    cleaned = []
+    for row in raw[:40]:
+        if not isinstance(row, dict):
+            continue
+        name = clean(row.get("name"), 80)
+        if not name:
+            continue
+        fields = [f for f in (row.get("fields") or []) if f in FLOOR_LOG_FIELD_KEYS][:len(FLOOR_LOG_FIELD_KEYS)]
+        labels = {k: clean(v, 60) for k, v in (row.get("labels") or {}).items() if k in FLOOR_LOG_FIELD_KEYS and clean(v)}
+        cleaned.append({"name": name, "fields": fields or ["target_qty", "completed_qty", "on_time", "remarks"], "labels": labels})
+    if not cleaned:
+        raise HTTPException(status_code=400, detail="At least one valid department is required.")
+    await floor_ops_settings_collection.update_one(
+        {"tenant_id": ctx["tenant_id"]},
+        {"$set": {"departments": cleaned, "updated_at": datetime.utcnow(), "updated_by": ctx.get("admin_name") or ctx.get("admin_email") or ""}},
+        upsert=True,
+    )
+    return {"status": "success", "message": "Floor department setup saved.", "data": cleaned}
+
+
+@router.get("/floor-workers")
+async def list_floor_workers(ctx: dict = Depends(require_design_or_production)):
+    rows = [serialize(r) async for r in floor_workers_collection.find({"tenant_id": ctx["tenant_id"]}).sort("name", 1)]
+    return {"status": "success", "data": rows}
+
+
+@router.post("/floor-workers", status_code=201)
+async def create_floor_worker(payload: dict, ctx: dict = Depends(require_design_or_production)):
+    name = clean(payload.get("name"), 120)
+    if not name:
+        raise HTTPException(status_code=400, detail="Worker name is required.")
+    now = datetime.utcnow()
+    row = {
+        "tenant_id": ctx["tenant_id"], "name": name,
+        "phone": clean(payload.get("phone"), 20),
+        "departments": [clean(x, 80) for x in (payload.get("departments") or []) if clean(x)][:10],
+        "active": payload.get("active", True) is not False,
+        "notes": clean(payload.get("notes"), 300),
+        "created_by": ctx.get("admin_name") or ctx.get("admin_email") or "",
+        "created_at": now, "updated_at": now,
+    }
+    result = await floor_workers_collection.insert_one(row)
+    row["_id"] = result.inserted_id
+    return {"message": f"{name} added to the floor worker directory.", "data": serialize(row)}
+
+
+@router.patch("/floor-workers/{worker_id}")
+async def update_floor_worker(worker_id: str, payload: dict, ctx: dict = Depends(require_design_or_production)):
+    if not ObjectId.is_valid(worker_id):
+        raise HTTPException(status_code=400, detail="Invalid worker.")
+    update: Dict[str, Any] = {}
+    if "name" in payload:
+        update["name"] = clean(payload["name"], 120)
+    if "phone" in payload:
+        update["phone"] = clean(payload["phone"], 20)
+    if "departments" in payload:
+        update["departments"] = [clean(x, 80) for x in (payload["departments"] or []) if clean(x)][:10]
+    if "active" in payload:
+        update["active"] = bool(payload["active"])
+    if "notes" in payload:
+        update["notes"] = clean(payload["notes"], 300)
+    if not update:
+        raise HTTPException(status_code=400, detail="Nothing to update.")
+    update["updated_at"] = datetime.utcnow()
+    result = await floor_workers_collection.update_one({"_id": ObjectId(worker_id), "tenant_id": ctx["tenant_id"]}, {"$set": update})
+    if not result.matched_count:
+        raise HTTPException(status_code=404, detail="Worker not found.")
+    return {"message": "Worker updated."}
+
+
+@router.get("/floor-logs")
+async def list_floor_logs(
+    date_from: str = "", date_to: str = "", department: str = "", worker_id: str = "", design_no: str = "",
+    ctx: dict = Depends(require_design_or_production),
+):
+    query: Dict[str, Any] = {"tenant_id": ctx["tenant_id"]}
+    if date_from or date_to:
+        rng: Dict[str, str] = {}
+        if date_from:
+            rng["$gte"] = clean(date_from, 10)
+        if date_to:
+            rng["$lte"] = clean(date_to, 10)
+        query["date"] = rng
+    if department:
+        query["department"] = clean(department, 80)
+    if worker_id:
+        query["worker_id"] = clean(worker_id, 40)
+    if design_no:
+        query["design_no"] = {"$regex": clean(design_no, 60), "$options": "i"}
+    rows = [serialize(r) async for r in daily_production_logs_collection.find(query).sort([("date", -1), ("created_at", -1)]).limit(500)]
+    return {"status": "success", "data": rows}
+
+
+@router.post("/floor-logs", status_code=201)
+async def create_floor_log(payload: dict, ctx: dict = Depends(require_design_or_production)):
+    department = clean(payload.get("department"), 80)
+    if not department:
+        raise HTTPException(status_code=400, detail="Department is required.")
+    worker_id = clean(payload.get("worker_id"), 40)
+    worker_name = clean(payload.get("worker_name"), 120)
+    if worker_id:
+        if not ObjectId.is_valid(worker_id):
+            raise HTTPException(status_code=400, detail="Invalid worker.")
+        worker = await floor_workers_collection.find_one({"_id": ObjectId(worker_id), "tenant_id": ctx["tenant_id"]})
+        if not worker:
+            raise HTTPException(status_code=404, detail="Worker not found.")
+        worker_name = worker.get("name") or worker_name
+    if not worker_name:
+        raise HTTPException(status_code=400, detail="Select or name the worker this entry is for.")
+    date = clean(payload.get("date"), 10) or datetime.utcnow().date().isoformat()
+    job_work_order_id = clean(payload.get("job_work_order_id"), 40)
+    now = datetime.utcnow()
+    row = {
+        "tenant_id": ctx["tenant_id"], "date": date, "time": clean(payload.get("time"), 10),
+        "department": department, "worker_id": worker_id or None, "worker_name": worker_name,
+        "design_no": clean(payload.get("design_no"), 120),
+        # Same log covers in-house floor staff and an outsourced job worker's
+        # daily output — job_work_order_id links it to that JWO for reference;
+        # the receipt/QC reconciliation on job_work_routes.py is unaffected.
+        "source": "JOB_WORK" if job_work_order_id else "INTERNAL",
+        "job_work_order_id": job_work_order_id or None,
+        "vendor_name": clean(payload.get("vendor_name"), 160),
+        **{field: number(payload.get(field)) for field in FLOOR_LOG_NUMERIC_FIELDS},
+        "on_time": bool(payload.get("on_time", True)),
+        "remarks": clean(payload.get("remarks"), 1000),
+        "created_by": ctx.get("admin_id"), "created_by_name": ctx.get("admin_name") or ctx.get("admin_email") or "",
+        "created_at": now, "updated_at": now,
+    }
+    result = await daily_production_logs_collection.insert_one(row)
+    row["_id"] = result.inserted_id
+    return {"message": f"Logged {department} entry for {worker_name}.", "data": serialize(row)}
+
+
+@router.get("/floor-kpis")
+async def floor_kpis(date_from: str = "", date_to: str = "", ctx: dict = Depends(require_design_or_production)):
+    query: Dict[str, Any] = {"tenant_id": ctx["tenant_id"]}
+    if date_from or date_to:
+        rng: Dict[str, str] = {}
+        if date_from:
+            rng["$gte"] = clean(date_from, 10)
+        if date_to:
+            rng["$lte"] = clean(date_to, 10)
+        query["date"] = rng
+    rows = [r async for r in daily_production_logs_collection.find(query)]
+
+    def rollup(key_fn) -> list:
+        buckets: Dict[str, dict] = {}
+        for r in rows:
+            key = key_fn(r)
+            if not key:
+                continue
+            bucket = buckets.setdefault(key, {
+                "key": key, "entries": 0, "target_qty": 0.0, "completed_qty": 0.0,
+                "rework_qty": 0.0, "rejected_qty": 0.0, "fabric_used_mtrs": 0.0,
+                "wastage_mtrs": 0.0, "on_time_count": 0,
+            })
+            bucket["entries"] += 1
+            for field in FLOOR_LOG_NUMERIC_FIELDS:
+                bucket[field] += number(r.get(field))
+            if r.get("on_time"):
+                bucket["on_time_count"] += 1
+        out = []
+        for bucket in buckets.values():
+            target, completed = bucket["target_qty"], bucket["completed_qty"]
+            out.append({
+                **{k: (round(v, 2) if isinstance(v, float) else v) for k, v in bucket.items()},
+                "efficiency_pct": round(completed / target * 100, 1) if target else None,
+                "rejection_pct": round(bucket["rejected_qty"] / completed * 100, 1) if completed else None,
+                "rework_pct": round(bucket["rework_qty"] / completed * 100, 1) if completed else None,
+                "on_time_pct": round(bucket["on_time_count"] / bucket["entries"] * 100, 1) if bucket["entries"] else None,
+            })
+        return sorted(out, key=lambda x: -x["entries"])
+
+    totals = rollup(lambda r: "All departments")
+    return {
+        "status": "success",
+        "entry_count": len(rows),
+        "totals": totals[0] if totals else None,
+        "by_department": rollup(lambda r: r.get("department")),
+        "by_worker": rollup(lambda r: r.get("worker_name")),
+        "by_design": rollup(lambda r: r.get("design_no")),
+    }
