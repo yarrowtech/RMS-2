@@ -30,7 +30,16 @@ DEFAULT_SETTINGS = {
     "default_base_size": "M",
     "default_size_run": "S, M, L, XL",
     "default_wastage_pct": 5,
+    # Production-handoff gates. A shop with a full design team keeps all three
+    # ON; a solo / production-led shop turns off the ceremony it doesn't run.
+    # `release_project` skips a check when its gate is off. Default ON = the
+    # exact behaviour before this became configurable.
+    "require_sample_approval": True,
+    "require_design_head_approval": True,
+    "require_production_feasibility": True,
 }
+
+_GATE_KEYS = ("require_sample_approval", "require_design_head_approval", "require_production_feasibility")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Daily shop-floor KPI logging — Pattern / Layering / Cutting / Stitching /
@@ -160,6 +169,9 @@ def _merge_settings(stored: dict) -> dict:
         if isinstance(DEFAULT_SETTINGS[key], list):
             if isinstance(value, list) and value:
                 merged[key] = value
+        elif isinstance(DEFAULT_SETTINGS[key], bool):
+            if isinstance(value, bool):
+                merged[key] = value
         elif value not in (None, ""):
             merged[key] = value
     return merged
@@ -181,6 +193,7 @@ async def save_settings(payload: dict, ctx: dict = Depends(require_design)):
         "default_base_size": clean(payload.get("default_base_size"), 16) or DEFAULT_SETTINGS["default_base_size"],
         "default_size_run": clean(payload.get("default_size_run"), 160) or DEFAULT_SETTINGS["default_size_run"],
         "default_wastage_pct": min(100.0, number(payload.get("default_wastage_pct"), DEFAULT_SETTINGS["default_wastage_pct"])),
+        **{key: payload.get(key, True) is not False for key in _GATE_KEYS},
         "tenant_id": ctx["tenant_id"],
         "updated_at": datetime.utcnow(),
         "updated_by": ctx.get("admin_name") or ctx.get("admin_email") or "",
@@ -446,11 +459,24 @@ async def release_project(project_id: str, payload: dict, ctx: dict = Depends(re
     if not ObjectId.is_valid(tech_pack_id): raise HTTPException(status_code=400, detail="Select an approved tech pack.")
     pack = await tech_packs_collection.find_one({"_id": ObjectId(tech_pack_id), "tenant_id": ctx["tenant_id"], "design_no": project["design_no"]})
     if not pack: raise HTTPException(status_code=400, detail="The selected tech pack must belong to this design number.")
-    approved_sample = await design_samples_collection.find_one({"tenant_id": ctx["tenant_id"], "project_id": project_id, "decision": {"$in": ["APPROVED", "APPROVED_WITH_COMMENTS"]}})
-    if not approved_sample: raise HTTPException(status_code=400, detail="Approve at least one sample before releasing to Production.")
-    approvals = {a.get("type"): a.get("decision") for a in project.get("approvals", [])}
-    if approvals.get("DESIGN_HEAD") != "APPROVED" or approvals.get("PRODUCTION_FEASIBILITY") != "APPROVED":
-        raise HTTPException(status_code=400, detail="Design Head and Production feasibility approvals are required before release.")
+
+    # A tech pack is always mandatory (above). The three sign-off checks are
+    # per-tenant configurable in Settings, and a design/HQ admin can override
+    # them for one style with a mandatory written reason (force).
+    gates = _merge_settings(await design_settings_collection.find_one({"tenant_id": ctx["tenant_id"]}) or {})
+    force = bool(payload.get("force"))
+    force_reason = clean(payload.get("force_reason"), 500)
+    if force and not force_reason:
+        raise HTTPException(status_code=400, detail="Enter a reason to release without full sign-off.")
+    if not force:
+        approvals = {a.get("type"): a.get("decision") for a in project.get("approvals", [])}
+        if gates["require_sample_approval"]:
+            approved_sample = await design_samples_collection.find_one({"tenant_id": ctx["tenant_id"], "project_id": project_id, "decision": {"$in": ["APPROVED", "APPROVED_WITH_COMMENTS"]}})
+            if not approved_sample: raise HTTPException(status_code=400, detail="Approve at least one sample before releasing to Production.")
+        if gates["require_design_head_approval"] and approvals.get("DESIGN_HEAD") != "APPROVED":
+            raise HTTPException(status_code=400, detail="Design Head approval is required before release.")
+        if gates["require_production_feasibility"] and approvals.get("PRODUCTION_FEASIBILITY") != "APPROVED":
+            raise HTTPException(status_code=400, detail="Production feasibility approval is required before release.")
     now = datetime.utcnow(); plan_id = clean(payload.get("material_plan_id"), 40) or None
     if not plan_id and payload.get("auto_create_bom"):
         pattern = await design_patterns_collection.find_one({"tenant_id": ctx["tenant_id"], "project_id": project_id, "consumption_per_unit": {"$gt": 0}}, sort=[("created_at", -1)])
@@ -463,9 +489,11 @@ async def release_project(project_id: str, payload: dict, ctx: dict = Depends(re
             "purchase_order_id": None, "purchase_order_no": None, "source": "DESIGN_HANDOFF", "created_by": ctx.get("admin_id"), "created_at": now, "updated_at": now}
         result = await style_bom_plans_collection.insert_one(plan); plan_id = str(result.inserted_id)
     if plan_id and (not ObjectId.is_valid(plan_id) or not await style_bom_plans_collection.find_one({"_id": ObjectId(plan_id), "tenant_id": ctx["tenant_id"]})): raise HTTPException(status_code=400, detail="Invalid material plan.")
-    await tech_packs_collection.update_one({"_id": pack["_id"]}, {"$set": {"status": "Released to Production", "approved_by": ctx.get("admin_name"), "approved_at": now, "design_project_id": project_id, "material_plan_id": plan_id or pack.get("material_plan_id"), "updated_at": now}})
-    await design_projects_collection.update_one({"_id": project["_id"]}, {"$set": {"status": "RELEASED_TO_PRODUCTION", "tech_pack_id": tech_pack_id, "material_plan_id": plan_id, "released_by": ctx.get("admin_name"), "released_at": now, "updated_at": now}})
-    return {"message": f"{project['design_no']} released to Production with tech pack {pack.get('tech_pack_no', '')}."}
+    release_meta = {"released_forced": force, "released_force_reason": force_reason if force else ""}
+    await tech_packs_collection.update_one({"_id": pack["_id"]}, {"$set": {"status": "Released to Production", "approved_by": ctx.get("admin_name"), "approved_at": now, "design_project_id": project_id, "material_plan_id": plan_id or pack.get("material_plan_id"), "updated_at": now, **release_meta}})
+    await design_projects_collection.update_one({"_id": project["_id"]}, {"$set": {"status": "RELEASED_TO_PRODUCTION", "tech_pack_id": tech_pack_id, "material_plan_id": plan_id, "released_by": ctx.get("admin_name"), "released_at": now, "updated_at": now, **release_meta}})
+    suffix = " (released without full sign-off)" if force else ""
+    return {"message": f"{project['design_no']} released to Production with tech pack {pack.get('tech_pack_no', '')}{suffix}."}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
