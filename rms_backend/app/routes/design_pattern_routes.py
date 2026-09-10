@@ -1,11 +1,14 @@
 """Operational Design & Pattern workflow linked to Production tech packs."""
+import io
+import re
 from datetime import datetime
 from typing import Any, Dict
 
 from bson import ObjectId
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile
 import cloudinary
 import cloudinary.uploader
+import pandas as pd
 from ..config import settings
 
 from ..db import (
@@ -643,6 +646,187 @@ async def create_floor_log(payload: dict, ctx: dict = Depends(require_design_or_
     result = await daily_production_logs_collection.insert_one(row)
     row["_id"] = result.inserted_id
     return {"message": f"Logged {department} entry for {worker_name}.", "data": serialize(row)}
+
+
+# ── Bulk upload — one spreadsheet covers a whole day across every department ──
+# The floor keeps its paper register; a supervisor transcribes it into this one
+# sheet and uploads it, instead of the admin re-keying a form per worker.
+
+_FLOOR_TEMPLATE_HEADERS = [
+    "Date", "Time", "Department", "Worker Name", "Style / Design No.",
+    "Target Qty", "Completed Qty", "Rework Qty", "Rejected Qty",
+    "Fabric Used (mtrs)", "Wastage (mtrs)", "Vendor", "On Time (Yes/No)", "Remarks",
+]
+_FLOOR_COL_ALIASES = {
+    "date": ("date", "logdate", "workdate"),
+    "time": ("time", "shift"),
+    "department": ("department", "dept"),
+    "worker_name": ("workername", "worker", "name", "employee", "staff", "employeename", "operator"),
+    "design_no": ("style", "designno", "designnumber", "styleno", "styledesignno"),
+    "target_qty": ("targetqty", "target", "targetpcs", "targetpatterns"),
+    "completed_qty": ("completedqty", "completed", "done", "completedpcs", "cutpcs", "stitchedpcs", "embroideredpcs", "completedpatterns", "output", "outputqty"),
+    "rework_qty": ("reworkqty", "rework", "reworkpcs"),
+    "rejected_qty": ("rejectedqty", "rejected", "reject", "rejectedpcs", "rejectpcs"),
+    "fabric_used_mtrs": ("fabricusedmtrs", "fabricused", "fabricusedmtr", "fabricm", "fabric", "fabricusedmeters", "fabricusedm"),
+    "wastage_mtrs": ("wastagemtrs", "wastage", "waste", "wastagemtr", "wastem", "wastagem"),
+    "vendor_name": ("vendor", "vendorname", "vendorfabricsource", "fabricvendor"),
+    "on_time": ("ontime", "ontimeyesno"),
+    "remarks": ("remarks", "remark", "note", "notes", "comment", "comments"),
+}
+
+
+def _floor_key(value: Any) -> str:
+    return re.sub(r"[^a-z0-9]+", "", str(value or "").strip().lower())
+
+
+def _parse_floor_upload(content: bytes, filename: str, dept_names: list) -> list:
+    name = (filename or "").lower()
+    try:
+        if name.endswith(".csv"):
+            frame = pd.read_csv(io.BytesIO(content), dtype=str)
+        elif name.endswith((".xlsx", ".xls")):
+            frame = pd.read_excel(io.BytesIO(content), dtype=str)
+        else:
+            raise HTTPException(status_code=400, detail="Upload a .csv or .xlsx file.")
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=400, detail="The file could not be read. Download the template and keep the headers.")
+    frame = frame.where(pd.notnull(frame), "")
+
+    colmap: Dict[str, str] = {}
+    for column in frame.columns:
+        key = _floor_key(column)
+        for field, aliases in _FLOOR_COL_ALIASES.items():
+            if key in aliases and field not in colmap:
+                colmap[field] = column
+    if "department" not in colmap or "worker_name" not in colmap:
+        raise HTTPException(status_code=400, detail="The file needs at least a Department and a Worker Name column.")
+
+    dept_by_key = {_floor_key(d): d for d in dept_names}
+    rows = []
+    for index, record in enumerate(frame.to_dict(orient="records"), start=2):
+        def cell(field: str) -> str:
+            return str(record.get(colmap.get(field, ""), "") or "").strip()
+
+        errors: list = []
+        raw_date = cell("date")
+        iso_date = ""
+        if raw_date:
+            try:
+                parsed = pd.to_datetime(raw_date, dayfirst=True, errors="raise")
+                iso_date = parsed.date().isoformat()
+            except Exception:
+                errors.append(f"Date '{raw_date}' is not a valid date.")
+        else:
+            errors.append("Date is required.")
+
+        department = dept_by_key.get(_floor_key(cell("department")), "")
+        if not department:
+            errors.append(f"Department '{cell('department') or '(blank)'}' is not one of your floor departments.")
+
+        worker_name = cell("worker_name")
+        if not worker_name:
+            errors.append("Worker Name is required.")
+
+        numbers: Dict[str, float] = {}
+        for field in FLOOR_LOG_NUMERIC_FIELDS:
+            text = cell(field).replace(",", "")
+            if not text:
+                numbers[field] = 0.0
+                continue
+            try:
+                value = float(text)
+            except ValueError:
+                errors.append(f"{field.replace('_', ' ')} '{text}' is not a number.")
+                numbers[field] = 0.0
+                continue
+            if value < 0:
+                errors.append(f"{field.replace('_', ' ')} cannot be negative.")
+            numbers[field] = max(0.0, value)
+
+        on_time_raw = _floor_key(cell("on_time"))
+        on_time = on_time_raw not in {"no", "n", "0", "false"} if on_time_raw else True
+
+        rows.append({
+            "row_no": index, "date": iso_date, "time": cell("time")[:10],
+            "department": department, "worker_name": worker_name[:120],
+            "design_no": cell("design_no")[:120], "vendor_name": cell("vendor_name")[:160],
+            "on_time": on_time, "remarks": cell("remarks")[:1000], **numbers, "errors": errors,
+        })
+    if not rows:
+        raise HTTPException(status_code=400, detail="The file has no data rows.")
+    return rows
+
+
+@router.get("/floor-logs/template")
+async def floor_log_template(ctx: dict = Depends(require_design_or_production)):
+    body = ",".join(f'"{h}"' for h in _FLOOR_TEMPLATE_HEADERS) + "\r\n"
+    return Response(content=body, media_type="text/csv", headers={"Content-Disposition": 'attachment; filename="daily-floor-log-template.csv"'})
+
+
+@router.post("/floor-logs/bulk/preview")
+async def preview_floor_logs(file: UploadFile = File(...), ctx: dict = Depends(require_design_or_production)):
+    stored = await floor_ops_settings_collection.find_one({"tenant_id": ctx["tenant_id"]})
+    dept_names = [d["name"] for d in ((stored or {}).get("departments") or DEFAULT_FLOOR_DEPARTMENTS)]
+    rows = _parse_floor_upload(await file.read(), file.filename or "", dept_names)
+    known = {_floor_key(r["name"]) async for r in floor_workers_collection.find({"tenant_id": ctx["tenant_id"]}, {"name": 1})}
+    new_workers = sorted({r["worker_name"] for r in rows if not r["errors"] and r["worker_name"] and _floor_key(r["worker_name"]) not in known})
+    invalid = sum(1 for r in rows if r["errors"])
+    return {
+        "status": "success", "mode": "preview_only",
+        "summary": {"row_count": len(rows), "valid_count": len(rows) - invalid, "invalid_count": invalid, "new_workers": new_workers},
+        "rows": rows[:200], "truncated": len(rows) > 200,
+    }
+
+
+@router.post("/floor-logs/bulk/commit")
+async def commit_floor_logs(file: UploadFile = File(...), ctx: dict = Depends(require_design_or_production)):
+    stored = await floor_ops_settings_collection.find_one({"tenant_id": ctx["tenant_id"]})
+    dept_names = [d["name"] for d in ((stored or {}).get("departments") or DEFAULT_FLOOR_DEPARTMENTS)]
+    rows = _parse_floor_upload(await file.read(), file.filename or "", dept_names)
+    now = datetime.utcnow()
+
+    worker_id_by_key: Dict[str, Any] = {}
+    async for w in floor_workers_collection.find({"tenant_id": ctx["tenant_id"]}, {"name": 1}):
+        worker_id_by_key[_floor_key(w.get("name"))] = w["_id"]
+
+    docs, skipped, new_workers = [], [], []
+    for row in rows:
+        if row["errors"]:
+            skipped.append({"row_no": row["row_no"], "worker": row["worker_name"], "errors": row["errors"]})
+            continue
+        wkey = _floor_key(row["worker_name"])
+        worker_oid = worker_id_by_key.get(wkey)
+        if worker_oid is None:
+            result = await floor_workers_collection.insert_one({
+                "tenant_id": ctx["tenant_id"], "name": row["worker_name"], "phone": "",
+                "departments": [row["department"]], "active": True, "notes": "Added from a daily-log upload.",
+                "created_by": ctx.get("admin_name") or ctx.get("admin_email") or "", "created_at": now, "updated_at": now,
+            })
+            worker_oid = result.inserted_id
+            worker_id_by_key[wkey] = worker_oid
+            new_workers.append(row["worker_name"])
+        docs.append({
+            "tenant_id": ctx["tenant_id"], "date": row["date"], "time": row["time"],
+            "department": row["department"], "worker_id": str(worker_oid), "worker_name": row["worker_name"],
+            "design_no": row["design_no"], "source": "INTERNAL", "job_work_order_id": None,
+            "vendor_name": row["vendor_name"],
+            **{f: row[f] for f in FLOOR_LOG_NUMERIC_FIELDS},
+            "on_time": row["on_time"], "remarks": row["remarks"],
+            "created_by": ctx.get("admin_id"), "created_by_name": ctx.get("admin_name") or ctx.get("admin_email") or "",
+            "import_source": "bulk_upload", "created_at": now, "updated_at": now,
+        })
+    if docs:
+        await daily_production_logs_collection.insert_many(docs, ordered=False)
+    return {
+        "status": "success", "mode": "committed",
+        "inserted": len(docs), "rows_skipped": len(skipped), "skipped_rows": skipped[:200],
+        "new_workers": sorted(set(new_workers)),
+        "message": f"{len(docs)} floor log entr{'y' if len(docs) == 1 else 'ies'} imported"
+                   + (f", {len(skipped)} row(s) skipped" if skipped else "")
+                   + (f", {len(set(new_workers))} new worker(s) added" if new_workers else "") + ".",
+    }
 
 
 @router.get("/floor-kpis")
