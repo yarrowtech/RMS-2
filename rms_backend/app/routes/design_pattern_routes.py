@@ -293,24 +293,33 @@ async def create_sample(payload: dict, ctx: dict = Depends(require_design)):
     await design_projects_collection.update_one({"_id": project["_id"]}, {"$set": {"status": status, "updated_at": now}})
     return {"message": f"Sample review {row['sample_no']} saved.", "data": serialize(row)}
 
-@router.post("/samples/{sample_id}/job-order", status_code=201)
-async def create_sample_job_order(sample_id: str, payload: dict, ctx: dict = Depends(require_design_or_production)):
-    depts=set(ctx.get("_managed_departments") or []); permissions=set(ctx.get("_permissions") or [])
-    if "Production & Job Work" not in depts and "job_work" not in permissions: raise HTTPException(status_code=403, detail="Production approval is required to create a sample job order.")
+@router.patch("/samples/{sample_id}")
+async def update_sample(sample_id: str, payload: dict, ctx: dict = Depends(require_design)):
+    """Correct or advance an existing sample round (e.g. fill in fit/decision
+    once the physical sample comes back) instead of creating a duplicate
+    record. Changing the decision re-derives the parent project's status the
+    same way create_sample does."""
     if not ObjectId.is_valid(sample_id): raise HTTPException(status_code=400, detail="Invalid sample.")
-    sample=await design_samples_collection.find_one({"_id":ObjectId(sample_id),"tenant_id":ctx["tenant_id"]})
+    sample = await design_samples_collection.find_one({"_id": ObjectId(sample_id), "tenant_id": ctx["tenant_id"]})
     if not sample: raise HTTPException(status_code=404, detail="Sample not found.")
-    if sample.get("job_work_order_id"): raise HTTPException(status_code=400, detail="This sample already has a job work order.")
-    project=await project_or_404(sample["project_id"],ctx["tenant_id"]); worker=clean(payload.get("job_worker_name") or sample.get("assigned_to"),160)
-    if not worker: raise HTTPException(status_code=400, detail="Job worker name is required.")
-    now=datetime.utcnow(); seq=await job_work_orders_collection.count_documents({"tenant_id":ctx["tenant_id"]})+1
-    pack=await tech_packs_collection.find_one({"tenant_id":ctx["tenant_id"],"design_no":project["design_no"]},sort=[("updated_at",-1)])
-    line={"design_no":project["design_no"],"department":project.get("department",""),"product_type":project.get("style_name",""),"quantity":number(sample.get("quantity"),1),"unit":"pcs","rate":0,"remarks":f"{sample.get('sample_type')} · {sample.get('review_notes','')}","tech_pack_id":str(pack["_id"]) if pack else "","image_urls":sample.get("image_urls",[])}
-    if pack: line["tech_pack"]={k:pack.get(k) for k in ("tech_pack_no","version","design_no","style_name","department","description","fabric_notes","measurement_rows","construction_notes","artwork_notes","trims_items","colourways","sketch_images","details_images","artwork_images","trims_images","colourway_images")}
-    order={"tenant_id":ctx["tenant_id"],"order_no":f"JWO-{now.strftime('%y%m%d')}-{seq:04d}","job_worker_name":worker,"assigned_vendor_id":clean(payload.get("vendor_id"),40) or None,"job_work_type":clean(payload.get("job_work_type"),40) or "Stitching","finished_product":f"Sample · {project['style_name']}","expected_quantity":number(sample.get("quantity"),1),"unit":"pcs","design_lines":[line],"due_date":sample.get("required_date",""),"remarks":f"Sample order {sample.get('sample_no')}. {sample.get('materials','')}","materials":[],"outputs":[],"status":"DRAFT","source":"DESIGN_SAMPLE","sample_id":sample_id,"created_by":ctx.get("admin_id"),"created_at":now,"updated_at":now}
-    result=await job_work_orders_collection.insert_one(order)
-    await design_samples_collection.update_one({"_id":sample["_id"]},{"$set":{"job_work_order_id":str(result.inserted_id),"job_work_order_no":order["order_no"],"assigned_to":worker,"updated_at":now}})
-    return {"message":f"Sample job {order['order_no']} created. Issue its material from Job Work Orders.","order_id":str(result.inserted_id)}
+    update: Dict[str, Any] = {}
+    for key, limit in {"sample_type": 80, "pattern_id": 40, "required_date": 20, "received_date": 20, "assigned_to": 160, "materials": 1500, "fit_result": 1000, "construction_result": 1000, "review_notes": 2000}.items():
+        if key in payload: update[key] = clean(payload[key], limit)
+    if "quantity" in payload: update["quantity"] = max(1, number(payload.get("quantity"), sample.get("quantity", 1)))
+    if "estimated_cost" in payload: update["estimated_cost"] = number(payload.get("estimated_cost"))
+    if "actual_cost" in payload: update["actual_cost"] = number(payload.get("actual_cost"))
+    if "image_urls" in payload: update["image_urls"] = [clean(x, 1000) for x in (payload.get("image_urls") or []) if clean(x)][:20]
+    if "decision" in payload:
+        decision = clean(payload["decision"], 40).upper()
+        if decision not in SAMPLE_DECISIONS: raise HTTPException(status_code=400, detail="Invalid sample decision.")
+        update["decision"] = decision
+    if not update: raise HTTPException(status_code=400, detail="Nothing to update.")
+    update["updated_at"] = datetime.utcnow()
+    await design_samples_collection.update_one({"_id": sample["_id"]}, {"$set": update})
+    if "decision" in update:
+        status = "AWAITING_APPROVAL" if update["decision"] in {"APPROVED", "APPROVED_WITH_COMMENTS"} else "REVISION_REQUIRED" if update["decision"] != "PENDING" else "SAMPLE_DEVELOPMENT"
+        await design_projects_collection.update_one({"_id": ObjectId(sample["project_id"])}, {"$set": {"status": status, "updated_at": datetime.utcnow()}})
+    return {"message": "Sample updated."}
 
 @router.post("/samples/{sample_id}/job-order", status_code=201)
 async def create_sample_job_order(sample_id: str, payload: dict, ctx: dict = Depends(require_design_or_production)):
@@ -362,6 +371,25 @@ async def create_research(payload: dict, ctx: dict = Depends(require_design)):
     result = await design_research_collection.insert_one(row); row["_id"] = result.inserted_id
     return {"message": "Research reference saved.", "data": serialize(row)}
 
+@router.patch("/research/{research_id}")
+async def update_research(research_id: str, payload: dict, ctx: dict = Depends(require_design)):
+    if not ObjectId.is_valid(research_id): raise HTTPException(status_code=400, detail="Invalid research reference.")
+    row = await design_research_collection.find_one({"_id": ObjectId(research_id), "tenant_id": ctx["tenant_id"]})
+    if not row: raise HTTPException(status_code=404, detail="Research reference not found.")
+    update: Dict[str, Any] = {}
+    if "title" in payload:
+        title = clean(payload["title"], 200)
+        if not title: raise HTTPException(status_code=400, detail="Research title is required.")
+        update["title"] = title
+    for key, limit in {"category": 80, "season": 80, "department": 80, "market_segment": 120, "notes": 3000}.items():
+        if key in payload: update[key] = clean(payload[key], limit)
+    if "tags" in payload: update["tags"] = [clean(x, 50) for x in (payload.get("tags") or []) if clean(x)][:30]
+    if "reference_urls" in payload: update["reference_urls"] = [clean(x, 1000) for x in (payload.get("reference_urls") or []) if clean(x)][:30]
+    if not update: raise HTTPException(status_code=400, detail="Nothing to update.")
+    update["updated_at"] = datetime.utcnow()
+    await design_research_collection.update_one({"_id": row["_id"]}, {"$set": update})
+    return {"message": "Research reference updated."}
+
 @router.post("/artworks", status_code=201)
 async def create_artwork(payload: dict, ctx: dict = Depends(require_design)):
     project = await project_or_404(clean(payload.get("project_id"), 40), ctx["tenant_id"]); now = datetime.utcnow()
@@ -373,6 +401,20 @@ async def create_artwork(payload: dict, ctx: dict = Depends(require_design)):
         "notes": clean(payload.get("notes"), 2000), "status": clean(payload.get("status"), 40) or "DRAFT", "created_at": now, "updated_at": now}
     result = await design_artworks_collection.insert_one(row); row["_id"] = result.inserted_id
     return {"message": f"Artwork {row['artwork_no']} saved.", "data": serialize(row)}
+
+@router.patch("/artworks/{artwork_id}")
+async def update_artwork(artwork_id: str, payload: dict, ctx: dict = Depends(require_design)):
+    if not ObjectId.is_valid(artwork_id): raise HTTPException(status_code=400, detail="Invalid artwork.")
+    row = await design_artworks_collection.find_one({"_id": ObjectId(artwork_id), "tenant_id": ctx["tenant_id"]})
+    if not row: raise HTTPException(status_code=404, detail="Artwork not found.")
+    update: Dict[str, Any] = {}
+    for key, limit in {"name": 160, "kind": 80, "version": 30, "width": 40, "height": 40, "placement": 300, "technique": 120, "colours": 500, "notes": 2000, "status": 40}.items():
+        if key in payload: update[key] = clean(payload[key], limit)
+    if "file_urls" in payload: update["file_urls"] = [clean(x, 1000) for x in (payload.get("file_urls") or []) if clean(x)][:30]
+    if not update: raise HTTPException(status_code=400, detail="Nothing to update.")
+    update["updated_at"] = datetime.utcnow()
+    await design_artworks_collection.update_one({"_id": row["_id"]}, {"$set": update})
+    return {"message": "Artwork updated."}
 
 @router.post("/change-requests", status_code=201)
 async def create_change_request(payload: dict, ctx: dict = Depends(require_design_or_production)):
