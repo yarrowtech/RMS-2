@@ -6,6 +6,7 @@ import { Modal, Field, CreateFabricPOModal } from "../shared/FabricBuyingCart.js
 import FabricThemesSection from "../Mbuyer/FabricThemes.jsx";
 import FabricRequirementSummary from "../Mbuyer/FabricRequirementSummary.jsx";
 import TechPackLibrary from "./TechPackLibrary.jsx";
+import { HybridProduction, WorkstationDisplay } from "./HybridProduction.jsx";
 
 const JOB_WORK_TYPES = ["Cutting", "Stitching", "Embroidery", "Printing", "Washing", "Finishing", "Packing", "Other"];
 const DESIGN_DEPARTMENTS = ["Men", "Women", "Kids Boys", "Kids Girls", "Infant", "Accessories", "Other"];
@@ -111,12 +112,11 @@ const WORKFLOW_STEPS = [
   { key: "techpack", label: "1 · Tech Pack", icon: "📐" },
   { key: "bom", label: "2 · Style BOM & Fabric Plan", icon: "🧮" },
   { key: "fabric", label: "3 · Fabric Buying", icon: "🧵" },
-  { key: "orders", label: "4 · Job Work Orders", icon: "✂️" },
-  // Self-service for a retailer running Job Work without Merchandiser
-  // Buyer enabled — they still need to invite vendors and see their
-  // fabric PO history without depending on Buyer's own screens.
-  { key: "vendors", label: "5 · Vendors", icon: "🤝" },
-  { key: "po-list", label: "6 · Purchase Orders", icon: "🧾" },
+  { key: "hybrid", label: "4 · Hybrid Production", icon: "🏭" },
+  { key: "workstation", label: "5 · Workstation Display", icon: "🖥️" },
+  { key: "orders", label: "6 · Standalone Job Work", icon: "✂️" },
+  { key: "vendors", label: "7 · Vendors", icon: "🤝" },
+  { key: "po-list", label: "8 · Purchase Orders", icon: "🧾" },
   { key: "design-collab", label: "Design Queries", icon: "💬" },
 ];
 
@@ -128,12 +128,31 @@ const STEP_STYLES = {
   techpack: { active: "border-fuchsia-500 bg-gradient-to-r from-fuchsia-600 to-pink-600 text-white shadow-lg shadow-fuchsia-200", chipActive: "border-fuchsia-500 bg-fuchsia-600 text-white", dot: "bg-fuchsia-600" },
   bom:      { active: "border-indigo-500 bg-gradient-to-r from-indigo-600 to-violet-600 text-white shadow-lg shadow-indigo-200", chipActive: "border-indigo-500 bg-indigo-600 text-white", dot: "bg-indigo-600" },
   fabric:   { active: "border-cyan-500 bg-gradient-to-r from-cyan-600 to-teal-600 text-white shadow-lg shadow-cyan-200", chipActive: "border-cyan-500 bg-cyan-600 text-white", dot: "bg-cyan-600" },
+  hybrid:   { active: "border-blue-500 bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-lg shadow-blue-200", chipActive: "border-blue-500 bg-blue-600 text-white", dot: "bg-blue-600" },
+  workstation: { active: "border-cyan-500 bg-gradient-to-r from-cyan-600 to-blue-600 text-white shadow-lg shadow-cyan-200", chipActive: "border-cyan-500 bg-cyan-600 text-white", dot: "bg-cyan-600" },
   orders:   { active: "border-amber-400 bg-gradient-to-r from-amber-500 to-orange-500 text-white shadow-lg shadow-amber-200", chipActive: "border-amber-400 bg-amber-500 text-white", dot: "bg-amber-500" },
   vendors:  { active: "border-violet-500 bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white shadow-lg shadow-violet-200", chipActive: "border-violet-500 bg-violet-600 text-white", dot: "bg-violet-600" },
   "po-list": { active: "border-emerald-500 bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-lg shadow-emerald-200", chipActive: "border-emerald-500 bg-emerald-600 text-white", dot: "bg-emerald-600" },
   "design-collab": { active: "border-fuchsia-500 bg-gradient-to-r from-fuchsia-600 to-pink-600 text-white shadow-lg shadow-fuchsia-200", chipActive: "border-fuchsia-500 bg-fuchsia-600 text-white", dot: "bg-fuchsia-600" },
 };
 
+const TAB_GUIDES = {
+  overview: ["Check active production, stock and pending work.", "Open the numbered tab matching the work you need to do.", "Follow each tab's Next step note; refresh after another department acts."],
+  techpack: ["Open the released design instruction from Design & Pattern.", "Verify images, measurements, construction, trims and colourways.", "Use the pack in a BOM, hybrid batch or standalone job-work order."],
+  bom: ["Choose the style/Tech Pack and enter planned garment quantity.", "Add every fabric/material consumption and wastage allowance.", "Compare required versus available stock, then buy shortages in Fabric Buying."],
+  fabric: ["Review pooled fabric demand and available central stock.", "Choose an approved fabric supplier and raise the purchase order.", "Purchased fabric follows PO → GRC → GRN; after GRN it becomes issue-ready stock."],
+  hybrid: ["Create the physical operation route and mark each step Internal or External.", "Create a batch from a released Tech Pack, then assign/start each operation in order.", "Reconcile every operation and use Final QC to post accepted finished goods to inventory."],
+  workstation: ["Select an active hybrid batch assigned to the floor.", "Open full screen or copy its secure link to the LED/TV.", "Worker follows the locked instructions; supervisor records counts in Hybrid Production."],
+  orders: ["Use this for a standalone external job where retailer-owned material leaves the premises.", "Issue counted material and share the locked Tech Pack with a registered or walk-in job worker.", "Receive and reconcile material, run QC, then post only accepted finished goods."],
+  vendors: ["Invite or select registered fabric/job-work vendors; walk-ins can still be entered on an order.", "Check vendor type, contact and onboarding status before assigning work.", "Return to Fabric Buying for supplier POs or Job Work/Hybrid Production for processing."],
+  "po-list": ["Review tenant purchase orders and their supplier status.", "For purchased goods, warehouse performs GRC count and defect check, then approved GRN.", "After GRN, use the received material in BOM, fabric planning or material issue."],
+  "design-collab": ["Ask Design & Pattern when a released instruction is unclear.", "Reference the design number, Tech Pack version and exact operation.", "Use the approved reply/revision; never alter a live batch instruction informally."],
+};
+
+function TabGuide({ activeStep }) {
+  const steps = TAB_GUIDES[activeStep] || [];
+  return <details open className="mb-4 overflow-hidden rounded-2xl border border-indigo-200 bg-white/90 shadow-sm"><summary className="cursor-pointer bg-indigo-50 px-5 py-3 text-sm font-black text-indigo-950">How to use this tab · What comes next</summary><div className="grid gap-3 p-4 md:grid-cols-3">{steps.map((step, index) => <div key={step} className="flex gap-2 rounded-xl bg-slate-50 p-3 text-xs leading-5 text-slate-600"><b className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-indigo-600 text-white">{index + 1}</b><span>{step}</span></div>)}</div></details>;
+}
 function StepSidebar({ activeStep, setActiveStep, counts }) {
   return (
     <aside className="hidden lg:flex lg:w-64 lg:shrink-0 lg:flex-col lg:gap-2">
@@ -177,14 +196,16 @@ const STEP_CARDS = [
   { key: "techpack", step: "1", title: "Tech Pack", desc: "Lock the approved design reference — sketch, spec sheet, artwork, trims, colourways.", grad: "from-fuchsia-600 to-pink-600" },
   { key: "bom", step: "2", title: "Style BOM & Fabric Plan", desc: "Calculate metres needed from garment consumption × quantity × wastage.", grad: "from-indigo-600 to-violet-600" },
   { key: "fabric", step: "3", title: "Fabric Buying", desc: "Pool fabric demand across themes, see what's in stock, raise supplier POs.", grad: "from-cyan-600 to-teal-600" },
-  { key: "orders", step: "4", title: "Job Work Orders", desc: "Issue material to a job worker, track it, and reconcile on return.", grad: "from-amber-500 to-orange-500" },
+  { key: "hybrid", step: "4", title: "Hybrid Production", desc: "Move one batch through internal floor operations and external job workers in the correct order.", grad: "from-blue-600 to-indigo-600" },
+  { key: "workstation", step: "5", title: "Workstation Display", desc: "Show the current locked Tech Pack instruction on a floor LED or TV.", grad: "from-cyan-600 to-blue-600" },
+  { key: "orders", step: "6", title: "Standalone Job Work", desc: "Issue material for external processing, track it, and reconcile on return.", grad: "from-amber-500 to-orange-500" },
 ];
 
 function OverviewPanel({ dashboard, plans, techPacks, orders, stock, materialSummary, setActiveStep }) {
   const stepCounts = { techpack: techPacks.length, bom: plans.length, fabric: null, orders: orders.length };
   return (
     <div>
-      <section className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <section className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
         {STEP_CARDS.map((card) => (
           <button key={card.key} type="button" onClick={() => setActiveStep(card.key)}
             className={`group relative overflow-hidden rounded-2xl bg-gradient-to-br ${card.grad} p-5 text-left shadow-lg transition duration-200 hover:-translate-y-0.5 hover:shadow-xl`}>
@@ -200,7 +221,7 @@ function OverviewPanel({ dashboard, plans, techPacks, orders, stock, materialSum
         ))}
       </section>
 
-      <section className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <section className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
         {[
           ["Active orders", dashboard.active_orders || 0, "Draft, issued and partially received", "bg-violet-600"],
           ["With job workers", dashboard.with_job_workers || 0, "Material currently outside", "bg-amber-500"],
@@ -407,6 +428,7 @@ export default function ProductionJobWork() {
           <StepSidebar activeStep={activeStep} setActiveStep={setActiveStep} counts={{ techpack: techPacks.length, bom: plans.length, orders: orders.length }} />
 
           <div className="min-w-0 flex-1">
+            <TabGuide activeStep={activeStep} />
             {activeStep === "overview" && (
               <OverviewPanel dashboard={dashboard} plans={plans} techPacks={techPacks} orders={orders} stock={stock} materialSummary={materialSummary} setActiveStep={setActiveStep} />
             )}
@@ -441,6 +463,10 @@ export default function ProductionJobWork() {
                 </section>
               </>
             )}
+
+            {activeStep === "hybrid" && <HybridProduction vendors={vendors} />}
+
+            {activeStep === "workstation" && <WorkstationDisplay />}
 
             {activeStep === "orders" && (
               <section className="overflow-hidden rounded-3xl border border-white bg-white/90 shadow-xl shadow-indigo-100/40 backdrop-blur">

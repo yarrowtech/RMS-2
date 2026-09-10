@@ -23,6 +23,7 @@ import InventoryManagement from "./components/InventoryManagement/InventoryManag
 import StockPlanForecasting from "./components/StockPlanForecastingDepartment/StockPlanForecasting.jsx";
 import ForecastAnalytics from "./components/ForecastAnalytics.jsx";
 import ProductionJobWork from "./components/Production/ProductionJobWork.jsx";
+import { PublicWorkstationDisplay } from "./components/Production/HybridProduction.jsx";
 import Marketing from "./components/Marketing/Marketing.jsx";
 import CustomerCRM from "./components/CustomerCRM/CustomerCRM.jsx";
 import Admin from "./components/Admin/Admin";
@@ -159,6 +160,7 @@ export default function App() {
         <Route path="/po-view/:token" element={<POPublicView />} />
         <Route path="/invoice/:token" element={<InvoicePublicView />} />
         <Route path="/job-work-view/:token" element={<JobWorkOrderPublicView />} />
+        <Route path="/production-display/:token" element={<PublicWorkstationDisplay />} />
         
         
 

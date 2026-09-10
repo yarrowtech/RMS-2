@@ -51,6 +51,7 @@ from .routes.production_addon_routes import router as production_addon_router
 from .routes.logistics_addon_routes import router as logistics_addon_router
 from .routes.logistics_routes import router as logistics_router
 from .routes.design_pattern_routes import router as design_pattern_router
+from .routes.production_flow_routes import router as production_flow_router
    
 
 
@@ -136,6 +137,7 @@ app.include_router(production_addon_router)
 app.include_router(logistics_addon_router)
 app.include_router(logistics_router)
 app.include_router(design_pattern_router)
+app.include_router(production_flow_router)
 app.include_router(onboarding_router)
 app.include_router(store_upgrade_router)
 app.include_router(retailer_signup_router)

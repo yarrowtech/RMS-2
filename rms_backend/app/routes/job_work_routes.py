@@ -442,7 +442,7 @@ async def _add_leftover_stock(tenant_id: str, parent_barcode: str, quantity: flo
     await collection.insert_one(document)
 
 
-async def _increase_central_stock(tenant_id: str, barcode: str, quantity: float, product: str, rate: float, reason: str, store: dict | None = None) -> None:
+async def _increase_central_stock(tenant_id: str, barcode: str, quantity: float, product: str, rate: float, reason: str, store: dict | None = None, source: str = "job_work_receipt") -> None:
     collection = _stock_collection(store)
     query = _stock_query(tenant_id, barcode, store)
     existing = await collection.find_one(query)
@@ -450,7 +450,7 @@ async def _increase_central_stock(tenant_id: str, barcode: str, quantity: float,
         "qty_change": quantity,
         "reason": reason,
         "adjustedAt": datetime.utcnow().isoformat(),
-        "source": "job_work_receipt",
+        "source": source,
     }
     if existing:
         await collection.update_one(
@@ -464,7 +464,7 @@ async def _increase_central_stock(tenant_id: str, barcode: str, quantity: float,
         "rate": rate,
         "mrp": rate,
         "description": product,
-        "source": "job_work_receipt",
+        "source": source,
         "createdAt": datetime.utcnow(),
         "updatedAt": datetime.utcnow(),
         "adjustments": [adjustment],

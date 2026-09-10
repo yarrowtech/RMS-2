@@ -138,6 +138,8 @@ design_settings_collection = db["design_settings"]
 floor_workers_collection = db["floor_workers"]
 floor_ops_settings_collection = db["floor_ops_settings"]
 daily_production_logs_collection = db["daily_production_logs"]
+production_routes_collection = db["production_routes"]
+production_batches_collection = db["production_batches"]
 
 # HR module. Employees are NOT duplicated here — admins_collection is the
 # single source of truth for who works at this tenant (name, department,
