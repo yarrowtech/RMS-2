@@ -1424,6 +1424,101 @@ async def get_tech_pack(tech_pack_id: str, ctx: dict = Depends(_require_design_o
     row["linked_theme"] = await _linked_theme_swatch(ctx["tenant_id"], pack.get("material_plan_id"))
     return {"data": row}
 
+@router.put("/tech-packs/{tech_pack_id}")
+async def update_tech_pack(tech_pack_id: str, request: Request, ctx: dict = Depends(_require_design_or_job_work)):
+    """Edit a draft shared Tech Pack. Released packs are immutable because
+    Production orders may already rely on that approved version."""
+    if not ObjectId.is_valid(tech_pack_id):
+        raise HTTPException(status_code=400, detail="Invalid tech pack.")
+    pack = await tech_packs_collection.find_one({"_id": ObjectId(tech_pack_id), "tenant_id": ctx["tenant_id"]})
+    if not pack:
+        raise HTTPException(status_code=404, detail="Tech pack not found.")
+    if str(pack.get("status") or "Draft").strip().upper() != "DRAFT":
+        raise HTTPException(status_code=409, detail="Released Tech Packs cannot be edited. Create a new revision instead.")
+
+    payload, uploaded_by_category = await _tech_pack_payload_from_request(request)
+    design_no = str(payload.get("design_no") or "").strip()[:120]
+    style_name = str(payload.get("style_name") or "").strip()[:160]
+    if not design_no or not style_name:
+        raise HTTPException(status_code=400, detail="Design number and style name are required for a tech pack.")
+    material_plan_id = str(payload.get("material_plan_id") or "").strip()
+    if material_plan_id:
+        if not ObjectId.is_valid(material_plan_id):
+            raise HTTPException(status_code=400, detail="Invalid linked material plan.")
+        if not await style_bom_plans_collection.find_one({"_id": ObjectId(material_plan_id), "tenant_id": ctx["tenant_id"]}):
+            raise HTTPException(status_code=404, detail="Linked material plan not found.")
+
+    def string_list(key: str, limit: int = 20) -> list[str]:
+        value = payload.get(key) or []
+        if isinstance(value, str):
+            parsed = _parse_json_list(value)
+            value = parsed if parsed else value.splitlines()
+        return [str(item).strip() for item in value if str(item).strip()][:limit] if isinstance(value, list) else []
+
+    def category_images(category: str) -> list[str]:
+        return [*string_list(f"{category}_images"), *uploaded_by_category.get(category, [])][:20]
+
+    colourways = _parse_colourways(payload.get("colourways"))
+    for index, row in enumerate(colourways):
+        uploaded = uploaded_by_category.get(f"colourway_row_{index}") or []
+        if uploaded:
+            row["image_url"] = uploaded[0]
+
+    update = {
+        "design_no": design_no, "style_name": style_name,
+        "department": str(payload.get("department") or "").strip()[:80],
+        "version": str(payload.get("version") or "v1").strip()[:30] or "v1",
+        "theme_name": str(payload.get("theme_name") or "").strip()[:120],
+        "collection": str(payload.get("collection") or "").strip()[:120],
+        "designer_name": str(payload.get("designer_name") or "").strip()[:120],
+        "sample_size": str(payload.get("sample_size") or "").strip()[:40],
+        "description": str(payload.get("description") or "").strip()[:1200],
+        "fabric_notes": str(payload.get("fabric_notes") or "").strip()[:2000],
+        "measurement_notes": str(payload.get("measurement_notes") or "").strip()[:3000],
+        "construction_notes": str(payload.get("construction_notes") or "").strip()[:3000],
+        "artwork_notes": str(payload.get("artwork_notes") or "").strip()[:3000],
+        "trims_labels_notes": str(payload.get("trims_labels_notes") or "").strip()[:3000],
+        "colourway_notes": str(payload.get("colourway_notes") or "").strip()[:3000],
+        "reference_images": string_list("reference_images"),
+        "document_urls": string_list("document_urls"),
+        "material_plan_id": material_plan_id or None,
+        "sizes": [str(size).strip()[:20] for size in _parse_json_list(payload.get("sizes")) if str(size).strip()][:20],
+        "measurement_rows": _parse_measurement_rows(payload.get("measurement_rows")),
+        "trims_items": _parse_trims_items(payload.get("trims_items")),
+        "artwork_width_cm": str(payload.get("artwork_width_cm") or "").strip()[:20],
+        "artwork_height_cm": str(payload.get("artwork_height_cm") or "").strip()[:20],
+        "artwork_placement": str(payload.get("artwork_placement") or "").strip()[:300],
+        "colourways": colourways,
+        "sketch_images": category_images("sketch"),
+        "details_images": category_images("details"),
+        "artwork_images": category_images("artwork"),
+        "trims_images": category_images("trims"),
+        "colourway_images": category_images("colourway"),
+        "updated_by": ctx.get("admin_id"), "updated_at": datetime.utcnow(),
+    }
+    await tech_packs_collection.update_one({"_id": pack["_id"], "tenant_id": ctx["tenant_id"]}, {"$set": update})
+    updated = await tech_packs_collection.find_one({"_id": pack["_id"], "tenant_id": ctx["tenant_id"]})
+    return {"message": f"Tech pack {pack.get('tech_pack_no', '')} updated.", "data": _serialize(updated)}
+
+
+@router.delete("/tech-packs/{tech_pack_id}")
+async def delete_tech_pack(tech_pack_id: str, ctx: dict = Depends(_require_design_or_job_work)):
+    """Delete only unused drafts. Approved/released and referenced packs
+    remain as auditable production records."""
+    if not ObjectId.is_valid(tech_pack_id):
+        raise HTTPException(status_code=400, detail="Invalid tech pack.")
+    pack = await tech_packs_collection.find_one({"_id": ObjectId(tech_pack_id), "tenant_id": ctx["tenant_id"]})
+    if not pack:
+        raise HTTPException(status_code=404, detail="Tech pack not found.")
+    if str(pack.get("status") or "Draft").strip().upper() != "DRAFT":
+        raise HTTPException(status_code=409, detail="Released Tech Packs cannot be deleted. Keep them for production history.")
+    in_use = await job_work_orders_collection.find_one(
+        {"tenant_id": ctx["tenant_id"], "design_lines.tech_pack_id": tech_pack_id}, {"_id": 1, "order_no": 1}
+    )
+    if in_use:
+        raise HTTPException(status_code=409, detail=f"This Tech Pack is used by job order {in_use.get('order_no', '')} and cannot be deleted.")
+    await tech_packs_collection.delete_one({"_id": pack["_id"], "tenant_id": ctx["tenant_id"]})
+    return {"message": f"Draft tech pack {pack.get('tech_pack_no', '')} deleted."}
 
 @router.post("/tech-packs/{tech_pack_id}/comments", status_code=201)
 async def add_tech_pack_comment(tech_pack_id: str, payload: dict, ctx: dict = Depends(_require_design_or_job_work)):
