@@ -25,7 +25,7 @@ const IMAGE_SECTIONS = [
 
 const emptyPack = {
   design_no: "", style_name: "", department: "", version: "v1", sample_size: "",
-  theme_name: "", collection: "", designer_name: "",
+  theme_id: "", theme_name: "", collection: "", designer_name: "",
   description: "", fabric_notes: "", construction_notes: "", artwork_notes: "", colourway_notes: "",
   reference_images: "", document_urls: "", material_plan_id: "",
   sizes: "", artwork_width_cm: "", artwork_height_cm: "", artwork_placement: "",
@@ -35,11 +35,28 @@ const emptyMeasurementRow = (sizes) => ({ point: "", sample_value: "", grades: O
 const emptyTrimRow = () => ({ description: "", color: "", size: "", supplier: "", quantity: "", price: "" });
 const emptyColourway = () => ({ name: "", fabric_ref: "", thread_ref: "", image_file: null, image_preview: "" });
 
+function cleanAssetUrls(value) {
+  if (!Array.isArray(value)) return [];
+  return value.map((item) => String(item || "").trim()).filter((item) => item && !["[]", "{}", "null", "none", "undefined"].includes(item.toLowerCase()));
+}
+
+function themeReference(pack) {
+  const snapshot = pack?.theme_snapshot || null;
+  const current = pack?.linked_theme || null;
+  if (!snapshot && !current) return null;
+  return { ...(current || {}), ...(snapshot || {}), swatches: current?.swatches?.length ? current.swatches : (snapshot?.swatches || []) };
+}
+
 async function imageToDataUrl(url) {
+  const candidate = cleanAssetUrls([url])[0];
+  if (!candidate) return null;
   try {
-    const response = await fetch(url);
-    if (!response.ok) throw new Error("Image is unavailable");
+    const response = await fetch(candidate);
+    if (!response.ok) return null;
+    const contentType = String(response.headers.get("content-type") || "").toLowerCase();
+    if (!contentType.startsWith("image/")) return null;
     const blob = await response.blob();
+    if (!String(blob.type || contentType).toLowerCase().startsWith("image/")) return null;
     return await new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = () => resolve(reader.result);
@@ -48,10 +65,9 @@ async function imageToDataUrl(url) {
     });
   } catch { return null; }
 }
-
-export async function downloadTechPackPdf(pack, plans = []) {
+async function buildTechPackPdf(pack, plans = []) {
   const linkedPlan = pack.material_plan_id ? (plans || []).find((plan) => plan.id === pack.material_plan_id) : null;
-  const linkedTheme = pack.linked_theme || null;
+  const linkedTheme = themeReference(pack);
   const doc = new jsPDF({ unit: "pt", format: "a4" });
   const pageWidth = 595.28;
   const pageHeight = 841.89;
@@ -59,8 +75,8 @@ export async function downloadTechPackPdf(pack, plans = []) {
   const contentWidth = pageWidth - margin * 2;
   const safe = (value, fallback = "-") => String(value || fallback);
   const imageGroups = {
-    sketch: [...new Set([...(pack.sketch_images || []), ...(pack.reference_images || [])])],
-    details: pack.details_images || [], artwork: pack.artwork_images || [], trims: pack.trims_images || [], colourway: pack.colourway_images || [],
+    sketch: [...new Set([...cleanAssetUrls(pack.sketch_images), ...cleanAssetUrls(pack.reference_images)])],
+    details: cleanAssetUrls(pack.details_images), artwork: cleanAssetUrls(pack.artwork_images), trims: cleanAssetUrls(pack.trims_images), colourway: cleanAssetUrls(pack.colourway_images),
   };
   const header = (section, pageNo) => {
     doc.setDrawColor(30, 41, 59); doc.setLineWidth(0.8); doc.rect(margin, 26, contentWidth, 64);
@@ -105,13 +121,18 @@ export async function downloadTechPackPdf(pack, plans = []) {
     return cursor + 10;
   };
   const imageGrid = async (urls, y, maxHeight = 215) => {
-    const dataUrls = (await Promise.all((urls || []).slice(0, 4).map(imageToDataUrl))).filter(Boolean);
-    if (!dataUrls.length) return y;
-    const columns = dataUrls.length === 1 ? 1 : 2; const gap = 8;
+    const dataUrls = (await Promise.all(cleanAssetUrls(urls).slice(0, 4).map(imageToDataUrl))).filter(Boolean);
+    const renderable = dataUrls.map((dataUrl) => {
+      try { return { dataUrl, props: doc.getImageProperties(dataUrl) }; }
+      catch { return null; }
+    }).filter(Boolean);
+    if (!renderable.length) return y;
+    const columns = renderable.length === 1 ? 1 : 2; const gap = 8;
     const cellWidth = (contentWidth - gap * (columns - 1)) / columns;
     let x = margin; let rowY = y; let rowHeight = 0;
-    dataUrls.forEach((dataUrl, index) => {
-      const props = doc.getImageProperties(dataUrl); const height = Math.min(maxHeight, cellWidth * (props.height / props.width));
+    renderable.forEach(({ dataUrl, props }, index) => {
+      const ratio = Number(props.width) > 0 ? Number(props.height) / Number(props.width) : 1;
+      const height = Math.min(maxHeight, cellWidth * ratio);
       if (index && index % columns === 0) { rowY += rowHeight + gap; x = margin; rowHeight = 0; }
       doc.setDrawColor(203, 213, 225); doc.rect(x, rowY, cellWidth, height); doc.addImage(dataUrl, x + 2, rowY + 2, cellWidth - 4, height - 4);
       rowHeight = Math.max(rowHeight, height); x += cellWidth + gap;
@@ -123,6 +144,11 @@ export async function downloadTechPackPdf(pack, plans = []) {
   y = sectionBar("Development", y);
   if (pack.theme_name || pack.collection || pack.designer_name) {
     y = textBox("Theme / Collection / Designer", [pack.theme_name && `Theme: ${pack.theme_name}`, pack.collection && `Collection: ${pack.collection}`, pack.designer_name && `Designer: ${pack.designer_name}`].filter(Boolean).join("    |    "), y, 32);
+  }
+  if (linkedTheme?.creative_direction || linkedTheme?.palette?.length) {
+    const direction = [linkedTheme.creative_direction, linkedTheme.palette?.length && `Palette: ${linkedTheme.palette.join(", ")}`].filter(Boolean).join("\n").slice(0, 700);
+    y = textBox("Approved theme direction (locked snapshot)", direction, y, 42);
+    y = await imageGrid(linkedTheme.moodboard_urls || [], y, 80);
   }
   y = textBox("Description / design brief", pack.description, y, 54); y = textBox("Fabric & material reference", pack.fabric_notes, y, 44);
   if (linkedPlan || linkedTheme?.swatches?.length) {
@@ -155,15 +181,27 @@ export async function downloadTechPackPdf(pack, plans = []) {
 
   doc.addPage(); header("6. Colourways, Comments & Handover", 6); y = 108; y = sectionBar("Colour and fabric combinations", y);
   y = table(["Colourway", "Fabric reference", "Thread / trim reference"], (pack.colourways || []).map((row) => [row.name, row.fabric_ref, row.thread_ref]), y, [150, 180, 197]);
-  y = await imageGrid((pack.colourways || []).map((row) => row.image_url).filter(Boolean), y, 90);
+  y = await imageGrid((Array.isArray(pack.colourways) ? pack.colourways : []).map((row) => row.image_url), y, 90);
   y = textBox("Colourway notes", pack.colourway_notes, y, 42); y = await imageGrid(imageGroups.colourway, y, 125);
   y = sectionBar("Job worker acknowledgement", y); doc.setDrawColor(148, 163, 184); doc.rect(margin, y, contentWidth, 100); doc.setFont("helvetica", "normal"); doc.setFontSize(9); doc.setTextColor(51, 65, 85);
   doc.text("I have reviewed this Tech Pack, all supplied references and the stated version. I will request clarification before starting work if any item is unclear.", margin + 10, y + 18, { maxWidth: contentWidth - 20 });
   doc.line(margin + 10, y + 62, margin + 205, y + 62); doc.line(margin + 225, y + 62, margin + 375, y + 62); doc.line(margin + 395, y + 62, pageWidth - margin - 10, y + 62);
   doc.setFontSize(7.5); doc.text("Job worker name / signature", margin + 10, y + 76); doc.text("Date", margin + 225, y + 76); doc.text("Production comments", margin + 395, y + 76); y += 110;
-  y = textBox("Attached document links", (pack.document_urls || []).join("\n"), y, 42); footer();
+  y = textBox("Attached document links", (Array.isArray(pack.document_urls) ? pack.document_urls : []).join("\n"), y, 42); footer();
 
   doc.save(`${String(pack.design_no || pack.tech_pack_no || "tech-pack").replace(/[^a-z0-9_-]+/gi, "-")}-${pack.version || "v1"}.pdf`);
+}
+
+// eslint-disable-next-line react-refresh/only-export-components
+export async function downloadTechPackPdf(pack, plans = []) {
+  try {
+    await buildTechPackPdf(pack, plans);
+    return true;
+  } catch (error) {
+    console.error("Tech Pack PDF generation failed", error);
+    if (typeof window !== "undefined") window.alert(`PDF could not be generated: ${error?.message || "Unknown error"}. Please check the Tech Pack images and try again.`);
+    return false;
+  }
 }
 function ImageUploadSection({ label, hint, previews, onAdd, onRemove }) {
   return (
@@ -186,7 +224,7 @@ function ImageUploadSection({ label, hint, previews, onAdd, onRemove }) {
   );
 }
 
-function PackModal({ plans, pack = null, onClose, onSaved }) {
+function PackModal({ plans = [], themes = [], pack = null, onClose, onSaved }) {
   const editing = Boolean(pack?.id);
   const [form, setForm] = useState(() => Object.fromEntries(Object.keys(emptyPack).map((key) => [key, key === "sizes" ? (pack?.sizes || []).join(", ") : key === "reference_images" || key === "document_urls" ? (pack?.[key] || []).join("\n") : pack?.[key] ?? emptyPack[key]])));
   const [sizeList, setSizeList] = useState(() => pack?.sizes || []);
@@ -199,6 +237,8 @@ function PackModal({ plans, pack = null, onClose, onSaved }) {
   const [error, setError] = useState("");
 
   const update = (key, value) => setForm((current) => ({ ...current, [key]: value }));
+  const selectedTheme = themes.find((theme) => theme.id === form.theme_id) || themeReference(pack);
+  const selectTheme = (themeId) => { const theme = themes.find((item) => item.id === themeId); setForm((current) => ({ ...current, theme_id: themeId, theme_name: theme?.theme_name || (themeId ? current.theme_name : ""), collection: theme?.collection || (themeId ? current.collection : ""), department: theme?.department || current.department })); };
 
   const applySizes = (raw) => {
     update("sizes", raw);
@@ -238,7 +278,7 @@ function PackModal({ plans, pack = null, onClose, onSaved }) {
       const cleanMeasurementRows = measurementRows.filter((row) => row.point.trim());
       const cleanTrimRows = trimRows.filter((row) => row.description.trim());
       const cleanColourways = colourways.filter((row) => row.name.trim());
-      const serializableColourways = cleanColourways.map(({ image_file, image_preview, ...row }) => row);
+      const serializableColourways = cleanColourways.map((row) => ({ name: row.name, fabric_ref: row.fabric_ref, thread_ref: row.thread_ref, image_url: row.image_url || "" }));
       const imageCount = Object.values(images).reduce((sum, list) => sum + (list?.length || 0), 0) + cleanColourways.filter((row) => row.image_file).length;
       let result;
       if (imageCount > 0) {
@@ -288,10 +328,12 @@ function PackModal({ plans, pack = null, onClose, onSaved }) {
         <Field label="Version"><input value={form.version} onChange={(e) => update("version", e.target.value)} placeholder="v1" /></Field>
         <Field label="Sample size"><input value={form.sample_size} onChange={(e) => update("sample_size", e.target.value)} placeholder="e.g. M or 40" /></Field>
         <Field label="Link Style BOM"><select value={form.material_plan_id} onChange={(e) => update("material_plan_id", e.target.value)}><option value="">No BOM linked yet</option>{plans.map((plan) => <option key={plan.id} value={plan.id}>{plan.plan_no} - {plan.style_name}</option>)}</select></Field>
-        <Field label="Theme (optional)"><input value={form.theme_name} onChange={(e) => update("theme_name", e.target.value)} placeholder="e.g. Neo Heritage" /></Field>
-        <Field label="Collection (optional)"><input value={form.collection} onChange={(e) => update("collection", e.target.value)} placeholder="e.g. Winter 2026" /></Field>
+                {themes.length > 0 && <Field label="Approved Design theme (optional)"><select value={form.theme_id} onChange={(e) => selectTheme(e.target.value)}><option value="">No linked approved theme</option>{themes.map((theme) => <option key={theme.id} value={theme.id}>{theme.theme_name}{theme.collection ? ` - ${theme.collection}` : ""}</option>)}</select></Field>}
+        <Field label="Theme (optional)"><input disabled={Boolean(form.theme_id)} value={form.theme_name} onChange={(e) => update("theme_name", e.target.value)} placeholder="e.g. Neo Heritage" /></Field>
+        <Field label="Collection (optional)"><input disabled={Boolean(form.theme_id)} value={form.collection} onChange={(e) => update("collection", e.target.value)} placeholder="e.g. Winter 2026" /></Field>
         <Field label="Designer (optional)"><input value={form.designer_name} onChange={(e) => update("designer_name", e.target.value)} placeholder="Designer name" /></Field>
       </div>
+      {selectedTheme && form.theme_id && <div className="rounded-2xl border border-violet-200 bg-violet-50 p-4 text-sm text-slate-700"><div className="flex flex-wrap items-center justify-between gap-2"><p className="font-black text-violet-900">Inherited approved direction: {selectedTheme.theme_name}</p><span className="rounded-full bg-emerald-100 px-2 py-1 text-[10px] font-black text-emerald-700">LOCKED SNAPSHOT ON SAVE</span></div>{selectedTheme.creative_direction && <p className="mt-2 leading-6">{selectedTheme.creative_direction}</p>}{selectedTheme.palette?.length > 0 && <div className="mt-3 flex flex-wrap gap-2">{selectedTheme.palette.map((colour, index) => <span key={`${colour}-${index}`} title={colour} className="h-7 w-7 rounded-full border-2 border-white shadow ring-1 ring-slate-200" style={{ backgroundColor: colour }} />)}</div>}<p className="mt-2 text-xs text-violet-700">To change approved direction, create and approve a new theme in Design & Pattern; do not overwrite production history.</p></div>}
 
       {/* 1. Sketch */}
       <Section number="1" title="Sketch" subtitle="Illustration, flat drawing or photo - front and back views ideally.">
@@ -447,11 +489,10 @@ function CommentLog({ pack, onUpdated }) {
 }
 
 function PackDetail({ pack, plans, onClose, onUpdated }) {
+  const linkedTheme = themeReference(pack);
   return <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-slate-950/50 p-3 backdrop-blur-sm"><section className="max-h-[94vh] w-full max-w-4xl overflow-y-auto rounded-3xl bg-white shadow-2xl"><header className="sticky top-0 z-10 flex items-center justify-between border-b border-slate-100 bg-white px-6 py-4"><div><p className="text-xs font-black uppercase tracking-[0.18em] text-violet-600">{pack.tech_pack_no} - {pack.version}</p><h2 className="mt-1 text-xl font-black text-slate-900">{pack.design_no} - {pack.style_name}</h2>{(pack.theme_name || pack.collection || pack.designer_name) && <p className="mt-1 text-xs text-slate-500">{[pack.theme_name && `Theme: ${pack.theme_name}`, pack.collection && `Collection: ${pack.collection}`, pack.designer_name && `Designer: ${pack.designer_name}`].filter(Boolean).join(" - ")}</p>}</div><button type="button" onClick={onClose} className="grid h-10 w-10 place-items-center rounded-xl border border-slate-200 text-xl text-slate-500">x</button></header>
     <div className="space-y-5 p-6 text-sm">
-      {pack.linked_theme?.swatches?.length > 0 && (
-        <div><p className="mb-2 text-xs font-black uppercase tracking-wide text-slate-500">Fabric reference - Theme "{pack.linked_theme.theme_name}"</p><div className="flex flex-wrap gap-2">{pack.linked_theme.swatches.map((s, i) => s.image_url && <img key={i} src={s.image_url} alt={s.fabric_type || "swatch"} title={`${s.fabric_type || ""} ${s.gsm ? s.gsm + " GSM" : ""} ${s.color || ""} - ${s.vendor_name || ""}`} className="h-16 w-16 rounded-xl border border-slate-200 object-cover" />)}</div></div>
-      )}
+      {linkedTheme && <div className="rounded-2xl border border-violet-200 bg-violet-50/60 p-4"><div className="flex flex-wrap items-center justify-between gap-2"><p className="text-xs font-black uppercase tracking-wide text-violet-800">Approved Design direction - {linkedTheme.theme_name}</p><span className="rounded-full bg-white px-2 py-1 text-[10px] font-black text-violet-700">READ-ONLY SNAPSHOT</span></div><p className="mt-1 text-xs text-slate-500">{[linkedTheme.collection, linkedTheme.season, linkedTheme.department, linkedTheme.target_customer].filter(Boolean).join(" - ")}</p>{linkedTheme.creative_direction && <p className="mt-3 whitespace-pre-line leading-6 text-slate-700">{linkedTheme.creative_direction}</p>}{linkedTheme.palette?.length > 0 && <div className="mt-3 flex flex-wrap gap-2">{linkedTheme.palette.map((colour, index) => <span key={`${colour}-${index}`} title={colour} className="h-8 w-8 rounded-full border-2 border-white shadow ring-1 ring-slate-200" style={{ backgroundColor: colour }} />)}</div>}{linkedTheme.moodboard_urls?.length > 0 && <div className="mt-3 flex flex-wrap gap-2">{linkedTheme.moodboard_urls.map((src) => <a key={src} href={src} target="_blank" rel="noreferrer"><img src={src} alt="Theme mood board" className="h-20 w-20 rounded-xl border border-violet-100 object-cover" /></a>)}</div>}{linkedTheme.swatches?.some((item) => item.image_url) && <div className="mt-3"><p className="mb-2 text-xs font-black uppercase tracking-wide text-slate-500">Production fabric swatches</p><div className="flex flex-wrap gap-2">{linkedTheme.swatches.map((s, i) => s.image_url && <img key={i} src={s.image_url} alt={s.fabric_type || "swatch"} title={`${s.fabric_type || ""} ${s.gsm ? s.gsm + " GSM" : ""} ${s.color || ""} - ${s.vendor_name || ""}`} className="h-16 w-16 rounded-xl border border-slate-200 object-cover" />)}</div></div>}</div>}
       {IMAGE_SECTIONS.map(([key, label]) => (pack[`${key}_images`]?.length > 0) && (
         <div key={key}><p className="mb-2 text-xs font-black uppercase tracking-wide text-slate-500">{label} images</p><div className="flex flex-wrap gap-2">{pack[`${key}_images`].map((src) => <img key={src} src={src} alt={label} className="h-20 w-20 rounded-xl border border-slate-200 object-cover" />)}</div></div>
       ))}
@@ -482,7 +523,7 @@ function PackDetail({ pack, plans, onClose, onUpdated }) {
   </section></div>;
 }
 
-export default function TechPackLibrary({ plans, onSelectForOrder }) {
+export default function TechPackLibrary({ plans = [], themes = [], onSelectForOrder }) {
   const [packs, setPacks] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -540,8 +581,8 @@ export default function TechPackLibrary({ plans, onSelectForOrder }) {
         </article>;
       })}
     </div> : <div className="p-9 text-center"><p className="font-bold text-slate-700">No tech packs yet</p><p className="mt-1 text-sm text-slate-500">Create a pack first, then choose it for the relevant design line in a job work order.</p></div>}
-    {showCreate && <PackModal plans={plans} onClose={() => setShowCreate(false)} onSaved={() => { setShowCreate(false); load(); }} />}
-    {editingPack && <PackModal plans={plans} pack={editingPack} onClose={() => setEditingPack(null)} onSaved={() => { setEditingPack(null); load(); }} />}
+    {showCreate && <PackModal plans={plans} themes={themes} onClose={() => setShowCreate(false)} onSaved={() => { setShowCreate(false); load(); }} />}
+    {editingPack && <PackModal plans={plans} themes={themes} pack={editingPack} onClose={() => setEditingPack(null)} onSaved={() => { setEditingPack(null); load(); }} />}
     {viewPack && <PackDetail pack={viewPack} plans={plans} onClose={() => setViewPack(null)} onUpdated={(updated) => { setViewPack(updated); setPacks((current) => current.map((p) => p.id === updated.id ? { ...p, ...updated } : p)); }} />}
   </section>;
 }

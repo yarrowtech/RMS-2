@@ -100,6 +100,21 @@ def _parse_json_list(raw: Any) -> list:
     return raw if isinstance(raw, list) else []
 
 
+def _clean_asset_urls(raw: Any, limit: int = 20) -> list[str]:
+    """Normalize asset URL lists and reject JSON placeholder values."""
+    values = _parse_json_list(raw) if isinstance(raw, str) else raw
+    if not isinstance(values, list):
+        return []
+    cleaned: list[str] = []
+    for value in values:
+        if isinstance(value, (dict, list, tuple)):
+            continue
+        url = str(value or "").strip()
+        if not url or url.lower() in {"[]", "{}", "null", "none", "undefined"}:
+            continue
+        cleaned.append(url[:1000])
+    return cleaned[:limit]
+
 def _parse_measurement_rows(raw: Any) -> list[dict]:
     rows = []
     for row in _parse_json_list(raw)[:60]:
@@ -768,6 +783,8 @@ async def _get_theme(theme_id: str, tenant_id: str) -> dict:
     theme = await fabric_themes_collection.find_one({"_id": ObjectId(theme_id), "tenant_id": tenant_id})
     if not theme:
         raise HTTPException(status_code=404, detail="Fabric theme not found.")
+    if theme.get("design_status") and theme.get("design_status") != "APPROVED":
+        raise HTTPException(status_code=404, detail="Fabric theme not found.")
     return theme
 
 
@@ -821,7 +838,8 @@ async def _theme_requirement_summary(theme: dict, tenant_id: str) -> list[dict]:
 @router.get("/fabric-themes")
 async def list_fabric_themes(ctx: dict = Depends(_require_job_work_or_buyer)):
     rows = []
-    async for theme in fabric_themes_collection.find({"tenant_id": ctx["tenant_id"]}).sort("created_at", -1).limit(200):
+    query = {"tenant_id": ctx["tenant_id"], "$or": [{"design_status": {"$exists": False}}, {"design_status": "APPROVED"}]}
+    async for theme in fabric_themes_collection.find(query).sort("created_at", -1).limit(200):
         rows.append(_serialize_theme(theme))
     return {"data": rows}
 
@@ -860,6 +878,8 @@ async def create_fabric_theme(payload: dict, ctx: dict = Depends(_require_job_wo
 @router.get("/fabric-themes/{theme_id}")
 async def get_fabric_theme(theme_id: str, ctx: dict = Depends(_require_job_work_or_buyer)):
     theme = await _get_theme(theme_id, ctx["tenant_id"])
+    if theme.get("design_status") and theme.get("design_status") != "APPROVED":
+        raise HTTPException(status_code=404, detail="Theme not found.")
     data = _serialize_theme(theme)
     data["requirements"] = await _theme_requirement_summary(theme, ctx["tenant_id"])
     return {"data": data}
@@ -868,6 +888,8 @@ async def get_fabric_theme(theme_id: str, ctx: dict = Depends(_require_job_work_
 @router.delete("/fabric-themes/{theme_id}")
 async def delete_fabric_theme(theme_id: str, ctx: dict = Depends(_require_job_work_or_buyer)):
     theme = await _get_theme(theme_id, ctx["tenant_id"])
+    if theme.get("source_department") == "Design & Pattern":
+        raise HTTPException(status_code=403, detail="Design-owned themes can only be deleted from Design & Pattern.")
     if theme.get("status") != "draft":
         raise HTTPException(status_code=400, detail="Only a draft theme (not yet finalized into POs) can be deleted.")
     await fabric_themes_collection.delete_one({"_id": theme["_id"]})
@@ -984,6 +1006,8 @@ async def finalize_fabric_theme(theme_id: str, payload: dict, ctx: dict = Depend
     theme = await _get_theme(theme_id, ctx["tenant_id"])
     if theme.get("status") != "draft":
         raise HTTPException(status_code=400, detail="This theme has already been finalized.")
+    if theme.get("design_status") and theme.get("design_status") != "APPROVED":
+        raise HTTPException(status_code=409, detail="Design must approve this theme before Production creates purchase orders.")
     lines = theme.get("lines") or []
     if not lines:
         raise HTTPException(status_code=400, detail="Add at least one fabric selection before finalizing this theme.")
@@ -1288,26 +1312,44 @@ async def create_manual_fabric_purchase_order(payload: dict, ctx: dict = Depends
     return await _create_fabric_po_document(ctx, payload, plan=None)
 
 
-async def _linked_theme_swatch(tenant_id: str, material_plan_id: str | None) -> dict | None:
-    """A Tech Pack's optional material_plan_id points at a Style BOM plan;
-    a Fabric Theme separately points at zero or more BOM plans via
-    plan_ids. Neither record points at the other directly, so this walks
-    BOM -> Theme to surface the theme name + its vendor fabric swatches on
-    the Tech Pack — read-only enrichment, no new field stored on either
-    record, nothing to keep in sync."""
-    if not material_plan_id:
+async def _approved_design_theme(tenant_id: str, theme_id: str | None) -> dict | None:
+    if not theme_id:
         return None
-    theme = await fabric_themes_collection.find_one({"tenant_id": tenant_id, "plan_ids": material_plan_id})
+    if not ObjectId.is_valid(theme_id):
+        raise HTTPException(status_code=400, detail="Invalid linked collection or theme.")
+    theme = await fabric_themes_collection.find_one({"_id": ObjectId(theme_id), "tenant_id": tenant_id, "source_department": "Design & Pattern"})
     if not theme:
-        return None
+        raise HTTPException(status_code=404, detail="Linked collection or theme not found.")
+    if theme.get("design_status") != "APPROVED":
+        raise HTTPException(status_code=409, detail="Approve the collection/theme in Design & Pattern before linking it to a Tech Pack.")
+    return theme
+
+
+def _theme_reference(theme: dict) -> dict:
     swatches = [{
-        "image_url": line.get("image_url", ""),
-        "fabric_type": line.get("fabric_type", ""), "gsm": line.get("gsm", ""),
-        "width": line.get("width", ""), "color": line.get("color", ""),
+        "image_url": line.get("image_url", ""), "fabric_type": line.get("fabric_type", ""),
+        "gsm": line.get("gsm", ""), "width": line.get("width", ""), "color": line.get("color", ""),
         "vendor_name": line.get("vendor_name") or (line.get("walkin_vendor") or {}).get("name") or "",
     } for line in (theme.get("lines") or [])]
-    return {"id": str(theme["_id"]), "theme_name": theme.get("theme_name", ""), "swatches": swatches}
+    return {
+        "id": str(theme["_id"]), "theme_name": theme.get("theme_name", ""),
+        "collection": theme.get("collection", ""), "season": theme.get("season", ""),
+        "department": theme.get("department", ""), "target_customer": theme.get("target_customer", ""),
+        "creative_direction": theme.get("creative_direction", ""), "palette": theme.get("palette", []),
+        "moodboard_urls": theme.get("moodboard_urls", []), "document_urls": theme.get("document_urls", []),
+        "design_status": theme.get("design_status", ""), "swatches": swatches,
+    }
 
+
+async def _linked_theme_swatch(tenant_id: str, material_plan_id: str | None, theme_id: str | None = None) -> dict | None:
+    """Prefer the Tech Pack's direct approved Design theme; fall back to the
+    legacy BOM-to-Fabric-Theme link so existing records keep working."""
+    theme = None
+    if theme_id and ObjectId.is_valid(theme_id):
+        theme = await fabric_themes_collection.find_one({"_id": ObjectId(theme_id), "tenant_id": tenant_id})
+    if not theme and material_plan_id:
+        theme = await fabric_themes_collection.find_one({"tenant_id": tenant_id, "plan_ids": material_plan_id})
+    return _theme_reference(theme) if theme else None
 
 @router.get("/tech-packs")
 async def list_tech_packs(ctx: dict = Depends(_require_design_or_job_work)):
@@ -1320,7 +1362,14 @@ async def list_tech_packs(ctx: dict = Depends(_require_design_or_job_work)):
         query["$or"] = [{"origin_department": {"$ne": "Design & Pattern"}}, {"status": "Released to Production"}]
     async for pack in tech_packs_collection.find(query).sort("updated_at", -1).limit(300):
         row = _serialize(pack)
-        row["linked_theme"] = await _linked_theme_swatch(ctx["tenant_id"], pack.get("material_plan_id"))
+        for category in TECH_PACK_IMAGE_CATEGORIES:
+            row[f"{category}_images"] = _clean_asset_urls(row.get(f"{category}_images"))
+        row["reference_images"] = _clean_asset_urls(row.get("reference_images"))
+        row["colourways"] = [
+            {**item, "image_url": (_clean_asset_urls([item.get("image_url")], 1) or [""])[0]}
+            for item in (row.get("colourways") or []) if isinstance(item, dict)
+        ]
+        row["linked_theme"] = await _linked_theme_swatch(ctx["tenant_id"], pack.get("material_plan_id"), pack.get("theme_id"))
         rows.append(row)
     return {"data": rows}
 
@@ -1351,11 +1400,15 @@ async def create_tech_pack(request: Request, ctx: dict = Depends(_require_design
         if not plan:
             raise HTTPException(status_code=404, detail="Linked material plan not found.")
 
+    theme_id = str(payload.get("theme_id") or "").strip()
+    linked_design_theme = await _approved_design_theme(ctx["tenant_id"], theme_id)
+    theme_snapshot = _theme_reference(linked_design_theme) if linked_design_theme else None
+
     def _category_images(category: str) -> list[str]:
         existing = payload.get(f"{category}_images") or []
         existing = _parse_json_list(existing) if isinstance(existing, str) else existing
         uploaded = uploaded_by_category.get(category, [])
-        return [str(url).strip() for url in (*existing, *uploaded) if str(url).strip()][:20]
+        return _clean_asset_urls([*existing, *uploaded])
 
     now = datetime.utcnow()
     sequence = await tech_packs_collection.count_documents({"tenant_id": ctx["tenant_id"]}) + 1
@@ -1364,12 +1417,13 @@ async def create_tech_pack(request: Request, ctx: dict = Depends(_require_design
         "tech_pack_no": f"TP-{now.strftime('%y%m%d')}-{sequence:04d}",
         "design_no": design_no,
         "style_name": style_name,
-        "department": str(payload.get("department") or "").strip()[:80],
+        "department": (linked_design_theme or {}).get("department") or str(payload.get("department") or "").strip()[:80],
         "version": version,
         "status": "Draft",
         "origin_department": "Design & Pattern" if ("Design & Pattern" in set(ctx.get("_managed_departments") or []) or "design_pattern" in set(ctx.get("_permissions") or [])) else "Production & Job Work",
-        "theme_name": str(payload.get("theme_name") or "").strip()[:120],
-        "collection": str(payload.get("collection") or "").strip()[:120],
+        "theme_id": theme_id or None, "theme_snapshot": theme_snapshot,
+        "theme_name": (linked_design_theme or {}).get("theme_name") or str(payload.get("theme_name") or "").strip()[:120],
+        "collection": (linked_design_theme or {}).get("collection") or str(payload.get("collection") or "").strip()[:120],
         "designer_name": str(payload.get("designer_name") or "").strip()[:120],
         "sample_size": str(payload.get("sample_size") or "").strip()[:40],
         "description": str(payload.get("description") or "").strip()[:1200],
@@ -1421,7 +1475,7 @@ async def get_tech_pack(tech_pack_id: str, ctx: dict = Depends(_require_design_o
     if not pack:
         raise HTTPException(status_code=404, detail="Tech pack not found.")
     row = _serialize(pack)
-    row["linked_theme"] = await _linked_theme_swatch(ctx["tenant_id"], pack.get("material_plan_id"))
+    row["linked_theme"] = await _linked_theme_swatch(ctx["tenant_id"], pack.get("material_plan_id"), pack.get("theme_id"))
     return {"data": row}
 
 @router.put("/tech-packs/{tech_pack_id}")
@@ -1448,6 +1502,10 @@ async def update_tech_pack(tech_pack_id: str, request: Request, ctx: dict = Depe
         if not await style_bom_plans_collection.find_one({"_id": ObjectId(material_plan_id), "tenant_id": ctx["tenant_id"]}):
             raise HTTPException(status_code=404, detail="Linked material plan not found.")
 
+    theme_id = str(payload.get("theme_id") or "").strip()
+    linked_design_theme = await _approved_design_theme(ctx["tenant_id"], theme_id)
+    theme_snapshot = _theme_reference(linked_design_theme) if linked_design_theme else None
+
     def string_list(key: str, limit: int = 20) -> list[str]:
         value = payload.get(key) or []
         if isinstance(value, str):
@@ -1466,10 +1524,11 @@ async def update_tech_pack(tech_pack_id: str, request: Request, ctx: dict = Depe
 
     update = {
         "design_no": design_no, "style_name": style_name,
-        "department": str(payload.get("department") or "").strip()[:80],
+        "department": (linked_design_theme or {}).get("department") or str(payload.get("department") or "").strip()[:80],
         "version": str(payload.get("version") or "v1").strip()[:30] or "v1",
-        "theme_name": str(payload.get("theme_name") or "").strip()[:120],
-        "collection": str(payload.get("collection") or "").strip()[:120],
+        "theme_id": theme_id or None, "theme_snapshot": theme_snapshot,
+        "theme_name": (linked_design_theme or {}).get("theme_name") or str(payload.get("theme_name") or "").strip()[:120],
+        "collection": (linked_design_theme or {}).get("collection") or str(payload.get("collection") or "").strip()[:120],
         "designer_name": str(payload.get("designer_name") or "").strip()[:120],
         "sample_size": str(payload.get("sample_size") or "").strip()[:40],
         "description": str(payload.get("description") or "").strip()[:1200],

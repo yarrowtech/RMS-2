@@ -229,9 +229,8 @@ export default function ProfessionalRoleSelector() {
 
       <header className="relative z-30 border-b border-slate-200/70 bg-white/75 backdrop-blur-xl">
         <div className="mx-auto flex w-full max-w-7xl items-center justify-between px-4 py-3 sm:px-8 sm:py-5 lg:px-10">
-          <a href="#top" className="flex min-w-0 items-center gap-2.5 sm:gap-3">
-            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-slate-950 text-white shadow-lg shadow-slate-900/15 sm:h-12 sm:w-12 sm:rounded-2xl"><Store size={20} className="sm:hidden" /><Store size={22} className="hidden sm:block" /></span>
-            <span className="min-w-0"><span className="block text-base font-extrabold tracking-tight text-slate-950 sm:text-lg">RMS</span><span className="hidden text-[11px] font-bold uppercase tracking-[0.18em] text-slate-500 sm:block">Retail Management System</span></span>
+          <a href="#top" className="flex min-w-0 items-center" aria-label="Eretailms home">
+            <img src="/rms-preview.png" alt="Eretailms" className="h-12 w-[150px] object-contain object-left sm:h-16 sm:w-[210px]" />
           </a>
           <nav className="hidden items-center gap-8 text-[15px] font-semibold text-slate-600 lg:flex" aria-label="Main navigation">
             <a href="#about" className="hover:text-indigo-700">What is RMS?</a>

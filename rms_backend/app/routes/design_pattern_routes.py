@@ -17,7 +17,8 @@ from ..db import (
     design_queries_collection, design_research_collection, design_samples_collection,
     design_settings_collection,
     daily_production_logs_collection, floor_ops_settings_collection, floor_workers_collection,
-    job_work_orders_collection, sales_collection, style_bom_plans_collection, tech_packs_collection,
+    fabric_themes_collection, job_work_orders_collection, sales_collection,
+    style_bom_plans_collection, tech_packs_collection,
 )
 from .deps import get_hq_tenant
 
@@ -107,6 +108,25 @@ async def project_or_404(project_id: str, tenant_id: str) -> dict:
     if not row: raise HTTPException(status_code=404, detail="Design project not found.")
     return row
 
+def _theme_snapshot(theme: dict) -> dict:
+    """Stable creative brief copied into a Tech Pack or project handoff."""
+    return {
+        "id": str(theme["_id"]), "theme_name": theme.get("theme_name", ""),
+        "collection": theme.get("collection", ""), "season": theme.get("season", ""),
+        "department": theme.get("department", ""), "target_customer": theme.get("target_customer", ""),
+        "creative_direction": theme.get("creative_direction", ""), "palette": theme.get("palette", []),
+        "moodboard_urls": theme.get("moodboard_urls", []), "document_urls": theme.get("document_urls", []),
+        "design_status": theme.get("design_status", "DRAFT"),
+    }
+
+async def _design_theme_or_404(theme_id: str, tenant_id: str) -> dict:
+    if not ObjectId.is_valid(theme_id):
+        raise HTTPException(status_code=400, detail="Invalid collection or theme.")
+    theme = await fabric_themes_collection.find_one({"_id": ObjectId(theme_id), "tenant_id": tenant_id, "source_department": "Design & Pattern"})
+    if not theme:
+        raise HTTPException(status_code=404, detail="Collection or theme not found.")
+    return theme
+
 @router.post("/assets", status_code=201)
 async def upload_assets(files: list[UploadFile] = File(...), ctx: dict = Depends(require_design)):
     if not files or len(files) > 12: raise HTTPException(status_code=400, detail="Upload between 1 and 12 files at a time.")
@@ -122,6 +142,80 @@ async def upload_assets(files: list[UploadFile] = File(...), ctx: dict = Depends
         rows.append({"name": clean(file.filename, 240), "url": result.get("secure_url") or result.get("url"), "resource_type": result.get("resource_type"), "format": result.get("format"), "bytes": len(raw)})
     return {"message": f"{len(rows)} asset(s) uploaded.", "data": rows}
 
+@router.get("/themes")
+async def list_design_themes(ctx: dict = Depends(require_design)):
+    rows = []
+    query = {"tenant_id": ctx["tenant_id"], "source_department": "Design & Pattern"}
+    async for theme in fabric_themes_collection.find(query).sort("updated_at", -1).limit(200):
+        item = serialize(theme)
+        item["linked_projects"] = await design_projects_collection.count_documents({"tenant_id": ctx["tenant_id"], "theme_id": item["id"]})
+        item["linked_tech_packs"] = await tech_packs_collection.count_documents({"tenant_id": ctx["tenant_id"], "theme_id": item["id"]})
+        rows.append(item)
+    return {"data": rows}
+
+@router.post("/themes", status_code=201)
+async def create_design_theme(payload: dict, ctx: dict = Depends(require_design)):
+    name = clean(payload.get("theme_name"), 160)
+    if not name:
+        raise HTTPException(status_code=400, detail="Theme name is required.")
+    now = datetime.utcnow()
+    palette = payload.get("palette") if isinstance(payload.get("palette"), list) else []
+    doc = {
+        "tenant_id": ctx["tenant_id"], "theme_name": name,
+        "collection": clean(payload.get("collection"), 120), "season": clean(payload.get("season"), 80),
+        "department": clean(payload.get("department"), 80), "target_customer": clean(payload.get("target_customer"), 160),
+        "target_date": clean(payload.get("target_date"), 20), "creative_direction": clean(payload.get("creative_direction"), 3000),
+        "palette": [clean(value, 60) for value in palette if clean(value, 60)][:30],
+        "moodboard_urls": [clean(value, 1000) for value in (payload.get("moodboard_urls") or []) if clean(value, 1000)][:30],
+        "document_urls": [clean(value, 1000) for value in (payload.get("document_urls") or []) if clean(value, 1000)][:30],
+        "design_status": "DRAFT", "source_department": "Design & Pattern",
+        "status": "draft", "notes": "", "plan_ids": [], "lines": [], "purchase_orders": [],
+        "created_by": ctx.get("admin_id"), "created_at": now, "updated_at": now,
+    }
+    result = await fabric_themes_collection.insert_one(doc); doc["_id"] = result.inserted_id
+    return {"message": f'Collection/theme "{name}" saved as draft.', "data": serialize(doc)}
+
+@router.patch("/themes/{theme_id}")
+async def update_design_theme(theme_id: str, payload: dict, ctx: dict = Depends(require_design)):
+    theme = await _design_theme_or_404(theme_id, ctx["tenant_id"])
+    if theme.get("design_status", "DRAFT") != "DRAFT":
+        raise HTTPException(status_code=409, detail="Approved themes are locked. Create a new theme/version for changed creative direction.")
+    update = {}
+    limits = {"theme_name": 160, "collection": 120, "season": 80, "department": 80, "target_customer": 160, "target_date": 20, "creative_direction": 3000}
+    for key, limit in limits.items():
+        if key in payload: update[key] = clean(payload.get(key), limit)
+    if "theme_name" in update and not update["theme_name"]:
+        raise HTTPException(status_code=400, detail="Theme name is required.")
+    for key in ("palette", "moodboard_urls", "document_urls"):
+        if key in payload:
+            raw = payload.get(key) if isinstance(payload.get(key), list) else []
+            update[key] = [clean(value, 1000 if key != "palette" else 60) for value in raw if clean(value)][:30]
+    update["updated_at"] = datetime.utcnow()
+    await fabric_themes_collection.update_one({"_id": theme["_id"]}, {"$set": update})
+    return {"message": "Collection/theme draft updated."}
+
+@router.post("/themes/{theme_id}/approve")
+async def approve_design_theme(theme_id: str, ctx: dict = Depends(require_design)):
+    theme = await _design_theme_or_404(theme_id, ctx["tenant_id"])
+    if theme.get("design_status", "DRAFT") != "DRAFT":
+        raise HTTPException(status_code=409, detail="Only a draft theme can be approved.")
+    if not clean(theme.get("creative_direction"), 3000):
+        raise HTTPException(status_code=400, detail="Add the creative direction before approving this theme.")
+    now = datetime.utcnow()
+    await fabric_themes_collection.update_one({"_id": theme["_id"]}, {"$set": {"design_status": "APPROVED", "approved_at": now, "approved_by": ctx.get("admin_id"), "updated_at": now}})
+    return {"message": f'Collection/theme "{theme.get("theme_name", "")}" approved and available to Production and Tech Packs.'}
+
+@router.delete("/themes/{theme_id}")
+async def delete_design_theme(theme_id: str, ctx: dict = Depends(require_design)):
+    theme = await _design_theme_or_404(theme_id, ctx["tenant_id"])
+    if theme.get("design_status", "DRAFT") != "DRAFT":
+        raise HTTPException(status_code=409, detail="Approved themes are retained for audit history.")
+    used = await design_projects_collection.count_documents({"tenant_id": ctx["tenant_id"], "theme_id": theme_id})
+    used += await tech_packs_collection.count_documents({"tenant_id": ctx["tenant_id"], "theme_id": theme_id})
+    if used or theme.get("lines") or theme.get("purchase_orders"):
+        raise HTTPException(status_code=409, detail="This theme is already in use and cannot be deleted.")
+    await fabric_themes_collection.delete_one({"_id": theme["_id"]})
+    return {"message": "Unused draft theme deleted."}
 @router.get("/workspace")
 async def workspace(ctx: dict = Depends(require_design)):
     tenant = ctx["tenant_id"]
@@ -136,7 +230,13 @@ async def workspace(ctx: dict = Depends(require_design)):
     changes = await rows(design_change_requests_collection)
     packs = [serialize(r) async for r in tech_packs_collection.find({"tenant_id": tenant}).sort("updated_at", -1).limit(300)]
     plans = [serialize(r) async for r in style_bom_plans_collection.find({"tenant_id": tenant}).sort("updated_at", -1).limit(300)]
-    return {"projects": projects, "patterns": patterns, "samples": samples, "queries": queries, "research": research, "artworks": artworks, "change_requests": changes, "tech_packs": packs, "material_plans": plans}
+    themes = []
+    async for theme in fabric_themes_collection.find({"tenant_id": tenant, "source_department": "Design & Pattern"}).sort("updated_at", -1).limit(200):
+        item = serialize(theme)
+        item["linked_projects"] = await design_projects_collection.count_documents({"tenant_id": tenant, "theme_id": item["id"]})
+        item["linked_tech_packs"] = await tech_packs_collection.count_documents({"tenant_id": tenant, "theme_id": item["id"]})
+        themes.append(item)
+    return {"themes": themes, "projects": projects, "patterns": patterns, "samples": samples, "queries": queries, "research": research, "artworks": artworks, "change_requests": changes, "tech_packs": packs, "material_plans": plans}
 
 @router.get("/collaboration")
 async def collaboration(ctx: dict = Depends(require_design_or_production)):
@@ -209,12 +309,15 @@ async def create_project(payload: dict, ctx: dict = Depends(require_design)):
     style = clean(payload.get("style_name"), 160)
     if not style: raise HTTPException(status_code=400, detail="Style name is required.")
     now = datetime.utcnow(); tenant = ctx["tenant_id"]
+    theme_id = clean(payload.get("theme_id"), 40)
+    linked_theme = await _design_theme_or_404(theme_id, tenant) if theme_id else None
     seq = await design_projects_collection.count_documents({"tenant_id": tenant}) + 1
     row = {
         "tenant_id": tenant, "design_no": clean(payload.get("design_no"), 120) or f"DES-{now.strftime('%y%m%d')}-{seq:04d}",
-        "style_name": style, "department": clean(payload.get("department"), 80), "category": clean(payload.get("category"), 100),
-        "theme": clean(payload.get("theme"), 120), "collection": clean(payload.get("collection"), 120), "season": clean(payload.get("season"), 80),
-        "designer": clean(payload.get("designer"), 120), "target_customer": clean(payload.get("target_customer"), 160),
+        "style_name": style, "department": clean(payload.get("department"), 80) or (linked_theme or {}).get("department", ""), "category": clean(payload.get("category"), 100),
+        "theme_id": theme_id or None, "theme": clean(payload.get("theme"), 120) or (linked_theme or {}).get("theme_name", ""),
+        "collection": clean(payload.get("collection"), 120) or (linked_theme or {}).get("collection", ""), "season": clean(payload.get("season"), 80) or (linked_theme or {}).get("season", ""),
+        "designer": clean(payload.get("designer"), 120), "target_customer": clean(payload.get("target_customer"), 160) or (linked_theme or {}).get("target_customer", ""),
         "target_cost": number(payload.get("target_cost")), "planned_quantity": number(payload.get("planned_quantity")),
         "launch_date": clean(payload.get("launch_date"), 20), "priority": clean(payload.get("priority"), 30) or "MEDIUM",
         "description": clean(payload.get("description"), 2000), "moodboard_urls": [clean(x, 1000) for x in payload.get("moodboard_urls", []) if clean(x)],
@@ -231,6 +334,16 @@ async def update_project(project_id: str, payload: dict, ctx: dict = Depends(req
     row = await project_or_404(project_id, ctx["tenant_id"])
     allowed = {"style_name", "department", "category", "theme", "collection", "season", "designer", "target_customer", "launch_date", "priority", "description"}
     update = {k: clean(payload[k], 2000 if k == "description" else 160) for k in allowed if k in payload}
+    if "theme_id" in payload:
+        theme_id = clean(payload.get("theme_id"), 40)
+        linked_theme = await _design_theme_or_404(theme_id, ctx["tenant_id"]) if theme_id else None
+        update["theme_id"] = theme_id or None
+        if linked_theme:
+            update.update({
+                "theme": linked_theme.get("theme_name", ""), "collection": linked_theme.get("collection", ""),
+                "season": linked_theme.get("season", ""), "department": linked_theme.get("department", ""),
+                "target_customer": linked_theme.get("target_customer", ""),
+            })
     if "status" in payload:
         status = clean(payload["status"], 40).upper()
         if status not in PROJECT_STATUSES: raise HTTPException(status_code=400, detail="Invalid project status.")

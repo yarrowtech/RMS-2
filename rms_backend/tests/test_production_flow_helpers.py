@@ -1,5 +1,6 @@
 import unittest
 
+from app.routes.job_work_routes import _clean_asset_urls, _theme_reference
 from app.routes.production_flow_routes import clean_steps, number, safe_barcode
 
 
@@ -20,6 +21,22 @@ class ProductionFlowHelperTests(unittest.TestCase):
         self.assertEqual(number(-3), 0)
         self.assertEqual(number("bad", 4), 4)
 
+    def test_asset_urls_reject_json_placeholders(self):
+        self.assertEqual(
+            _clean_asset_urls(["[]", "null", " https://cdn.example.com/sketch.jpg "]),
+            ["https://cdn.example.com/sketch.jpg"],
+        )
+        self.assertEqual(_clean_asset_urls('["https://cdn.example.com/trim.png"]'), ["https://cdn.example.com/trim.png"])
+    def test_theme_reference_contains_locked_creative_and_supplier_details(self):
+        result = _theme_reference({
+            "_id": "theme-1", "theme_name": "Monsoon Earth", "collection": "Festive 2027",
+            "palette": ["#7C3AED", "terracotta"], "creative_direction": "Natural texture",
+            "moodboard_urls": ["https://cdn.example.com/mood.jpg"],
+            "lines": [{"image_url": "https://cdn.example.com/fabric.jpg", "vendor_name": "Mill A", "color": "Rust"}],
+        })
+        self.assertEqual(result["theme_name"], "Monsoon Earth")
+        self.assertEqual(result["palette"], ["#7C3AED", "terracotta"])
+        self.assertEqual(result["swatches"][0]["vendor_name"], "Mill A")
     def test_garment_barcode_is_safe_and_variant_stable(self):
         self.assertEqual(safe_barcode("FG-DES 101-Navy Blue-M"), "FG-DES-101-NAVY-BLUE-M")
         self.assertEqual(safe_barcode("FG-DES 101-Navy Blue-M"), safe_barcode("FG-DES 101-Navy Blue-M"))
