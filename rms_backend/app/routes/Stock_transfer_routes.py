@@ -550,14 +550,23 @@ async def receive_transfer(
     to_info       = await _resolve_store_name(to_store_id, tenant_id)
     now           = datetime.utcnow()
 
-    received_overrides = {l.get("barcode"): _int(l.get("receivedQty", 0)) for l in payload.get("lines", [])} if payload.get("lines") else {}
+    line_payload  = {l.get("barcode"): l for l in payload.get("lines", [])} if payload.get("lines") else {}
+    received_overrides = {bc: _int(l.get("receivedQty", 0)) for bc, l in line_payload.items()}
 
     received_lines = []
+    shortfall_lines = []
     for line in lines:
         bc       = line["barcode"]
         dispatched_qty = line["qty"]
         recv_qty = received_overrides.get(bc, dispatched_qty) if received_overrides else dispatched_qty
-        recv_qty = min(recv_qty, dispatched_qty)
+        recv_qty = max(0, min(recv_qty, dispatched_qty))
+        short_qty = dispatched_qty - recv_qty
+        if short_qty > 0:
+            shortfall_lines.append({
+                "barcode": bc, "product": line.get("product", ""), "rate": line.get("rate", 0),
+                "dispatched_qty": dispatched_qty, "received_qty": recv_qty, "short_qty": short_qty,
+                "reason": (line_payload.get(bc, {}).get("reason") or "").strip()[:500],
+            })
         if recv_qty <= 0:
             continue
 
@@ -570,8 +579,9 @@ async def receive_transfer(
         )
         received_lines.append({**line, "qty": recv_qty, "value": round(recv_qty * line.get("rate", 0), 2)})
 
-    if not received_lines:
+    if not received_lines and not shortfall_lines:
         raise HTTPException(status_code=400, detail="No quantity to receive.")
+    receipt_remarks = (payload.get("remarks") or "").strip()[:1000]
 
     in_ref = await _generate_ref("In", tenant_id)
     in_doc = {
@@ -600,6 +610,8 @@ async def receive_transfer(
         "status":            "Received",
         "outDocNo":          out_doc.get("refNo", ""),
         "outRemarks":        out_doc.get("remarks", ""),
+        "receiptRemarks":    receipt_remarks,
+        "shortfall_lines":   shortfall_lines,
         "lines":             received_lines,
         "totalQty":          sumQty(received_lines),
         "totalValue":        round(sumVal(received_lines), 2),
@@ -614,15 +626,92 @@ async def receive_transfer(
         {"$set": {
             "status":             "Partially Received" if is_partial else "Received",
             "linked_transfer_id": in_doc["_id"],
+            "receiptRemarks":     receipt_remarks,
+            "shortfall_lines":    shortfall_lines,
+            "shortfall_status":   "open" if shortfall_lines else None,
             "updatedAt":          now,
         }}
     )
 
     updated_out = await stock_transfers_collection.find_one({"_id": oid, "tenant_id": tenant_id})
+    message = f"Received {sumQty(received_lines)} unit(s). Stock added to {to_info['name']}."
+    if shortfall_lines:
+        short_total = sum(_int(l.get("short_qty", 0)) for l in shortfall_lines)
+        message += f" {short_total} unit(s) short across {len(shortfall_lines)} line(s) — flagged for Central to review."
     return JSONResponse({
         "status":  "success",
-        "message": f"Received {sumQty(received_lines)} unit(s). Stock added to {to_info['name']}.",
+        "message": message,
         "data":    {"out": serialize(updated_out), "in": serialize(in_doc)},
+    })
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# POST /stock-transfers/{id}/resolve-shortfall — Central reviews a short receipt
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@router.post("/{transfer_id}/resolve-shortfall")
+async def resolve_shortfall(
+    transfer_id: str,
+    payload: dict = {},
+    authorization: str = Header(None),
+    _perm=Depends(require_permission("stock_transfer")),
+):
+    """Central's side of a short receipt flagged in receive_transfer(). The
+    store already told us what actually arrived; this is where Central
+    decides what happens to the gap — either it genuinely never left (put it
+    back in the source's stock) or it's accepted as lost/damaged in transit
+    (write off, no stock movement, but the decision is recorded so the
+    shortfall stops showing as unresolved)."""
+    store = await _require_tenant(authorization)
+    tenant_id = store["tenant_id"]
+    if store.get("store_id"):
+        raise HTTPException(status_code=403, detail="Only Central/HQ can resolve a transfer shortfall.")
+
+    try:    oid = ObjectId(transfer_id)
+    except: raise HTTPException(status_code=400, detail="Invalid transfer ID")
+
+    out_doc = await stock_transfers_collection.find_one({"_id": oid, "tenant_id": tenant_id})
+    if not out_doc:
+        raise HTTPException(status_code=404, detail="Transfer not found")
+    shortfall_lines = out_doc.get("shortfall_lines") or []
+    if out_doc.get("shortfall_status") != "open" or not shortfall_lines:
+        raise HTTPException(status_code=400, detail="This transfer has no open shortfall to resolve.")
+
+    action = (payload.get("action") or "").strip()
+    if action not in {"return_to_stock", "write_off"}:
+        raise HTTPException(status_code=400, detail="Choose either 'return_to_stock' or 'write_off'.")
+    note = (payload.get("note") or "").strip()[:1000]
+    now = datetime.utcnow()
+
+    if action == "return_to_stock":
+        from_store_id = out_doc.get("from_store_id")
+        from_info = await _resolve_store_name(from_store_id, tenant_id)
+        for line in shortfall_lines:
+            await _add_stock(
+                line["barcode"], from_store_id, line["short_qty"],
+                reason=f"Shortfall reversal for {out_doc.get('refNo')} — never actually left {from_info['name']}",
+                tenant_id=tenant_id, product_name=line.get("product", ""), rate=line.get("rate", 0),
+                store_name=from_info["name"], store_type=from_info["type"],
+            )
+
+    await stock_transfers_collection.update_one(
+        {"_id": oid, "tenant_id": tenant_id},
+        {"$set": {
+            "shortfall_status": "resolved",
+            "shortfall_resolution": {
+                "action": action, "note": note,
+                "resolved_by": (payload.get("resolvedBy") or "Admin").strip(),
+                "resolved_at": now,
+            },
+            "updatedAt": now,
+        }}
+    )
+    updated = await stock_transfers_collection.find_one({"_id": oid, "tenant_id": tenant_id})
+    verb = "returned to stock" if action == "return_to_stock" else "written off"
+    return JSONResponse({
+        "status": "success",
+        "message": f"Shortfall on {out_doc.get('refNo')} {verb}.",
+        "data": serialize(updated),
     })
 
 

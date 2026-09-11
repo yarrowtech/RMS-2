@@ -1019,6 +1019,10 @@ export default function StockTransfer() {
   const [loading,     setLoading]     = useState(false);
   const [saving,      setSaving]      = useState(false);
   const [receivingId, setReceivingId] = useState(null);
+  const [receiveDrafts, setReceiveDrafts] = useState({});
+  const [shortfallModal, setShortfallModal] = useState(null);
+  const [shortfallForm, setShortfallForm] = useState({ action: "return_to_stock", note: "" });
+  const [resolvingId, setResolvingId] = useState(null);
 
   const [editId,   setEditId]   = useState(null);
   const [openOut,  setOpenOut]  = useState(false);
@@ -1222,17 +1226,31 @@ export default function StockTransfer() {
   };
 
   /* ── Receive (confirms a Pending dispatch — adds stock at destination) ── */
-  const handleReceive = async (transferId) => {
+  const setReceiveLineQty = (transferId, barcode, receivedQty) => setReceiveDrafts(cur => ({ ...cur, [transferId]: { ...cur[transferId], lines: { ...cur[transferId]?.lines, [barcode]: { ...cur[transferId]?.lines?.[barcode], receivedQty } } } }));
+  const setReceiveLineReason = (transferId, barcode, reason) => setReceiveDrafts(cur => ({ ...cur, [transferId]: { ...cur[transferId], lines: { ...cur[transferId]?.lines, [barcode]: { ...cur[transferId]?.lines?.[barcode], reason } } } }));
+  const setReceiveRemarks = (transferId, remarks) => setReceiveDrafts(cur => ({ ...cur, [transferId]: { ...cur[transferId], remarks } }));
+
+  const handleReceive = async (tr) => {
+    const transferId = tr.id;
+    const draft = receiveDrafts[transferId] || {};
+    const lines = (tr.lines || []).map(l => ({
+      barcode: l.barcode,
+      receivedQty: Number(draft.lines?.[l.barcode]?.receivedQty ?? l.qty),
+      reason: draft.lines?.[l.barcode]?.reason || "",
+    }));
+    const shortLines = lines.filter(l => l.receivedQty < (tr.lines.find(x => x.barcode === l.barcode)?.qty || 0));
+    if (shortLines.length && !window.confirm(`${shortLines.length} line(s) are short of what was dispatched. Confirm receipt with these actual quantities?`)) return;
     try {
       setReceivingId(transferId);
       const res = await fetch(`${API_BASE}/${transferId}/receive`, {
         method: "POST",
         headers: { ...authHdr, "Content-Type": "application/json" },
-        body: JSON.stringify({ receivedBy: localStorage.getItem("admin_name") || "Admin" }),
+        body: JSON.stringify({ receivedBy: localStorage.getItem("admin_name") || "Admin", lines, remarks: draft.remarks || "" }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || "Receive failed");
       toast.success(data.message || "Receipt confirmed — stock added.");
+      setReceiveDrafts(cur => { const next = { ...cur }; delete next[transferId]; return next; });
       await fetchPending();
       await fetchAll();
       if (data.data?.in) printRecord(data.data.in);
@@ -1240,6 +1258,29 @@ export default function StockTransfer() {
       toast.error(e.message || "Receive failed");
     } finally {
       setReceivingId(null);
+    }
+  };
+
+  /* ── Central resolves a short receipt flagged during Receive ── */
+  const handleResolveShortfall = async () => {
+    if (!shortfallModal) return;
+    try {
+      setResolvingId(shortfallModal.id);
+      const res = await fetch(`${API_BASE}/${shortfallModal.id}/resolve-shortfall`, {
+        method: "POST",
+        headers: { ...authHdr, "Content-Type": "application/json" },
+        body: JSON.stringify({ action: shortfallForm.action, note: shortfallForm.note, resolvedBy: localStorage.getItem("admin_name") || "Admin" }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "Could not resolve shortfall");
+      toast.success(data.message || "Shortfall resolved.");
+      setShortfallModal(null);
+      setShortfallForm({ action: "return_to_stock", note: "" });
+      await fetchAll();
+    } catch (e) {
+      toast.error(e.message || "Could not resolve shortfall");
+    } finally {
+      setResolvingId(null);
     }
   };
 
@@ -1428,6 +1469,8 @@ export default function StockTransfer() {
                             : "bg-slate-50 text-slate-600 border-slate-200")}>
                             {rec.status||"—"}
                           </span>
+                          {rec.shortfall_status==="open" && <span className="ml-1 inline-flex items-center px-2 py-0.5 rounded-lg text-[10px] font-bold border bg-rose-50 text-rose-700 border-rose-200">Shortfall {rec.shortfall_lines?.reduce((s,l)=>s+(l.short_qty||0),0)}</span>}
+                          {rec.shortfall_status==="resolved" && <span className="ml-1 inline-flex items-center px-2 py-0.5 rounded-lg text-[10px] font-bold border bg-slate-50 text-slate-500 border-slate-200">Shortfall resolved</span>}
                         </td>
                         <td className="px-3 py-2.5">
                           <div className="flex gap-1.5">
@@ -1437,6 +1480,9 @@ export default function StockTransfer() {
                                 <button onClick={() => handleEdit(rec)} className="h-7 px-2.5 rounded-lg bg-indigo-50 text-indigo-600 hover:bg-indigo-100 border border-indigo-200 text-xs font-bold transition flex items-center gap-1"><FaEdit size={10}/> Edit</button>
                                 <button onClick={() => handleDelete(rec)} className="h-7 px-2.5 rounded-lg bg-rose-50 text-rose-600 hover:bg-rose-100 border border-rose-200 text-xs font-bold transition flex items-center gap-1"><FaTrash size={10}/> Cancel</button>
                               </>
+                            )}
+                            {rec.type === "Out" && rec.shortfall_status === "open" && isHQ && (
+                              <button onClick={() => setShortfallModal(rec)} className="h-7 px-2.5 rounded-lg bg-rose-50 text-rose-600 hover:bg-rose-100 border border-rose-200 text-xs font-bold transition">Resolve shortfall</button>
                             )}
                           </div>
                         </td>
@@ -1469,7 +1515,10 @@ export default function StockTransfer() {
               <p className="text-sm text-slate-500">No pending receipts. Everything dispatched to {isHQ ? "Central" : "this store"} has been received.</p>
             </div>
           ) : (
-            pending.map((tr) => (
+            pending.map((tr) => {
+              const draft = receiveDrafts[tr.id] || {};
+              const anyShort = (tr.lines || []).some(l => Number(draft.lines?.[l.barcode]?.receivedQty ?? l.qty) < l.qty);
+              return (
               <div key={tr.id} className="bg-white rounded-xl border border-amber-200 shadow-sm overflow-hidden">
                 <div className="px-5 py-3 bg-amber-50 border-b border-amber-200 flex items-center justify-between flex-wrap gap-2">
                   <div className="flex items-center gap-3">
@@ -1479,39 +1528,58 @@ export default function StockTransfer() {
                       <p className="text-xs text-amber-600">From: {tr.fromWh || "Central"} · Transporter: {tr.transporter || "—"} · Dispatched {tr.date}</p>
                     </div>
                   </div>
-                  <button onClick={() => handleReceive(tr.id)} disabled={receivingId === tr.id}
+                  <button onClick={() => handleReceive(tr)} disabled={receivingId === tr.id}
                     className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-600 text-white text-xs font-bold hover:bg-emerald-700 transition disabled:opacity-50">
                     {receivingId === tr.id
                       ? (<><div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" /> Confirming…</>)
-                      : (<><FaCheckCircle size={12} /> Confirm Receipt</>)}
+                      : (<><FaCheckCircle size={12} /> {anyShort ? "Confirm Receipt (with shortfall)" : "Confirm Receipt"}</>)}
                   </button>
                 </div>
                 <div className="p-4">
+                  <p className="mb-2 text-[11px] text-slate-400">Received qty defaults to what was dispatched — change a line only if the actual count differs, and add a reason so Central can review it.</p>
                   <table className="w-full text-xs">
                     <thead>
                       <tr className="text-slate-400 uppercase font-bold">
                         <th className="text-left pb-2">Barcode</th>
                         <th className="text-left pb-2">Product</th>
-                        <th className="text-right pb-2">Qty</th>
+                        <th className="text-right pb-2">Dispatched</th>
+                        <th className="text-right pb-2 w-24">Received</th>
+                        <th className="text-left pb-2">Reason if short</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-50">
-                      {(tr.lines || []).map((l, i) => (
+                      {(tr.lines || []).map((l, i) => {
+                        const recvQty = draft.lines?.[l.barcode]?.receivedQty ?? l.qty;
+                        const short = Number(recvQty) < l.qty;
+                        return (
                         <tr key={i}>
                           <td className="py-1.5 font-mono text-slate-600">{l.barcode}</td>
                           <td className="py-1.5 text-slate-800">{l.product}</td>
                           <td className="py-1.5 text-right font-bold text-slate-700">{l.qty}</td>
+                          <td className="py-1.5 text-right">
+                            <input type="number" min="0" max={l.qty} value={recvQty}
+                              onChange={(e) => setReceiveLineQty(tr.id, l.barcode, e.target.value === "" ? "" : Math.max(0, Math.min(l.qty, Number(e.target.value))))}
+                              className={cn("w-20 rounded-lg border px-2 py-1 text-right font-bold", short ? "border-rose-300 bg-rose-50 text-rose-700" : "border-slate-200 text-slate-700")}/>
+                          </td>
+                          <td className="py-1.5">
+                            {short && <input value={draft.lines?.[l.barcode]?.reason || ""} onChange={(e) => setReceiveLineReason(tr.id, l.barcode, e.target.value)}
+                              placeholder="e.g. damaged in transit, short-packed" className="w-full rounded-lg border border-rose-200 px-2 py-1 text-rose-700 placeholder:text-rose-300"/>}
+                          </td>
                         </tr>
-                      ))}
+                        );
+                      })}
                     </tbody>
                   </table>
                   <div className="mt-2 pt-2 border-t border-slate-100 flex justify-between text-xs">
                     <span className="text-slate-400">Total {tr.lines?.length || 0} line(s)</span>
                     <span className="font-bold text-slate-700">Qty: {tr.totalQty}</span>
                   </div>
+                  <input value={draft.remarks || ""} onChange={(e) => setReceiveRemarks(tr.id, e.target.value)} placeholder="Overall receipt remarks (optional)"
+                    className="mt-2 w-full rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs text-slate-700 placeholder:text-slate-400"/>
                 </div>
               </div>
-            ))
+              );
+            })
           )}
         </div>
       )}
@@ -1670,6 +1738,47 @@ export default function StockTransfer() {
           <Totals qty={totOut.qty} val={totOut.val} valid={totOut.valid}/>
           <ModalFooter onClose={()=>{setOpenOut(false);setEditId(null);}} onSave={handleSave} saving={saving} label={editId ? "Save Changes" : "Dispatch Stock"} color="indigo"/>
         </ModalShell>
+      )}
+
+      {/* ══════════════════════ MODAL: RESOLVE SHORTFALL (Central only) ══════════════════════ */}
+      {shortfallModal && (
+        <div className="fixed inset-0 z-[999]">
+          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => setShortfallModal(null)}/>
+          <div className="absolute inset-0 flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-5">
+              <h2 className="text-lg font-bold text-slate-900">Resolve shortfall — {shortfallModal.refNo}</h2>
+              <p className="mt-1 text-xs text-slate-500">{shortfallModal.toWh || "The store"} reported these lines short of what was dispatched:</p>
+              <div className="mt-3 max-h-40 overflow-y-auto rounded-lg border border-slate-100">
+                <table className="w-full text-xs">
+                  <thead><tr className="bg-slate-50 text-slate-400 uppercase font-bold"><th className="text-left px-2 py-1.5">Barcode</th><th className="text-right px-2 py-1.5">Short</th><th className="text-left px-2 py-1.5">Reason</th></tr></thead>
+                  <tbody className="divide-y divide-slate-50">
+                    {(shortfallModal.shortfall_lines||[]).map((l,i) => (
+                      <tr key={i}><td className="px-2 py-1.5 font-mono text-slate-600">{l.barcode}</td><td className="px-2 py-1.5 text-right font-bold text-rose-600">{l.short_qty}</td><td className="px-2 py-1.5 text-slate-500">{l.reason||"—"}</td></tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div className="mt-4 space-y-2">
+                <label className="flex items-start gap-2 text-sm">
+                  <input type="radio" name="shortfallAction" checked={shortfallForm.action==="return_to_stock"} onChange={()=>setShortfallForm(f=>({...f,action:"return_to_stock"}))} className="mt-1"/>
+                  <span><b className="text-slate-800">It never actually left</b> — put the missing quantity back into {shortfallModal.fromWh || "the source"}'s stock.</span>
+                </label>
+                <label className="flex items-start gap-2 text-sm">
+                  <input type="radio" name="shortfallAction" checked={shortfallForm.action==="write_off"} onChange={()=>setShortfallForm(f=>({...f,action:"write_off"}))} className="mt-1"/>
+                  <span><b className="text-slate-800">Accept as lost/damaged in transit</b> — write it off, no stock change.</span>
+                </label>
+              </div>
+              <textarea value={shortfallForm.note} onChange={(e)=>setShortfallForm(f=>({...f,note:e.target.value}))} rows="2" placeholder="Note (optional)"
+                className="mt-3 w-full rounded-lg border border-slate-200 px-2.5 py-2 text-sm text-slate-700 placeholder:text-slate-400"/>
+              <div className="mt-4 flex justify-end gap-2">
+                <button onClick={()=>setShortfallModal(null)} className="px-4 py-2 rounded-lg bg-slate-100 text-slate-700 text-sm font-semibold hover:bg-slate-200">Cancel</button>
+                <button onClick={handleResolveShortfall} disabled={resolvingId===shortfallModal.id} className="px-4 py-2 rounded-lg bg-rose-600 text-white text-sm font-bold hover:bg-rose-700 disabled:opacity-50">
+                  {resolvingId===shortfallModal.id ? "Saving…" : "Confirm resolution"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
