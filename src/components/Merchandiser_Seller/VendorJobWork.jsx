@@ -10,6 +10,13 @@ const stages = [
   ["UPDATE", "General update"],
 ];
 
+function Guide({ title, steps }) {
+  return <details open className="overflow-hidden rounded-2xl border border-teal-200 bg-white">
+    <summary className="cursor-pointer bg-teal-50 px-5 py-3 text-sm font-black text-teal-950">{title}</summary>
+    <div className="grid gap-3 p-4 md:grid-cols-2">{steps.map((step, i) => <div key={step} className="flex gap-2 rounded-xl bg-slate-50 p-3 text-xs leading-5 text-slate-600"><b className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-teal-600 text-white">{i + 1}</b>{step}</div>)}</div>
+  </details>;
+}
+
 function vendorHeaders() {
   const token = localStorage.getItem("vendor_token") || localStorage.getItem("token") || "";
   return { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) };
@@ -23,6 +30,25 @@ async function api(path, options = {}) {
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(data.detail || "Unable to load job-work records.");
   return data;
+}
+
+async function hpApi(path, options = {}) {
+  const response = await fetch(`${API_BASE_URL}/api/production-flow${path}`, {
+    ...options,
+    headers: { ...vendorHeaders(), ...(options.headers || {}) },
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.detail || "Unable to load production batch challans.");
+  return data;
+}
+
+function challanChip(status) {
+  const text = String(status || "SENT").replaceAll("_", " ");
+  const style = {
+    SENT: "bg-amber-50 text-amber-700", PARTIALLY_RECEIVED: "bg-indigo-50 text-indigo-700",
+    RECEIVED: "bg-emerald-50 text-emerald-700",
+  }[status] || "bg-slate-100 text-slate-600";
+  return <span className={`rounded-full px-2.5 py-1 text-[11px] font-bold ${style}`}>{text}</span>;
 }
 
 function chip(status) {
@@ -100,6 +126,8 @@ export default function VendorJobWork() {
   const [notice, setNotice] = useState("");
   const [drafts, setDrafts] = useState({});
   const [saving, setSaving] = useState("");
+  const [challans, setChallans] = useState([]);
+  const [readyNotes, setReadyNotes] = useState({});
 
   const load = useCallback(async () => {
     setLoading(true); setError("");
@@ -107,7 +135,19 @@ export default function VendorJobWork() {
     catch (err) { setError(err.message); }
     finally { setLoading(false); }
   }, []);
-  useEffect(() => { load(); }, [load]);
+  const loadChallans = useCallback(async () => {
+    try { const data = await hpApi("/vendor/challans"); setChallans(data.data || []); }
+    catch { /* Hybrid Production may not apply to every vendor — stay silent, Job Work Orders above still load. */ }
+  }, []);
+  useEffect(() => { load(); loadChallans(); }, [load, loadChallans]);
+  const markReady = async (row) => {
+    const key = `${row.batch_id}-${row.operation_index}`;
+    setSaving(`ready-${key}`); setError("");
+    try {
+      const result = await hpApi(`/vendor/challans/${row.batch_id}/${row.operation_index}/ready`, { method: "POST", body: JSON.stringify({ note: readyNotes[key] || "" }) });
+      notify(result.message); await loadChallans();
+    } catch (err) { setError(err.message); } finally { setSaving(""); }
+  };
 
   const updateDraft = (id, patch) => setDrafts((current) => ({ ...current, [id]: { stage: "UPDATE", message: "", takenDate: new Date().toISOString().slice(0, 10), piecesReceived: "", promisedReadyDate: "", ackNote: "", ...(current[id] || {}), ...patch } }));
   const notify = (message) => { setNotice(message); window.setTimeout(() => setNotice(""), 4000); };
@@ -143,10 +183,16 @@ export default function VendorJobWork() {
   return <div className="mx-auto max-w-6xl space-y-5">
     <header className="flex flex-col justify-between gap-4 rounded-2xl border border-teal-100 bg-gradient-to-r from-teal-50 via-white to-emerald-50 p-6 sm:flex-row sm:items-center">
       <div><p className="text-xs font-bold uppercase tracking-[0.18em] text-teal-700">Vendor workspace</p><h1 className="mt-1 text-2xl font-black text-slate-900">Job Work Orders</h1><p className="mt-1 text-sm text-slate-500">Orders from approved retailer partners for cutting, stitching and finishing work.</p></div>
-      <button onClick={load} className="rounded-xl border border-teal-200 bg-white px-4 py-2.5 text-sm font-bold text-teal-700 transition hover:bg-teal-50">â†» Refresh</button>
+      <button onClick={() => { load(); loadChallans(); }} className="rounded-xl border border-teal-200 bg-white px-4 py-2.5 text-sm font-bold text-teal-700 transition hover:bg-teal-50">â†» Refresh</button>
     </header>
     {notice && <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-800">âœ“ {notice}</div>}
     {error && <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-800">{error}</div>}
+    <Guide title="How Job Work Orders work" steps={[
+      "When an approved retailer assigns and issues material to you, it appears below with a challan number and the design/tech pack details.",
+      "Once you physically receive the material, use 'Acknowledge challan' — record the date taken, how many pieces you received, and the date you promise finished goods by.",
+      "Use 'Share update' any time to tell the retailer your stage (cutting started, stitching started, ready for return, delayed) — this is just a message, it never changes stock.",
+      "When you deliver the finished goods, the retailer records the actual receipt and inspects it on their side. Stock and payment only update after that — nothing here updates automatically from your update alone.",
+    ]} />
     {loading ? <div className="rounded-2xl border border-slate-200 bg-white p-16 text-center text-sm text-slate-400">Loading assigned job workâ€¦</div> : orders.length === 0 ? <div className="rounded-2xl border border-slate-200 bg-white p-16 text-center"><div className="text-3xl">âœ‚</div><p className="mt-3 font-bold text-slate-700">No linked job-work orders</p><p className="mt-1 text-sm text-slate-400">When an approved retailer assigns and issues a job-work order to your RMS account, it appears here.</p></div> : orders.map((order) => {
       const draft = drafts[order.id] || { stage: "UPDATE", message: "", takenDate: new Date().toISOString().slice(0, 10), piecesReceived: "", promisedReadyDate: "", ackNote: "" };
       const acknowledged = Boolean(order.vendor_acknowledged_at);
@@ -163,5 +209,31 @@ export default function VendorJobWork() {
 
 <label className="mt-3 block text-xs font-bold text-slate-600">Progress stage<select value={draft.stage} onChange={(e) => updateDraft(order.id, { stage: e.target.value })} className="mt-1.5 w-full rounded-lg border border-teal-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none">{stages.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label><label className="mt-3 block text-xs font-bold text-slate-600">Message<textarea value={draft.message} onChange={(e) => updateDraft(order.id, { message: e.target.value })} rows="3" placeholder="Share progress, expected dispatch or delay reason" className="mt-1.5 w-full resize-none rounded-lg border border-teal-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none" /></label><button onClick={() => shareProgress(order)} disabled={saving === `progress-${order.id}`} className="mt-3 w-full rounded-lg border border-teal-600 bg-white px-3 py-2.5 text-sm font-bold text-teal-700 disabled:opacity-60">{saving === `progress-${order.id}` ? "Sendingâ€¦" : "Share update"}</button><p className="mt-3 text-[11px] leading-4 text-slate-500">Stock changes only when the retailer physically receives and records the completed goods.</p></aside></div></article>;
     })}
+    {challans.length > 0 && <section className="rounded-2xl border border-indigo-100 bg-white shadow-sm">
+      <header className="border-b border-indigo-100 bg-indigo-50/60 px-5 py-4"><p className="text-xs font-bold uppercase tracking-[0.16em] text-indigo-700">Hybrid production</p><h2 className="mt-1 text-lg font-black text-slate-900">Production batch challans</h2><p className="mt-1 text-sm text-slate-500">One-off operation handoffs (e.g. a single embroidery or stitching step on a retailer's in-house batch) — separate from full Job Work Orders above.</p></header>
+      <div className="border-b border-indigo-50 p-5"><Guide title="How a production batch challan works" steps={[
+        "This is a single operation on a batch the retailer is already producing in-house — not a full order. The retailer sent it out only for this one step (e.g. embroidery), after finishing other steps themselves.",
+        "'Mark ready / dispatched' below is just your heads-up that you're sending it back — it never changes quantity, stock or payment by itself.",
+        "The retailer inspects what physically comes back and records accepted/rejected/rework — that's the real completion step, and it happens on their side regardless of whether you marked ready first.",
+        "If a due date is extended or a late penalty applies, the retailer's own copy of the challan will show it — check the printed/shared challan or contact them directly for the final payable amount.",
+      ]} /></div>
+      <div className="divide-y divide-indigo-50">{challans.map((row) => {
+        const key = `${row.batch_id}-${row.operation_index}`;
+        const canMarkReady = row.status === "SENT" && !row.vendor_marked_ready_at;
+        return <div key={key} className="flex flex-col gap-3 p-5 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <div className="flex flex-wrap items-center gap-2"><b className="text-slate-900">{row.challan_no}</b>{challanChip(row.status)}</div>
+            <p className="mt-1 text-sm text-slate-600">{row.operation_name} &middot; {row.design_no} &middot; {row.style_name}</p>
+            <p className="mt-1 text-xs text-slate-500">Retailer: <b>{row.retailer_name}</b> &middot; Sent {row.sent_qty} {row.unit} &middot; Due {row.due_date || "not set"}{row.amount != null && <> &middot; Rs {row.amount}</>}</p>
+            {row.vendor_marked_ready_at && <p className="mt-1 text-xs font-bold text-indigo-700">You marked this ready on {String(row.vendor_marked_ready_at).slice(0, 10)}.</p>}
+            {row.status !== "SENT" && <p className="mt-1 text-xs font-bold text-emerald-700">Retailer received: {row.accepted_qty || 0} accepted, {row.rejected_qty || 0} rejected.</p>}
+          </div>
+          {canMarkReady && <div className="flex w-full flex-col gap-2 sm:w-64">
+            <input value={readyNotes[key] || ""} onChange={(e) => setReadyNotes((current) => ({ ...current, [key]: e.target.value }))} placeholder="Note (optional)" className="rounded-lg border border-indigo-200 px-2.5 py-1.5 text-sm text-slate-700 outline-none" />
+            <button onClick={() => markReady(row)} disabled={saving === `ready-${key}`} className="rounded-lg bg-indigo-600 px-3 py-2 text-sm font-bold text-white disabled:opacity-60">{saving === `ready-${key}` ? "Saving..." : "Mark ready / dispatched"}</button>
+          </div>}
+        </div>;
+      })}</div>
+    </section>}
   </div>;
 }

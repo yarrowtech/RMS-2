@@ -4,13 +4,13 @@ This layer tracks retailer-owned work-in-progress. It deliberately does not use
 GRC/GRN, which remain purchase receiving documents. Only final QC-approved
 finished goods are posted to inventory.
 """
-from datetime import datetime
+from datetime import date, datetime
 import re
 import secrets
 from typing import Any
 
 from bson import ObjectId
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException
 
 from ..db import (
     daily_production_logs_collection,
@@ -18,8 +18,12 @@ from ..db import (
     production_batches_collection,
     production_routes_collection,
     tech_packs_collection,
+    tenants_collection,
 )
-from .job_work_routes import _increase_central_stock, _require_job_work, _stock_scope
+from .job_work_routes import (
+    _increase_central_stock, _require_job_work, _require_vendor_job_work_access,
+    _stock_scope, _vendor_session,
+)
 
 router = APIRouter(prefix="/api/production-flow", tags=["Hybrid Production"])
 
@@ -94,6 +98,13 @@ def operation_input(batch: dict, index: int) -> float:
 
 def safe_barcode(value: str) -> str:
     return re.sub(r"[^A-Z0-9]+", "-", value.upper()).strip("-")[:64]
+
+
+def parse_date(value: Any) -> date | None:
+    try:
+        return datetime.strptime(str(value or "").strip(), "%Y-%m-%d").date()
+    except ValueError:
+        return None
 
 
 @router.get("/workspace")
@@ -212,7 +223,7 @@ async def assign_operation(batch_id: str, operation_index: int, payload: dict, c
     operation.update({
         "worker_id": worker_id or None, "worker_name": worker_name,
         "workstation": clean(payload.get("workstation"), 100),
-        "external_party": ({"vendor_id": clean(payload.get("vendor_id"), 40) or None, "vendor_name": clean(payload.get("vendor_name"), 160), "mobile": clean(payload.get("mobile"), 30), "due_date": clean(payload.get("due_date"), 10), "challan_no": clean(payload.get("challan_no"), 80), "instructions": clean(payload.get("handoff_notes"), 1000)} if operation.get("mode") == "EXTERNAL" else None),
+        "external_party": ({"vendor_id": clean(payload.get("vendor_id"), 40) or None, "vendor_name": clean(payload.get("vendor_name"), 160), "mobile": clean(payload.get("mobile"), 30), "due_date": clean(payload.get("due_date"), 10), "challan_no": clean(payload.get("challan_no"), 80), "instructions": clean(payload.get("handoff_notes"), 1000), "rate": number(payload.get("rate")) or None, "penalty_per_day": number(payload.get("penalty_per_day")) or None} if operation.get("mode") == "EXTERNAL" else None),
     })
     operations[operation_index] = operation
     await production_batches_collection.update_one({"_id": batch["_id"]}, {"$set": {"operations": operations, "updated_at": datetime.utcnow()}})
@@ -237,9 +248,53 @@ async def start_operation(batch_id: str, operation_index: int, payload: dict, ct
     operation["status"] = "IN_PROGRESS" if operation.get("mode") == "INTERNAL" else "EXTERNAL_ISSUED"
     operation["started_at"] = datetime.utcnow()
     operation["history"] = [*(operation.get("history") or []), {"event": operation["status"], "at": datetime.utcnow(), "by": ctx.get("admin_id"), "note": clean(payload.get("note"), 500)}]
+    if operation.get("mode") == "EXTERNAL":
+        # This is the real dispatch moment for retailer-owned WIP going to an
+        # external job worker: the sent quantity is only known now (it comes
+        # from the previous operation's accepted_qty), so the challan/ticket
+        # is finalized here rather than at assign time.
+        party = dict(operation.get("external_party") or {})
+        sent_qty = operation["input_qty"]
+        rate = number(party.get("rate")) or None
+        party.update({
+            "challan_no": party.get("challan_no") or f"{batch['batch_no']}-OP{operation_index + 1}",
+            "sent_qty": sent_qty, "sent_at": operation["started_at"],
+            "amount": round(sent_qty * rate, 2) if rate else None,
+            "status": "SENT",
+        })
+        operation["external_party"] = party
     operations[operation_index] = operation
     await production_batches_collection.update_one({"_id": batch["_id"]}, {"$set": {"operations": operations, "status": "IN_PROGRESS", "current_operation_index": operation_index, "updated_at": datetime.utcnow()}})
     return {"message": f"{operation['name']} started with {operation['input_qty']} {batch.get('unit', 'pcs')}. Next, record accepted, rejected and rework quantities when it returns or finishes."}
+
+
+@router.patch("/batches/{batch_id}/operations/{operation_index}/amend-due-date")
+async def amend_due_date(batch_id: str, operation_index: int, payload: dict, ctx: dict = Depends(_require_job_work)):
+    """A job that is out with an external worker can legitimately need a
+    renegotiated return date. This is the only way to change the due date
+    once a challan is issued — full reassignment is blocked by then — and
+    every change is kept as history so a later-day-late/penalty calculation
+    is judged against the date actually agreed at the time, not a stale one."""
+    batch = await get_batch(batch_id, ctx["tenant_id"])
+    operations = list(batch.get("operations") or [])
+    if operation_index < 0 or operation_index >= len(operations):
+        raise HTTPException(status_code=404, detail="Operation not found.")
+    operation = dict(operations[operation_index])
+    party = dict(operation.get("external_party") or {})
+    if operation.get("mode") != "EXTERNAL" or not party or operation.get("status") not in {"EXTERNAL_ISSUED", "REWORK_PENDING"}:
+        raise HTTPException(status_code=409, detail="Only an issued external operation's due date can be amended.")
+    new_due_date = clean(payload.get("due_date"), 10)
+    if not new_due_date or not parse_date(new_due_date):
+        raise HTTPException(status_code=400, detail="A valid new due date (YYYY-MM-DD) is required.")
+    now = datetime.utcnow()
+    history = list(party.get("due_date_history") or [])
+    history.append({"from": party.get("due_date") or "", "to": new_due_date, "note": clean(payload.get("note"), 500), "at": now, "by": ctx.get("admin_id")})
+    party["due_date"] = new_due_date
+    party["due_date_history"] = history
+    operation["external_party"] = party
+    operations[operation_index] = operation
+    await production_batches_collection.update_one({"_id": batch["_id"]}, {"$set": {"operations": operations, "updated_at": now}})
+    return {"message": f"Return date amended to {new_due_date}."}
 
 
 @router.post("/batches/{batch_id}/operations/{operation_index}/complete")
@@ -259,6 +314,23 @@ async def complete_operation(batch_id: str, operation_index: int, payload: dict,
         raise HTTPException(status_code=400, detail=f"Accepted + rejected + rework must equal the operation input ({input_qty}).")
     now = datetime.utcnow()
     operation.update({"accepted_qty": accepted, "rejected_qty": rejected, "rework_qty": rework, "remarks": clean(payload.get("remarks"), 1000), "completed_at": now if not rework else None, "status": "COMPLETED" if not rework else "REWORK_PENDING"})
+    if operation.get("mode") == "EXTERNAL" and operation.get("external_party"):
+        # Closes the loop opened when the challan was issued in start_operation:
+        # the same qty-in/qty-out reconciliation an internal step already gets.
+        party = operation["external_party"]
+        due = parse_date(party.get("due_date"))
+        days_late = max(0, (now.date() - due).days) if due else 0
+        penalty_per_day = number(party.get("penalty_per_day")) or 0
+        penalty_amount = round(penalty_per_day * days_late, 2) if days_late and penalty_per_day else 0
+        gross_amount = party.get("amount")
+        operation["external_party"] = {
+            **party,
+            "received_qty": round(accepted + rejected + rework, 3), "accepted_qty": accepted,
+            "rejected_qty": rejected, "rework_qty": rework, "received_at": now,
+            "status": "PARTIALLY_RECEIVED" if rework else "RECEIVED",
+            "days_late": days_late, "penalty_amount": penalty_amount,
+            "net_payable": round(max(0, gross_amount - penalty_amount), 2) if gross_amount is not None else None,
+        }
     operation["history"] = [*(operation.get("history") or []), {"event": operation["status"], "at": now, "by": ctx.get("admin_id"), "accepted_qty": accepted, "rejected_qty": rejected, "rework_qty": rework}]
     operations[operation_index] = operation
     batch_status = "REWORK_PENDING" if rework else ("AWAITING_FINAL_QC" if operation_index == len(operations) - 1 else "IN_PROGRESS")
@@ -321,6 +393,74 @@ async def final_qc(batch_id: str, payload: dict, ctx: dict = Depends(_require_jo
     receipt = {"receipt_no": f"FGR-{now.strftime('%y%m%d')}-{str(batch['_id'])[-5:].upper()}", "outputs": cleaned_outputs, "accepted_qty": accepted, "rejected_qty": rejected, "rework_qty": 0, "notes": clean(payload.get("notes"), 1000), "qc_by": ctx.get("admin_id"), "qc_at": now}
     await production_batches_collection.update_one({"_id": batch["_id"]}, {"$set": {"status": "COMPLETED", "final_qc": receipt, "completed_at": now, "updated_at": now}})
     return {"message": f"Final QC complete. {accepted} pieces posted to inventory under Finished-Goods Receipt {receipt['receipt_no']}.", "data": serialize(receipt)}
+
+
+@router.get("/vendor/challans")
+async def vendor_challans(authorization: str = Header(None)):
+    """Vendor portal: read-only list of this vendor's Hybrid Production
+    challans across every retailer tenant they work with — mirrors
+    job_work_routes.vendor_job_work_orders for the full-order flow. A
+    walk-in vendor (no vendor_id, no login) never reaches this endpoint;
+    their side of the handoff stays a phone call / physical handoff, same
+    as it is for internal floor workers who also have no login."""
+    vendor_id = _vendor_session(authorization)
+    await _require_vendor_job_work_access(vendor_id)
+    tenant_names: dict[str, str] = {}
+    rows = []
+    async for batch in production_batches_collection.find({"operations.external_party.vendor_id": vendor_id}).sort("updated_at", -1).limit(300):
+        tenant_id = batch.get("tenant_id", "")
+        if tenant_id not in tenant_names:
+            tenant = await tenants_collection.find_one({"tenant_id": tenant_id}, {"company_name": 1, "name": 1})
+            tenant_names[tenant_id] = (tenant or {}).get("company_name") or (tenant or {}).get("name") or tenant_id
+        for index, op in enumerate(batch.get("operations") or []):
+            party = op.get("external_party") or {}
+            if party.get("vendor_id") != vendor_id:
+                continue
+            rows.append(serialize({
+                "retailer_name": tenant_names[tenant_id], "batch_id": batch["_id"], "batch_no": batch.get("batch_no"),
+                "design_no": batch.get("design_no"), "style_name": batch.get("style_name"), "unit": batch.get("unit"),
+                "operation_index": index, "operation_name": op.get("name"), "operation_status": op.get("status"),
+                "challan_no": party.get("challan_no"), "sent_qty": party.get("sent_qty"), "sent_at": party.get("sent_at"),
+                "due_date": party.get("due_date"), "rate": party.get("rate"), "amount": party.get("amount"),
+                "status": party.get("status"), "vendor_marked_ready_at": party.get("vendor_marked_ready_at"),
+                "vendor_ready_note": party.get("vendor_ready_note"),
+                "received_qty": party.get("received_qty"), "accepted_qty": party.get("accepted_qty"),
+                "rejected_qty": party.get("rejected_qty"), "days_late": party.get("days_late"),
+            }))
+    return {"data": rows}
+
+
+@router.post("/vendor/challans/{batch_id}/{operation_index}/ready")
+async def vendor_mark_challan_ready(batch_id: str, operation_index: int, payload: dict | None = None, authorization: str = Header(None)):
+    """Vendor's own "I'm done, sending it back" signal. Purely advisory —
+    like vendor_update_job_work_progress in job_work_routes.py, it never
+    changes quantities, stock or operation status. The retailer's own
+    physical inspection at Record Completion remains the only real QC step."""
+    vendor_id = _vendor_session(authorization)
+    await _require_vendor_job_work_access(vendor_id)
+    if not ObjectId.is_valid(batch_id):
+        raise HTTPException(status_code=400, detail="Invalid production batch.")
+    batch = await production_batches_collection.find_one({"_id": ObjectId(batch_id)})
+    if not batch:
+        raise HTTPException(status_code=404, detail="Production batch not found.")
+    operations = list(batch.get("operations") or [])
+    if operation_index < 0 or operation_index >= len(operations):
+        raise HTTPException(status_code=404, detail="Operation not found.")
+    operation = dict(operations[operation_index])
+    party = dict(operation.get("external_party") or {})
+    if party.get("vendor_id") != vendor_id:
+        raise HTTPException(status_code=404, detail="This challan is not assigned to you.")
+    if operation.get("status") != "EXTERNAL_ISSUED":
+        raise HTTPException(status_code=409, detail="This job is not currently awaiting your work.")
+    payload = payload or {}
+    now = datetime.utcnow()
+    party["vendor_marked_ready_at"] = now
+    party["vendor_ready_note"] = clean(payload.get("note"), 500)
+    party["vendor_ready_qty"] = number(payload.get("qty")) or None
+    operation["external_party"] = party
+    operations[operation_index] = operation
+    await production_batches_collection.update_one({"_id": batch["_id"]}, {"$set": {"operations": operations, "updated_at": now}})
+    return {"message": "Marked ready. The retailer will confirm after physically inspecting the returned pieces."}
 
 
 @router.get("/display/{display_token}")
