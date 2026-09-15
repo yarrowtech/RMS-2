@@ -45,6 +45,7 @@
 
 from datetime import datetime
 import secrets
+from typing import Dict
 
 from fastapi import APIRouter, HTTPException, Header
 from app.db import (
@@ -52,6 +53,7 @@ from app.db import (
     tenants_collection, product_collection, stock_adjustments_collection,
     grc_collection, stores_collection,
 )
+from app.raphaaa_product_enrichment import is_raphaaa_tenant, proposed_product_name
 from .store_helper import get_store_context
 
 router = APIRouter(prefix="/stock-allocation", tags=["Stock Allocation"])
@@ -66,6 +68,37 @@ def _assert_store_access(store: dict, store_id: str) -> None:
 async def _is_single_store_tenant(tenant_id: str) -> bool:
     tenant = await tenants_collection.find_one({"tenant_id": tenant_id}, {"account_type": 1})
     return (tenant or {}).get("account_type") == "single_store"
+
+
+async def _raphaaa_item_names(tenant_id: str) -> Dict[str, str]:
+    """Live Product Master names for Raphaaa, keyed by barcode.
+
+    This screen otherwise reads `description` off the stock document itself,
+    which is a frozen snapshot from whenever stock was last imported — for
+    Raphaaa that snapshot can be a bad source value (e.g. a date landed in
+    the Description column). Computing the name live from the current
+    Product Master, the same way Forecast & Analytics already does, means
+    this screen is always correct without depending on a stock re-import or
+    the Product Cleanup "Apply" step having been re-run. No-op for every
+    other tenant.
+    """
+    if not is_raphaaa_tenant(tenant_id):
+        return {}
+    names: Dict[str, str] = {}
+    projection = {
+        "barcode": 1, "product_name": 1, "description": 1, "sku": 1, "base_sku": 1,
+        "division": 1, "section": 1, "department": 1, "design_no": 1, "category1": 1,
+        "style": 1, "category3": 1, "product_type": 1, "category4": 1, "variants": 1,
+    }
+    async for product in product_collection.find({"tenant_id": tenant_id}, projection):
+        barcode = (product.get("barcode") or "").strip()
+        if barcode:
+            names[barcode] = proposed_product_name(product)
+        for variant in product.get("variants") or []:
+            variant_barcode = (variant.get("barcode") or "").strip()
+            if variant_barcode:
+                names[variant_barcode] = proposed_product_name({**product, **variant})
+    return names
 
 
 def _variant_token(value: str, fallback: str) -> str:
@@ -200,13 +233,26 @@ async def get_store_stock_summary(authorization: str = Header(None)):
     # store_stock documents don't carry their own mrp/rate (same rule
     # get_store_stock applies). Build a barcode -> price lookup once instead
     # of a query per store_stock row.
+    #
+    # Second fallback layer: some stock (e.g. Raphaa's Data Hub stock-file
+    # import) writes stockQty/description onto inventory_collection but never
+    # writes mrp/rate there at all, so the lookup above stays 0 forever. Fall
+    # back to the Product Master's own price for exactly that case — this
+    # only ever fires when the stock doc's own price was already 0, so a
+    # tenant whose stock docs already carry a price is completely unaffected.
+    product_prices: dict = {}
+    async for doc in product_collection.find({"tenant_id": tenant_id}, {"barcode": 1, "mrp": 1, "selling_price": 1, "cost_price": 1}):
+        barcode = doc.get("barcode", "")
+        if barcode:
+            product_prices[barcode] = float(doc.get("mrp") or doc.get("selling_price") or doc.get("cost_price") or 0)
+
     central_prices: dict = {}
     central_qty = 0.0
     central_value = 0.0
     central_items = 0
     async for doc in inventory_collection.find({"tenant_id": tenant_id}):
         barcode = doc.get("barcode", "")
-        price = float(doc.get("mrp") or doc.get("rate") or 0)
+        price = float(doc.get("mrp") or doc.get("rate") or 0) or product_prices.get(barcode, 0.0)
         if barcode:
             central_prices[barcode] = price
         qty = float(doc.get("stockQty", 0))
@@ -231,7 +277,7 @@ async def get_store_stock_summary(authorization: str = Header(None)):
         barcode = doc.get("barcode", "")
         qty = float(doc.get("stockQty", 0))
         own_price = float(doc.get("mrp") or doc.get("rate") or 0) if is_single_store else 0.0
-        price = own_price or central_prices.get(barcode, 0.0)
+        price = own_price or central_prices.get(barcode, 0.0) or product_prices.get(barcode, 0.0)
         value = qty * price
         row = rows_by_store.setdefault(store_id, {
             "store_id": store_id, "store_name": doc.get("store_name", ""),
@@ -303,6 +349,12 @@ async def get_item_matrix(
             "store_qty": {},
         })
         row["store_qty"][store_id] = row["store_qty"].get(store_id, 0) + float(doc.get("stockQty", 0))
+
+    item_names = await _raphaaa_item_names(tenant_id)
+    for barcode, row in products.items():
+        live_name = item_names.get(barcode)
+        if live_name:
+            row["description"] = live_name
 
     rows = list(products.values())
     if search:

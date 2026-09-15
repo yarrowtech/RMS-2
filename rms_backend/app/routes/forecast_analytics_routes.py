@@ -17,7 +17,7 @@ box would be at this stage.
 import math
 from collections import defaultdict
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from bson import ObjectId
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
@@ -29,6 +29,16 @@ from ..config import settings
 from ..email_utils import send_demand_signal_email
 from ..error_log import log_error
 from ..product_identity import stock_identity
+from ..raphaaa_product_enrichment import enrichment_patch, is_raphaaa_tenant, proposed_product_name
+from ..raphaaa_purchase_plan import (
+    RAPHAAA_POLICY_CODE,
+    RAPHAAA_STOCK_CREDIT_PCT,
+    RAPHAAA_UPLIFT_PCT,
+    build_purchase_math,
+    completed_periods,
+    period_for_date,
+    promotion_label,
+)
 from ..db import (
     admins_collection, grn_collection, inventory_collection, product_collection,
     procurement_notifications_collection, purchaseorders_collection, sales_collection,
@@ -77,6 +87,56 @@ async def _barcode_identity_aliases(tenant_id: str) -> Dict[str, str]:
     return aliases
 
 
+async def _raphaaa_product_metadata(tenant_id: str) -> Dict[str, dict]:
+    """Current Product Master metadata keyed by every base/variant barcode.
+
+    Historical sales keep the values that existed when they were imported.
+    Raphaaa's forecast display should instead use the corrected current Product
+    Master name and hierarchy, without rewriting those immutable bill lines.
+    """
+    if not is_raphaaa_tenant(tenant_id):
+        return {}
+
+    by_barcode: Dict[str, dict] = {}
+    projection = {
+        "barcode": 1, "sku": 1, "base_sku": 1, "product_name": 1, "description": 1,
+        "display_product_name": 1, "division": 1, "section": 1, "department": 1,
+        "design_no": 1, "category1": 1, "brand": 1, "category2": 1,
+        "style": 1, "category3": 1, "product_type": 1, "category4": 1,
+        "size": 1, "category5": 1, "vendor_name": 1, "vendor_id": 1,
+        "cost_price": 1, "variants": 1,
+    }
+    async for product in product_collection.find({"tenant_id": tenant_id}, projection):
+        barcode = (product.get("barcode") or "").strip()
+        if barcode:
+            by_barcode[barcode] = product
+        for variant in product.get("variants") or []:
+            variant_barcode = (variant.get("barcode") or "").strip()
+            if variant_barcode:
+                by_barcode[variant_barcode] = {**product, **variant, "barcode": variant_barcode}
+    return by_barcode
+
+
+def _raphaaa_master_context(master: dict) -> dict:
+    if not master:
+        return {}
+    enriched = enrichment_patch(master)
+    return {
+        "name": proposed_product_name(master),
+        "sku": master.get("sku") or master.get("base_sku") or "",
+        "division": master.get("division", ""),
+        "section": master.get("section", ""),
+        "department": master.get("department", ""),
+        "design_no": master.get("design_no") or master.get("category1") or "",
+        "brand": enriched.get("brand", ""),
+        "style": enriched.get("style", ""),
+        "product_type": enriched.get("product_type", ""),
+        "size": enriched.get("size", ""),
+        "vendor_name": master.get("vendor_name", ""),
+        "vendor_linked": bool(master.get("vendor_id")),
+    }
+
+
 async def _compute_demand_forecast(tenant_id: str, store_id: Optional[str], lookback_days: int, limit: int) -> List[dict]:
     since = datetime.utcnow() - timedelta(days=max(1, lookback_days))
     match: Dict[str, Any] = {"tenant_id": tenant_id, "type": "sale", "created_at": {"$gte": since}}
@@ -84,6 +144,7 @@ async def _compute_demand_forecast(tenant_id: str, store_id: Optional[str], look
         match["store_id"] = store_id
 
     barcode_aliases = await _barcode_identity_aliases(tenant_id)
+    product_metadata = await _raphaaa_product_metadata(tenant_id)
     async for inventory in inventory_collection.find({"tenant_id": tenant_id}, {"barcode": 1, "stock_identity": 1, "product_id": 1, "variant_id": 1, "design_no": 1, "material_code": 1, "sku": 1, "vendor_barcode": 1, "barcode_policy": 1}):
         barcode = (inventory.get("barcode") or "").strip()
         identity = inventory.get("stock_identity") or barcode_aliases.get(barcode) or stock_identity(inventory)
@@ -121,6 +182,7 @@ async def _compute_demand_forecast(tenant_id: str, store_id: Optional[str], look
     for identity, weeks in weekly.items():
         m = meta[identity]
         bc = m["barcode"]
+        master = product_metadata.get(bc) or {}
         ordered = [weeks[k] for k in sorted(weeks.keys())]
         weeks_active = len(ordered)
         avg_weekly_qty = m["total_qty"] / weeks_active if weeks_active else 0.0
@@ -139,12 +201,33 @@ async def _compute_demand_forecast(tenant_id: str, store_id: Optional[str], look
 
         avg_price = m["total_revenue"] / m["total_qty"] if m["total_qty"] else 0.0
         avg_cost = m["total_cost"] / m["total_qty"] if m["total_qty"] else 0.0
+        if not avg_cost and master:
+            avg_cost = float(master.get("cost_price") or 0)
         if not avg_cost:
             product = await product_collection.find_one({"barcode": bc, "tenant_id": tenant_id}, {"cost_price": 1})
             avg_cost = float((product or {}).get("cost_price") or 0)
 
+        display_name = m["name"]
+        master_context = {}
+        if master:
+            master_context = _raphaaa_master_context(master)
+            display_name = master_context["name"]
+
         rows.append({
-            "barcode": bc, "stock_identity": identity, "name": m["name"], "sku": m["sku"], "division": m["division"],
+            "barcode": bc, "stock_identity": identity,
+            "name": display_name,
+            "source_name": m["name"],
+            "sku": master_context.get("sku") or m["sku"],
+            "division": master_context.get("division") or m["division"],
+            "section": master_context.get("section", ""),
+            "department": master_context.get("department", ""),
+            "design_no": master_context.get("design_no", ""),
+            "brand": master_context.get("brand", ""),
+            "style": master_context.get("style", ""),
+            "product_type": master_context.get("product_type", ""),
+            "size": master_context.get("size", ""),
+            "vendor_name": master_context.get("vendor_name", ""),
+            "vendor_linked": master_context.get("vendor_linked", False),
             "weeks_active": weeks_active,
             "total_qty_sold": round(m["total_qty"], 2),
             "avg_weekly_qty": round(avg_weekly_qty, 2),
@@ -163,7 +246,7 @@ async def _compute_demand_forecast(tenant_id: str, store_id: Optional[str], look
 async def get_demand_forecast(
     store_id: Optional[str] = Query(None),
     lookback_days: int = Query(90, ge=7, le=365),
-    limit: int = Query(50, ge=1, le=200),
+    limit: int = Query(50, ge=1, le=1000),
     ctx: TenantCtx = Depends(_require_forecast_context),
 ):
     rows = await _compute_demand_forecast(ctx["tenant_id"], store_id, lookback_days, limit)
@@ -312,6 +395,13 @@ class PurchasePlanRequest(BaseModel):
     lookback_days: int = Field(90, ge=7, le=365)
 
 
+class RaphaaaPurchasePlanRequest(BaseModel):
+    history_periods: int = Field(2, ge=2, le=10)
+    period_mode: Literal["calendar_year", "seasonal_window"] = "calendar_year"
+    season_start_month: int = Field(10, ge=1, le=12)
+    season_end_month: int = Field(2, ge=1, le=12)
+
+
 def _lines_from_forecast(rows: List[dict]) -> List[dict]:
     """Shared by the interactive /purchase-plan endpoint and the automated
     restock draft below — same ROI-ranked line shape either way, the only
@@ -328,6 +418,11 @@ def _lines_from_forecast(rows: List[dict]) -> List[dict]:
         lines.append({
             "barcode": row["barcode"], "stock_identity": row.get("stock_identity", ""),
             "name": row["name"], "sku": row["sku"],
+            "division": row.get("division", ""), "section": row.get("section", ""),
+            "department": row.get("department", ""), "design_no": row.get("design_no", ""),
+            "brand": row.get("brand", ""), "style": row.get("style", ""),
+            "product_type": row.get("product_type", ""), "size": row.get("size", ""),
+            "vendor_name": row.get("vendor_name", ""), "vendor_linked": row.get("vendor_linked", False),
             "recommended_qty": recommended_qty, "unit_cost": unit_cost,
             "line_cost": line_cost, "expected_profit": expected_profit, "roi": roi,
             "trend": row["trend"],
@@ -374,13 +469,344 @@ async def build_purchase_plan(payload: PurchasePlanRequest, ctx: TenantCtx = Dep
     }
 
 
+def _number(value: Any) -> float:
+    try:
+        return float(value or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _promotion_names(document: dict, item: dict) -> List[str]:
+    names: List[str] = []
+    for source in (document, item):
+        for key in (
+            "promotion_name", "promo_name", "campaign_name", "offer_name",
+            "coupon_code", "promotionName", "promoName", "offerName", "couponCode",
+        ):
+            value = source.get(key)
+            if value not in (None, ""):
+                names.append(str(value).strip())
+    return [name for name in names if name]
+
+
+def _promotion_type(document: dict, item: dict) -> str:
+    for source in (item, document):
+        for key in ("promotion_type", "promo_type", "promotionType", "promoType"):
+            value = str(source.get(key) or "").strip()
+            if value:
+                return value
+    return "Not specified"
+
+
+async def _tenant_stock_map(tenant_id: str, aliases: Dict[str, str]) -> Dict[str, float]:
+    """Recorded on-hand at central plus stores, without changing either ledger."""
+    totals: Dict[str, float] = defaultdict(float)
+    projection = {
+        "barcode": 1, "stockQty": 1, "stock_identity": 1, "product_id": 1,
+        "variant_id": 1, "design_no": 1, "material_code": 1, "sku": 1,
+        "vendor_barcode": 1, "barcode_policy": 1,
+    }
+    for collection in (inventory_collection, store_stock_collection):
+        async for doc in collection.find({"tenant_id": tenant_id}, projection):
+            barcode = str(doc.get("barcode") or "").strip()
+            identity = (
+                doc.get("stock_identity") or aliases.get(barcode) or stock_identity(doc)
+                or (f"barcode:{barcode.lower()}" if barcode else "")
+            )
+            if identity:
+                totals[identity] += _number(doc.get("stockQty"))
+    return dict(totals)
+
+
+async def _latest_grn_costs(tenant_id: str, aliases: Dict[str, str]) -> Dict[str, dict]:
+    """Latest posted receiving rate and supplier at the same stock identity."""
+    result: Dict[str, dict] = {}
+    cursor = grn_collection.find(
+        {"tenant_id": tenant_id, "status": "Posted"},
+        {"items": 1, "vendorName": 1, "createdAt": 1, "grnNo": 1},
+    ).sort("createdAt", 1)
+    async for grn in cursor:
+        for item in grn.get("items") or []:
+            barcode = str(item.get("barcode") or item.get("_effective_barcode") or "").strip()
+            identity = (
+                item.get("stock_identity") or aliases.get(barcode) or stock_identity(item)
+                or (f"barcode:{barcode.lower()}" if barcode else "")
+            )
+            rate = _number(item.get("rate"))
+            if identity and rate > 0:
+                result[identity] = {
+                    "unit_cost": rate, "cost_source": "Latest posted GRN",
+                    "vendor_name": str(grn.get("vendorName") or "").strip(),
+                    "grn_no": str(grn.get("grnNo") or "").strip(),
+                }
+    return result
+
+
+async def _compute_raphaaa_purchase_plan(tenant_id: str, payload: RaphaaaPurchasePlanRequest) -> dict:
+    now = datetime.utcnow()
+    periods = completed_periods(
+        now, payload.history_periods, payload.period_mode,
+        payload.season_start_month, payload.season_end_month,
+    )
+    if len(periods) < 2:
+        raise HTTPException(status_code=400, detail="At least two completed comparable periods are required.")
+
+    aliases = await _barcode_identity_aliases(tenant_id)
+    product_metadata = await _raphaaa_product_metadata(tenant_id)
+    stock_by_identity = await _tenant_stock_map(tenant_id, aliases)
+    grn_costs = await _latest_grn_costs(tenant_id, aliases)
+    period_keys = [period["key"] for period in periods]
+    rows: Dict[str, dict] = {}
+    match: Dict[str, Any] = {
+        "tenant_id": tenant_id,
+        "type": {"$in": ["sale", "return"]},
+        "created_at": {"$gte": periods[0]["start"], "$lt": periods[-1]["end"]},
+    }
+    cursor = sales_collection.find(match, {
+        "type": 1, "created_at": 1, "items": 1, "summary": 1,
+        "applied_offer": 1, "discount_pct": 1, "appliedOffer": 1, "discount": 1,
+        "promotion_name": 1, "promotion_type": 1, "promo_name": 1,
+        "campaign_name": 1, "offer_name": 1, "coupon_code": 1,
+    }).sort("created_at", 1)
+
+    invoice_count = 0
+    named_promotion_lines = 0
+    async for sale in cursor:
+        created_at = sale.get("created_at")
+        if not isinstance(created_at, datetime):
+            continue
+        period_key = period_for_date(created_at, periods)
+        if not period_key:
+            continue
+        invoice_count += 1
+        sign = -1.0 if sale.get("type") == "return" else 1.0
+        items = sale.get("items") or []
+        item_gross_values = []
+        for item in items:
+            qty = abs(_number(item.get("qty") or item.get("quantity")))
+            explicit_gross = _number(item.get("gross_amount") or item.get("grossAmount"))
+            line_total = abs(_number(item.get("total")))
+            item_gross_values.append(explicit_gross or line_total or qty * _number(item.get("price")))
+        bill_gross = sum(item_gross_values)
+        summary = sale.get("summary") or {}
+        bill_discount = _number(summary.get("total_savings") or summary.get("totalSavings"))
+        if bill_discount <= 0:
+            summary_gross = _number(summary.get("total_sale") or summary.get("totalSale"))
+            summary_net = _number(summary.get("net_payable") or summary.get("netPayable"))
+            if summary_gross > summary_net > 0:
+                bill_discount = summary_gross - summary_net
+            else:
+                bill_discount = _number(sale.get("applied_offer") or sale.get("appliedOffer"))
+                bill_discount += bill_gross * _number(sale.get("discount_pct") or sale.get("discount")) / 100
+
+        for index, item in enumerate(items):
+            barcode = str(item.get("barcode") or "").strip()
+            if not barcode:
+                continue
+            identity = (
+                item.get("stock_identity") or aliases.get(barcode) or stock_identity(item)
+                or f"barcode:{barcode.lower()}"
+            )
+            qty = abs(_number(item.get("qty") or item.get("quantity")))
+            if qty <= 0:
+                continue
+            gross = item_gross_values[index]
+            explicit_net_raw = item.get("net_amount", item.get("netAmount"))
+            if explicit_net_raw not in (None, ""):
+                net = max(0.0, _number(explicit_net_raw))
+                discount_amount = max(0.0, gross - net)
+            else:
+                allocated_discount = (bill_discount * gross / bill_gross) if bill_gross > 0 else 0.0
+                discount_amount = min(gross, max(0.0, allocated_discount))
+                net = max(0.0, gross - discount_amount)
+
+            record = rows.setdefault(identity, {
+                "stock_identity": identity, "barcode": barcode,
+                "name": item.get("name") or barcode, "source_name": item.get("name") or "",
+                "sku": item.get("sku") or "", "division": item.get("division") or "",
+                "section": item.get("section") or "", "department": item.get("department") or "",
+                "quantities_by_period": {key: 0.0 for key in period_keys},
+                "gross_sales": 0.0, "net_sales": 0.0, "discount_amount": 0.0,
+                "cost_total": 0.0, "cost_qty": 0.0, "promotion_names": set(),
+                "promotion_breakdown": defaultdict(
+                    lambda: {"qty": 0.0, "gross_sales": 0.0, "net_sales": 0.0, "discount_amount": 0.0}
+                ),
+            })
+            record["quantities_by_period"][period_key] += sign * qty
+            record["gross_sales"] += sign * gross
+            record["net_sales"] += sign * net
+            record["discount_amount"] += sign * discount_amount
+            cost = _number(item.get("cost_price"))
+            if cost > 0 and sign > 0:
+                record["cost_total"] += qty * cost
+                record["cost_qty"] += qty
+            names = _promotion_names(sale, item)
+            if names:
+                named_promotion_lines += 1
+                record["promotion_names"].update(names)
+            label = promotion_label(names, discount_amount)
+            promo_type = _promotion_type(sale, item)
+            promo = record["promotion_breakdown"][(label, promo_type)]
+            promo["qty"] += sign * qty
+            promo["gross_sales"] += sign * gross
+            promo["net_sales"] += sign * net
+            promo["discount_amount"] += sign * discount_amount
+
+    result_lines: List[dict] = []
+    promotion_rows: List[dict] = []
+    for identity, record in rows.items():
+        barcode = record["barcode"]
+        master = product_metadata.get(barcode) or {}
+        context = _raphaaa_master_context(master) if master else {}
+        grn = grn_costs.get(identity) or {}
+        average_snapshot_cost = record["cost_total"] / record["cost_qty"] if record["cost_qty"] else 0.0
+        master_cost = _number(master.get("cost_price"))
+        unit_cost = _number(grn.get("unit_cost")) or master_cost or average_snapshot_cost
+        cost_source = grn.get("cost_source") or (
+            "Product Master" if master_cost else
+            "Historical sales snapshot" if average_snapshot_cost else "Unavailable"
+        )
+        vendor_name = grn.get("vendor_name") or context.get("vendor_name") or master.get("vendor_name") or ""
+        total_qty = sum(record["quantities_by_period"].values())
+        avg_selling_price = (
+            record["net_sales"] / total_qty if total_qty > 0
+            else _number(master.get("selling_price") or master.get("mrp"))
+        )
+        calculation = build_purchase_math(
+            record["quantities_by_period"], stock_by_identity.get(identity, 0),
+            unit_cost, avg_selling_price,
+        )
+        quantities = {
+            key: round(max(0.0, value), 2)
+            for key, value in record["quantities_by_period"].items()
+        }
+        periods_with_sales = sum(1 for value in quantities.values() if value > 0)
+        line = {
+            "barcode": barcode, "stock_identity": identity,
+            "name": context.get("name") or record["name"],
+            "source_name": record["source_name"],
+            "sku": context.get("sku") or record["sku"],
+            "division": context.get("division") or record["division"],
+            "section": context.get("section") or record["section"],
+            "department": context.get("department") or record["department"],
+            "design_no": context.get("design_no", ""), "brand": context.get("brand", ""),
+            "style": context.get("style", ""), "product_type": context.get("product_type", ""),
+            "size": context.get("size", ""), "vendor_name": vendor_name,
+            "vendor_linked": context.get("vendor_linked", False),
+            "quantities_by_period": quantities,
+            "gross_sales": round(max(0.0, record["gross_sales"]), 2),
+            "discount_amount": round(max(0.0, record["discount_amount"]), 2),
+            "net_sales": round(max(0.0, record["net_sales"]), 2),
+            "avg_selling_price": round(max(0.0, avg_selling_price), 2),
+            "promotion": promotion_label(list(record["promotion_names"]), record["discount_amount"]),
+            "periods_with_sales": periods_with_sales,
+            "confidence": "High" if periods_with_sales >= 2 else "Limited history",
+            "cost_source": cost_source, "cost_reference": grn.get("grn_no", ""),
+            **calculation,
+        }
+        result_lines.append(line)
+        for (promo_name, promo_type), promo in record["promotion_breakdown"].items():
+            promotion_rows.append({
+                "promotion": promo_name,
+                "promotion_type": promo_type,
+                "vendor_name": vendor_name or "Vendor unavailable",
+                "name": line["name"], "design_no": line["design_no"], "barcode": barcode,
+                "qty": round(max(0.0, promo["qty"]), 2),
+                "gross_sales": round(max(0.0, promo["gross_sales"]), 2),
+                "discount_amount": round(max(0.0, promo["discount_amount"]), 2),
+                "net_sales": round(max(0.0, promo["net_sales"]), 2),
+            })
+
+    result_lines.sort(
+        key=lambda line: (line["final_purchase_qty"], line["net_sales"]), reverse=True
+    )
+    vendor_map: Dict[str, dict] = {}
+    for line in result_lines:
+        vendor = line["vendor_name"] or "Vendor unavailable"
+        row = vendor_map.setdefault(vendor, {
+            "vendor_name": vendor, "product_count": 0, "units_sold": 0.0,
+            "gross_sales": 0.0, "discount_amount": 0.0, "net_sales": 0.0,
+            "final_purchase_qty": 0, "estimated_purchase_amount": 0.0,
+        })
+        row["product_count"] += 1
+        row["units_sold"] += sum(line["quantities_by_period"].values())
+        for field in ("gross_sales", "discount_amount", "net_sales", "estimated_purchase_amount"):
+            row[field] += line[field]
+        row["final_purchase_qty"] += line["final_purchase_qty"]
+
+    vendor_performance = []
+    for row in vendor_map.values():
+        vendor_performance.append({
+            **row,
+            "units_sold": round(row["units_sold"], 2),
+            "gross_sales": round(row["gross_sales"], 2),
+            "discount_amount": round(row["discount_amount"], 2),
+            "net_sales": round(row["net_sales"], 2),
+            "estimated_purchase_amount": round(row["estimated_purchase_amount"], 2),
+        })
+    vendor_performance.sort(key=lambda row: row["net_sales"], reverse=True)
+
+    return {
+        "status": "success", "tenant_id": tenant_id, "generated_at": now,
+        "policy": {
+            "code": RAPHAAA_POLICY_CODE,
+            "name": "Raphaaa peak-period purchase plan",
+            "history_periods": payload.history_periods,
+            "period_mode": payload.period_mode,
+            "season_start_month": payload.season_start_month if payload.period_mode == "seasonal_window" else None,
+            "season_end_month": payload.season_end_month if payload.period_mode == "seasonal_window" else None,
+            "uplift_pct": RAPHAAA_UPLIFT_PCT,
+            "stock_credit_pct": RAPHAAA_STOCK_CREDIT_PCT,
+            "formula": "PQ = ceil(max(period sales) × 1.18); final = max(0, ceil(PQ − recorded on-hand × 0.50))",
+        },
+        "periods": [
+            {**period, "start": period["start"].isoformat(), "end_exclusive": period["end"].isoformat()}
+            for period in periods
+        ],
+        "data_quality": {
+            "invoice_count": invoice_count, "product_count": len(result_lines),
+            "named_promotion_lines": named_promotion_lines,
+            "promotion_name_available": named_promotion_lines > 0,
+            "stock_basis": "Recorded on-hand: central inventory plus all store stock",
+            "stock_caveat": "Damaged, quarantined and reserved stock can only be excluded when those quantities are recorded separately.",
+            "vendor_caveat": "Historical vendor attribution uses latest posted GRN first, then current Product Master. Unlinked imported vendor names remain marked unlinked.",
+        },
+        "summary": {
+            "recommended_products": sum(1 for line in result_lines if line["final_purchase_qty"] > 0),
+            "final_purchase_qty": sum(line["final_purchase_qty"] for line in result_lines),
+            "estimated_purchase_amount": round(sum(line["estimated_purchase_amount"] for line in result_lines), 2),
+            "historical_net_sales": round(sum(line["net_sales"] for line in result_lines), 2),
+            "historical_discount_amount": round(sum(line["discount_amount"] for line in result_lines), 2),
+        },
+        "lines": result_lines,
+        "vendor_performance": vendor_performance,
+        "promotion_performance": sorted(
+            promotion_rows, key=lambda row: row["net_sales"], reverse=True
+        ),
+    }
+
+
+@router.post("/purchase-plan/raphaaa")
+async def build_raphaaa_purchase_plan(
+    payload: RaphaaaPurchasePlanRequest,
+    ctx: TenantCtx = Depends(_require_forecast_context),
+):
+    if not is_raphaaa_tenant(ctx["tenant_id"]):
+        raise HTTPException(
+            status_code=404,
+            detail="This purchase policy is configured only for the Raphaaa tenant.",
+        )
+    return await _compute_raphaaa_purchase_plan(ctx["tenant_id"], payload)
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # DASHBOARD
 # ═══════════════════════════════════════════════════════════════════════════
 
 @router.get("/dashboard")
 async def get_dashboard(ctx: TenantCtx = Depends(_require_forecast_context)):
-    top_demand = await _compute_demand_forecast(ctx["tenant_id"], None, lookback_days=90, limit=5)
+    demand_limit = 1000 if is_raphaaa_tenant(ctx["tenant_id"]) else 5
+    top_demand = await _compute_demand_forecast(ctx["tenant_id"], None, lookback_days=90, limit=demand_limit)
     alert_count = await forecast_low_stock_alerts_collection.count_documents({"tenant_id": ctx["tenant_id"]})
     return {
         "status": "success",
@@ -653,18 +1079,21 @@ async def auto_run_forecast_automation(
 
 @router.get("/alerts")
 async def get_low_stock_alerts(ctx: TenantCtx = Depends(_require_forecast_context)):
+    product_metadata = await _raphaaa_product_metadata(ctx["tenant_id"])
     cursor = forecast_low_stock_alerts_collection.find(
         {"tenant_id": ctx["tenant_id"]}
     ).sort("days_remaining", 1)
     rows = []
     async for doc in cursor:
-        rows.append({
+        row = {
             "barcode": doc["barcode"], "name": doc.get("name", ""), "sku": doc.get("sku", ""),
             "store_id": doc.get("store_id"), "store_name": doc.get("store_name") or "HQ / Central",
             "stock_qty": doc.get("stock_qty", 0), "avg_weekly_qty": doc.get("avg_weekly_qty", 0),
             "days_remaining": doc.get("days_remaining"), "severity": doc.get("severity", "warning"),
             "updated_at": doc.get("updated_at").isoformat() if isinstance(doc.get("updated_at"), datetime) else None,
-        })
+        }
+        row.update(_raphaaa_master_context(product_metadata.get(doc["barcode"]) or {}))
+        rows.append(row)
     return {"status": "success", "count": len(rows), "data": rows}
 
 
@@ -673,9 +1102,14 @@ async def get_restock_draft(ctx: TenantCtx = Depends(_require_forecast_context))
     doc = await forecast_restock_drafts_collection.find_one({"tenant_id": ctx["tenant_id"]})
     if not doc:
         return {"status": "success", "generated_at": None, "lines": [], "line_count": 0}
+    lines = [dict(line) for line in doc.get("lines", [])]
+    product_metadata = await _raphaaa_product_metadata(ctx["tenant_id"])
+    if product_metadata:
+        for line in lines:
+            line.update(_raphaaa_master_context(product_metadata.get(line.get("barcode")) or {}))
     return {
         "status": "success",
         "generated_at": doc["generated_at"].isoformat() if isinstance(doc.get("generated_at"), datetime) else None,
-        "lines": doc.get("lines", []),
-        "line_count": doc.get("line_count", 0),
+        "lines": lines,
+        "line_count": len(lines),
     }

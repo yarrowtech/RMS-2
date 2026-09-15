@@ -4,7 +4,7 @@ This layer tracks retailer-owned work-in-progress. It deliberately does not use
 GRC/GRN, which remain purchase receiving documents. Only final QC-approved
 finished goods are posted to inventory.
 """
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 import re
 import secrets
 from typing import Any
@@ -15,8 +15,10 @@ from fastapi import APIRouter, Depends, Header, HTTPException
 from ..db import (
     daily_production_logs_collection,
     floor_workers_collection,
+    product_collection,
     production_batches_collection,
     production_routes_collection,
+    sales_collection,
     tech_packs_collection,
     tenants_collection,
 )
@@ -80,6 +82,55 @@ def clean_steps(raw: Any) -> list[dict]:
     return steps
 
 
+async def _unstitched_opportunities(tenant_id: str) -> list[dict]:
+    """Previous-season unstitched stock, grouped by Design No., cross-checked
+    against 12 months of real billing — so 'send to stitch' is a decision
+    based on proven demand, not a guess. Purely additive: only products a
+    tenant explicitly tagged stage="unstitched" (via bulk import) show up
+    here; every other tenant/product is unaffected."""
+    grouped: dict[str, dict] = {}
+    async for p in product_collection.find({"tenant_id": tenant_id, "stage": "unstitched"}, {"design_no": 1, "product_name": 1, "quantity": 1}):
+        design_no = clean(p.get("design_no"))
+        if not design_no:
+            continue
+        row = grouped.setdefault(design_no, {"design_no": design_no, "unstitched_qty": 0.0, "product_names": set()})
+        row["unstitched_qty"] += number(p.get("quantity"))
+        if p.get("product_name"):
+            row["product_names"].add(p["product_name"])
+    if not grouped:
+        return []
+
+    since = datetime.utcnow() - timedelta(days=365)
+    sold: dict[str, float] = {}
+    async for doc in sales_collection.find(
+        {"tenant_id": tenant_id, "type": "sale", "created_at": {"$gte": since}},
+        {"items.design_no": 1, "items.qty": 1},
+    ):
+        for item in doc.get("items", []):
+            d = clean(item.get("design_no"))
+            if d in grouped:
+                sold[d] = sold.get(d, 0.0) + number(item.get("qty"))
+
+    rows = []
+    for design_no, info in grouped.items():
+        pack = await tech_packs_collection.find_one(
+            {"tenant_id": tenant_id, "design_no": design_no, "status": "Released to Production"},
+            sort=[("updated_at", -1)],
+        )
+        sold_qty = round(sold.get(design_no, 0.0), 2)
+        rows.append({
+            "design_no": design_no,
+            "unstitched_qty": round(info["unstitched_qty"], 2),
+            "sold_qty": sold_qty,
+            "sold": sold_qty > 0,
+            "product_names": sorted(info["product_names"]),
+            "tech_pack_id": str(pack["_id"]) if pack else None,
+            "tech_pack_no": pack.get("tech_pack_no") if pack else None,
+        })
+    rows.sort(key=lambda r: (-r["sold_qty"], r["design_no"]))
+    return rows
+
+
 async def get_batch(batch_id: str, tenant_id: str) -> dict:
     if not ObjectId.is_valid(batch_id):
         raise HTTPException(status_code=400, detail="Invalid production batch.")
@@ -114,8 +165,10 @@ async def workspace(ctx: dict = Depends(_require_job_work)):
     batches = [serialize(row) async for row in production_batches_collection.find({"tenant_id": tenant_id}).sort("updated_at", -1).limit(300)]
     workers = [serialize(row) async for row in floor_workers_collection.find({"tenant_id": tenant_id, "active": {"$ne": False}}).sort("name", 1).limit(500)]
     packs = [serialize(row) async for row in tech_packs_collection.find({"tenant_id": tenant_id, "status": "Released to Production"}).sort("updated_at", -1).limit(300)]
+    unstitched_opportunities = await _unstitched_opportunities(tenant_id)
     return {
         "routes": routes, "batches": batches, "workers": workers, "tech_packs": packs,
+        "unstitched_opportunities": unstitched_opportunities,
         "default_steps": DEFAULT_STEPS,
         "guide": [
             "Create an operation route once for each production method.",
@@ -193,8 +246,23 @@ async def create_batch(payload: dict, ctx: dict = Depends(_require_job_work)):
         "operations": operations, "current_operation_index": 0, "status": "PLANNED",
         "created_by": ctx.get("admin_id"), "created_at": now, "updated_at": now,
     }
+    source_design_no = clean(payload.get("source_design_no"), 120)
+    if source_design_no:
+        row["source_design_no"] = source_design_no
+
     result = await production_batches_collection.insert_one(row)
     row["_id"] = result.inserted_id
+
+    if source_design_no:
+        remaining = quantity
+        async for src in product_collection.find({"tenant_id": tenant_id, "design_no": source_design_no, "stage": "unstitched", "quantity": {"$gt": 0}}):
+            if remaining <= 0:
+                break
+            take = min(number(src.get("quantity")), remaining)
+            if take > 0:
+                await product_collection.update_one({"_id": src["_id"]}, {"$inc": {"quantity": -take}})
+                remaining -= take
+
     return {"message": f"Batch {row['batch_no']} created. Next, assign and start {operations[0]['name']}.", "data": serialize(row)}
 
 

@@ -799,6 +799,8 @@ async def save_bill(
         "payment_split": clean_payment_split if split_total > 0 else {},
         "applied_offer": _float(bill_meta.get("appliedOffer")),
         "discount_pct": _float(bill_meta.get("discount")),
+        "promotion_name": str(bill_meta.get("promotionName") or "").strip()[:120],
+        "promotion_type": str(bill_meta.get("promotionType") or "").strip().lower()[:40],
         "paid_amount": _float(payload.get("paidAmount")),
         "change_return": _float(payload.get("changeReturn")),
         "items": clean_items,

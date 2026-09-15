@@ -1034,6 +1034,12 @@ function SourceBadge({ source, vendorName, grnNo }) {
       {vendorName || "Vendor"}
     </span>
   );
+  if (source === "data_hub_import") return (
+    <span style={{ display:"inline-flex", alignItems:"center", gap:4, padding:"2px 8px", borderRadius:20, fontSize:10, fontWeight:700, background:"#EFF6FF", color:"#2563EB", border:"1px solid #BFDBFE", maxWidth:200, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }} title={vendorName || "Historical Data Import"}>
+      <FaFileImport style={{ fontSize:9, flexShrink:0 }} />
+      {vendorName ? `Imported · ${vendorName}` : "Historical Import"}
+    </span>
+  );
   return (
     <span style={{ display:"inline-flex", alignItems:"center", gap:4, padding:"2px 8px", borderRadius:20, fontSize:10, fontWeight:700, background:"#EEF2FF", color:"#6366F1", border:"1px solid #C7D2FE" }}>
       <FaStore style={{ fontSize:9, flexShrink:0 }} /> Admin
@@ -1408,11 +1414,11 @@ function ProductDetailModal({ row, onClose, onSaved, setShowForm, setEditProduct
                   </div>
                 </div>
               )}
-              {row.source === "vendor" && row.vendor_name && (
+              {(row.source === "vendor" || row.source === "data_hub_import") && row.vendor_name && (
                 <div style={{ display:"flex", alignItems:"center", gap:10, padding:"12px 16px", background:"#F0FDF4", borderRadius:10, border:"1px solid #BBF7D0", marginBottom:18 }}>
                   <FaUserTie style={{ color:"#16A34A", fontSize:18, flexShrink:0 }} />
                   <div>
-                    <div style={{ fontSize:10, color:"#86EFAC", fontWeight:700, textTransform:"uppercase", letterSpacing:"0.5px" }}>Supplied by Vendor</div>
+                    <div style={{ fontSize:10, color:"#86EFAC", fontWeight:700, textTransform:"uppercase", letterSpacing:"0.5px" }}>{row.source === "data_hub_import" ? "Imported supplier reference · Unlinked" : "Supplied by Vendor"}</div>
                     <div style={{ fontSize:14, fontWeight:700, color:"#15803D", marginTop:1 }}>{row.vendor_name}</div>
                   </div>
                 </div>
@@ -1792,15 +1798,18 @@ export default function InventoryCurrentStockList() {
   };
 
   const vendorNames = React.useMemo(() => {
-    const names = new Set(data.filter(r => r.source === "vendor" && r.vendor_name).map(r => r.vendor_name));
+    const names = new Set(data
+      .filter(r => r.vendor_name && (sourceFilter === "data_hub_import" ? r.source === "data_hub_import" : r.source === "vendor"))
+      .map(r => r.vendor_name));
     return [...names].sort();
-  }, [data]);
+  }, [data, sourceFilter]);
 
   const sourceCounts = React.useMemo(() => ({
     all:    data.length,
     admin:  data.filter(r => r.source === "admin").length,
     vendor: data.filter(r => r.source === "vendor").length,
     grn:    data.filter(r => r.source === "grn").length,
+    imported: data.filter(r => r.source === "data_hub_import").length,
   }), [data]);
 
   const filtered = React.useMemo(() => {
@@ -1910,7 +1919,8 @@ export default function InventoryCurrentStockList() {
           <button onClick={() => { setSourceFilter("admin"); setVendorFilter(""); }}  style={tabStyle("admin",  "#6366F1")}>Admin ({sourceCounts.admin})</button>
           <button onClick={() => { setSourceFilter("vendor"); }}                      style={tabStyle("vendor", "#059669")}>🏪 Vendor ({sourceCounts.vendor})</button>
           <button onClick={() => { setSourceFilter("grn"); setVendorFilter(""); }}    style={tabStyle("grn",    "#D97706")}>📋 GRN Inward ({sourceCounts.grn})</button>
-          {sourceFilter === "vendor" && vendorNames.length > 0 && (
+          {sourceCounts.imported > 0 && <button onClick={() => { setSourceFilter("data_hub_import"); }} style={tabStyle("data_hub_import", "#2563EB")}>Imported ({sourceCounts.imported})</button>}
+          {(sourceFilter === "vendor" || sourceFilter === "data_hub_import") && vendorNames.length > 0 && (
             <>
               <span style={{ fontSize:11, color:"#94A3B8", fontWeight:700, marginLeft:8 }}>VENDOR</span>
               <div style={{ position:"relative", display:"flex", alignItems:"center" }}>

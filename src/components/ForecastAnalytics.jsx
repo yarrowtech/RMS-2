@@ -6,6 +6,10 @@ import {
   Search, RefreshCw, AlertTriangle, ShoppingCart, BarChart3,
   UploadCloud, FileSpreadsheet, CheckCircle2, XCircle, Undo2, History, Download, Trash2,
 } from "lucide-react";
+import {
+  Bar, BarChart as RechartsBarChart, CartesianGrid, Legend,
+  ResponsiveContainer, Tooltip, XAxis, YAxis,
+} from "recharts";
 
 function getAdminToken() {
   return (
@@ -108,10 +112,12 @@ function TrendBadge({ trend }) {
 }
 
 /* ── Dashboard ── */
-function DashboardView({ onNavigate }) {
+function DashboardView({ onNavigate, raphaaaMode = false }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState("");
+  const [filters, setFilters] = useState({});
 
   useEffect(() => {
     faFetch("/api/forecast-analytics/dashboard")
@@ -119,6 +125,9 @@ function DashboardView({ onNavigate }) {
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
   }, []);
+
+  const demandRows = data?.top_forecasted_items || [];
+  const visibleDemandRows = filterProductRows(demandRows, search, filters, BASIC_PRODUCT_FILTERS).slice(0, 5);
 
   return (
     <div className="space-y-6">
@@ -143,6 +152,15 @@ function DashboardView({ onNavigate }) {
         </button>
       )}
 
+      {raphaaaMode && !loading && (
+        <ProductFilterPanel
+          rows={demandRows} search={search} setSearch={setSearch} filters={filters} setFilters={setFilters}
+          fields={BASIC_PRODUCT_FILTERS}
+          title="Overview product filters"
+          description="Choose a hierarchy or supplier to see its five highest-demand products. The alert count above remains the tenant-wide total."
+        />
+      )}
+
       <div className="fa-panel overflow-hidden">
         <div className="border-b border-slate-100 px-5 py-4"><h4 className="text-sm font-bold text-slate-900">Top 5 items by recent demand</h4></div>
         <div className="overflow-x-auto">
@@ -150,10 +168,14 @@ function DashboardView({ onNavigate }) {
             <thead><tr>{["Item", "SKU", "Weekly avg", "Next-period forecast", "Trend"].map((h) => <th key={h} className="px-4 py-2.5 text-left font-bold uppercase">{h}</th>)}</tr></thead>
             <tbody className="divide-y divide-slate-100">
               {loading ? <tr><td colSpan={5} className="px-4 py-8 text-center text-slate-400">Loading…</td></tr>
-                : !data?.top_forecasted_items?.length ? <tr><td colSpan={5} className="px-4 py-8 text-center text-slate-400">No sales history yet in the lookback window.</td></tr>
-                : data.top_forecasted_items.map((row) => (
+                : !visibleDemandRows.length ? <tr><td colSpan={5} className="px-4 py-8 text-center text-slate-400">{demandRows.length ? "No products match the selected filters." : "No sales history yet in the lookback window."}</td></tr>
+                : visibleDemandRows.map((row) => (
                   <tr key={row.barcode}>
-                    <td className="px-4 py-2.5 font-semibold text-slate-800">{row.name || row.barcode}</td>
+                    <td className="px-4 py-2.5 font-semibold text-slate-800">
+                      {row.name || row.barcode}
+                      {raphaaaMode && <span className="mt-0.5 block text-[10px] font-normal text-slate-400">{[row.section, row.department, row.design_no, row.brand, row.size].filter(Boolean).join(" / ")}</span>}
+                      {raphaaaMode && row.vendor_name && <span className="block text-[10px] font-semibold text-blue-600">Supplier: {row.vendor_name}</span>}
+                    </td>
                     <td className="px-4 py-2.5 font-mono text-xs">{row.sku}</td>
                     <td className="px-4 py-2.5">{row.avg_weekly_qty}</td>
                     <td className="px-4 py-2.5 font-bold">{row.forecast_next_period_qty}</td>
@@ -179,21 +201,91 @@ function DashboardView({ onNavigate }) {
 }
 
 /* ── Demand Forecast ── */
-function DemandForecastView() {
+const FORECAST_FILTERS = [
+  ["division", "Division"], ["section", "Section"], ["department", "Department"],
+  ["design_no", "Design No."], ["brand", "Brand"], ["style", "Style"],
+  ["product_type", "Type"], ["size", "Size"], ["vendor_name", "Vendor"],
+];
+
+const BASIC_PRODUCT_FILTERS = [
+  ["division", "Division"], ["section", "Section"], ["department", "Department"],
+  ["design_no", "Design No."], ["brand", "Brand"], ["vendor_name", "Vendor"],
+];
+const VENDOR_RESULT_FILTERS = [["vendor_name", "Vendor"], ["category", "Category"]];
+const ALERT_BASE_FILTERS = [["store_name", "Location"], ["severity", "Severity"]];
+const PLAN_BASE_FILTERS = [["trend", "Trend"]];
+
+function filterProductRows(rows, search, filters, fields) {
+  const wanted = search.trim().toLowerCase();
+  return rows.filter((row) => {
+    if (wanted && ![
+      row.name, row.item_name, row.sku, row.barcode, row.design_no,
+      row.vendor_name, row.category, row.store_name, row.severity,
+    ].some((value) => String(value || "").toLowerCase().includes(wanted))) return false;
+    return fields.every(([key]) => !filters[key] || String(row[key] || "") === String(filters[key]));
+  });
+}
+
+function ProductFilterPanel({ rows, search, setSearch, filters, setFilters, fields, title, description }) {
+  const options = React.useMemo(() => Object.fromEntries(
+    fields.map(([key]) => [key, [...new Set(rows.map((row) => row[key]).filter((value) => value !== "" && value != null))]
+      .sort((a, b) => String(a).localeCompare(String(b)))])
+  ), [rows, fields]);
+  const count = filterProductRows(rows, search, filters, fields).length;
+
+  return (
+    <div className="fa-panel p-5">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div><h4 className="text-sm font-bold text-slate-900">{title}</h4><p className="mt-0.5 text-xs text-slate-500">{description}</p></div>
+        <button type="button" onClick={() => { setSearch(""); setFilters({}); }} className="text-xs font-bold text-indigo-600 hover:text-indigo-800">Clear filters</button>
+      </div>
+      <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+        <div className="relative sm:col-span-2">
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search product, SKU, barcode, design or vendor" className="w-full rounded-lg border py-2 pl-9 pr-3 text-sm" />
+        </div>
+        {fields.map(([key, label]) => (
+          <select key={key} value={filters[key] || ""} onChange={(e) => setFilters((old) => ({ ...old, [key]: e.target.value }))} className="rounded-lg border px-2.5 py-2 text-sm">
+            <option value="">All {label}</option>
+            {(options[key] || []).map((value) => <option key={String(value)} value={String(value)}>{value}</option>)}
+          </select>
+        ))}
+      </div>
+      <p className="mt-3 text-xs font-semibold text-slate-400">Showing {count} of {rows.length} records.</p>
+    </div>
+  );
+}
+
+function DemandForecastView({ raphaaaMode = false }) {
   const [rows, setRows] = useState([]);
   const [lookbackDays, setLookbackDays] = useState(90);
+  const [search, setSearch] = useState("");
+  const [filters, setFilters] = useState({});
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
     setLoading(true); setError(null);
     try {
-      const r = await faFetch(`/api/forecast-analytics/demand-forecast?lookback_days=${lookbackDays}&limit=50`);
+      const r = await faFetch(`/api/forecast-analytics/demand-forecast?lookback_days=${lookbackDays}&limit=${raphaaaMode ? 1000 : 50}`);
       setRows(r.data || []);
     } catch (e) { setError(e.message); } finally { setLoading(false); }
-  }, [lookbackDays]);
+  }, [lookbackDays, raphaaaMode]);
 
   useEffect(() => { load(); }, [load]);
+
+  const filterOptions = React.useMemo(() => Object.fromEntries(
+    FORECAST_FILTERS.map(([key]) => [key, [...new Set(rows.map((row) => row[key]).filter(Boolean))].sort((a, b) => String(a).localeCompare(String(b)))])
+  ), [rows]);
+
+  const filteredRows = React.useMemo(() => {
+    const wanted = search.trim().toLowerCase();
+    return rows.filter((row) => {
+      if (wanted && ![row.name, row.sku, row.barcode, row.design_no, row.vendor_name]
+        .some((value) => String(value || "").toLowerCase().includes(wanted))) return false;
+      return FORECAST_FILTERS.every(([key]) => !filters[key] || row[key] === filters[key]);
+    });
+  }, [rows, search, filters]);
 
   return (
     <div className="space-y-5">
@@ -212,16 +304,45 @@ function DemandForecastView() {
         </div>
       </div>
 
+      {raphaaaMode && (
+        <div className="fa-panel p-5">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h4 className="text-sm font-bold text-slate-900">Product hierarchy filters</h4>
+              <p className="mt-0.5 text-xs text-slate-500">Segregate imported products by the Division, Section, Department and category hierarchy from your Sales Excel.</p>
+            </div>
+            <button type="button" onClick={() => { setSearch(""); setFilters({}); }} className="text-xs font-bold text-indigo-600 hover:text-indigo-800">Clear filters</button>
+          </div>
+          <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+            <div className="relative sm:col-span-2">
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Product, SKU, barcode, design or vendor" className="w-full rounded-lg border py-2 pl-9 pr-3 text-sm" />
+            </div>
+            {FORECAST_FILTERS.map(([key, label]) => (
+              <select key={key} value={filters[key] || ""} onChange={(e) => setFilters((old) => ({ ...old, [key]: e.target.value }))} className="rounded-lg border px-2.5 py-2 text-sm">
+                <option value="">All {label}</option>
+                {(filterOptions[key] || []).map((value) => <option key={value} value={value}>{value}</option>)}
+              </select>
+            ))}
+          </div>
+          <p className="mt-3 text-xs font-semibold text-slate-400">Showing {filteredRows.length} of {rows.length} forecasted products.</p>
+        </div>
+      )}
+
       <div className="fa-panel overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead><tr>{["Item", "SKU", "Weeks active", "Weekly avg", "Forecast (next)", "Trend", "Avg price", "Avg cost", "Margin/unit"].map((h) => <th key={h} className="whitespace-nowrap px-4 py-2.5 text-left font-bold uppercase">{h}</th>)}</tr></thead>
             <tbody className="divide-y divide-slate-100">
               {loading ? <tr><td colSpan={9} className="px-4 py-8 text-center text-slate-400">Loading…</td></tr>
-                : rows.length === 0 ? <tr><td colSpan={9} className="px-4 py-8 text-center text-slate-400">No sales history in this window yet.</td></tr>
-                : rows.map((row) => (
+                : filteredRows.length === 0 ? <tr><td colSpan={9} className="px-4 py-8 text-center text-slate-400">{rows.length ? "No products match the selected hierarchy filters." : "No sales history in this window yet."}</td></tr>
+                : filteredRows.map((row) => (
                   <tr key={row.barcode}>
-                    <td className="px-4 py-2.5 font-semibold text-slate-800">{row.name || row.barcode}</td>
+                    <td className="px-4 py-2.5 font-semibold text-slate-800">
+                      {row.name || row.barcode}
+                      {raphaaaMode && <span className="mt-0.5 block text-[10px] font-normal text-slate-400">{[row.division, row.section, row.department, row.design_no, row.style, row.product_type, row.size].filter(Boolean).join(" / ")}</span>}
+                      {raphaaaMode && row.vendor_name && <span className="mt-0.5 block text-[10px] font-semibold text-blue-600">Supplier: {row.vendor_name}{!row.vendor_linked ? " · imported/unlinked" : ""}</span>}
+                    </td>
                     <td className="px-4 py-2.5 font-mono text-xs">{row.sku}</td>
                     <td className="px-4 py-2.5">{row.weeks_active}</td>
                     <td className="px-4 py-2.5">{row.avg_weekly_qty}</td>
@@ -248,6 +369,8 @@ function VendorRankingView() {
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
   const [searched, setSearched] = useState(false);
+  const [resultSearch, setResultSearch] = useState("");
+  const [resultFilters, setResultFilters] = useState({});
 
   const search = async () => {
     if (!q.trim()) return;
@@ -256,14 +379,18 @@ function VendorRankingView() {
       const r = await faFetch(`/api/forecast-analytics/vendor-ranking?q=${encodeURIComponent(q.trim())}&limit=20`);
       setRows(r.data || []);
       setNote(r.note || "");
+      setResultSearch(""); setResultFilters({});
     } catch (e) { setError(e.message); } finally { setLoading(false); }
   };
+
+  const visibleRows = filterProductRows(rows, resultSearch, resultFilters, VENDOR_RESULT_FILTERS);
 
   return (
     <div className="space-y-5">
       <ErrorBanner message={error} />
       <div className="fa-panel p-5">
         <h4 className="text-sm font-bold text-slate-900">Vendor ranking</h4>
+        <p className="mt-1 text-xs font-semibold text-indigo-600">Score: price 50% · MOQ 20% · your PO history 30%. Average fulfillment days are shown for review but are not yet part of the score.</p>
         <p className="mt-0.5 text-xs text-slate-500">Ranked by price, MOQ, and your own order/fulfillment history with each vendor — only vendors with an Approved relationship to you are shown.</p>
         <div className="mt-3 flex gap-2">
           <div className="relative flex-1">
@@ -275,6 +402,13 @@ function VendorRankingView() {
       </div>
 
       {searched && (
+        <>
+        <ProductFilterPanel
+          rows={rows} search={resultSearch} setSearch={setResultSearch} filters={resultFilters} setFilters={setResultFilters}
+          fields={VENDOR_RESULT_FILTERS}
+          title="Refine vendor results"
+          description="The main search finds matching catalogue products. These filters narrow that result by approved vendor or catalogue category without changing the ranking score."
+        />
         <div className="fa-panel overflow-hidden">
           {note && <p className="border-b border-slate-100 bg-amber-50 px-5 py-2.5 text-xs font-semibold text-amber-700">{note}</p>}
           <div className="overflow-x-auto">
@@ -282,8 +416,8 @@ function VendorRankingView() {
               <thead><tr>{["Vendor", "Item", "Category", "Price range", "MOQ", "Orders with you", "Avg fulfillment", "Score"].map((h) => <th key={h} className="whitespace-nowrap px-4 py-2.5 text-left font-bold uppercase">{h}</th>)}</tr></thead>
               <tbody className="divide-y divide-slate-100">
                 {loading ? <tr><td colSpan={8} className="px-4 py-8 text-center text-slate-400">Searching…</td></tr>
-                  : rows.length === 0 ? <tr><td colSpan={8} className="px-4 py-8 text-center text-slate-400">No approved vendors match this search.</td></tr>
-                  : rows.map((row) => (
+                  : visibleRows.length === 0 ? <tr><td colSpan={8} className="px-4 py-8 text-center text-slate-400">{rows.length ? "No vendor results match these filters." : "No approved vendors match this search."}</td></tr>
+                  : visibleRows.map((row) => (
                     <tr key={row.catalogue_item_id}>
                       <td className="px-4 py-2.5">
                         <p className="font-semibold text-slate-800">{row.vendor_name}</p>
@@ -302,16 +436,19 @@ function VendorRankingView() {
             </table>
           </div>
         </div>
+        </>
       )}
     </div>
   );
 }
 
 /* ── Low Stock Alerts (automation output) ── */
-function AlertsView() {
+function AlertsView({ raphaaaMode = false }) {
   const [rows, setRows] = useState([]);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState("");
+  const [filters, setFilters] = useState({});
 
   const load = useCallback(() => {
     setLoading(true); setError(null);
@@ -322,6 +459,9 @@ function AlertsView() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  const alertFields = React.useMemo(() => raphaaaMode ? [...ALERT_BASE_FILTERS, ...BASIC_PRODUCT_FILTERS] : ALERT_BASE_FILTERS, [raphaaaMode]);
+  const visibleRows = filterProductRows(rows, search, filters, alertFields);
 
   return (
     <div className="space-y-5">
@@ -334,6 +474,13 @@ function AlertsView() {
         <button onClick={load} className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-bold text-indigo-700 hover:bg-indigo-100"><RefreshCw size={13} /> Refresh</button>
       </div>
 
+      <ProductFilterPanel
+        rows={rows} search={search} setSearch={setSearch} filters={filters} setFilters={setFilters}
+        fields={alertFields}
+        title="Alert filters"
+        description="Filter by location and severity. Raphaaa can also narrow alerts using the imported product hierarchy and supplier. Refresh reloads the saved daily calculation."
+      />
+
       <div className="fa-panel overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
@@ -341,9 +488,10 @@ function AlertsView() {
             <tbody className="divide-y divide-slate-100">
               {loading ? <tr><td colSpan={7} className="px-4 py-8 text-center text-slate-400">Loading…</td></tr>
                 : rows.length === 0 ? <tr><td colSpan={7} className="px-4 py-8 text-center text-slate-400">No low-stock items right now — nothing is projected to run out within 14 days.</td></tr>
-                : rows.map((row) => (
+                : visibleRows.length === 0 ? <tr><td colSpan={7} className="px-4 py-8 text-center text-slate-400">No alerts match the selected filters.</td></tr>
+                : visibleRows.map((row) => (
                   <tr key={`${row.store_id || "hq"}-${row.barcode}`}>
-                    <td className="px-4 py-2.5 font-semibold text-slate-800">{row.name || row.barcode}</td>
+                    <td className="px-4 py-2.5 font-semibold text-slate-800">{row.name || row.barcode}{raphaaaMode && <><span className="mt-0.5 block text-[10px] font-normal text-slate-400">{[row.section, row.department, row.design_no, row.brand, row.size].filter(Boolean).join(" / ")}</span>{row.vendor_name && <span className="block text-[10px] font-semibold text-blue-600">Supplier: {row.vendor_name}</span>}</>}</td>
                     <td className="px-4 py-2.5 font-mono text-xs">{row.sku}</td>
                     <td className="px-4 py-2.5 text-xs font-semibold text-slate-500">{row.store_name || "HQ / Central"}</td>
                     <td className="px-4 py-2.5">{row.stock_qty}</td>
@@ -361,7 +509,7 @@ function AlertsView() {
 }
 
 /* ── Purchase Plan ── */
-function PurchasePlanView() {
+function GenericPurchasePlanView({ raphaaaMode = false }) {
   const [budget, setBudget] = useState("");
   const [lookbackDays, setLookbackDays] = useState(90);
   const [plan, setPlan] = useState(null);
@@ -369,6 +517,8 @@ function PurchasePlanView() {
   const [loading, setLoading] = useState(false);
   const [draft, setDraft] = useState(null);
   const [draftLoading, setDraftLoading] = useState(true);
+  const [search, setSearch] = useState("");
+  const [filters, setFilters] = useState({});
 
   useEffect(() => {
     faFetch("/api/forecast-analytics/restock-draft")
@@ -390,9 +540,21 @@ function PurchasePlanView() {
     } catch (e) { setError(e.message); } finally { setLoading(false); }
   };
 
+  const planFields = React.useMemo(() => raphaaaMode ? [...PLAN_BASE_FILTERS, ...BASIC_PRODUCT_FILTERS] : PLAN_BASE_FILTERS, [raphaaaMode]);
+  const filterSourceRows = [...(draft?.lines || []), ...(plan?.lines || [])];
+  const visibleDraftLines = filterProductRows(draft?.lines || [], search, filters, planFields);
+  const visiblePlanLines = filterProductRows(plan?.lines || [], search, filters, planFields);
+
   return (
     <div className="space-y-5">
       <ErrorBanner message={error} />
+
+      <ProductFilterPanel
+        rows={filterSourceRows} search={search} setSearch={setSearch} filters={filters} setFilters={setFilters}
+        fields={planFields}
+        title="Purchase recommendation filters"
+        description="Use these filters to review particular products, trends or Raphaaa hierarchy groups. They change only the displayed rows; build the budget plan again whenever you change the budget or lookback."
+      />
 
       {!draftLoading && draft?.line_count > 0 && (
         <div className="fa-panel overflow-hidden">
@@ -408,9 +570,9 @@ function PurchasePlanView() {
             <table className="w-full text-sm">
               <thead><tr>{["Item", "SKU", "Suggested qty", "Line cost", "ROI", "Trend"].map((h) => <th key={h} className="whitespace-nowrap px-4 py-2.5 text-left font-bold uppercase">{h}</th>)}</tr></thead>
               <tbody className="divide-y divide-slate-100">
-                {draft.lines.map((line) => (
+                {visibleDraftLines.length === 0 ? <tr><td colSpan={6} className="px-4 py-8 text-center text-slate-400">No draft lines match the selected filters.</td></tr> : visibleDraftLines.map((line) => (
                   <tr key={line.barcode}>
-                    <td className="px-4 py-2.5 font-semibold text-slate-800">{line.name || line.barcode}</td>
+                    <td className="px-4 py-2.5 font-semibold text-slate-800">{line.name || line.barcode}{raphaaaMode && <><span className="mt-0.5 block text-[10px] font-normal text-slate-400">{[line.section, line.department, line.design_no, line.brand, line.size].filter(Boolean).join(" / ")}</span>{line.vendor_name && <span className="block text-[10px] font-semibold text-blue-600">Supplier: {line.vendor_name}</span>}</>}</td>
                     <td className="px-4 py-2.5 font-mono text-xs">{line.sku}</td>
                     <td className="px-4 py-2.5">{line.recommended_qty}</td>
                     <td className="px-4 py-2.5">₹{line.line_cost}</td>
@@ -464,9 +626,10 @@ function PurchasePlanView() {
                 <thead><tr>{["Item", "SKU", "Qty", "Unit cost", "Line cost", "Expected profit", "ROI", "Trend"].map((h) => <th key={h} className="whitespace-nowrap px-4 py-2.5 text-left font-bold uppercase">{h}</th>)}</tr></thead>
                 <tbody className="divide-y divide-slate-100">
                   {plan.lines.length === 0 ? <tr><td colSpan={8} className="px-4 py-8 text-center text-slate-400">Budget too small for any forecasted item, or no demand history yet.</td></tr>
-                    : plan.lines.map((line) => (
+                    : visiblePlanLines.length === 0 ? <tr><td colSpan={8} className="px-4 py-8 text-center text-slate-400">No purchase-plan lines match the selected filters.</td></tr>
+                    : visiblePlanLines.map((line) => (
                       <tr key={line.barcode}>
-                        <td className="px-4 py-2.5 font-semibold text-slate-800">{line.name || line.barcode}{line.partial && <span className="ml-1.5 rounded-full bg-amber-50 px-1.5 py-0.5 text-[10px] font-bold text-amber-700">partial</span>}</td>
+                        <td className="px-4 py-2.5 font-semibold text-slate-800">{line.name || line.barcode}{line.partial && <span className="ml-1.5 rounded-full bg-amber-50 px-1.5 py-0.5 text-[10px] font-bold text-amber-700">partial</span>}{raphaaaMode && <><span className="mt-0.5 block text-[10px] font-normal text-slate-400">{[line.section, line.department, line.design_no, line.brand, line.size].filter(Boolean).join(" / ")}</span>{line.vendor_name && <span className="block text-[10px] font-semibold text-blue-600">Supplier: {line.vendor_name}</span>}</>}</td>
                         <td className="px-4 py-2.5 font-mono text-xs">{line.sku}</td>
                         <td className="px-4 py-2.5">{line.recommended_qty}</td>
                         <td className="px-4 py-2.5">₹{line.unit_cost}</td>
@@ -487,6 +650,249 @@ function PurchasePlanView() {
 }
 
 /* ── Data Import (Raphaa pilot only) ── */
+function RaphaaaPurchasePlanView() {
+  const [historyPeriods, setHistoryPeriods] = useState(2);
+  const [periodMode, setPeriodMode] = useState("calendar_year");
+  const [plan, setPlan] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [search, setSearch] = useState("");
+  const [filters, setFilters] = useState({});
+  const [vendorMetric, setVendorMetric] = useState("net_sales");
+
+  const build = useCallback(async () => {
+    setLoading(true); setError(null);
+    try {
+      const result = await faFetch("/api/forecast-analytics/purchase-plan/raphaaa", {
+        method: "POST",
+        body: JSON.stringify({
+          history_periods: historyPeriods,
+          period_mode: periodMode,
+          season_start_month: 10,
+          season_end_month: 2,
+        }),
+      });
+      setPlan(result);
+    } catch (e) { setError(e.message); } finally { setLoading(false); }
+  }, [historyPeriods, periodMode]);
+
+  useEffect(() => { build(); }, [build]);
+
+  const filterFields = React.useMemo(() => [
+    ...BASIC_PRODUCT_FILTERS, ["style", "Style"], ["product_type", "Type"],
+    ["size", "Size"], ["promotion", "Promotion"], ["confidence", "Confidence"],
+  ], []);
+  const lines = React.useMemo(() => plan?.lines || [], [plan]);
+  const visibleLines = React.useMemo(
+    () => filterProductRows(lines, search, filters, filterFields),
+    [lines, search, filters, filterFields],
+  );
+  const periods = plan?.periods || [];
+  const summary = React.useMemo(() => ({
+    recommended_products: visibleLines.filter((line) => Number(line.final_purchase_qty) > 0).length,
+    final_purchase_qty: visibleLines.reduce((sum, line) => sum + Number(line.final_purchase_qty || 0), 0),
+    estimated_purchase_amount: visibleLines.reduce((sum, line) => sum + Number(line.estimated_purchase_amount || 0), 0),
+    historical_net_sales: visibleLines.reduce((sum, line) => sum + Number(line.net_sales || 0), 0),
+  }), [visibleLines]);
+  const productChart = React.useMemo(() => visibleLines
+    .filter((line) => Number(line.historical_peak_qty) > 0 || Number(line.final_purchase_qty) > 0)
+    .slice().sort((a, b) => Number(b.final_purchase_qty) - Number(a.final_purchase_qty))
+    .slice(0, 12)
+    .map((line) => ({
+      label: line.design_no || line.name || line.barcode,
+      ...line.quantities_by_period,
+      "Final purchase": line.final_purchase_qty,
+    })), [visibleLines]);
+  const vendorRows = React.useMemo(() => aggregatePlanVendors(visibleLines)
+    .sort((a, b) => Number(b[vendorMetric]) - Number(a[vendorMetric])).slice(0, 10), [visibleLines, vendorMetric]);
+  const visibleBarcodes = React.useMemo(() => new Set(visibleLines.map((line) => line.barcode)), [visibleLines]);
+  const promotionRows = React.useMemo(() => (plan?.promotion_performance || [])
+    .filter((row) => visibleBarcodes.has(row.barcode)).slice(0, 20), [plan, visibleBarcodes]);
+
+  return (
+    <div className="space-y-5">
+      <ErrorBanner message={error} />
+      <div className="fa-panel p-5">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="max-w-3xl">
+            <h4 className="text-base font-black text-slate-900">Raphaaa purchase policy</h4>
+            <p className="mt-1 text-sm text-slate-600">Compare completed periods, take the largest product sales quantity, add 18%, then deduct 50% of today’s recorded central and store stock.</p>
+            <p className="mt-2 rounded-lg bg-indigo-50 px-3 py-2 text-xs font-bold text-indigo-800">PQ = ceil(largest period sales × 1.18). Final quantity = max(0, ceil(PQ − current stock × 0.50)). This is a recommendation only; it does not create a PO or change stock.</p>
+          </div>
+          <div className="flex flex-wrap items-end gap-2">
+            <label className="text-xs font-bold text-slate-600">Comparison
+              <select value={periodMode} onChange={(e) => setPeriodMode(e.target.value)} className="mt-1 block rounded-lg border px-2.5 py-2 text-sm">
+                <option value="calendar_year">Completed calendar years</option>
+                <option value="seasonal_window">Winter seasons (Oct–Feb)</option>
+              </select>
+            </label>
+            <label className="text-xs font-bold text-slate-600">Periods
+              <select value={historyPeriods} onChange={(e) => setHistoryPeriods(Number(e.target.value))} className="mt-1 block rounded-lg border px-2.5 py-2 text-sm">
+                {[2, 3, 4, 5, 6].map((value) => <option key={value} value={value}>{value}</option>)}
+              </select>
+            </label>
+            <button onClick={build} disabled={loading} className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-bold text-white disabled:opacity-60"><RefreshCw size={14} />{loading ? "Calculating…" : "Recalculate"}</button>
+          </div>
+        </div>
+        {plan && <p className="mt-3 text-xs text-slate-500">Compared: {periods.map((period) => period.label).join(", ")} · Stock snapshot: {new Date(plan.generated_at).toLocaleString("en-IN")} · {plan.data_quality?.invoice_count || 0} sales/return documents reviewed.</p>}
+      </div>
+
+      <ProductFilterPanel rows={lines} search={search} setSearch={setSearch} filters={filters} setFilters={setFilters} fields={filterFields} title="Purchase-plan filters" description="All cards, charts, tables and the CSV export below use this same filtered product population." />
+
+      {plan && <>
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <StatTile label="Products to repurchase" value={summary.recommended_products.toLocaleString("en-IN")} tone="emerald" />
+          <StatTile label="Final purchase quantity" value={summary.final_purchase_qty.toLocaleString("en-IN")} />
+          <StatTile label="Estimated purchase amount" value={formatMoney(summary.estimated_purchase_amount)} tone="amber" />
+          <StatTile label="Historical net sales" value={formatMoney(summary.historical_net_sales)} />
+        </div>
+
+        <div className="grid gap-3 lg:grid-cols-2">
+          <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-xs leading-5 text-amber-900">
+            <p className="font-black">Stock basis</p>
+            <p>{plan.data_quality?.stock_basis}. {plan.data_quality?.stock_caveat}</p>
+          </div>
+          <div className={`rounded-xl border p-4 text-xs leading-5 ${plan.data_quality?.promotion_name_available ? "border-emerald-200 bg-emerald-50 text-emerald-900" : "border-sky-200 bg-sky-50 text-sky-900"}`}>
+            <p className="font-black">Promotion evidence</p>
+            <p>{plan.data_quality?.promotion_name_available ? `${plan.data_quality.named_promotion_lines} sales lines contain a promotion name.` : "Existing sales contain discount amounts but no reliable promotion names. They are shown as ‘Unlabelled discount / offer’; the system does not invent campaign names or claim causal uplift."}</p>
+          </div>
+        </div>
+
+        <div className="grid gap-5 xl:grid-cols-2">
+          <div className="fa-panel p-5">
+            <h4 className="text-sm font-black text-slate-900">Product performance and proposed quantity</h4>
+            <p className="mt-1 text-xs text-slate-500">Top 12 filtered products by final purchase quantity. Bars start at zero and compare like-for-like completed periods.</p>
+            <div className="mt-4 h-[360px]">
+              {productChart.length ? <ResponsiveContainer width="100%" height="100%">
+                <RechartsBarChart data={productChart} layout="vertical" margin={{ top: 5, right: 18, left: 24, bottom: 5 }}>
+                  <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                  <XAxis type="number" allowDecimals={false} />
+                  <YAxis type="category" dataKey="label" width={110} tick={{ fontSize: 10 }} />
+                  <Tooltip formatter={(value) => [Number(value).toLocaleString("en-IN"), "Quantity"]} />
+                  <Legend />
+                  {periods.map((period, index) => <Bar key={period.key} dataKey={period.key} name={`${period.label} sold`} fill={["#94a3b8", "#6366f1", "#0ea5e9", "#14b8a6", "#a855f7", "#f59e0b"][index % 6]} radius={[0, 3, 3, 0]} />)}
+                  <Bar dataKey="Final purchase" fill="#10b981" radius={[0, 3, 3, 0]} />
+                </RechartsBarChart>
+              </ResponsiveContainer> : <div className="flex h-full items-center justify-center text-sm text-slate-400">No products match this selection.</div>}
+            </div>
+          </div>
+
+          <div className="fa-panel p-5">
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <div><h4 className="text-sm font-black text-slate-900">Vendor performance</h4><p className="mt-1 text-xs text-slate-500">Performance of products attributed to each supplier; choose the decision measure.</p></div>
+              <select value={vendorMetric} onChange={(e) => setVendorMetric(e.target.value)} className="rounded-lg border px-2.5 py-1.5 text-xs font-bold">
+                <option value="net_sales">Net sales</option><option value="units_sold">Units sold</option><option value="discount_amount">Discount amount</option><option value="final_purchase_qty">Purchase quantity</option><option value="estimated_purchase_amount">Purchase amount</option>
+              </select>
+            </div>
+            <div className="mt-4 h-[360px]">
+              {vendorRows.length ? <ResponsiveContainer width="100%" height="100%">
+                <RechartsBarChart data={vendorRows} layout="vertical" margin={{ top: 5, right: 18, left: 30, bottom: 5 }}>
+                  <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                  <XAxis type="number" />
+                  <YAxis type="category" dataKey="vendor_name" width={120} tick={{ fontSize: 10 }} />
+                  <Tooltip formatter={(value) => [vendorMetric.includes("sales") || vendorMetric.includes("amount") ? formatMoney(value) : Number(value).toLocaleString("en-IN"), vendorMetric.replaceAll("_", " ")]} />
+                  <Bar dataKey={vendorMetric} name={vendorMetric.replaceAll("_", " ")} fill="#7c3aed" radius={[0, 4, 4, 0]} />
+                </RechartsBarChart>
+              </ResponsiveContainer> : <div className="flex h-full items-center justify-center text-sm text-slate-400">No vendor evidence matches this selection.</div>}
+            </div>
+            <p className="mt-2 text-[11px] leading-4 text-slate-500">{plan.data_quality?.vendor_caveat}</p>
+          </div>
+        </div>
+      </>}
+
+      {plan && <div className="fa-panel overflow-hidden">
+        <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-100 px-5 py-4">
+          <div><h4 className="text-sm font-black text-slate-900">Auditable purchase quantities</h4><p className="mt-1 text-xs text-slate-500">Exact inputs, assumptions and amounts for each filtered SKU. Zero recommendations remain visible for review.</p></div>
+          <button type="button" onClick={() => downloadPurchasePlan(visibleLines, periods)} disabled={!visibleLines.length} className="inline-flex items-center gap-2 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs font-bold text-indigo-700 disabled:opacity-50"><Download size={14} />Export filtered CSV</button>
+        </div>
+        <div className="max-h-[560px] overflow-auto">
+          <table className="min-w-[1900px] w-full text-xs">
+            <thead className="sticky top-0 z-10"><tr>
+              {["Product / hierarchy", "Vendor", ...periods.map((p) => `${p.label} sold`), "Peak", "PQ +18%", "Current stock", "50% stock", "Final qty", "Unit cost", "Purchase amount", "Gross sales", "Discount", "Net sales", "Promotion", "Evidence"].map((heading) => <th key={heading} className="whitespace-nowrap px-3 py-3 text-left font-black uppercase">{heading}</th>)}
+            </tr></thead>
+            <tbody className="divide-y divide-slate-100">
+              {!visibleLines.length ? <tr><td colSpan={16 + periods.length} className="px-4 py-10 text-center text-slate-400">{loading ? "Calculating the plan…" : "No historical products match the selected filters."}</td></tr> : visibleLines.map((line) => <tr key={line.stock_identity || line.barcode}>
+                <td className="px-3 py-3"><p className="max-w-[230px] font-bold text-slate-900">{line.name}</p><p className="mt-0.5 text-[10px] text-slate-500">{[line.division, line.section, line.department, line.design_no, line.brand, line.style, line.size].filter(Boolean).join(" / ")}</p><p className="mt-0.5 font-mono text-[10px] text-slate-400">{line.sku || line.barcode}</p></td>
+                <td className="px-3 py-3"><span className="font-semibold">{line.vendor_name || "Unavailable"}</span>{line.vendor_name && !line.vendor_linked && <span className="mt-1 block text-[10px] font-bold text-amber-600">Imported / unlinked</span>}</td>
+                {periods.map((period) => <td key={period.key} className="px-3 py-3">{Number(line.quantities_by_period?.[period.key] || 0).toLocaleString("en-IN")}</td>)}
+                <td className="px-3 py-3 font-bold">{line.historical_peak_qty}</td>
+                <td className="px-3 py-3 font-bold text-indigo-700">{line.purchase_qty_before_stock}</td>
+                <td className="px-3 py-3">{line.current_stock_qty}</td>
+                <td className="px-3 py-3">{line.stock_credit_qty}</td>
+                <td className="px-3 py-3 text-sm font-black text-emerald-700">{line.final_purchase_qty}</td>
+                <td className="px-3 py-3">{line.unit_cost ? formatMoney(line.unit_cost) : "Unavailable"}<span className="block text-[10px] text-slate-400">{line.cost_source}{line.cost_reference ? ` · ${line.cost_reference}` : ""}</span></td>
+                <td className="px-3 py-3 font-bold">{formatMoney(line.estimated_purchase_amount)}</td>
+                <td className="px-3 py-3">{formatMoney(line.gross_sales)}</td>
+                <td className="px-3 py-3 text-rose-600">{formatMoney(line.discount_amount)}</td>
+                <td className="px-3 py-3 font-bold">{formatMoney(line.net_sales)}</td>
+                <td className="max-w-[180px] px-3 py-3">{line.promotion}</td>
+                <td className="px-3 py-3"><span className={`rounded-full px-2 py-1 text-[10px] font-black ${line.confidence === "High" ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>{line.confidence}</span><span className="mt-1 block text-[10px] text-slate-400">{line.periods_with_sales}/{periods.length} periods with sales</span></td>
+              </tr>)}
+            </tbody>
+          </table>
+        </div>
+      </div>}
+
+      {plan && <div className="grid gap-5 xl:grid-cols-[1.35fr_.65fr]">
+        <div className="fa-panel overflow-hidden">
+          <div className="border-b border-slate-100 px-5 py-4"><h4 className="text-sm font-black text-slate-900">Promotion and discount evidence</h4><p className="mt-1 text-xs text-slate-500">Actual gross, discount and net amounts by product/promotion label. This is descriptive performance, not proof that a promotion caused the sale.</p></div>
+          <div className="max-h-80 overflow-auto"><table className="min-w-[940px] w-full text-xs"><thead><tr>{["Promotion", "Type", "Product", "Vendor", "Qty", "Gross", "Discount", "Net"].map((heading) => <th key={heading} className="px-4 py-3 text-left font-black uppercase">{heading}</th>)}</tr></thead><tbody className="divide-y divide-slate-100">{promotionRows.length ? promotionRows.map((row, index) => <tr key={`${row.barcode}-${row.promotion}-${row.promotion_type}-${index}`}><td className="px-4 py-3 font-bold">{row.promotion}</td><td className="px-4 py-3 capitalize">{row.promotion_type}</td><td className="px-4 py-3">{row.name}{row.design_no && <span className="block text-[10px] text-slate-400">Design {row.design_no}</span>}</td><td className="px-4 py-3">{row.vendor_name}</td><td className="px-4 py-3">{row.qty}</td><td className="px-4 py-3">{formatMoney(row.gross_sales)}</td><td className="px-4 py-3 text-rose-600">{formatMoney(row.discount_amount)}</td><td className="px-4 py-3 font-bold">{formatMoney(row.net_sales)}</td></tr>) : <tr><td colSpan={8} className="px-4 py-8 text-center text-slate-400">No promotion evidence matches this selection.</td></tr>}</tbody></table></div>
+        </div>
+        <div className="fa-panel p-5">
+          <h4 className="text-sm font-black text-slate-900">How to use this plan</h4>
+          <ol className="mt-3 space-y-3 text-xs leading-5 text-slate-600">
+            <li><b>1.</b> Choose full years or comparable winter seasons and at least two periods.</li>
+            <li><b>2.</b> Filter Division → Section → Department → Design No. → size/vendor.</li>
+            <li><b>3.</b> Review the peak quantity, 18% PQ, current stock and final quantity row by row.</li>
+            <li><b>4.</b> Resolve “Limited history”, unavailable costs and unlinked vendors before ordering.</li>
+            <li><b>5.</b> Export the filtered CSV and use approved quantities to prepare a PO in Procurement.</li>
+          </ol>
+          <div className="mt-4 rounded-xl bg-slate-50 p-3 text-[11px] leading-5 text-slate-500"><b>What happens next:</b> this screen does not bypass vendor approval, PO, GRC or GRN. After review, Procurement creates the PO; received goods continue through the existing GRC → GRN → inventory flow.</div>
+        </div>
+      </div>}
+    </div>
+  );
+}
+
+function PurchasePlanView({ raphaaaMode = false }) {
+  return raphaaaMode ? <RaphaaaPurchasePlanView /> : <GenericPurchasePlanView />;
+}
+
+const formatMoney = (value) => `₹${Number(value || 0).toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
+
+function aggregatePlanVendors(lines) {
+  const grouped = new Map();
+  lines.forEach((line) => {
+    const key = line.vendor_name || "Vendor unavailable";
+    const row = grouped.get(key) || { vendor_name: key, units_sold: 0, net_sales: 0, discount_amount: 0, final_purchase_qty: 0, estimated_purchase_amount: 0 };
+    row.units_sold += Object.values(line.quantities_by_period || {}).reduce((sum, value) => sum + Number(value || 0), 0);
+    row.net_sales += Number(line.net_sales || 0);
+    row.discount_amount += Number(line.discount_amount || 0);
+    row.final_purchase_qty += Number(line.final_purchase_qty || 0);
+    row.estimated_purchase_amount += Number(line.estimated_purchase_amount || 0);
+    grouped.set(key, row);
+  });
+  return [...grouped.values()];
+}
+
+function downloadPurchasePlan(lines, periods) {
+  const headers = ["Product", "Design No.", "SKU", "Barcode", "Vendor", ...periods.map((p) => `${p.label} units`), "Peak units", "PQ before stock", "Current stock", "50% stock credit", "Final purchase qty", "Unit cost", "Purchase amount", "Gross sales", "Discount", "Net sales", "Promotion", "Confidence", "Cost source"];
+  const values = lines.map((line) => [
+    line.name, line.design_no, line.sku, line.barcode, line.vendor_name,
+    ...periods.map((p) => line.quantities_by_period?.[p.key] || 0),
+    line.historical_peak_qty, line.purchase_qty_before_stock, line.current_stock_qty,
+    line.stock_credit_qty, line.final_purchase_qty, line.unit_cost,
+    line.estimated_purchase_amount, line.gross_sales, line.discount_amount,
+    line.net_sales, line.promotion, line.confidence, line.cost_source,
+  ]);
+  const escape = (value) => `"${String(value ?? "").replaceAll('"', '""')}"`;
+  const csv = [headers, ...values].map((row) => row.map(escape).join(",")).join("\n");
+  const url = URL.createObjectURL(new Blob([`\uFEFF${csv}`], { type: "text/csv;charset=utf-8" }));
+  const link = document.createElement("a");
+  link.href = url; link.download = "raphaaa-purchase-plan.csv"; link.click();
+  URL.revokeObjectURL(url);
+}
+
 function StatTile({ label, value, tone = "slate" }) {
   const tones = {
     slate: "text-slate-900",
@@ -811,16 +1217,108 @@ function ImportHistory({ refreshKey }) {
   );
 }
 
+function ProductCleanupView() {
+  const [preview, setPreview] = useState(null);
+  const [error, setError] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [applying, setApplying] = useState(false);
+  const [result, setResult] = useState(null);
+
+  const load = useCallback(() => {
+    setLoading(true); setError(null);
+    faFetch("/api/forecast-analytics/data-hub/products/enrichment/preview")
+      .then(setPreview)
+      .catch((e) => setError(e.message))
+      .finally(() => setLoading(false));
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const apply = async () => {
+    if (!window.confirm("Apply these Raphaaa Product Master improvements? Original imported names will be preserved. Historical bills, stock quantities, barcodes and prices will not change.")) return;
+    setApplying(true); setError(null); setResult(null);
+    try {
+      const response = await faFetch("/api/forecast-analytics/data-hub/products/enrichment/apply", {
+        method: "POST", body: JSON.stringify({ confirm: true }),
+      });
+      setResult(response);
+      load();
+    } catch (e) { setError(e.message); } finally { setApplying(false); }
+  };
+
+  const summary = preview?.summary || {};
+  const rows = preview?.rows || [];
+
+  return (
+    <div className="space-y-5">
+      <ErrorBanner message={error} />
+
+      <div className="fa-panel p-5">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="max-w-3xl">
+            <h4 className="flex items-center gap-2 text-sm font-bold text-slate-900"><CheckCircle2 size={15} className="text-indigo-600" /> 3 · Product cleanup</h4>
+            <p className="mt-1 text-xs leading-5 text-slate-500">Raphaaa-only cleanup for products created by Sales History imports. It converts code-only names such as F/S into readable names using Section, Department, type and Design No.; copies Brand, Style and Size from Category 2–5; and preserves the original imported name for audit.</p>
+            <p className="mt-2 text-xs font-semibold text-amber-700">Vendor names remain visible as imported supplier references. They stay marked Unlinked until the vendor is registered and approved—this cleanup never creates a false vendor relationship.</p>
+          </div>
+          <button onClick={load} disabled={loading || applying} className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-bold text-indigo-700 hover:bg-indigo-100 disabled:opacity-60"><RefreshCw size={13} /> Refresh preview</button>
+        </div>
+      </div>
+
+      {loading ? <div className="fa-panel p-8 text-center text-sm text-slate-400">Checking imported products…</div> : preview && (
+        <>
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+            <StatTile label="Imported products" value={summary.imported_products ?? 0} />
+            <StatTile label="Names to fix" value={summary.names_to_fix ?? 0} tone={summary.names_to_fix ? "amber" : "emerald"} />
+            <StatTile label="Brands available" value={summary.brands_available_from_hierarchy ?? 0} tone="emerald" />
+            <StatTile label="Vendors unlinked" value={summary.vendors_unlinked ?? 0} tone={summary.vendors_unlinked ? "amber" : "emerald"} />
+            <StatTile label="Missing HSN" value={summary.missing_hsn ?? 0} tone={summary.missing_hsn ? "rose" : "emerald"} />
+            <StatTile label="Missing GST" value={summary.missing_gst ?? 0} tone={summary.missing_gst ? "rose" : "emerald"} />
+          </div>
+
+          <div className="fa-panel overflow-hidden">
+            <div className="border-b border-slate-100 px-5 py-3 text-xs font-bold uppercase tracking-wide text-slate-500">Proposed Product Master changes</div>
+            <div className="max-h-[32rem] overflow-auto">
+              <table className="w-full text-sm">
+                <thead><tr>{["Barcode / SKU", "Current name", "Proposed display name", "Classification", "Vendor", "Quality status"].map((h) => <th key={h} className="whitespace-nowrap px-4 py-2.5 text-left font-bold uppercase">{h}</th>)}</tr></thead>
+                <tbody className="divide-y divide-slate-100">
+                  {rows.length === 0 ? <tr><td colSpan={6} className="px-4 py-8 text-center text-slate-400">No imported products found.</td></tr> : rows.map((row) => (
+                    <tr key={row.product_id}>
+                      <td className="px-4 py-2.5"><span className="block font-mono text-xs text-slate-700">{row.barcode || "—"}</span><span className="text-[10px] text-slate-400">{row.sku || "No SKU"}</span></td>
+                      <td className="px-4 py-2.5 font-semibold text-slate-600">{row.current_name || "—"}</td>
+                      <td className="px-4 py-2.5 font-bold text-slate-900">{row.proposed_name}{row.name_will_change && <span className="ml-2 rounded-full bg-amber-50 px-1.5 py-0.5 text-[10px] text-amber-700">will update</span>}</td>
+                      <td className="px-4 py-2.5 text-xs text-slate-500">{[row.division, row.section, row.department, row.design_no, row.style, row.product_type, row.size].filter(Boolean).join(" / ") || "—"}</td>
+                      <td className="px-4 py-2.5 text-xs text-slate-600">{row.vendor_name || "—"}{row.vendor_name && !row.vendor_linked && <span className="mt-1 block font-bold text-amber-600">Imported · Unlinked</span>}</td>
+                      <td className="px-4 py-2.5 text-xs text-slate-500">{row.remaining_issues?.length ? row.remaining_issues.map((issue) => issue.replaceAll("_", " ")).join(" · ") : <span className="font-bold text-emerald-600">Ready</span>}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {preview.truncated && <p className="text-xs text-slate-400">The preview is limited to the first {rows.length} products; Apply processes every Raphaaa Data Hub product.</p>}
+          <button onClick={apply} disabled={applying || !rows.length} className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-5 py-2.5 text-sm font-bold text-white hover:bg-indigo-700 disabled:opacity-50"><CheckCircle2 size={15} /> {applying ? "Applying…" : `Apply cleanup to ${summary.imported_products ?? 0} products`}</button>
+        </>
+      )}
+
+      {result && <div className="fa-panel border-l-4 border-emerald-400 p-5 text-sm text-emerald-800"><b>Cleanup applied.</b> {result.product_names_fixed} product name(s) fixed and {result.products_updated} Product Master record(s) enriched. {result.stock_descriptions_synced > 0 && <>{result.stock_descriptions_synced} stock record(s) were refreshed so HQ Admin&apos;s Store-wise Inventory shows the same name — no re-import needed. </>}Stock quantities, barcodes and prices were not changed.</div>}
+    </div>
+  );
+}
+
 const IMPORT_TABS = [
   { id: "sales", label: "1 · Sales history" },
   { id: "stock", label: "2 · Stock snapshot" },
   { id: "history", label: "History" },
 ];
 
-function DataImportView() {
+function DataImportView({ enrichmentEnabled = false }) {
   const [tab, setTab] = useState("sales");
   const [historyKey, setHistoryKey] = useState(0);
   const bumpHistory = () => setHistoryKey((k) => k + 1);
+  const importTabs = enrichmentEnabled
+    ? [IMPORT_TABS[0], IMPORT_TABS[1], { id: "cleanup", label: "3 · Product cleanup" }, IMPORT_TABS[2]]
+    : IMPORT_TABS;
 
   return (
     <div className="space-y-5">
@@ -831,7 +1329,7 @@ function DataImportView() {
       </section>
 
       <div className="inline-flex rounded-xl border border-slate-200 bg-white p-1 shadow-sm">
-        {IMPORT_TABS.map((t) => (
+        {importTabs.map((t) => (
           <button
             key={t.id}
             onClick={() => setTab(t.id)}
@@ -858,6 +1356,7 @@ function DataImportView() {
           onCommitted={bumpHistory}
         />
       )}
+      {tab === "cleanup" && enrichmentEnabled && <ProductCleanupView />}
       {tab === "history" && <ImportHistory refreshKey={historyKey} />}
     </div>
   );
@@ -866,6 +1365,7 @@ function DataImportView() {
 export default function ForecastAnalytics() {
   const [activeSection, setActiveSection] = useState("dashboard");
   const [dataHubEnabled, setDataHubEnabled] = useState(false);
+  const [productEnrichmentEnabled, setProductEnrichmentEnabled] = useState(false);
   const isStoreWorkspace = getAdminScope() !== "hq";
   const workspaceName = isStoreWorkspace ? (getStoreName() || "Store workspace") : "Head office workspace";
   const adminName = getAdminName() || "Analytics Administrator";
@@ -873,8 +1373,11 @@ export default function ForecastAnalytics() {
 
   useEffect(() => {
     faFetch("/api/forecast-analytics/data-hub/status")
-      .then((r) => setDataHubEnabled(Boolean(r.enabled)))
-      .catch(() => setDataHubEnabled(false));
+      .then((r) => {
+        setDataHubEnabled(Boolean(r.enabled));
+        setProductEnrichmentEnabled(Boolean(r.product_enrichment_enabled));
+      })
+      .catch(() => { setDataHubEnabled(false); setProductEnrichmentEnabled(false); });
   }, []);
 
   const menu = dataHubEnabled ? [...MENU, { id: "import", label: "Data Import", icon: UploadCloud }] : MENU;
@@ -882,13 +1385,13 @@ export default function ForecastAnalytics() {
 
   const renderContent = () => {
     switch (activeSection) {
-      case "dashboard": return <DashboardView onNavigate={setActiveSection} />;
-      case "demand": return <DemandForecastView />;
+      case "dashboard": return <DashboardView onNavigate={setActiveSection} raphaaaMode={productEnrichmentEnabled} />;
+      case "demand": return <DemandForecastView raphaaaMode={productEnrichmentEnabled} />;
       case "vendors": return <VendorRankingView />;
-      case "purchase": return <PurchasePlanView />;
-      case "alerts": return <AlertsView />;
-      case "import": return dataHubEnabled ? <DataImportView /> : <DashboardView onNavigate={setActiveSection} />;
-      default: return <DashboardView onNavigate={setActiveSection} />;
+      case "purchase": return <PurchasePlanView raphaaaMode={productEnrichmentEnabled} />;
+      case "alerts": return <AlertsView raphaaaMode={productEnrichmentEnabled} />;
+      case "import": return dataHubEnabled ? <DataImportView enrichmentEnabled={productEnrichmentEnabled} /> : <DashboardView onNavigate={setActiveSection} raphaaaMode={productEnrichmentEnabled} />;
+      default: return <DashboardView onNavigate={setActiveSection} raphaaaMode={productEnrichmentEnabled} />;
     }
   };
 
@@ -913,13 +1416,13 @@ export default function ForecastAnalytics() {
 
         <nav className="mt-6 flex-1 space-y-1.5 overflow-y-auto pr-1">
           <p className="fa-sidebar-note px-3 pb-2 text-[10px] font-bold uppercase tracking-[.18em] text-slate-400">Workspace</p>
-          {menu.map(({ id, label, icon: Icon }) => (
+          {menu.map(({ id, label, icon }) => (
             <button
               key={id}
               onClick={() => setActiveSection(id)}
               className={`fa-nav-item flex w-full items-center rounded-xl px-3.5 py-3 text-left text-sm font-semibold transition-all ${activeSection === id ? "fa-nav-item-active" : ""}`}
             >
-              <Icon className="mr-3 h-[18px] w-[18px] shrink-0" />
+              {React.createElement(icon, { className: "mr-3 h-[18px] w-[18px] shrink-0" })}
               <span className="fa-nav-label">{label}</span>
             </button>
           ))}

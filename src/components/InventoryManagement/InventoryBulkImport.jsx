@@ -137,6 +137,9 @@ export default function InventoryBulkImport({ onClose, onImported }) {
                 Fill in <strong>product_name</strong>, <strong>unit</strong> and <strong>opening_qty</strong> at minimum — everything else is optional.
                 Leave <strong>sku</strong>/<strong>barcode</strong> blank to have RMS generate them, or fill them in to keep the identifiers already printed on your existing stock.
               </p>
+              <p style={{ fontSize: 12.5, color: "#64748b", lineHeight: 1.6, margin: 0 }}>
+                Manufacturer tenants only: set <strong>stage</strong> to <strong>unstitched</strong> (with a <strong>design_no</strong>) on rows that are previous-season unstitched stock — those rows then show up in Production &amp; Job Work's "send to stitch" list, cross-checked against real sales. Leave both blank for a normal migration.
+              </p>
               <label style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 10, padding: "36px 16px", borderRadius: 14, border: "2px dashed #CBD5E1", background: "#F8FAFC", cursor: "pointer" }}>
                 <FaFileUpload style={{ fontSize: 26, color: "#94A3B8" }} />
                 <span style={{ fontSize: 13, fontWeight: 600, color: "#334155" }}>{file ? file.name : "Click to choose a CSV or Excel file"}</span>
@@ -190,7 +193,14 @@ export default function InventoryBulkImport({ onClose, onImported }) {
                     {preview.rows.map(r => (
                       <tr key={r.row_no} style={{ borderTop: "1px solid #F1F5F9", background: r.errors.length ? "#FEF2F2" : "transparent" }}>
                         <td style={{ padding: "7px 10px", color: "#94A3B8" }}>{r.row_no}</td>
-                        <td style={{ padding: "7px 10px", fontWeight: 600, color: "#0f172a" }}>{r.product_name || <em style={{ color: "#94A3B8" }}>—</em>}</td>
+                        <td style={{ padding: "7px 10px", fontWeight: 600, color: "#0f172a" }}>
+                          {r.product_name || <em style={{ color: "#94A3B8" }}>—</em>}
+                          {r.stage === "unstitched" && (
+                            <span style={{ marginLeft: 6, padding: "1px 6px", borderRadius: 8, fontSize: 10, fontWeight: 700, background: "#CCFBF1", color: "#0f766e" }}>
+                              Unstitched · {r.design_no}
+                            </span>
+                          )}
+                        </td>
                         <td style={{ padding: "7px 10px", textAlign: "right" }}>{r.opening_qty}</td>
                         <td style={{ padding: "7px 10px", textAlign: "right" }}>₹{r.cost_price}</td>
                         <td style={{ padding: "7px 10px", color: r.errors.length ? "#B91C1C" : "#059669" }}>

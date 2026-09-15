@@ -36,8 +36,15 @@ from typing import Any, Dict, List, Optional
 import pandas as pd
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 
 from .deps import get_hq_tenant
+from ..raphaaa_product_enrichment import (
+    enrichment_patch,
+    is_raphaaa_tenant,
+    product_quality_issues,
+    proposed_product_name,
+)
 from ..db import (
     data_hub_imports_collection,
     inventory_collection,
@@ -52,6 +59,10 @@ TenantCtx = Dict[str, Any]
 MAX_ROWS = 20_000
 PREVIEW_ROWS = 500
 CENTRAL_LABEL = "Central Warehouse / HQ"
+
+
+class ProductEnrichmentRequest(BaseModel):
+    confirm: bool = False
 
 # Column aliases — every list is matched with _key() (case / space / punctuation
 # insensitive), so "Cat-1 (Design No.)" and "CATEGORY1" resolve to the same field.
@@ -612,7 +623,7 @@ def _public(row: dict) -> dict:
 
 def _new_product_doc(tenant_id: str, batch_id: str, row: dict, now: datetime) -> dict:
     cats = row["_cats"]
-    return {
+    base = {
         "product_name": row["product"],
         "division": row["_division"], "section": row["_section"], "department": row["_department"],
         "hsn_code": "", "gst_rate": 0.0, "cgst_rate": 0.0, "sgst_rate": 0.0, "igst_rate": 0.0,
@@ -630,6 +641,9 @@ def _new_product_doc(tenant_id: str, batch_id: str, row: dict, now: datetime) ->
         "tenant_id": tenant_id,
         "source": "data_hub_import", "data_hub_batch_id": batch_id,
     }
+    if is_raphaaa_tenant(tenant_id):
+        base.update(enrichment_patch(base))
+    return base
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -646,6 +660,7 @@ async def get_data_hub_status(ctx: TenantCtx = Depends(_forecast_context)):
     return {
         "status": "success",
         "enabled": enabled,
+        "product_enrichment_enabled": enabled and is_raphaaa_tenant(ctx["tenant_id"]),
         "mode": "preview_then_commit",
         "message": "Import the sales file first (it also builds the product catalogue), then the stock file. Multi-sheet workbooks are read in full — every tab whose headers match is combined, cover/filter/summary tabs are skipped. The stock file can be wide (a column per location: WAREHOUSE + store columns) or long (one row per product per site: a Locname / Source Site column plus CLOSING_QTY) — both are auto-detected. Matching uses ITEM_CODE / BARCODE first, then DIVISION/SECTION/DEPARTMENT/VENDOR/CAT1-5 with RSP/MRP. Finance, GST and POS flows are never touched.",
         "catalogue_size": catalogue_size,
@@ -933,6 +948,111 @@ async def commit_stock_snapshot(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Product catalogue enrichment (Raphaaa only)
+# -----------------------------------------------------------------------------
+
+async def _raphaaa_enrichment_context(ctx: TenantCtx = Depends(_pilot_context)) -> TenantCtx:
+    if not is_raphaaa_tenant(ctx["tenant_id"]):
+        raise HTTPException(status_code=404, detail="Product cleanup is enabled only for the Raphaaa tenant.")
+    return ctx
+
+
+def _enrichment_preview_row(product: dict) -> dict:
+    patch = enrichment_patch(product)
+    current_issues = product_quality_issues(product)
+    return {
+        "product_id": str(product["_id"]),
+        "barcode": _text(product.get("barcode")),
+        "sku": _text(product.get("sku") or product.get("base_sku")),
+        "current_name": _text(product.get("product_name")),
+        "proposed_name": proposed_product_name(product),
+        "name_will_change": "product_name" in patch and patch["product_name"] != _text(product.get("product_name")),
+        "division": _text(product.get("division")),
+        "section": _text(product.get("section")),
+        "department": _text(product.get("department")),
+        "design_no": _text(product.get("design_no") or product.get("category1")),
+        "brand": patch["brand"],
+        "style": patch["style"],
+        "product_type": patch["product_type"],
+        "size": patch["size"],
+        "vendor_name": _text(product.get("vendor_name")),
+        "vendor_linked": bool(product.get("vendor_id")),
+        "issues": current_issues,
+        "remaining_issues": patch["data_quality_issues"],
+    }
+
+
+@router.get("/products/enrichment/preview")
+async def preview_product_enrichment(ctx: TenantCtx = Depends(_raphaaa_enrichment_context)):
+    query = {"tenant_id": ctx["tenant_id"], "source": "data_hub_import"}
+    products = await product_collection.find(query).sort("created_at", 1).to_list(length=PREVIEW_ROWS)
+    rows = [_enrichment_preview_row(product) for product in products]
+    total = await product_collection.count_documents(query)
+    return {
+        "status": "success",
+        "mode": "preview_only",
+        "summary": {
+            "imported_products": total,
+            "names_to_fix": sum(1 for row in rows if row["name_will_change"]),
+            "brands_available_from_hierarchy": sum(1 for row in rows if row["brand"]),
+            "vendors_unlinked": sum(1 for row in rows if row["vendor_name"] and not row["vendor_linked"]),
+            "missing_hsn": sum(1 for row in rows if "missing_hsn" in row["remaining_issues"]),
+            "missing_gst": sum(1 for row in rows if "missing_gst" in row["remaining_issues"]),
+        },
+        "rows": rows,
+        "truncated": total > len(rows),
+    }
+
+
+@router.post("/products/enrichment/apply")
+async def apply_product_enrichment(
+    payload: ProductEnrichmentRequest,
+    ctx: TenantCtx = Depends(_raphaaa_enrichment_context),
+):
+    if not payload.confirm:
+        raise HTTPException(status_code=400, detail="Preview the cleanup first, then send confirm=true.")
+
+    query = {"tenant_id": ctx["tenant_id"], "source": "data_hub_import"}
+    now = datetime.utcnow()
+    scanned = updated = names_fixed = stock_docs_synced = 0
+    async for product in product_collection.find(query):
+        scanned += 1
+        patch = enrichment_patch(product, applied_at=now)
+        patch["data_hub_enriched_by"] = ctx.get("admin_id")
+        if patch.get("product_name") and patch["product_name"] != _text(product.get("product_name")):
+            names_fixed += 1
+        result = await product_collection.update_one(
+            {"_id": product["_id"], "tenant_id": ctx["tenant_id"], "source": "data_hub_import"},
+            {"$set": patch},
+        )
+        updated += result.modified_count
+
+        # HQ Admin's Store-wise Inventory reads `description` off the physical
+        # stock documents (a frozen snapshot from the last stock import), not
+        # the Product Master — so without this it silently falls out of sync
+        # with the name just fixed above, with no re-import to notice by.
+        barcodes = [_text(product.get("barcode"))] + [
+            _text(v.get("barcode")) for v in (product.get("variants") or []) if _text(v.get("barcode"))
+        ]
+        barcodes = [b for b in barcodes if b]
+        if barcodes:
+            new_description = patch.get("display_product_name") or _text(product.get("product_name"))
+            stock_filter = {"tenant_id": ctx["tenant_id"], "barcode": {"$in": barcodes}}
+            inv_result = await inventory_collection.update_many(stock_filter, {"$set": {"description": new_description}})
+            store_result = await store_stock_collection.update_many(stock_filter, {"$set": {"description": new_description}})
+            stock_docs_synced += inv_result.modified_count + store_result.modified_count
+
+    return {
+        "status": "success",
+        "mode": "applied",
+        "products_scanned": scanned,
+        "products_updated": updated,
+        "product_names_fixed": names_fixed,
+        "stock_descriptions_synced": stock_docs_synced,
+        "message": "Product Master metadata was enriched and matching stock-record descriptions (used by HQ Admin's Store-wise Inventory) were refreshed to match. Stock quantities, barcodes and prices were not changed.",
+    }
+
+
 # Import history + rollback
 # ─────────────────────────────────────────────────────────────────────────────
 

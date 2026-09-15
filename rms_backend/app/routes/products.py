@@ -972,6 +972,7 @@ from pydantic import BaseModel
 from ..auth import decode_token
 from .deps import get_hq_tenant
 from .grn_routes import resolve_single_store_destination
+from ..raphaaa_product_enrichment import is_raphaaa_tenant, proposed_product_name
 
 router = APIRouter(prefix="/api/products", tags=["Products"])
 
@@ -1521,6 +1522,14 @@ async def get_products(authorization: str = Header(None)):
                 continue  # hide — pure vendor catalog, no GRN yet
 
         result.append(p)
+
+    if is_raphaaa_tenant(tenant_id):
+        # Show the live, hierarchy-derived name here too — same reasoning as
+        # Forecast & Analytics and Store-wise Inventory: this reads directly
+        # off proposed_product_name rather than depending on the Product
+        # Cleanup "Apply" step having already run for every product.
+        for p in result:
+            p["product_name"] = proposed_product_name(p)
 
     return JSONResponse(content=jsonable_encoder({"status": "success", "count": len(result), "data": result}))
 

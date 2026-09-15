@@ -572,6 +572,20 @@ function GenerateBillPopup({ open, isReturn, items, bill, setBill, summary, onCl
                   <input type="number" value={bill.discount} onChange={e => setBill({ ...bill, discount: e.target.value })}
                     className="h-11 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm font-bold outline-none focus:border-violet-500" />
                 </div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="space-y-1">
+                    <label className="ml-1 text-[10px] font-black uppercase tracking-widest text-black">Promotion name (optional)</label>
+                    <input type="text" value={bill.promotionName} onChange={e => setBill({ ...bill, promotionName: e.target.value })} placeholder="e.g. Winter Sale"
+                      className="h-11 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm font-bold outline-none focus:border-violet-500" />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="ml-1 text-[10px] font-black uppercase tracking-widest text-black">Promotion type</label>
+                    <select value={bill.promotionType} onChange={e => setBill({ ...bill, promotionType: e.target.value })}
+                      className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm font-bold outline-none focus:border-violet-500">
+                      <option value="">Not specified</option><option value="discount">Discount</option><option value="coupon">Coupon</option><option value="bundle">Bundle</option><option value="seasonal">Seasonal</option><option value="clearance">Clearance</option><option value="other">Other</option>
+                    </select>
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -810,9 +824,6 @@ function ReceiptModal({ open, receipt, onClose }) {
     `).join("");
 
     const totalQty = receipt.items.reduce((a, i) => a + Math.abs(i.qty), 0).toFixed(0);
-
-    const wordsStr = numToWords(Number(totalQty)) + " Items Only";
-
 
     const html = `<!DOCTYPE html>
 <html>
@@ -1302,7 +1313,7 @@ export default function CashierPOS() {
   // login and is shared by store cashiers and store owners.
   const [bill, setBill] = useState(() => ({
     cashierName: localStorage.getItem("admin_name") || "Cashier", customerName: "", mobile: "", customerEmail: "",
-    offer: "", appliedOffer: 0, discount: "",
+    offer: "", appliedOffer: 0, discount: "", promotionName: "", promotionType: "",
     paymentMethod: "Cash",
   }));
 
@@ -1572,7 +1583,7 @@ export default function CashierPOS() {
   const clearAll = () => {
     setItems([]); setBarcode(""); setSearch(""); setSearchRes([]);
     setOriginalInvoice("");
-    setBill(prev => ({ ...prev, customerName: "", mobile: "", customerEmail: "", offer: "", appliedOffer: 0, discount: "", paymentMethod: "Cash" }));
+    setBill(prev => ({ ...prev, customerName: "", mobile: "", customerEmail: "", offer: "", appliedOffer: 0, discount: "", promotionName: "", promotionType: "", paymentMethod: "Cash" }));
   };
 
   const saveOfflineBill = useCallback((paidAmount = 0, changeReturn = 0, reason = "Backend unavailable", paymentMethodOverride = bill.paymentMethod, paymentSplitOverride = {}) => {

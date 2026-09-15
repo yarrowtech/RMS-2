@@ -37,10 +37,16 @@ router = APIRouter(prefix="/inventory-import", tags=["Inventory Bulk Import"])
 TEMPLATE_COLUMNS = [
     "product_name", "division", "section", "department", "hsn_code", "gst_rate",
     "unit", "cost_price", "mrp", "selling_price", "opening_qty", "sku", "barcode",
+    "design_no", "stage",
 ]
 # sku/barcode are optional — leave blank to have RMS generate them, the same
 # way Add Product does. Fill them in only if you want to keep the identifiers
 # already printed on your existing stock/labels.
+# design_no/stage are optional and only matter for manufacturer tenants —
+# leave stage blank for a normal migration. Set stage to "unstitched" (with a
+# design_no) to make a row eligible for Production & Job Work's "send this
+# sale-proven design to stitch" flow; every other tenant/row is unaffected.
+VALID_STAGES = {"finished", "unstitched"}
 
 
 def _normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
@@ -144,6 +150,14 @@ def _validate_rows(raw_rows: List[dict], existing_skus: set, existing_barcodes: 
                 errors.append(f"Barcode '{barcode}' is duplicated within this file.")
             seen_barcodes.add(barcode)
 
+        design_no = str(raw.get("design_no") or "").strip()
+        stage = str(raw.get("stage") or "").strip().lower() or "finished"
+        if stage not in VALID_STAGES:
+            errors.append("Stage must be 'unstitched' or 'finished' (leave blank for finished).")
+            stage = "finished"
+        if stage == "unstitched" and not design_no:
+            errors.append("Design No. is required when stage is 'unstitched'.")
+
         rows.append({
             "row_no": row_no,
             "product_name": product_name,
@@ -159,6 +173,8 @@ def _validate_rows(raw_rows: List[dict], existing_skus: set, existing_barcodes: 
             "opening_qty": qty,
             "sku": sku,
             "barcode": barcode,
+            "design_no": design_no,
+            "stage": stage,
             "errors": errors,
         })
 
@@ -232,6 +248,8 @@ class CommitRow(BaseModel):
     opening_qty: float = 0.0
     sku: str = ""
     barcode: str = ""
+    design_no: str = ""
+    stage: str = "finished"
 
 
 class CommitPayload(BaseModel):
@@ -306,6 +324,7 @@ async def commit_import(payload: CommitPayload, ctx: dict = Depends(get_hq_tenan
             "has_variants": False, "variant_type": "none", "variants": [], "images": [],
             "created_at": datetime.utcnow(), "created_by": "ADMIN", "vendor_id": None, "vendor_name": "", "tenant_id": tenant_id,
             "source": "migration", "import_batch_id": batch_id,
+            "design_no": row["design_no"], "stage": row["stage"],
         }
         await product_collection.insert_one(doc)
         await _seed_import_stock(tenant_id, store, barcode, row["product_name"], row["opening_qty"], row["cost_price"], row["unit"], batch_id)
