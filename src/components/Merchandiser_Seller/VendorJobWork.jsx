@@ -78,6 +78,8 @@ function TechPackSnapshot({ pack }) {
       </div>
     )}
 
+    {pack.fabric_references?.length > 0 && <div className="mt-2"><p className="font-black text-slate-700">Fabric references</p><div className="mt-1 grid gap-2 md:grid-cols-2">{pack.fabric_references.map((fabric, index) => <div key={`${fabric.reference_name}-${index}`} className="rounded-lg border border-white bg-white/80 p-2"><b>{fabric.reference_name}</b><p>{[fabric.usage, fabric.fabric_type, fabric.composition, fabric.color, fabric.color_code].filter(Boolean).join(" · ")}</p><p className="text-[10px] text-slate-500">{[fabric.gsm, fabric.width, fabric.consumption && `${fabric.consumption} ${fabric.unit || ""}/garment`, fabric.supplier, fabric.supplier_ref, fabric.lot_no].filter(Boolean).join(" · ")}</p>{[fabric.grain_notes, fabric.shrinkage, fabric.handling_notes].filter(Boolean).map((note, noteIndex) => <p key={noteIndex} className="mt-0.5 text-[10px] text-amber-700">{note}</p>)}{fabric.image_urls?.length > 0 && <div className="mt-1 flex flex-wrap gap-1">{fabric.image_urls.map((src, imageIndex) => <a key={`${src}-${imageIndex}`} href={src} target="_blank" rel="noreferrer"><img src={src} alt={`${fabric.reference_name} swatch`} className="h-12 w-12 rounded-lg border object-cover" /></a>)}</div>}</div>)}</div></div>}
+
     {pack.sizes?.length > 0 && pack.measurement_rows?.length > 0 && (
       <div className="mt-1.5 overflow-x-auto"><table className="w-full text-[11px]"><thead><tr><th className="pr-2 text-left font-bold">Point</th><th className="pr-2 text-left font-bold">Sample</th>{pack.sizes.map((s) => <th key={s} className="pr-2 text-left font-bold">{s}</th>)}</tr></thead><tbody>{pack.measurement_rows.map((row, i) => <tr key={i}><td className="pr-2">{row.point}</td><td className="pr-2">{row.sample_value}</td>{pack.sizes.map((s) => <td key={s} className="pr-2">{row.grades?.[s] || ""}</td>)}</tr>)}</tbody></table></div>
     )}
@@ -106,7 +108,7 @@ function DesignReferencePanel({ order }) {
     <p className="text-xs font-black uppercase tracking-[0.16em] text-violet-700">Design references</p>
     <div className="mt-3 grid gap-3 md:grid-cols-2">{lines.map((line, index) => <article key={`${line.design_no || index}`} className="rounded-xl border border-white bg-white p-3 shadow-sm">
       <div className="flex gap-3">
-        <div className="flex shrink-0 gap-1">{(line.image_urls || []).slice(0, 3).map((src, imgIndex) => <a key={src} href={src} target="_blank" rel="noreferrer"><img src={src} alt="Design" className="h-16 w-16 rounded-xl border border-slate-100 object-cover" /></a>)}{!(line.image_urls || []).length && <div className="grid h-16 w-16 place-items-center rounded-xl bg-slate-100 text-xs font-bold text-slate-400">No image</div>}</div>
+        <div className="flex shrink-0 gap-1">{(line.image_urls || []).slice(0, 3).map((src) => <a key={src} href={src} target="_blank" rel="noreferrer"><img src={src} alt="Design" className="h-16 w-16 rounded-xl border border-slate-100 object-cover" /></a>)}{!(line.image_urls || []).length && <div className="grid h-16 w-16 place-items-center rounded-xl bg-slate-100 text-xs font-bold text-slate-400">No image</div>}</div>
         <div className="min-w-0">
           <p className="font-black text-slate-900">{line.design_no || "Design"}</p>
           <p className="mt-0.5 text-xs font-semibold text-slate-500">{line.department || "Department"} - {line.product_type || order.finished_product}</p>

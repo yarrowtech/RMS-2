@@ -34,6 +34,11 @@ const emptyPack = {
 const emptyMeasurementRow = (sizes) => ({ point: "", sample_value: "", grades: Object.fromEntries(sizes.map((s) => [s, ""])) });
 const emptyTrimRow = () => ({ description: "", color: "", size: "", supplier: "", quantity: "", price: "" });
 const emptyColourway = () => ({ name: "", fabric_ref: "", thread_ref: "", image_file: null, image_preview: "" });
+const emptyFabricReference = () => ({
+  reference_name: "", usage: "", fabric_type: "", composition: "", color: "", color_code: "",
+  gsm: "", width: "", consumption: "", unit: "metres", supplier: "", supplier_ref: "", lot_no: "",
+  grain_notes: "", shrinkage: "", handling_notes: "", bom_material: "", image_urls: [], image_files: [], image_previews: [],
+});
 
 function cleanAssetUrls(value) {
   if (!Array.isArray(value)) return [];
@@ -87,7 +92,7 @@ async function buildTechPackPdf(pack, plans = []) {
     doc.setFont("helvetica", "normal"); doc.setFontSize(8);
     doc.text(`Design: ${safe(pack.design_no)}    Style: ${safe(pack.style_name)}`, margin + 128, 64);
     doc.text(`Department: ${safe(pack.department)}    Sample: ${safe(pack.sample_size)}    Version: ${safe(pack.version, "v1")}`, margin + 128, 77);
-    doc.setFont("helvetica", "bold"); doc.text(`PAGE ${pageNo} / 6`, pageWidth - margin - 54, 48);
+    doc.setFont("helvetica", "bold"); doc.text(`PAGE ${pageNo}`, pageWidth - margin - 54, 48);
   };
   const footer = () => {
     doc.setDrawColor(203, 213, 225); doc.line(margin, pageHeight - 30, pageWidth - margin, pageHeight - 30);
@@ -140,7 +145,8 @@ async function buildTechPackPdf(pack, plans = []) {
     return rowY + rowHeight + 10;
   };
 
-  header("1. Sketch & Design Brief", 1); let y = 108;
+  let pageNo = 1;
+  header("1. Sketch & Design Brief", pageNo); let y = 108;
   y = sectionBar("Development", y);
   if (pack.theme_name || pack.collection || pack.designer_name) {
     y = textBox("Theme / Collection / Designer", [pack.theme_name && `Theme: ${pack.theme_name}`, pack.collection && `Collection: ${pack.collection}`, pack.designer_name && `Designer: ${pack.designer_name}`].filter(Boolean).join("    |    "), y, 32);
@@ -150,7 +156,39 @@ async function buildTechPackPdf(pack, plans = []) {
     y = textBox("Approved theme direction (locked snapshot)", direction, y, 42);
     y = await imageGrid(linkedTheme.moodboard_urls || [], y, 80);
   }
-  y = textBox("Description / design brief", pack.description, y, 54); y = textBox("Fabric & material reference", pack.fabric_notes, y, 44);
+  y = textBox("Description / design brief", pack.description, y, 54); y = textBox("General fabric & material notes", pack.fabric_notes, y, 44); footer();
+
+  for (const [fabricIndex, fabric] of (pack.fabric_references || []).entries()) {
+    doc.addPage(); pageNo += 1; header(`1A. Fabric Reference ${fabricIndex + 1}`, pageNo); y = 108;
+    y = sectionBar(fabric.reference_name || `Fabric ${fabricIndex + 1}`, y);
+    y = textBox("Identity / placement", [
+      fabric.usage && `Used at: ${fabric.usage}`,
+      fabric.fabric_type && `Type: ${fabric.fabric_type}`,
+      fabric.composition && `Composition: ${fabric.composition}`,
+      fabric.color && `Colour: ${fabric.color}${fabric.color_code ? ` (${fabric.color_code})` : ""}`,
+    ].filter(Boolean).join("\n"), y, 56);
+    y = textBox("Technical / sourcing", [
+      fabric.gsm && `Weight: ${fabric.gsm}`,
+      fabric.width && `Width: ${fabric.width}`,
+      fabric.consumption && `Consumption: ${fabric.consumption} ${fabric.unit || ""} per garment`,
+      fabric.supplier && `Supplier: ${fabric.supplier}`,
+      fabric.supplier_ref && `Supplier ref: ${fabric.supplier_ref}`,
+      fabric.lot_no && `Lot / batch: ${fabric.lot_no}`,
+      fabric.bom_material && `Linked BOM material: ${fabric.bom_material}`,
+    ].filter(Boolean).join(" | "), y, 54);
+    y = textBox("Cutting / handling", [fabric.grain_notes, fabric.shrinkage, fabric.handling_notes].filter(Boolean).join("\n"), y, 50);
+    const swatches = cleanAssetUrls(fabric.image_urls);
+    if (swatches.length) {
+      y = sectionBar("Approved fabric swatch photos", y);
+      y = await imageGrid(swatches.slice(0, 4), y, 88);
+      if (swatches.length > 4) y = await imageGrid(swatches.slice(4, 8), y, 88);
+    } else {
+      y = textBox("Fabric swatch", "No image attached; identify this fabric from the written reference above.", y, 38);
+    }
+    footer();
+  }
+
+  doc.addPage(); pageNo += 1; header("1B. Sketch Visuals", pageNo); y = 108;
   if (linkedPlan || linkedTheme?.swatches?.length) {
     y = sectionBar(linkedTheme ? `Fabric reference - Theme "${linkedTheme.theme_name}"` : "Fabric reference - linked Style BOM", y);
     if (linkedPlan) {
@@ -163,23 +201,23 @@ async function buildTechPackPdf(pack, plans = []) {
   y = sectionBar("Front, back and reference views", y); y = await imageGrid(imageGroups.sketch, y, 190);
   if (!imageGroups.sketch.length) y = textBox("Sketch reference", "No sketch image attached. Use the written description and upload a front/back reference before issuing to the job worker.", y, 50); footer();
 
-  doc.addPage(); header("2. Spec Sheet & Measurements", 2); y = 108; y = sectionBar("Point of Measure (POM) and grading", y);
+  doc.addPage(); pageNo += 1; header("2. Spec Sheet & Measurements", pageNo); y = 108; y = sectionBar("Point of Measure (POM) and grading", y);
   const sizes = Array.isArray(pack.sizes) ? pack.sizes : String(pack.sizes || "").split(",").map((size) => size.trim()).filter(Boolean);
   const specColumns = ["POM / Measurement", "Sample", ...sizes]; const specWidths = [190, 78, ...sizes.map(() => (contentWidth - 268) / Math.max(sizes.length, 1))];
   y = table(specColumns, (pack.measurement_rows || []).map((row) => [row.point, row.sample_value, ...sizes.map((size) => row.grades?.[size] || "")]), y, specWidths);
   y = textBox("Measurement instructions", pack.measurement_notes || "Measure finished garment flat unless a different instruction is written. Confirm any tolerance with the merchandiser before cutting.", y, 50); footer();
 
-  doc.addPage(); header("3. Construction Details", 3); y = 108; y = sectionBar("Construction and finishing instructions", y); y = textBox("Details", pack.construction_notes, y, 80); y = await imageGrid(imageGroups.details, y, 205);
+  doc.addPage(); pageNo += 1; header("3. Construction Details", pageNo); y = 108; y = sectionBar("Construction and finishing instructions", y); y = textBox("Details", pack.construction_notes, y, 80); y = await imageGrid(imageGroups.details, y, 205);
   if (!imageGroups.details.length) y = textBox("Detail reference", "No enlarged construction image attached. Follow the construction notes above and request clarification before production if anything is unclear.", y, 50); footer();
 
-  doc.addPage(); header("4. Artwork & Placement", 4); y = 108; y = sectionBar("Artwork reference", y);
+  doc.addPage(); pageNo += 1; header("4. Artwork & Placement", pageNo); y = 108; y = sectionBar("Artwork reference", y);
   y = textBox("Placement and dimensions", [pack.artwork_placement, pack.artwork_width_cm && `Width: ${pack.artwork_width_cm} cm`, pack.artwork_height_cm && `Height: ${pack.artwork_height_cm} cm`].filter(Boolean).join(" | "), y, 45); y = textBox("Artwork instructions", pack.artwork_notes, y, 62); y = await imageGrid(imageGroups.artwork, y, 205);
   if (!imageGroups.artwork.length) y = textBox("Artwork reference", "No artwork file is attached for this style.", y, 40); footer();
 
-  doc.addPage(); header("5. Trims, Labels & Packaging", 5); y = 108; y = sectionBar("Trim specification", y);
+  doc.addPage(); pageNo += 1; header("5. Trims, Labels & Packaging", pageNo); y = 108; y = sectionBar("Trim specification", y);
   y = table(["Description", "Colour", "Size", "Supplier", "Qty", "Price"], (pack.trims_items || []).map((item) => [item.description, item.color, item.size, item.supplier, item.quantity, item.price]), y, [150, 72, 55, 105, 52, 63]); y = textBox("Trim / label notes", pack.trims_labels_notes, y, 44); y = await imageGrid(imageGroups.trims, y, 160); footer();
 
-  doc.addPage(); header("6. Colourways, Comments & Handover", 6); y = 108; y = sectionBar("Colour and fabric combinations", y);
+  doc.addPage(); pageNo += 1; header("6. Colourways, Comments & Handover", pageNo); y = 108; y = sectionBar("Colour and fabric combinations", y);
   y = table(["Colourway", "Fabric reference", "Thread / trim reference"], (pack.colourways || []).map((row) => [row.name, row.fabric_ref, row.thread_ref]), y, [150, 180, 197]);
   y = await imageGrid((Array.isArray(pack.colourways) ? pack.colourways : []).map((row) => row.image_url), y, 90);
   y = textBox("Colourway notes", pack.colourway_notes, y, 42); y = await imageGrid(imageGroups.colourway, y, 125);
@@ -224,6 +262,63 @@ function ImageUploadSection({ label, hint, previews, onAdd, onRemove }) {
   );
 }
 
+function FabricReferenceEditor({ rows, onChange, onAddImages, onRemoveImage, onAddRow, onRemoveRow, linkedPlan }) {
+  const inputClass = "w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100";
+  const materials = linkedPlan?.materials || [];
+  const field = (label, control, hint = "") => <label className="block text-xs font-bold uppercase tracking-wide text-slate-500"><span>{label}</span>{hint && <span className="ml-1 normal-case font-normal tracking-normal text-slate-400">— {hint}</span>}{control}</label>;
+  return (
+    <div className="rounded-2xl border border-violet-200 bg-white p-4">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div><p className="text-sm font-black text-slate-900">Fabric references and swatches</p><p className="mt-0.5 text-xs leading-5 text-slate-500">Add one row for every fabric used—main body, lining, cuff, collar or contrast. Images are optional; attach close-up swatches so cutting and production can identify the correct material.</p></div>
+        <span className="rounded-full bg-violet-50 px-2.5 py-1 text-[10px] font-black text-violet-700">OPTIONAL · MULTIPLE ALLOWED</span>
+      </div>
+      <div className="mt-4 space-y-4">
+        {rows.map((row, index) => (
+          <article key={index} className="rounded-2xl border border-slate-200 bg-slate-50/60 p-4">
+            <div className="mb-3 flex items-center justify-between gap-2"><p className="font-black text-slate-800">Fabric {index + 1}{row.reference_name ? ` · ${row.reference_name}` : ""}</p><button type="button" disabled={rows.length === 1} onClick={() => onRemoveRow(index)} className="rounded-lg border border-rose-100 bg-white px-2.5 py-1 text-xs font-bold text-rose-600 disabled:text-slate-300">Remove</button></div>
+            <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
+              {field("Reference name *", <input className={`${inputClass} mt-1`} value={row.reference_name} onChange={(e) => onChange(index, "reference_name", e.target.value)} placeholder="Main fabric / Lining / Cuff" />, "required only when saving this row")}
+              {field("Used at / placement", <input className={`${inputClass} mt-1`} value={row.usage} onChange={(e) => onChange(index, "usage", e.target.value)} placeholder="Body, collar, cuff, pocket" />)}
+              {field("Fabric type", <input className={`${inputClass} mt-1`} value={row.fabric_type} onChange={(e) => onChange(index, "fabric_type", e.target.value)} placeholder="Woven cotton, knit rib, denim" />)}
+              {field("Composition", <input className={`${inputClass} mt-1`} value={row.composition} onChange={(e) => onChange(index, "composition", e.target.value)} placeholder="80% cotton, 20% polyester" />)}
+              {field("Colour / shade", <input className={`${inputClass} mt-1`} value={row.color} onChange={(e) => onChange(index, "color", e.target.value)} placeholder="Off white / Stone grey" />)}
+              {field("Colour code", <input className={`${inputClass} mt-1`} value={row.color_code} onChange={(e) => onChange(index, "color_code", e.target.value)} placeholder="Pantone / internal shade code" />)}
+            </div>
+
+            <div className="mt-3 rounded-xl border border-dashed border-violet-200 bg-white p-3">
+              <label className="block text-xs font-black uppercase tracking-wide text-slate-600">Fabric swatch images <span className="font-normal normal-case tracking-normal text-slate-400">— optional, up to 8 per fabric</span>
+                <input type="file" accept="image/*" multiple onChange={(e) => { onAddImages(index, e.target.files); e.target.value = ""; }} className="mt-2 w-full text-xs text-slate-500 file:mr-3 file:rounded-lg file:border-0 file:bg-violet-600 file:px-3 file:py-1.5 file:text-xs file:font-bold file:text-white" />
+              </label>
+              {row.image_previews?.length > 0 && <div className="mt-3 flex flex-wrap gap-2">{row.image_previews.map((src, imageIndex) => <div key={`${src}-${imageIndex}`} className="relative"><img src={src} alt={`${row.reference_name || `Fabric ${index + 1}`} swatch ${imageIndex + 1}`} className="h-20 w-20 rounded-xl border border-slate-200 object-cover" /><button type="button" onClick={() => onRemoveImage(index, imageIndex)} className="absolute -right-2 -top-2 grid h-5 w-5 place-items-center rounded-full bg-rose-600 text-[10px] font-black text-white">x</button></div>)}</div>}
+            </div>
+
+            <details className="mt-3 rounded-xl border border-slate-200 bg-white p-3">
+              <summary className="cursor-pointer text-xs font-black text-violet-700">Technical sourcing and cutting details</summary>
+              <p className="mt-1 text-[11px] leading-5 text-slate-400">Use these when the worker must match weight, width, consumption, lot, grain direction or shrinkage. Leave unknown fields blank instead of guessing.</p>
+              <div className="mt-3 grid gap-3 md:grid-cols-2 lg:grid-cols-4">
+                {field("GSM / weight", <input className={`${inputClass} mt-1`} value={row.gsm} onChange={(e) => onChange(index, "gsm", e.target.value)} placeholder="180 GSM" />)}
+                {field("Width", <input className={`${inputClass} mt-1`} value={row.width} onChange={(e) => onChange(index, "width", e.target.value)} placeholder="58 inches / 147 cm" />)}
+                {field("Consumption / garment", <input className={`${inputClass} mt-1`} value={row.consumption} onChange={(e) => onChange(index, "consumption", e.target.value)} placeholder="1.85" />)}
+                {field("Consumption unit", <select className={`${inputClass} mt-1`} value={row.unit} onChange={(e) => onChange(index, "unit", e.target.value)}><option>metres</option><option>yards</option><option>kg</option><option>grams</option><option>pieces</option></select>)}
+                {field("Supplier", <input className={`${inputClass} mt-1`} value={row.supplier} onChange={(e) => onChange(index, "supplier", e.target.value)} placeholder="Supplier name" />)}
+                {field("Supplier fabric ref", <input className={`${inputClass} mt-1`} value={row.supplier_ref} onChange={(e) => onChange(index, "supplier_ref", e.target.value)} placeholder="Mill / vendor article code" />)}
+                {field("Lot / batch", <input className={`${inputClass} mt-1`} value={row.lot_no} onChange={(e) => onChange(index, "lot_no", e.target.value)} placeholder="Optional approved lot" />)}
+                {field("BOM material link", <select className={`${inputClass} mt-1`} value={row.bom_material} onChange={(e) => onChange(index, "bom_material", e.target.value)}><option value="">Not linked</option>{materials.map((item, materialIndex) => <option key={`${item.material_name}-${materialIndex}`} value={item.material_name}>{item.material_name}</option>)}</select>, materials.length ? "from selected Style BOM" : "link a Style BOM above first")}
+              </div>
+              <div className="mt-3 grid gap-3 md:grid-cols-3">
+                {field("Grain / nap / print direction", <textarea rows="2" className={`${inputClass} mt-1`} value={row.grain_notes} onChange={(e) => onChange(index, "grain_notes", e.target.value)} placeholder="One-way print; cut all panels in same direction" />)}
+                {field("Shrinkage / tolerance", <textarea rows="2" className={`${inputClass} mt-1`} value={row.shrinkage} onChange={(e) => onChange(index, "shrinkage", e.target.value)} placeholder="Pre-wash; 3% length shrinkage" />)}
+                {field("Handling / cutting notes", <textarea rows="2" className={`${inputClass} mt-1`} value={row.handling_notes} onChange={(e) => onChange(index, "handling_notes", e.target.value)} placeholder="Avoid defects; match checks at side seam" />)}
+              </div>
+            </details>
+          </article>
+        ))}
+      </div>
+      <button type="button" onClick={onAddRow} className="mt-4 rounded-xl border border-violet-200 bg-violet-50 px-3 py-2 text-sm font-black text-violet-700">+ Add fabric reference</button>
+    </div>
+  );
+}
+
 function PackModal({ plans = [], themes = [], pack = null, onClose, onSaved }) {
   const editing = Boolean(pack?.id);
   const [form, setForm] = useState(() => Object.fromEntries(Object.keys(emptyPack).map((key) => [key, key === "sizes" ? (pack?.sizes || []).join(", ") : key === "reference_images" || key === "document_urls" ? (pack?.[key] || []).join("\n") : pack?.[key] ?? emptyPack[key]])));
@@ -231,6 +326,9 @@ function PackModal({ plans = [], themes = [], pack = null, onClose, onSaved }) {
   const [measurementRows, setMeasurementRows] = useState(() => pack?.measurement_rows || []);
   const [trimRows, setTrimRows] = useState(() => pack?.trims_items?.length ? pack.trims_items : [emptyTrimRow()]);
   const [colourways, setColourways] = useState(() => pack?.colourways?.length ? pack.colourways.map((row) => ({ ...row, image_file: null, image_preview: row.image_url || "" })) : [emptyColourway()]);
+  const [fabricReferences, setFabricReferences] = useState(() => pack?.fabric_references?.length
+    ? pack.fabric_references.map((row) => ({ ...emptyFabricReference(), ...row, image_urls: cleanAssetUrls(row.image_urls), image_previews: cleanAssetUrls(row.image_urls) }))
+    : [emptyFabricReference()]);
   const [images, setImages] = useState({}); // newly selected files by category
   const [previews, setPreviews] = useState(() => Object.fromEntries(IMAGE_SECTIONS.map(([key]) => [key, pack?.[`${key}_images`] || []])));
   const [saving, setSaving] = useState(false);
@@ -254,6 +352,31 @@ function PackModal({ plans = [], themes = [], pack = null, onClose, onSaved }) {
   }));
   const changeTrim = (index, key, value) => setTrimRows((rows) => rows.map((row, i) => i === index ? { ...row, [key]: value } : row));
   const changeColourway = (index, key, value) => setColourways((rows) => rows.map((row, i) => i === index ? { ...row, [key]: value } : row));
+  const changeFabricReference = (index, key, value) => setFabricReferences((rows) => rows.map((row, i) => i === index ? { ...row, [key]: value } : row));
+  const addFabricImages = (index, files) => {
+    const accepted = Array.from(files || []).filter((file) => file.type.startsWith("image/"));
+    if (!accepted.length) return;
+    setFabricReferences((rows) => rows.map((row, i) => {
+      if (i !== index) return row;
+      const room = Math.max(0, 8 - (row.image_previews?.length || 0));
+      const selected = accepted.slice(0, room);
+      return {
+        ...row,
+        image_files: [...(row.image_files || []), ...selected],
+        image_previews: [...(row.image_previews || []), ...selected.map((file) => URL.createObjectURL(file))],
+      };
+    }));
+  };
+  const removeFabricImage = (rowIndex, imageIndex) => setFabricReferences((rows) => rows.map((row, index) => {
+    if (index !== rowIndex) return row;
+    const existingCount = (row.image_urls || []).length;
+    return {
+      ...row,
+      image_urls: imageIndex < existingCount ? row.image_urls.filter((_, i) => i !== imageIndex) : row.image_urls,
+      image_files: imageIndex >= existingCount ? (row.image_files || []).filter((_, i) => i !== imageIndex - existingCount) : row.image_files,
+      image_previews: (row.image_previews || []).filter((_, i) => i !== imageIndex),
+    };
+  }));
   const setColourwayImage = (index, files) => {
     const file = Array.from(files || []).find((item) => item.type.startsWith("image/"));
     if (!file) return;
@@ -275,11 +398,26 @@ function PackModal({ plans = [], themes = [], pack = null, onClose, onSaved }) {
   const submit = async (event) => {
     event.preventDefault(); setSaving(true); setError("");
     try {
+      const incompleteFabric = fabricReferences.find((row) => !row.reference_name.trim() && (
+        [row.usage, row.fabric_type, row.composition, row.color, row.color_code, row.gsm, row.width, row.consumption,
+          row.supplier, row.supplier_ref, row.lot_no, row.grain_notes, row.shrinkage, row.handling_notes, row.bom_material]
+          .some((value) => String(value || "").trim()) || row.image_previews?.length
+      ));
+      if (incompleteFabric) throw new Error("Give every entered fabric a reference name (for example Main fabric, Lining or Cuff fabric), or remove its unfinished row.");
       const cleanMeasurementRows = measurementRows.filter((row) => row.point.trim());
       const cleanTrimRows = trimRows.filter((row) => row.description.trim());
       const cleanColourways = colourways.filter((row) => row.name.trim());
+      const cleanFabricReferences = fabricReferences.filter((row) => row.reference_name.trim());
       const serializableColourways = cleanColourways.map((row) => ({ name: row.name, fabric_ref: row.fabric_ref, thread_ref: row.thread_ref, image_url: row.image_url || "" }));
-      const imageCount = Object.values(images).reduce((sum, list) => sum + (list?.length || 0), 0) + cleanColourways.filter((row) => row.image_file).length;
+      const serializableFabricReferences = cleanFabricReferences.map((row) => ({
+        reference_name: row.reference_name, usage: row.usage, fabric_type: row.fabric_type, composition: row.composition,
+        color: row.color, color_code: row.color_code, gsm: row.gsm, width: row.width,
+        consumption: row.consumption, unit: row.unit, supplier: row.supplier, supplier_ref: row.supplier_ref,
+        lot_no: row.lot_no, grain_notes: row.grain_notes, shrinkage: row.shrinkage,
+        handling_notes: row.handling_notes, bom_material: row.bom_material, image_urls: cleanAssetUrls(row.image_urls),
+      }));
+      const fabricImageCount = cleanFabricReferences.reduce((sum, row) => sum + (row.image_files?.length || 0), 0);
+      const imageCount = Object.values(images).reduce((sum, list) => sum + (list?.length || 0), 0) + cleanColourways.filter((row) => row.image_file).length + fabricImageCount;
       let result;
       if (imageCount > 0) {
         // Multipart: every field must be a single string value (repeated
@@ -296,9 +434,11 @@ function PackModal({ plans = [], themes = [], pack = null, onClose, onSaved }) {
         body.append("measurement_rows", JSON.stringify(cleanMeasurementRows));
         body.append("trims_items", JSON.stringify(cleanTrimRows));
         body.append("colourways", JSON.stringify(serializableColourways));
+        body.append("fabric_references", JSON.stringify(serializableFabricReferences));
         IMAGE_SECTIONS.forEach(([category]) => body.append(`${category}_images`, JSON.stringify((previews[category] || []).filter((url) => !url.startsWith("blob:")))));
         Object.entries(images).forEach(([category, files]) => (files || []).forEach((file) => body.append(`pack_image_${category}`, file)));
         cleanColourways.forEach((row, index) => { if (row.image_file) body.append(`pack_image_colourway_row_${index}`, row.image_file); });
+        cleanFabricReferences.forEach((row, index) => (row.image_files || []).forEach((file) => body.append(`pack_image_fabric_row_${index}`, file)));
         result = await api(editing ? `/tech-packs/${pack.id}` : "/tech-packs", { method: editing ? "PUT" : "POST", body });
       } else {
         const jsonPayload = {
@@ -309,6 +449,7 @@ function PackModal({ plans = [], themes = [], pack = null, onClose, onSaved }) {
           measurement_rows: JSON.stringify(cleanMeasurementRows),
           trims_items: JSON.stringify(cleanTrimRows),
           colourways: JSON.stringify(serializableColourways),
+          fabric_references: JSON.stringify(serializableFabricReferences),
           ...Object.fromEntries(IMAGE_SECTIONS.map(([category]) => [`${category}_images`, (previews[category] || []).filter((url) => !url.startsWith("blob:"))])),
         };
         result = await api(editing ? `/tech-packs/${pack.id}` : "/tech-packs", { method: editing ? "PUT" : "POST", body: JSON.stringify(jsonPayload) });
@@ -338,7 +479,16 @@ function PackModal({ plans = [], themes = [], pack = null, onClose, onSaved }) {
       {/* 1. Sketch */}
       <Section number="1" title="Sketch" subtitle="Illustration, flat drawing or photo - front and back views ideally.">
         <Field label="Sketch notes"><textarea rows="2" value={form.description} onChange={(e) => update("description", e.target.value)} placeholder="Front/back/side reference, fit, silhouette and the main construction intent." /></Field>
-        <Field label="Fabric & material reference"><textarea rows="2" value={form.fabric_notes} onChange={(e) => update("fabric_notes", e.target.value)} placeholder="Fabric type, GSM, width, shade, thread and consumption notes." /></Field>
+        <Field label="General fabric & material notes"><textarea rows="2" value={form.fabric_notes} onChange={(e) => update("fabric_notes", e.target.value)} placeholder="Instructions that apply across all fabrics; add each actual fabric separately below." /></Field>
+        <FabricReferenceEditor
+          rows={fabricReferences}
+          onChange={changeFabricReference}
+          onAddImages={addFabricImages}
+          onRemoveImage={removeFabricImage}
+          onAddRow={() => setFabricReferences((rows) => [...rows, emptyFabricReference()])}
+          onRemoveRow={(index) => setFabricReferences((rows) => rows.filter((_, i) => i !== index))}
+          linkedPlan={plans.find((plan) => plan.id === form.material_plan_id)}
+        />
         <ImageUploadSection label="Sketch images" hint="Enlarge details with measurements - can be in colour." files={images.sketch} previews={previews.sketch} onAdd={(f) => addImages("sketch", f)} onRemove={(i) => removeImage("sketch", i)} />
       </Section>
 
@@ -493,6 +643,7 @@ function PackDetail({ pack, plans, onClose, onUpdated }) {
   return <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-slate-950/50 p-3 backdrop-blur-sm"><section className="max-h-[94vh] w-full max-w-4xl overflow-y-auto rounded-3xl bg-white shadow-2xl"><header className="sticky top-0 z-10 flex items-center justify-between border-b border-slate-100 bg-white px-6 py-4"><div><p className="text-xs font-black uppercase tracking-[0.18em] text-violet-600">{pack.tech_pack_no} - {pack.version}</p><h2 className="mt-1 text-xl font-black text-slate-900">{pack.design_no} - {pack.style_name}</h2>{(pack.theme_name || pack.collection || pack.designer_name) && <p className="mt-1 text-xs text-slate-500">{[pack.theme_name && `Theme: ${pack.theme_name}`, pack.collection && `Collection: ${pack.collection}`, pack.designer_name && `Designer: ${pack.designer_name}`].filter(Boolean).join(" - ")}</p>}</div><button type="button" onClick={onClose} className="grid h-10 w-10 place-items-center rounded-xl border border-slate-200 text-xl text-slate-500">x</button></header>
     <div className="space-y-5 p-6 text-sm">
       {linkedTheme && <div className="rounded-2xl border border-violet-200 bg-violet-50/60 p-4"><div className="flex flex-wrap items-center justify-between gap-2"><p className="text-xs font-black uppercase tracking-wide text-violet-800">Approved Design direction - {linkedTheme.theme_name}</p><span className="rounded-full bg-white px-2 py-1 text-[10px] font-black text-violet-700">READ-ONLY SNAPSHOT</span></div><p className="mt-1 text-xs text-slate-500">{[linkedTheme.collection, linkedTheme.season, linkedTheme.department, linkedTheme.target_customer].filter(Boolean).join(" - ")}</p>{linkedTheme.creative_direction && <p className="mt-3 whitespace-pre-line leading-6 text-slate-700">{linkedTheme.creative_direction}</p>}{linkedTheme.palette?.length > 0 && <div className="mt-3 flex flex-wrap gap-2">{linkedTheme.palette.map((colour, index) => <span key={`${colour}-${index}`} title={colour} className="h-8 w-8 rounded-full border-2 border-white shadow ring-1 ring-slate-200" style={{ backgroundColor: colour }} />)}</div>}{linkedTheme.moodboard_urls?.length > 0 && <div className="mt-3 flex flex-wrap gap-2">{linkedTheme.moodboard_urls.map((src) => <a key={src} href={src} target="_blank" rel="noreferrer"><img src={src} alt="Theme mood board" className="h-20 w-20 rounded-xl border border-violet-100 object-cover" /></a>)}</div>}{linkedTheme.swatches?.some((item) => item.image_url) && <div className="mt-3"><p className="mb-2 text-xs font-black uppercase tracking-wide text-slate-500">Production fabric swatches</p><div className="flex flex-wrap gap-2">{linkedTheme.swatches.map((s, i) => s.image_url && <img key={i} src={s.image_url} alt={s.fabric_type || "swatch"} title={`${s.fabric_type || ""} ${s.gsm ? s.gsm + " GSM" : ""} ${s.color || ""} - ${s.vendor_name || ""}`} className="h-16 w-16 rounded-xl border border-slate-200 object-cover" />)}</div></div>}</div>}
+      {pack.fabric_references?.length > 0 && <div><p className="mb-2 text-xs font-black uppercase tracking-wide text-slate-500">Sketch fabric references</p><div className="grid gap-3 md:grid-cols-2">{pack.fabric_references.map((fabric, index) => <article key={`${fabric.reference_name}-${index}`} className="rounded-2xl border border-violet-100 bg-violet-50/40 p-4"><div className="flex items-start justify-between gap-2"><div><p className="font-black text-slate-900">{fabric.reference_name}</p><p className="text-xs text-slate-500">{[fabric.usage, fabric.fabric_type, fabric.composition, fabric.color, fabric.color_code].filter(Boolean).join(" · ") || "No descriptive details"}</p></div>{fabric.bom_material && <span className="rounded-full bg-white px-2 py-1 text-[10px] font-bold text-violet-700">BOM: {fabric.bom_material}</span>}</div><p className="mt-2 text-xs leading-5 text-slate-600">{[fabric.gsm && `Weight ${fabric.gsm}`, fabric.width && `Width ${fabric.width}`, fabric.consumption && `${fabric.consumption} ${fabric.unit || ""}/garment`, fabric.supplier && `Supplier ${fabric.supplier}`, fabric.supplier_ref && `Ref ${fabric.supplier_ref}`, fabric.lot_no && `Lot ${fabric.lot_no}`].filter(Boolean).join(" · ")}</p>{[fabric.grain_notes, fabric.shrinkage, fabric.handling_notes].filter(Boolean).map((note, noteIndex) => <p key={noteIndex} className="mt-1 text-xs text-slate-600">{note}</p>)}{fabric.image_urls?.length > 0 && <div className="mt-3 flex flex-wrap gap-2">{fabric.image_urls.map((src, imageIndex) => <a key={`${src}-${imageIndex}`} href={src} target="_blank" rel="noreferrer"><img src={src} alt={`${fabric.reference_name} swatch`} className="h-20 w-20 rounded-xl border border-white object-cover shadow-sm" /></a>)}</div>}</article>)}</div></div>}
       {IMAGE_SECTIONS.map(([key, label]) => (pack[`${key}_images`]?.length > 0) && (
         <div key={key}><p className="mb-2 text-xs font-black uppercase tracking-wide text-slate-500">{label} images</p><div className="flex flex-wrap gap-2">{pack[`${key}_images`].map((src) => <img key={src} src={src} alt={label} className="h-20 w-20 rounded-xl border border-slate-200 object-cover" />)}</div></div>
       ))}

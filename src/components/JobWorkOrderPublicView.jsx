@@ -60,6 +60,15 @@ function TechPackContent({ pack }) {
         </div>
       )}
 
+      {Array.isArray(pack.fabric_references) && pack.fabric_references.length > 0 && (
+        <div style={{ marginBottom: 12 }}>
+          <p style={{ fontSize: 11.5, fontWeight: 700, color: "#64748b", margin: "0 0 6px" }}>FABRIC REFERENCES</p>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 8 }}>
+            {pack.fabric_references.map((fabric, index) => <div key={`${fabric.reference_name}-${index}`} style={{ padding: 10, borderRadius: 8, border: "1px solid #E2E8F0", background: "#fff" }}><p style={{ margin: 0, fontWeight: 700 }}>{fabric.reference_name}</p><p style={{ margin: "3px 0", fontSize: 12, color: "#475569" }}>{[fabric.usage, fabric.fabric_type, fabric.composition, fabric.color, fabric.color_code].filter(Boolean).join(" · ")}</p><p style={{ margin: 0, fontSize: 11.5, color: "#64748b" }}>{[fabric.gsm, fabric.width, fabric.consumption && `${fabric.consumption} ${fabric.unit || ""}/garment`, fabric.supplier, fabric.supplier_ref, fabric.lot_no].filter(Boolean).join(" · ")}</p>{fabric.image_urls?.length > 0 && <div style={{ display: "flex", gap: 5, flexWrap: "wrap", marginTop: 6 }}>{fabric.image_urls.map((src, imageIndex) => <img key={`${src}-${imageIndex}`} src={src} alt={`${fabric.reference_name} swatch`} style={{ width: 54, height: 54, borderRadius: 7, objectFit: "cover", border: "1px solid #E2E8F0" }} />)}</div>}</div>)}
+          </div>
+        </div>
+      )}
+
       {Array.isArray(pack.measurement_rows) && pack.measurement_rows.length > 0 && (
         <div style={{ overflowX: "auto", marginBottom: 12 }}>
           <p style={{ fontSize: 11.5, fontWeight: 700, color: "#64748b", margin: "0 0 4px" }}>MEASUREMENTS</p>

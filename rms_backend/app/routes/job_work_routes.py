@@ -170,6 +170,31 @@ def _parse_colourways(raw: Any) -> list[dict]:
     return rows
 
 
+def _parse_fabric_references(raw: Any) -> list[dict]:
+    rows = []
+    fields = {
+        "reference_name": 100, "usage": 160, "fabric_type": 120,
+        "composition": 160, "color": 80, "color_code": 60,
+        "gsm": 40, "width": 60, "consumption": 40, "unit": 30,
+        "supplier": 160, "supplier_ref": 120, "lot_no": 80,
+        "grain_notes": 300, "shrinkage": 120, "handling_notes": 600,
+        "bom_material": 160,
+    }
+    for row in _parse_json_list(raw)[:40]:
+        if not isinstance(row, dict):
+            continue
+        reference_name = str(row.get("reference_name") or "").strip()[:100]
+        if not reference_name:
+            continue
+        cleaned = {"reference_name": reference_name}
+        for key, limit in fields.items():
+            if key != "reference_name":
+                cleaned[key] = str(row.get(key) or "").strip()[:limit]
+        cleaned["image_urls"] = _clean_asset_urls(row.get("image_urls"), 8)
+        rows.append(cleaned)
+    return rows
+
+
 TECH_PACK_IMAGE_CATEGORIES = ("sketch", "details", "artwork", "trims", "colourway")
 
 
@@ -192,7 +217,8 @@ async def _tech_pack_payload_from_request(request: Request) -> tuple[dict, dict[
                 continue
             category = key[len("pack_image_"):]
             is_colourway_row = category.startswith("colourway_row_") and category[len("colourway_row_"):].isdigit()
-            if category not in TECH_PACK_IMAGE_CATEGORIES and not is_colourway_row:
+            is_fabric_row = category.startswith("fabric_row_") and category[len("fabric_row_"):].isdigit()
+            if category not in TECH_PACK_IMAGE_CATEGORIES and not is_colourway_row and not is_fabric_row:
                 continue
             try:
                 result = cloudinary.uploader.upload(
@@ -1369,6 +1395,10 @@ async def list_tech_packs(ctx: dict = Depends(_require_design_or_job_work)):
             {**item, "image_url": (_clean_asset_urls([item.get("image_url")], 1) or [""])[0]}
             for item in (row.get("colourways") or []) if isinstance(item, dict)
         ]
+        row["fabric_references"] = [
+            {**item, "image_urls": _clean_asset_urls(item.get("image_urls"), 8)}
+            for item in (row.get("fabric_references") or []) if isinstance(item, dict)
+        ]
         row["linked_theme"] = await _linked_theme_swatch(ctx["tenant_id"], pack.get("material_plan_id"), pack.get("theme_id"))
         rows.append(row)
     return {"data": rows}
@@ -1451,6 +1481,18 @@ async def create_tech_pack(request: Request, ctx: dict = Depends(_require_design
             {**row, "image_url": (uploaded_by_category.get(f"colourway_row_{index}") or [row.get("image_url", "")])[0]}
             for index, row in enumerate(_parse_colourways(payload.get("colourways")))
         ],
+        # Repeatable fabric references live in Sketch and may carry several
+        # physical swatch photos without replacing the general sketch images.
+        "fabric_references": [
+            {
+                **row,
+                "image_urls": _clean_asset_urls([
+                    *(row.get("image_urls") or []),
+                    *uploaded_by_category.get(f"fabric_row_{index}", []),
+                ], 8),
+            }
+            for index, row in enumerate(_parse_fabric_references(payload.get("fabric_references")))
+        ],
         # Per-guide-page image slots (Sketch / Details / Artwork / Trims & Label / Colourways).
         "sketch_images": _category_images("sketch"),
         "details_images": _category_images("details"),
@@ -1475,6 +1517,10 @@ async def get_tech_pack(tech_pack_id: str, ctx: dict = Depends(_require_design_o
     if not pack:
         raise HTTPException(status_code=404, detail="Tech pack not found.")
     row = _serialize(pack)
+    row["fabric_references"] = [
+        {**item, "image_urls": _clean_asset_urls(item.get("image_urls"), 8)}
+        for item in (row.get("fabric_references") or []) if isinstance(item, dict)
+    ]
     row["linked_theme"] = await _linked_theme_swatch(ctx["tenant_id"], pack.get("material_plan_id"), pack.get("theme_id"))
     return {"data": row}
 
@@ -1521,6 +1567,12 @@ async def update_tech_pack(tech_pack_id: str, request: Request, ctx: dict = Depe
         uploaded = uploaded_by_category.get(f"colourway_row_{index}") or []
         if uploaded:
             row["image_url"] = uploaded[0]
+    fabric_references = _parse_fabric_references(payload.get("fabric_references"))
+    for index, row in enumerate(fabric_references):
+        row["image_urls"] = _clean_asset_urls([
+            *(row.get("image_urls") or []),
+            *uploaded_by_category.get(f"fabric_row_{index}", []),
+        ], 8)
 
     update = {
         "design_no": design_no, "style_name": style_name,
@@ -1548,6 +1600,7 @@ async def update_tech_pack(tech_pack_id: str, request: Request, ctx: dict = Depe
         "artwork_height_cm": str(payload.get("artwork_height_cm") or "").strip()[:20],
         "artwork_placement": str(payload.get("artwork_placement") or "").strip()[:300],
         "colourways": colourways,
+        "fabric_references": fabric_references,
         "sketch_images": category_images("sketch"),
         "details_images": category_images("details"),
         "artwork_images": category_images("artwork"),
@@ -1785,6 +1838,7 @@ async def create_order(request: Request, ctx: dict = Depends(_require_job_work))
             "theme_name": tech_pack.get("theme_name", ""), "collection": tech_pack.get("collection", ""),
             "designer_name": tech_pack.get("designer_name", ""),
             "description": tech_pack.get("description", ""), "fabric_notes": tech_pack.get("fabric_notes", ""),
+            "fabric_references": tech_pack.get("fabric_references", []),
             "measurement_notes": tech_pack.get("measurement_notes", ""), "construction_notes": tech_pack.get("construction_notes", ""),
             "artwork_notes": tech_pack.get("artwork_notes", ""), "trims_labels_notes": tech_pack.get("trims_labels_notes", ""),
             "colourway_notes": tech_pack.get("colourway_notes", ""), "reference_images": tech_pack.get("reference_images", []),

@@ -240,10 +240,21 @@ async def get_store_stock_summary(authorization: str = Header(None)):
     # back to the Product Master's own price for exactly that case — this
     # only ever fires when the stock doc's own price was already 0, so a
     # tenant whose stock docs already carry a price is completely unaffected.
+    #
+    # Raphaaa only: value at cost (Standard Rate) instead of MRP, to match
+    # their source ERP's "Closing Amt" column (a cost-basis figure) rather
+    # than the "RSP VALUE" (retail-basis) figure MRP would produce — those
+    # two are legitimately different numbers in their own export. Every other
+    # tenant keeps the existing MRP-first order untouched.
+    is_raphaaa = is_raphaaa_tenant(tenant_id)
     product_prices: dict = {}
     async for doc in product_collection.find({"tenant_id": tenant_id}, {"barcode": 1, "mrp": 1, "selling_price": 1, "cost_price": 1}):
         barcode = doc.get("barcode", "")
-        if barcode:
+        if not barcode:
+            continue
+        if is_raphaaa:
+            product_prices[barcode] = float(doc.get("cost_price") or doc.get("mrp") or doc.get("selling_price") or 0)
+        else:
             product_prices[barcode] = float(doc.get("mrp") or doc.get("selling_price") or doc.get("cost_price") or 0)
 
     central_prices: dict = {}
@@ -294,7 +305,7 @@ async def get_store_stock_summary(authorization: str = Header(None)):
         *[{**r, "total_qty": round(r["total_qty"], 2), "total_value": round(r["total_value"], 2)}
           for r in sorted(rows_by_store.values(), key=lambda r: r["store_name"])],
     ]
-    return {"status": "success", "data": rows}
+    return {"status": "success", "data": rows, "tenant_id": tenant_id}
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -362,7 +362,7 @@ function DemandForecastView({ raphaaaMode = false }) {
 }
 
 /* ── Vendor Ranking ── */
-function VendorRankingView() {
+function GenericVendorRankingView() {
   const [q, setQ] = useState("");
   const [rows, setRows] = useState([]);
   const [note, setNote] = useState("");
@@ -438,6 +438,145 @@ function VendorRankingView() {
         </div>
         </>
       )}
+    </div>
+  );
+}
+
+function VendorRankingView({ raphaaaMode = false }) {
+  return raphaaaMode ? <RaphaaaVendorRankingView /> : <GenericVendorRankingView />;
+}
+
+function RaphaaaVendorRankingView() {
+  const [historyPeriods, setHistoryPeriods] = useState(2);
+  const [periodMode, setPeriodMode] = useState("calendar_year");
+  const [result, setResult] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [search, setSearch] = useState("");
+  const [filters, setFilters] = useState({});
+  const [metric, setMetric] = useState("net_sales");
+
+  const load = useCallback(async () => {
+    setLoading(true); setError(null);
+    try {
+      setResult(await faFetch("/api/forecast-analytics/purchase-plan/raphaaa", {
+        method: "POST",
+        body: JSON.stringify({
+          history_periods: historyPeriods,
+          period_mode: periodMode,
+          season_start_month: 10,
+          season_end_month: 2,
+        }),
+      }));
+    } catch (e) { setError(e.message); } finally { setLoading(false); }
+  }, [historyPeriods, periodMode]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const filterFields = React.useMemo(() => [
+    ...BASIC_PRODUCT_FILTERS, ["style", "Style"], ["product_type", "Type"],
+    ["size", "Size"], ["promotion", "Promotion"], ["confidence", "Confidence"],
+  ], []);
+  const lines = React.useMemo(() => result?.lines || [], [result]);
+  const visibleLines = React.useMemo(
+    () => filterProductRows(lines, search, filters, filterFields),
+    [lines, search, filters, filterFields],
+  );
+  const rankedVendors = React.useMemo(() => aggregateRaphaaaVendors(visibleLines)
+    .sort((a, b) => Number(b[metric] || 0) - Number(a[metric] || 0)), [visibleLines, metric]);
+  const chartRows = rankedVendors.slice(0, 10);
+  const summary = React.useMemo(() => ({
+    vendor_count: rankedVendors.length,
+    net_sales: visibleLines.reduce((sum, row) => sum + Number(row.net_sales || 0), 0),
+    units_sold: visibleLines.reduce((sum, row) => sum + Object.values(row.quantities_by_period || {}).reduce((total, value) => total + Number(value || 0), 0), 0),
+    final_purchase_qty: visibleLines.reduce((sum, row) => sum + Number(row.final_purchase_qty || 0), 0),
+  }), [rankedVendors, visibleLines]);
+  const periods = result?.periods || [];
+  const isMoneyMetric = ["gross_sales", "discount_amount", "net_sales", "estimated_purchase_amount"].includes(metric);
+
+  return (
+    <div className="space-y-5">
+      <ErrorBanner message={error} />
+      <div className="fa-panel p-5">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="max-w-3xl">
+            <h4 className="text-base font-black text-slate-900">Raphaaa vendor performance ranking</h4>
+            <p className="mt-1 text-sm text-slate-600">Ranks suppliers from Raphaaa's actual product sales, returns, discounts, current stock and calculated repurchase need—not catalogue price or a hidden score.</p>
+            <p className="mt-2 text-xs text-slate-500">Vendor attribution uses the latest posted GRN first, then the Product Master supplier. Imported vendor names remain visible as unlinked evidence until they are connected to an approved RMS vendor.</p>
+          </div>
+          <div className="flex flex-wrap items-end gap-2">
+            <label className="text-xs font-bold text-slate-600">Comparison
+              <select value={periodMode} onChange={(e) => setPeriodMode(e.target.value)} className="mt-1 block rounded-lg border px-2.5 py-2 text-sm">
+                <option value="calendar_year">Completed calendar years</option>
+                <option value="seasonal_window">Winter seasons (Oct–Feb)</option>
+              </select>
+            </label>
+            <label className="text-xs font-bold text-slate-600">Periods
+              <select value={historyPeriods} onChange={(e) => setHistoryPeriods(Number(e.target.value))} className="mt-1 block rounded-lg border px-2.5 py-2 text-sm">
+                {[2, 3, 4, 5, 6].map((value) => <option key={value} value={value}>{value}</option>)}
+              </select>
+            </label>
+            <button onClick={load} disabled={loading} className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-bold text-white disabled:opacity-60"><RefreshCw size={14} />{loading ? "Ranking…" : "Recalculate"}</button>
+          </div>
+        </div>
+        {result && <p className="mt-3 text-xs text-slate-500">Compared: {periods.map((period) => period.label).join(", ")} · Snapshot: {new Date(result.generated_at).toLocaleString("en-IN")} · {result.data_quality?.invoice_count || 0} sales/return documents reviewed.</p>}
+      </div>
+
+      <ProductFilterPanel rows={lines} search={search} setSearch={setSearch} filters={filters} setFilters={setFilters} fields={filterFields} title="Vendor ranking filters" description="All cards, the chart, vendor table and product evidence use this same filtered product population." />
+
+      {result && <>
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <StatTile label="Vendors represented" value={summary.vendor_count.toLocaleString("en-IN")} />
+          <StatTile label="Units sold" value={summary.units_sold.toLocaleString("en-IN")} />
+          <StatTile label="Historical net sales" value={formatMoney(summary.net_sales)} tone="emerald" />
+          <StatTile label="Recommended repurchase" value={summary.final_purchase_qty.toLocaleString("en-IN")} tone="amber" />
+        </div>
+
+        <div className="fa-panel p-5">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div><h4 className="text-sm font-black text-slate-900">Top vendors by selected measure</h4><p className="mt-1 text-xs text-slate-500">The bars start at zero and rank the top 10 suppliers; choose the operational measure you want to compare.</p></div>
+            <select value={metric} onChange={(e) => setMetric(e.target.value)} className="rounded-lg border px-2.5 py-2 text-xs font-bold">
+              <option value="net_sales">Net sales</option><option value="units_sold">Units sold</option><option value="gross_sales">Gross sales</option><option value="discount_amount">Discount amount</option><option value="final_purchase_qty">Recommended quantity</option><option value="estimated_purchase_amount">Estimated purchase amount</option>
+            </select>
+          </div>
+          <div className="mt-4 h-[390px]">
+            {chartRows.length ? <ResponsiveContainer width="100%" height="100%"><RechartsBarChart data={chartRows} layout="vertical" margin={{ top: 5, right: 24, left: 38, bottom: 5 }}>
+              <CartesianGrid strokeDasharray="3 3" horizontal={false} /><XAxis type="number" domain={[0, "auto"]} /><YAxis type="category" dataKey="vendor_name" width={145} tick={{ fontSize: 10 }} />
+              <Tooltip formatter={(value) => [isMoneyMetric ? formatMoney(value) : Number(value).toLocaleString("en-IN"), metric.replaceAll("_", " ")]} />
+              <Bar dataKey={metric} name={metric.replaceAll("_", " ")} fill="#7c3aed" radius={[0, 5, 5, 0]} />
+            </RechartsBarChart></ResponsiveContainer> : <div className="flex h-full items-center justify-center text-sm text-slate-400">{loading ? "Calculating vendor rankings…" : "No vendor evidence matches this selection."}</div>}
+          </div>
+        </div>
+
+        <div className="fa-panel overflow-hidden">
+          <div className="border-b border-slate-100 px-5 py-4"><h4 className="text-sm font-black text-slate-900">Vendor ranking details</h4><p className="mt-1 text-xs text-slate-500">Rank is based only on the selected chart measure. Discount results are descriptive and do not prove that a promotion caused sales.</p></div>
+          <div className="max-h-[480px] overflow-auto"><table className="min-w-[1380px] w-full text-xs">
+            <thead className="sticky top-0 z-10"><tr>{["Rank", "Vendor", "Products", "Units sold", "Gross sales", "Discount", "Discount rate", "Net sales", "Repurchase qty", "Purchase amount", "Top product"].map((heading) => <th key={heading} className="whitespace-nowrap px-3 py-3 text-left font-black uppercase">{heading}</th>)}</tr></thead>
+            <tbody className="divide-y divide-slate-100">{rankedVendors.length ? rankedVendors.map((row, index) => <tr key={row.vendor_name}>
+              <td className="px-3 py-3 text-sm font-black text-indigo-700">#{index + 1}</td>
+              <td className="px-3 py-3"><span className="font-bold text-slate-900">{row.vendor_name}</span><span className={`mt-1 block text-[10px] font-bold ${row.unlinked_product_count ? "text-amber-600" : "text-emerald-600"}`}>{row.unlinked_product_count ? `${row.unlinked_product_count} product(s) imported / unlinked` : "Linked supplier evidence"}</span></td>
+              <td className="px-3 py-3">{row.product_count}</td><td className="px-3 py-3">{row.units_sold.toLocaleString("en-IN")}</td><td className="px-3 py-3">{formatMoney(row.gross_sales)}</td><td className="px-3 py-3 text-rose-600">{formatMoney(row.discount_amount)}</td><td className="px-3 py-3">{row.discount_rate.toFixed(1)}%</td><td className="px-3 py-3 font-bold">{formatMoney(row.net_sales)}</td><td className="px-3 py-3 font-bold text-emerald-700">{row.final_purchase_qty.toLocaleString("en-IN")}</td><td className="px-3 py-3">{formatMoney(row.estimated_purchase_amount)}</td><td className="px-3 py-3">{row.top_product}<span className="block text-[10px] text-slate-400">{formatMoney(row.top_product_net_sales)} net sales</span></td>
+            </tr>) : <tr><td colSpan={11} className="px-4 py-10 text-center text-slate-400">No vendor evidence matches the selected filters.</td></tr>}</tbody>
+          </table></div>
+        </div>
+
+        <div className="fa-panel overflow-hidden">
+          <div className="border-b border-slate-100 px-5 py-4"><h4 className="text-sm font-black text-slate-900">Product evidence behind the ranking</h4><p className="mt-1 text-xs text-slate-500">Use this table to verify which design, promotion, stock position and purchase recommendation contributed to each vendor total.</p></div>
+          <div className="max-h-[480px] overflow-auto"><table className="min-w-[1450px] w-full text-xs">
+            <thead className="sticky top-0 z-10"><tr>{["Vendor", "Product / hierarchy", "Promotion", "Units sold", "Gross", "Discount", "Net", "Current stock", "Final qty", "Evidence"].map((heading) => <th key={heading} className="whitespace-nowrap px-3 py-3 text-left font-black uppercase">{heading}</th>)}</tr></thead>
+            <tbody className="divide-y divide-slate-100">{visibleLines.length ? visibleLines.map((line) => <tr key={line.stock_identity || line.barcode}>
+              <td className="px-3 py-3"><span className="font-bold">{line.vendor_name || "Vendor unavailable"}</span>{line.vendor_name && !line.vendor_linked && <span className="block text-[10px] font-bold text-amber-600">Imported / unlinked</span>}</td>
+              <td className="px-3 py-3"><span className="font-bold text-slate-900">{line.name}</span><span className="block text-[10px] text-slate-400">{[line.division, line.section, line.department, line.design_no, line.brand, line.style, line.size].filter(Boolean).join(" / ")}</span></td>
+              <td className="px-3 py-3">{line.promotion || "No promotion label"}</td><td className="px-3 py-3">{Object.values(line.quantities_by_period || {}).reduce((sum, value) => sum + Number(value || 0), 0).toLocaleString("en-IN")}</td><td className="px-3 py-3">{formatMoney(line.gross_sales)}</td><td className="px-3 py-3 text-rose-600">{formatMoney(line.discount_amount)}</td><td className="px-3 py-3 font-bold">{formatMoney(line.net_sales)}</td><td className="px-3 py-3">{Number(line.current_stock_qty || 0).toLocaleString("en-IN")}</td><td className="px-3 py-3 font-black text-emerald-700">{Number(line.final_purchase_qty || 0).toLocaleString("en-IN")}</td><td className="px-3 py-3"><span className={`rounded-full px-2 py-1 text-[10px] font-black ${line.confidence === "High" ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>{line.confidence}</span></td>
+            </tr>) : <tr><td colSpan={10} className="px-4 py-10 text-center text-slate-400">No products match the selected filters.</td></tr>}</tbody>
+          </table></div>
+        </div>
+
+        <div className="grid gap-4 lg:grid-cols-2">
+          <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-xs leading-5 text-amber-900"><p className="font-black">Data-quality check</p><p>{result.data_quality?.vendor_caveat}</p></div>
+          <div className="fa-panel p-4 text-xs leading-5 text-slate-600"><p className="font-black text-slate-900">How to use it</p><p>1. Select comparable years or winter seasons. 2. Filter the product hierarchy. 3. Choose a ranking measure. 4. Verify the product evidence and unlinked suppliers. 5. Use the Purchase Plan tab for row-level quantities before Procurement creates a PO.</p></div>
+        </div>
+      </>}
     </div>
   );
 }
@@ -875,6 +1014,47 @@ function aggregatePlanVendors(lines) {
   return [...grouped.values()];
 }
 
+function aggregateRaphaaaVendors(lines) {
+  const grouped = new Map();
+  lines.forEach((line) => {
+    const key = line.vendor_name || "Vendor unavailable";
+    const row = grouped.get(key) || {
+      vendor_name: key,
+      product_count: 0,
+      unlinked_product_count: 0,
+      units_sold: 0,
+      gross_sales: 0,
+      discount_amount: 0,
+      net_sales: 0,
+      final_purchase_qty: 0,
+      estimated_purchase_amount: 0,
+      top_product: "Unavailable",
+      top_product_net_sales: -1,
+    };
+    const units = Object.values(line.quantities_by_period || {})
+      .reduce((sum, value) => sum + Number(value || 0), 0);
+    const netSales = Number(line.net_sales || 0);
+    row.product_count += 1;
+    row.unlinked_product_count += line.vendor_linked ? 0 : 1;
+    row.units_sold += units;
+    row.gross_sales += Number(line.gross_sales || 0);
+    row.discount_amount += Number(line.discount_amount || 0);
+    row.net_sales += netSales;
+    row.final_purchase_qty += Number(line.final_purchase_qty || 0);
+    row.estimated_purchase_amount += Number(line.estimated_purchase_amount || 0);
+    if (netSales > row.top_product_net_sales) {
+      row.top_product = line.design_no ? `${line.name} (Design ${line.design_no})` : (line.name || line.sku || line.barcode || "Unavailable");
+      row.top_product_net_sales = netSales;
+    }
+    grouped.set(key, row);
+  });
+  return [...grouped.values()].map((row) => ({
+    ...row,
+    top_product_net_sales: Math.max(0, row.top_product_net_sales),
+    discount_rate: row.gross_sales > 0 ? (row.discount_amount / row.gross_sales) * 100 : 0,
+  }));
+}
+
 function downloadPurchasePlan(lines, periods) {
   const headers = ["Product", "Design No.", "SKU", "Barcode", "Vendor", ...periods.map((p) => `${p.label} units`), "Peak units", "PQ before stock", "Current stock", "50% stock credit", "Final purchase qty", "Unit cost", "Purchase amount", "Gross sales", "Discount", "Net sales", "Promotion", "Confidence", "Cost source"];
   const values = lines.map((line) => [
@@ -1027,18 +1207,19 @@ function ImportPanel({ kind, title, blurb, onCommitted }) {
 
       {preview && (
         <>
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <div className={`grid gap-4 sm:grid-cols-2 ${kind === "stock" ? "lg:grid-cols-5" : "lg:grid-cols-4"}`}>
             <StatTile label={kind === "stock" ? "Rows / products" : "Rows in file"} value={kind === "stock" ? `${preview.rows?.length ?? 0} → ${s?.products_in_snapshot ?? 0}` : (s?.row_count ?? 0)} />
             <StatTile label={kind === "stock" ? "Ready to write" : "Ready to import"} value={s?.valid_count ?? 0} tone="emerald" />
             <StatTile label="Will be skipped" value={s?.invalid_count ?? 0} tone={s?.invalid_count ? "rose" : "slate"} />
             {kind === "stock"
               ? <StatTile label="Matched via category" value={s?.resolved_via_category ?? 0} tone="amber" />
               : <StatTile label="New products to create" value={s?.new_products ?? 0} tone={s?.new_products ? "amber" : "slate"} />}
+            {kind === "stock" && <StatTile label="New products (never sold)" value={s?.new_products_from_stock ?? 0} tone={s?.new_products_from_stock ? "amber" : "slate"} />}
           </div>
 
           {kind === "stock" && (s?.catalogue_size ?? 0) === 0 && (
             <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs font-semibold text-amber-800">
-              ⚠ No products in the catalogue yet — import the <b>sales file first</b>. Stock rows are matched to products the sales import creates.
+              ⚠ No products in the catalogue yet. A row with a Barcode/Item Code will create its own product; import the sales file too so items that already sold keep their real history.
             </div>
           )}
 
@@ -1073,6 +1254,20 @@ function ImportPanel({ kind, title, blurb, onCommitted }) {
             </div>
           )}
 
+          {kind === "stock" && (s?.error_breakdown?.length ?? 0) > 0 && (
+            <div className="fa-panel p-4">
+              <p className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-400">Why rows are being skipped, grouped</p>
+              <div className="space-y-1.5">
+                {s.error_breakdown.map((b) => (
+                  <div key={b.reason} className="flex items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs">
+                    <span className="text-amber-900">{b.reason}</span>
+                    <span className="shrink-0 rounded-full bg-amber-100 px-2 py-0.5 font-bold text-amber-800">{b.row_count} row(s)</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           <RowErrorsTable kind={kind} rows={preview.rows || []} />
           {preview.truncated && <p className="text-xs text-slate-400">Preview shows the first {(preview.rows || []).length} rows — all rows in the file are validated and committed.</p>}
 
@@ -1098,6 +1293,7 @@ function ImportPanel({ kind, title, blurb, onCommitted }) {
                 <p>Rows applied: <b className="text-slate-900">{result.rows_applied}</b></p>
                 <p>Location writes: <b className="text-slate-900">{result.locations_written}</b></p>
                 <p>Rows skipped: <b className="text-slate-900">{result.rows_skipped}</b></p>
+                <p>New products created: <b className="text-slate-900">{result.products_created_count ?? 0}</b></p>
                 <p>Batch: <span className="font-mono">{result.batch_id?.slice(0, 12)}</span></p>
               </>
             ) : (
@@ -1366,6 +1562,7 @@ export default function ForecastAnalytics() {
   const [activeSection, setActiveSection] = useState("dashboard");
   const [dataHubEnabled, setDataHubEnabled] = useState(false);
   const [productEnrichmentEnabled, setProductEnrichmentEnabled] = useState(false);
+  const [dataHubTenantId, setDataHubTenantId] = useState("");
   const isStoreWorkspace = getAdminScope() !== "hq";
   const workspaceName = isStoreWorkspace ? (getStoreName() || "Store workspace") : "Head office workspace";
   const adminName = getAdminName() || "Analytics Administrator";
@@ -1376,6 +1573,7 @@ export default function ForecastAnalytics() {
       .then((r) => {
         setDataHubEnabled(Boolean(r.enabled));
         setProductEnrichmentEnabled(Boolean(r.product_enrichment_enabled));
+        setDataHubTenantId(r.tenant_id || "");
       })
       .catch(() => { setDataHubEnabled(false); setProductEnrichmentEnabled(false); });
   }, []);
@@ -1387,7 +1585,7 @@ export default function ForecastAnalytics() {
     switch (activeSection) {
       case "dashboard": return <DashboardView onNavigate={setActiveSection} raphaaaMode={productEnrichmentEnabled} />;
       case "demand": return <DemandForecastView raphaaaMode={productEnrichmentEnabled} />;
-      case "vendors": return <VendorRankingView />;
+      case "vendors": return <VendorRankingView raphaaaMode={productEnrichmentEnabled} />;
       case "purchase": return <PurchasePlanView raphaaaMode={productEnrichmentEnabled} />;
       case "alerts": return <AlertsView raphaaaMode={productEnrichmentEnabled} />;
       case "import": return dataHubEnabled ? <DataImportView enrichmentEnabled={productEnrichmentEnabled} /> : <DashboardView onNavigate={setActiveSection} raphaaaMode={productEnrichmentEnabled} />;
@@ -1411,6 +1609,7 @@ export default function ForecastAnalytics() {
             <p className="text-[10px] font-bold uppercase tracking-[.16em] text-slate-300">Signed in as</p>
             <p className="mt-1 truncate text-sm font-semibold">{adminName}</p>
             <p className="mt-0.5 truncate text-xs text-indigo-100/75">{workspaceName}</p>
+            {dataHubTenantId && <p className="mt-0.5 truncate font-mono text-[10px] text-indigo-200/60">Tenant: {dataHubTenantId}</p>}
           </div>
         </div>
 

@@ -1,6 +1,6 @@
 import unittest
 
-from app.routes.job_work_routes import _clean_asset_urls, _theme_reference
+from app.routes.job_work_routes import _clean_asset_urls, _parse_fabric_references, _theme_reference
 from app.routes.production_flow_routes import clean_steps, number, safe_barcode
 
 
@@ -27,6 +27,17 @@ class ProductionFlowHelperTests(unittest.TestCase):
             ["https://cdn.example.com/sketch.jpg"],
         )
         self.assertEqual(_clean_asset_urls('["https://cdn.example.com/trim.png"]'), ["https://cdn.example.com/trim.png"])
+
+    def test_fabric_references_keep_structured_fields_and_clean_images(self):
+        rows = _parse_fabric_references([{
+            "reference_name": " Main fabric ", "usage": "Body and sleeves",
+            "fabric_type": "Woven cotton", "gsm": "180 GSM", "consumption": "1.8",
+            "unit": "metres", "image_urls": ["null", " https://cdn.example.com/main.jpg "],
+        }, {"reference_name": ""}])
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["reference_name"], "Main fabric")
+        self.assertEqual(rows[0]["usage"], "Body and sleeves")
+        self.assertEqual(rows[0]["image_urls"], ["https://cdn.example.com/main.jpg"])
     def test_theme_reference_contains_locked_creative_and_supplier_details(self):
         result = _theme_reference({
             "_id": "theme-1", "theme_name": "Monsoon Earth", "collection": "Festive 2027",

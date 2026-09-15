@@ -9,14 +9,18 @@ Two spreadsheet exports, previewed then committed:
                           rest of RMS shows real names, not bare barcodes.
       NO stock movement, NO finance / GST voucher, NO POS / cashier flow.
 
-  * STOCK  (physical count — NO barcode, product identified by
-      DIVISION|SECTION|DEPARTMENT|VENDOR|CATEGORY1-5; CATEGORY6 = Ageing, ignored)
+  * STOCK  (physical count — Barcode/Item Code preferred; when absent, a row
+      is identified by DIVISION|SECTION|DEPARTMENT|CATEGORY1-5, with Vendor
+      and RSP/MRP/Standard Rate used only as soft tiebreakers when that
+      combination matches more than one product; CATEGORY6 = Ageing, ignored)
       -> inventory        WAREHOUSE column  = Raphaa HQ / central on-hand
       -> store_stock       one column per store
       Each row is resolved to a barcode through the products the sales import
       created (their category attributes ARE the map). Rows that collapse to the
-      same product+location (different Ageing) are summed. Absolute snapshot:
-      $set stockQty, never $inc. Items absent from the file are left untouched.
+      same product+location (different Ageing) are summed. A row that's still
+      genuinely ambiguous after both tiebreakers is left unresolved rather than
+      guessing. Absolute snapshot: $set stockQty, never $inc. Items absent from
+      the file are left untouched.
 
 Isolation (enforced by _pilot_context on every route):
   * 404 for any tenant whose id does not start with "raphaa"
@@ -200,12 +204,23 @@ def _column(row: dict, *names: str) -> str:
     return ""
 
 
-def _cat_key(division: str, section: str, department: str, vendor: str, cats: List[str]) -> str:
-    """Normalised product-identity key. Empty when nothing meaningful is set."""
-    parts = [division, section, department, vendor, *cats]
+def _cat_key(division: str, section: str, department: str, cats: List[str]) -> str:
+    """Normalised product-identity key. Empty when nothing meaningful is set.
+
+    Vendor is deliberately NOT part of this key — a stock file's Vendor
+    column frequently differs in spelling/suffix from what the Sales import
+    stored ("ABC Textiles" vs "ABC Textiles Pvt Ltd"), and requiring an exact
+    match on it silently dropped otherwise-perfectly-identifiable rows.
+    Vendor is now used as a soft tiebreaker instead — see _resolve_by_category.
+    """
+    parts = [division, section, department, *cats]
     if not any(_key(part) for part in parts):
         return ""
     return "|".join(_key(part) for part in parts)
+
+
+def _row_vendor(row: dict) -> str:
+    return _column(row, "vendor", "supplier")
 
 
 def _row_cat_key(row: dict) -> str:
@@ -213,7 +228,6 @@ def _row_cat_key(row: dict) -> str:
         _column(row, "division"),
         _column(row, "section"),
         _column(row, "department", "dept"),
-        _column(row, "vendor", "supplier"),
         [_column(row, *CAT_ALIASES[name]) for name in ("cat1", "cat2", "cat3", "cat4", "cat5")],
     )
 
@@ -266,6 +280,7 @@ async def _catalogue(tenant_id: str) -> tuple[dict, dict, dict]:
             "division": _text(product.get("division")),
             "section": _text(product.get("section")),
             "department": _text(product.get("department")),
+            "vendor_name": _text(product.get("vendor_name")),
             "cost_price": float(product.get("cost_price") or 0),
             "rsp": float(product.get("selling_price") or 0),
             "mrp": float(product.get("mrp") or product.get("selling_price") or 0),
@@ -284,7 +299,7 @@ async def _catalogue(tenant_id: str) -> tuple[dict, dict, dict]:
                 sku_index[_key(v_sku)] = v_payload
 
         cats = [_text(product.get(f"category{n}")) for n in range(1, 6)]
-        ck = _cat_key(payload["division"], payload["section"], payload["department"], _text(product.get("vendor_name")), cats)
+        ck = _cat_key(payload["division"], payload["section"], payload["department"], cats)
         if ck and payload["barcode"]:
             bucket = cat_index.setdefault(ck, [])
             if not any(existing["barcode"] == payload["barcode"] for existing in bucket):
@@ -292,11 +307,23 @@ async def _catalogue(tenant_id: str) -> tuple[dict, dict, dict]:
     return barcode_index, sku_index, cat_index
 
 
+def _vendor_similar(a: str, b: str) -> bool:
+    """Loose vendor-name match — exact after normalising, or one name contains
+    the other (handles "ABC Textiles" vs "ABC Textiles Pvt Ltd")."""
+    ka, kb = _key(a), _key(b)
+    if not ka or not kb:
+        return False
+    return ka == kb or ka in kb or kb in ka
+
+
 def _resolve_by_category(raw: dict, cat_index: Dict[str, List[dict]]) -> tuple[Optional[dict], Optional[str]]:
     """Resolve a stock row that has no Barcode / Item Code to a product via its
-    category tuple. When the tuple maps to several products, use the row's
-    MRP -> RSP -> Standard Rate to pick one. Returns (payload, warning); warning
-    is None when the match is unambiguous or a price narrowed it to exactly one."""
+    Division/Section/Department/Category tuple (Vendor is not part of this
+    key — see _cat_key). When the tuple maps to several products, narrow using
+    the row's MRP -> RSP -> Standard Rate first, then Vendor-name similarity.
+    Returns (payload, message). message is None when unambiguous or narrowed
+    to exactly one; when genuinely still ambiguous, returns (None, message) —
+    the row is left unresolved rather than guessing which product it is."""
     candidates = cat_index.get(_row_cat_key(raw)) or []
     if not candidates:
         return None, None
@@ -315,15 +342,21 @@ def _resolve_by_category(raw: dict, cat_index: Dict[str, List[dict]]) -> tuple[O
         if len(hits) == 1:
             return hits[0], None
 
-    picked = candidates[0]
+    row_vendor = _row_vendor(raw)
+    if row_vendor:
+        vendor_hits = [c for c in candidates if _vendor_similar(c.get("vendor_name", ""), row_vendor)]
+        if len(vendor_hits) == 1:
+            return vendor_hits[0], None
+
     shown = ", ".join(f"{c['barcode']} (RSP {c['rsp']:g}/MRP {c['mrp']:g})" for c in candidates[:3])
-    warning = (
-        f"Category combination matches {len(candidates)} products: {shown}"
+    message = (
+        f"Multiple products match this row's Division/Section/Department/Category ({len(candidates)}: {shown}"
         + ("…" if len(candidates) > 3 else "")
-        + f". This row's RSP {rsp:g}/MRP {mrp:g}/Std {std:g} did not match exactly one; "
-        f"used {picked['barcode']}. Add an Item Code column to this row to resolve it exactly."
+        + f"). This row's RSP {rsp:g}/MRP {mrp:g}/Std {std:g} and Vendor '{row_vendor or '(blank)'}' did not narrow it "
+        f"to exactly one, so it was left unresolved rather than guessing. Add a Barcode or Item Code to this row to "
+        f"resolve it exactly."
     )
-    return picked, warning
+    return None, message
 
 
 async def _stores(tenant_id: str) -> List[dict]:
@@ -391,6 +424,36 @@ def _match_product(row: dict, barcode_index: dict, sku_index: dict) -> Optional[
     barcode = _column(row, "barcode", "rms barcode")
     item_code = _column(row, "item code", "itemcode", "sku", "product code")
     return barcode_index.get(_key(barcode)) or sku_index.get(_key(item_code))
+
+
+def _stock_new_product_payload(raw: dict) -> Optional[dict]:
+    """A stock row with a real Barcode/Item Code that matches nothing yet is
+    very likely genuinely new stock that has never been sold (so the Sales
+    import never had a chance to create it) — not a data error. Build the
+    same shape _catalogue()'s lookup would have returned had the product
+    already existed, so this row flows through the rest of _stock_rows
+    exactly like a normal match. The real product_name comes from
+    enrichment_patch when the product is actually created in commit."""
+    barcode = _column(raw, "barcode", "rms barcode")
+    item_code = _column(raw, "item code", "itemcode", "sku", "product code")
+    if not barcode and not item_code:
+        return None
+    barcode = barcode or item_code
+    cats = _row_cats(raw)
+    return {
+        "barcode": barcode,
+        "sku": item_code or barcode,
+        "product_name": barcode,
+        "design_no": cats[0],
+        "division": _column(raw, "division"),
+        "section": _column(raw, "section"),
+        "department": _column(raw, "department", "dept"),
+        "vendor_name": _row_vendor(raw),
+        "cost_price": _number(_column(raw, "standard_rate", "standard rate", "std rate")) or 0.0,
+        "rsp": _number(_column(raw, "rsp", "selling price")) or 0.0,
+        "mrp": _number(_column(raw, "mrp")) or 0.0,
+        "_cats": cats,
+    }
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -522,16 +585,27 @@ def _stock_rows(raw_rows: List[dict], barcode_index: dict, sku_index: dict, cat_
         product = _match_product(raw, barcode_index, sku_index)
         matched_via = "barcode"
         if not product and not has_id_col:
-            product, warning = _resolve_by_category(raw, cat_index)
+            product, message = _resolve_by_category(raw, cat_index)
             matched_via = "category"
-            if product and warning:
-                row_errors.append(warning)
-            if not product:
-                row_errors.append("No Barcode / Item Code column, and this DIVISION/SECTION/DEPARTMENT/VENDOR/CAT1-5 combination was not found in imported sales.")
+            if message:
+                row_errors.append(message)
+            elif not product:
+                row_errors.append("No Barcode / Item Code column, and this DIVISION/SECTION/DEPARTMENT/CATEGORY1-5 combination was not found in imported sales.")
         elif not product:
-            row_errors.append("Barcode / Item Code in this row does not match any product.")
+            new_payload = _stock_new_product_payload(raw)
+            if new_payload:
+                product = new_payload
+                matched_via = "new_from_stock"
+            else:
+                row_errors.append("Barcode / Item Code in this row does not match any product.")
 
         loc_qty: Dict[str, float] = {label: 0.0 for label in all_labels}
+        # Which locations THIS row actually reported a value for — distinct
+        # from loc_qty's 0.0 default, which just fills in every OTHER location
+        # so allocation totals add up. Only "touched" locations get written at
+        # commit time (see below); a location a product's rows never mention
+        # is left completely alone, not zeroed out.
+        touched: set = set()
         if long_format:
             loc_raw = _column(raw, *_STOCK_LOC_ALIASES)
             label = _match_location(loc_raw, stores)
@@ -544,29 +618,36 @@ def _stock_rows(raw_rows: List[dict], barcode_index: dict, sku_index: dict, cat_
                 row_errors.append(f"Location '{loc_raw or '(blank)'}' does not match the HQ warehouse or any store.")
             else:
                 loc_qty[label] = qty
+                touched.add(label)
         else:
             for location_id, aliases in location_columns.items():
                 value = ""
+                present = False
                 for alias in aliases:
                     if alias in raw:
                         value = raw.get(alias, "")
+                        present = True
                         break
                 qty = _number(value)
                 if qty is None or qty < 0:
                     row_errors.append(f"{'Warehouse' if location_id == 'central' else 'Store'} quantity must be zero or greater.")
                     qty = 0.0
                 loc_qty[label_for[location_id]] = qty
+                if present:
+                    touched.add(label_for[location_id])
 
         if product:
             bucket = agg.setdefault(product["barcode"], {
                 "product": product,
                 "matched_via": matched_via,
                 "allocation": {label: 0.0 for label in all_labels},
+                "touched": set(),
                 "source_rows": [],
                 "errors": [],
             })
             for label, qty in loc_qty.items():
                 bucket["allocation"][label] += qty
+            bucket["touched"] |= touched
             bucket["source_rows"].append(index)
             bucket["errors"].extend(row_errors)
         else:
@@ -597,6 +678,7 @@ def _stock_rows(raw_rows: List[dict], barcode_index: dict, sku_index: dict, cat_
             "product": bucket["product"]["product_name"],
             "matched_via": bucket["matched_via"],
             "allocation": allocation,
+            "touched": sorted(bucket["touched"]),
             "grand_total": round(sum(allocation.values()), 2),
             "errors": list(dict.fromkeys(bucket["errors"])),
             "_product": bucket["product"],
@@ -615,6 +697,33 @@ def _stock_rows(raw_rows: List[dict], barcode_index: dict, sku_index: dict, cat_
 def _summary(rows: List[dict]) -> dict:
     invalid = [row for row in rows if row["errors"]]
     return {"row_count": len(rows), "valid_count": len(rows) - len(invalid), "invalid_count": len(invalid)}
+
+
+# Plain-language buckets for the preview/skip summary — so a non-technical
+# admin sees "14 rows: vendor spelling didn't match" instead of having to
+# read every row's raw error text one at a time.
+_REASON_LABELS = [
+    ("does not match any product", "Barcode / Item Code not found in the catalogue"),
+    ("multiple products match", "Ambiguous — matches more than one product, needs a Barcode/Item Code to resolve"),
+    ("was not found in imported sales", "No matching product by Division/Section/Department/Category — check those columns and the Vendor spelling"),
+    ("does not match the hq warehouse or any store", "Store/location name not recognised"),
+    ("must be zero or greater", "Quantity column has an invalid (negative or non-numeric) value"),
+]
+
+
+def _error_breakdown(rows: List[dict]) -> List[dict]:
+    counts: Dict[str, int] = {}
+    for row in rows:
+        if not row["errors"]:
+            continue
+        seen: set = set()
+        for error in row["errors"]:
+            lowered = error.lower()
+            for needle, label in _REASON_LABELS:
+                if needle in lowered and label not in seen:
+                    counts[label] = counts.get(label, 0) + 1
+                    seen.add(label)
+    return [{"reason": label, "row_count": count} for label, count in sorted(counts.items(), key=lambda kv: -kv[1])]
 
 
 def _public(row: dict) -> dict:
@@ -646,6 +755,37 @@ def _new_product_doc(tenant_id: str, batch_id: str, row: dict, now: datetime) ->
     return base
 
 
+def _new_product_doc_from_stock(tenant_id: str, batch_id: str, payload: dict, now: datetime) -> dict:
+    """Same shape as _new_product_doc, sourced from a stock row instead of a
+    sales row — for genuinely new stock that has never been sold yet, so the
+    Sales import never had a barcode to create it from. product_name starts
+    as the barcode itself; enrichment_patch (always applied — this whole
+    module is Raphaaa-only) replaces it with a real hierarchy-derived name,
+    the same way a poor sales-side name would be replaced."""
+    cats = payload.get("_cats") or ["", "", "", "", ""]
+    base = {
+        "product_name": payload["barcode"],
+        "division": payload["division"], "section": payload["section"], "department": payload["department"],
+        "hsn_code": "", "gst_rate": 0.0, "cgst_rate": 0.0, "sgst_rate": 0.0, "igst_rate": 0.0,
+        "sku": payload["sku"] or f"DH-{payload['barcode']}",
+        "barcode": payload["barcode"],
+        "design_no": cats[0],
+        "category1": cats[0], "category2": cats[1], "category3": cats[2], "category4": cats[3], "category5": cats[4],
+        "cost_price": payload["cost_price"],
+        "mrp": payload["mrp"],
+        "selling_price": payload["rsp"] or payload["mrp"] or payload["cost_price"],
+        "quantity": 0, "unit": "pcs", "description": "", "specification": "",
+        "has_variants": False, "variant_type": "none", "variants": [], "images": [],
+        "vendor_id": None, "vendor_name": payload["vendor_name"],
+        "created_at": now, "created_by": "DATA_HUB",
+        "tenant_id": tenant_id,
+        "source": "data_hub_import", "data_hub_batch_id": batch_id,
+    }
+    if is_raphaaa_tenant(tenant_id):
+        base.update(enrichment_patch(base))
+    return base
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Status / template
 # ─────────────────────────────────────────────────────────────────────────────
@@ -665,6 +805,7 @@ async def get_data_hub_status(ctx: TenantCtx = Depends(_forecast_context)):
         "message": "Import the sales file first (it also builds the product catalogue), then the stock file. Multi-sheet workbooks are read in full — every tab whose headers match is combined, cover/filter/summary tabs are skipped. The stock file can be wide (a column per location: WAREHOUSE + store columns) or long (one row per product per site: a Locname / Source Site column plus CLOSING_QTY) — both are auto-detected. Matching uses ITEM_CODE / BARCODE first, then DIVISION/SECTION/DEPARTMENT/VENDOR/CAT1-5 with RSP/MRP. Finance, GST and POS flows are never touched.",
         "catalogue_size": catalogue_size,
         "locations": [{"id": "central", "name": CENTRAL_LABEL}, *[{"id": store["id"], "name": store["name"]} for store in stores]],
+        "tenant_id": ctx["tenant_id"],
     }
 
 
@@ -722,6 +863,7 @@ async def preview_stock_snapshot(file: UploadFile = File(...), ctx: TenantCtx = 
     stores = await _stores(ctx["tenant_id"])
     rows, totals, _, meta = _stock_rows(raw_rows, barcode_index, sku_index, cat_index, stores)
     resolved_via_category = sum(1 for row in rows if row.get("matched_via") == "category")
+    new_from_stock = sum(1 for row in rows if row.get("matched_via") == "new_from_stock")
     return {
         "status": "success",
         "mode": "preview_only",
@@ -730,11 +872,13 @@ async def preview_stock_snapshot(file: UploadFile = File(...), ctx: TenantCtx = 
             **_summary(rows),
             "products_in_snapshot": sum(1 for row in rows if row.get("matched_via")),
             "resolved_via_category": resolved_via_category,
+            "new_products_from_stock": new_from_stock,
             "unresolved_rows": sum(1 for row in rows if row["errors"] and not row.get("matched_via")),
             "catalogue_size": len(barcode_index),
             "location_totals": totals,
             "file_format": meta["format"],
             "location_map": meta["location_map"],
+            "error_breakdown": _error_breakdown(rows),
         },
         "rows": [_public(row) for row in rows[:PREVIEW_ROWS]],
         "truncated": len(rows) > PREVIEW_ROWS,
@@ -895,15 +1039,39 @@ async def commit_stock_snapshot(
     now = datetime.utcnow()
     changes: List[dict] = []
     skipped: List[dict] = []
+    created_products: List[str] = []
     applied = 0
 
     for row in rows:
         if row["_product"] is None or any(any(b in error for b in blocking) for error in row["errors"]):
             skipped.append({"row_no": row["row_no"], "product": row["product"], "errors": row["errors"]})
             continue
+
+        if row.get("matched_via") == "new_from_stock":
+            # Genuinely new stock that's never been sold, so the Sales import
+            # never had a barcode to create it from. Create it now — but
+            # check first in case an earlier row in this same file already
+            # created it (two rows for the same new barcode at different
+            # sites), or a concurrent import beat us to it.
+            existing_product = await product_collection.find_one({"tenant_id": tenant_id, "barcode": row["_product"]["barcode"]}, {"product_name": 1})
+            if existing_product:
+                row["_product"]["product_name"] = existing_product.get("product_name") or row["_product"]["barcode"]
+            else:
+                new_doc = _new_product_doc_from_stock(tenant_id, batch_id, row["_product"], now)
+                await product_collection.insert_one(new_doc)
+                row["_product"]["product_name"] = new_doc["product_name"]
+                created_products.append(new_doc["barcode"])
+
         barcode = row["_product"]["barcode"]
         description = row["_product"]["product_name"]
+        touched_labels = set(row.get("touched") or [])
         for label, qty in row["allocation"].items():
+            if label not in touched_labels:
+                # This product's rows in the file never mentioned this
+                # location — leave whatever is already there untouched,
+                # instead of silently zeroing it out just because every
+                # OTHER location for this product got a real value.
+                continue
             if label == CENTRAL_LABEL:
                 collection = inventory_collection
                 flt = {"tenant_id": tenant_id, "barcode": barcode}
@@ -937,6 +1105,7 @@ async def commit_stock_snapshot(
         "created_by": ctx.get("admin_id"), "created_by_name": ctx.get("admin_name") or ctx.get("admin_email") or "",
         "rows_applied": applied, "rows_skipped": len(skipped),
         "location_totals": totals, "changes": changes, "rolled_back": False,
+        "products_created": created_products, "products_created_count": len(created_products),
     }
     await data_hub_imports_collection.insert_one(log)
 
@@ -944,6 +1113,8 @@ async def commit_stock_snapshot(
         "status": "success", "mode": "committed", "import_type": "stock_snapshot", "batch_id": batch_id,
         "rows_applied": applied, "rows_skipped": len(skipped), "locations_written": len(changes),
         "location_totals": totals, "skipped_rows": skipped[:PREVIEW_ROWS],
+        "skipped_breakdown": _error_breakdown(rows),
+        "products_created": created_products, "products_created_count": len(created_products),
     }
 
 
@@ -1117,6 +1288,20 @@ async def rollback_import(batch_id: str, ctx: TenantCtx = Depends(_pilot_context
             else:
                 deleted = await collection.delete_one(flt)
                 reverted += deleted.deleted_count
+
+        # This batch may have created genuinely-new products for stock that
+        # had never been sold (see _new_product_doc_from_stock) — remove
+        # them too, same safety rule as the sales-side rollback: only if no
+        # stock is left against them (the reverts just above already zeroed
+        # or removed this batch's own stock for that barcode).
+        for barcode in doc.get("products_created", []):
+            has_stock = await inventory_collection.find_one({"tenant_id": tenant_id, "barcode": barcode, "stockQty": {"$gt": 0}}) \
+                or await store_stock_collection.find_one({"tenant_id": tenant_id, "barcode": barcode, "stockQty": {"$gt": 0}})
+            if not has_stock:
+                removed = await product_collection.delete_one(
+                    {"tenant_id": tenant_id, "barcode": barcode, "source": "data_hub_import", "data_hub_batch_id": batch_id}
+                )
+                products_removed += removed.deleted_count
 
     await data_hub_imports_collection.update_one(
         {"_id": doc["_id"]},

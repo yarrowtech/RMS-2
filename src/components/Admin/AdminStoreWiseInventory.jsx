@@ -15,7 +15,7 @@ function authHeaders() {
 }
 
 /* ── All-stores totals, side by side ── */
-function StoreStockSummary({ refreshKey }) {
+function StoreStockSummary({ refreshKey, onTenant }) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -24,7 +24,7 @@ function StoreStockSummary({ refreshKey }) {
     setLoading(true); setError(null);
     fetch(`${API}/stock-allocation/store-summary`, { headers: authHeaders() })
       .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
-      .then((json) => setRows(json.data || []))
+      .then((json) => { setRows(json.data || []); onTenant?.(json.tenant_id || ""); })
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
   }, [refreshKey]);
@@ -161,6 +161,7 @@ function ItemMatrixView({ refreshKey }) {
 ══════════════════════════════════════════════════════════════════ */
 export default function AdminStoreWiseInventory() {
   const [refreshKey, setRefreshKey] = useState(0);
+  const [tenantId, setTenantId] = useState("");
 
   return (
     <div className="p-6 space-y-5">
@@ -169,7 +170,10 @@ export default function AdminStoreWiseInventory() {
           <FaWarehouse className="text-indigo-600 text-2xl shrink-0" />
           <div>
             <h1 className="text-xl sm:text-2xl font-bold text-slate-900">Store-wise Inventory</h1>
-            <p className="text-xs text-slate-500 mt-0.5">Central stock plus every store/branch's stock, side by side.</p>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Central stock plus every store/branch's stock, side by side.
+              {tenantId && <span className="ml-2 font-mono text-slate-400">Tenant: {tenantId}</span>}
+            </p>
           </div>
         </div>
         <button onClick={() => setRefreshKey((k) => k + 1)}
@@ -178,7 +182,7 @@ export default function AdminStoreWiseInventory() {
         </button>
       </div>
 
-      <StoreStockSummary refreshKey={refreshKey} />
+      <StoreStockSummary refreshKey={refreshKey} onTenant={setTenantId} />
 
       <div>
         <h2 className="text-sm font-bold text-slate-700 mb-2">Item-level breakdown</h2>
