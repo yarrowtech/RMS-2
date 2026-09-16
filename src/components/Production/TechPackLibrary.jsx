@@ -17,6 +17,7 @@ async function api(path, options = {}) {
 
 const IMAGE_SECTIONS = [
   ["sketch", "Sketch", "Front/back flat drawing or photo reference."],
+  ["spec", "Spec sheet", "Measurement drawing with numbered POM callouts."],
   ["details", "Details", "Enlarged construction details - collar, pocket, cuff etc."],
   ["artwork", "Artwork", "Print/embroidery/flocking artwork, actual size or to scale."],
   ["trims", "Trims & label", "Trim photos, label placement, hangtag."],
@@ -31,7 +32,10 @@ const emptyPack = {
   sizes: "", artwork_width_cm: "", artwork_height_cm: "", artwork_placement: "",
 };
 
-const emptyMeasurementRow = (sizes) => ({ point: "", sample_value: "", grades: Object.fromEntries(sizes.map((s) => [s, ""])) });
+const emptyMeasurementRow = (sizes) => ({
+  pom_code: "", point: "", measure_instruction: "", unit: "cm", sample_value: "",
+  tolerance: "", grade_rule: "", grades: Object.fromEntries(sizes.map((s) => [s, ""])),
+});
 const emptyTrimRow = () => ({ description: "", color: "", size: "", supplier: "", quantity: "", price: "" });
 const emptyColourway = () => ({ name: "", fabric_ref: "", thread_ref: "", image_file: null, image_preview: "" });
 const emptyFabricReference = () => ({
@@ -81,7 +85,7 @@ async function buildTechPackPdf(pack, plans = []) {
   const safe = (value, fallback = "-") => String(value || fallback);
   const imageGroups = {
     sketch: [...new Set([...cleanAssetUrls(pack.sketch_images), ...cleanAssetUrls(pack.reference_images)])],
-    details: cleanAssetUrls(pack.details_images), artwork: cleanAssetUrls(pack.artwork_images), trims: cleanAssetUrls(pack.trims_images), colourway: cleanAssetUrls(pack.colourway_images),
+    spec: cleanAssetUrls(pack.spec_images), details: cleanAssetUrls(pack.details_images), artwork: cleanAssetUrls(pack.artwork_images), trims: cleanAssetUrls(pack.trims_images), colourway: cleanAssetUrls(pack.colourway_images),
   };
   const header = (section, pageNo) => {
     doc.setDrawColor(30, 41, 59); doc.setLineWidth(0.8); doc.rect(margin, 26, contentWidth, 64);
@@ -201,11 +205,17 @@ async function buildTechPackPdf(pack, plans = []) {
   y = sectionBar("Front, back and reference views", y); y = await imageGrid(imageGroups.sketch, y, 190);
   if (!imageGroups.sketch.length) y = textBox("Sketch reference", "No sketch image attached. Use the written description and upload a front/back reference before issuing to the job worker.", y, 50); footer();
 
-  doc.addPage(); pageNo += 1; header("2. Spec Sheet & Measurements", pageNo); y = 108; y = sectionBar("Point of Measure (POM) and grading", y);
+  doc.addPage(); pageNo += 1; header("2A. Spec Sheet Reference", pageNo); y = 108; y = sectionBar("Measurement drawing and POM callouts", y);
+  y = await imageGrid(imageGroups.spec, y, 285);
+  if (!imageGroups.spec.length) y = textBox("Measurement reference", "No measurement drawing attached. Confirm every POM instruction in the table before cutting or inspection.", y, 55);
+  y = textBox("General measurement notes", pack.measurement_notes || "Measure the finished garment flat unless a row states otherwise.", y, 55); footer();
+
+  doc.addPage(); pageNo += 1; header("2B. POM & Size Grading", pageNo); y = 108; y = sectionBar("Point of Measure instructions", y);
   const sizes = Array.isArray(pack.sizes) ? pack.sizes : String(pack.sizes || "").split(",").map((size) => size.trim()).filter(Boolean);
-  const specColumns = ["POM / Measurement", "Sample", ...sizes]; const specWidths = [190, 78, ...sizes.map(() => (contentWidth - 268) / Math.max(sizes.length, 1))];
-  y = table(specColumns, (pack.measurement_rows || []).map((row) => [row.point, row.sample_value, ...sizes.map((size) => row.grades?.[size] || "")]), y, specWidths);
-  y = textBox("Measurement instructions", pack.measurement_notes || "Measure finished garment flat unless a different instruction is written. Confirm any tolerance with the merchandiser before cutting.", y, 50); footer();
+  y = table(["Code", "POM / Measurement", "How to measure", "Unit", "Tolerance", "Grade rule"], (pack.measurement_rows || []).map((row) => [row.pom_code, row.point, row.measure_instruction, row.unit || "cm", row.tolerance, row.grade_rule]), y, [44, 112, 194, 40, 55, 82]);
+  y = sectionBar(`Approved measurements${pack.sample_size ? ` - base/sample ${pack.sample_size}` : ""}`, y);
+  const specColumns = ["POM", "Sample", ...sizes]; const specWidths = [150, 70, ...sizes.map(() => (contentWidth - 220) / Math.max(sizes.length, 1))];
+  y = table(specColumns, (pack.measurement_rows || []).map((row) => [`${row.pom_code ? `${row.pom_code} - ` : ""}${row.point}`, row.sample_value, ...sizes.map((size) => row.grades?.[size] || "")]), y, specWidths); footer();
 
   doc.addPage(); pageNo += 1; header("3. Construction Details", pageNo); y = 108; y = sectionBar("Construction and finishing instructions", y); y = textBox("Details", pack.construction_notes, y, 80); y = await imageGrid(imageGroups.details, y, 205);
   if (!imageGroups.details.length) y = textBox("Detail reference", "No enlarged construction image attached. Follow the construction notes above and request clarification before production if anything is unclear.", y, 50); footer();
@@ -323,7 +333,9 @@ function PackModal({ plans = [], themes = [], pack = null, onClose, onSaved }) {
   const editing = Boolean(pack?.id);
   const [form, setForm] = useState(() => Object.fromEntries(Object.keys(emptyPack).map((key) => [key, key === "sizes" ? (pack?.sizes || []).join(", ") : key === "reference_images" || key === "document_urls" ? (pack?.[key] || []).join("\n") : pack?.[key] ?? emptyPack[key]])));
   const [sizeList, setSizeList] = useState(() => pack?.sizes || []);
-  const [measurementRows, setMeasurementRows] = useState(() => pack?.measurement_rows || []);
+  const [measurementRows, setMeasurementRows] = useState(() => pack?.measurement_rows?.length
+    ? pack.measurement_rows.map((row) => ({ ...emptyMeasurementRow(pack?.sizes || []), ...row }))
+    : [emptyMeasurementRow(pack?.sizes || [])]);
   const [trimRows, setTrimRows] = useState(() => pack?.trims_items?.length ? pack.trims_items : [emptyTrimRow()]);
   const [colourways, setColourways] = useState(() => pack?.colourways?.length ? pack.colourways.map((row) => ({ ...row, image_file: null, image_preview: row.image_url || "" })) : [emptyColourway()]);
   const [fabricReferences, setFabricReferences] = useState(() => pack?.fabric_references?.length
@@ -494,31 +506,40 @@ function PackModal({ plans = [], themes = [], pack = null, onClose, onSaved }) {
 
       {/* 2. Spec Sheet */}
       <Section number="2" title="Spec Sheet" subtitle="Measurements with Point of Measure (POM) instructions, and grading per size.">
-        <Field label="Sizes (comma separated, e.g. S, M, L, XL)"><input value={form.sizes} onChange={(e) => applySizes(e.target.value)} placeholder="S, M, L, XL" /></Field>
-        {sizeList.length > 0 && (
-          <div className="overflow-x-auto rounded-2xl border border-slate-200">
-            <table className="w-full text-xs">
-              <thead className="bg-slate-50"><tr>
-                <th className="px-3 py-2 text-left font-bold text-slate-500">Measurement point</th>
-                <th className="px-3 py-2 text-left font-bold text-slate-500">Sample</th>
-                {sizeList.map((size) => <th key={size} className="px-3 py-2 text-left font-bold text-slate-500">{size}</th>)}
-                <th />
-              </tr></thead>
-              <tbody>
-                {measurementRows.map((row, index) => (
-                  <tr key={index} className="border-t border-slate-100">
-                    <td className="px-3 py-1.5"><input value={row.point} onChange={(e) => changeMeasurement(index, "point", e.target.value)} placeholder="Chest" className="w-full rounded-lg border border-slate-200 px-2 py-1.5" /></td>
-                    <td className="px-3 py-1.5"><input value={row.sample_value} onChange={(e) => changeMeasurement(index, "sample_value", e.target.value)} placeholder="40" className="w-20 rounded-lg border border-slate-200 px-2 py-1.5" /></td>
-                    {sizeList.map((size) => <td key={size} className="px-3 py-1.5"><input value={row.grades?.[size] || ""} onChange={(e) => changeMeasurement(index, "grade", e.target.value, size)} className="w-16 rounded-lg border border-slate-200 px-2 py-1.5" /></td>)}
-                    <td><button type="button" disabled={measurementRows.length === 1} onClick={() => setMeasurementRows((rows) => rows.filter((_, i) => i !== index))} className="px-2 text-lg font-bold text-rose-500 disabled:text-slate-300">x</button></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+        <div className="rounded-xl border border-sky-200 bg-sky-50 p-3 text-xs leading-5 text-sky-900"><b>How to prepare this section:</b> upload a front/back measurement drawing with POM callout codes, enter the same code in each table row, explain exactly how it is measured, then enter the approved sample and graded size measurements. Leave unknown values blank rather than guessing.</div>
+        <div className="grid gap-4 lg:grid-cols-[minmax(260px,.75fr)_minmax(0,1.25fr)]">
+          <ImageUploadSection label="Measurement reference images" hint="Upload product drawings or photos with numbered POM callouts. Multiple images are allowed for front, back or detail views." files={images.spec} previews={previews.spec} onAdd={(f) => addImages("spec", f)} onRemove={(i) => removeImage("spec", i)} />
+          <div className="space-y-3 rounded-2xl border border-slate-200 bg-white p-4">
+            <Field label="Sizes (comma separated, e.g. S, M, L, XL)"><input value={form.sizes} onChange={(e) => applySizes(e.target.value)} placeholder="S, M, L, XL" /></Field>
+            <div className="grid gap-3 sm:grid-cols-2"><div className="rounded-xl bg-violet-50 p-3 text-xs text-violet-800"><b>Base/sample size:</b> {form.sample_size || "Set the Sample size at the top of this Tech Pack."}</div><div className="rounded-xl bg-slate-50 p-3 text-xs text-slate-600"><b>Grading:</b> each POM can have its own increment/rule and exact approved value for every size.</div></div>
+            <Field label="Other spec sheet notes (optional)"><textarea rows="2" value={form.measurement_notes || ""} onChange={(e) => update("measurement_notes", e.target.value)} placeholder="General measuring position, garment condition, tolerance policy or grading exceptions." /></Field>
           </div>
-        )}
+        </div>
+        <div className="overflow-x-auto rounded-2xl border border-slate-200">
+          <table className="min-w-[1500px] w-full text-xs">
+            <thead className="bg-slate-50"><tr>
+              {[["POM code", "w-24"], ["Measurement point", "w-40"], ["How to measure", "w-64"], ["Unit", "w-20"], [`Sample${form.sample_size ? ` (${form.sample_size})` : ""}`, "w-24"], ["Tolerance", "w-24"], ["Grade rule / increment", "w-40"]].map(([label, width]) => <th key={label} className={`px-3 py-2 text-left font-bold text-slate-500 ${width}`}>{label}</th>)}
+              {sizeList.map((size) => <th key={size} className="w-24 px-3 py-2 text-left font-bold text-slate-500">{size}</th>)}
+              <th className="w-10" />
+            </tr></thead>
+            <tbody>
+              {measurementRows.map((row, index) => (
+                <tr key={index} className="border-t border-slate-100 align-top">
+                  <td className="px-3 py-2"><input value={row.pom_code || ""} onChange={(e) => changeMeasurement(index, "pom_code", e.target.value)} placeholder={`P${index + 1}`} className="w-20 rounded-lg border border-slate-200 px-2 py-1.5" /></td>
+                  <td className="px-3 py-2"><input value={row.point} onChange={(e) => changeMeasurement(index, "point", e.target.value)} placeholder="Chest width" className="w-36 rounded-lg border border-slate-200 px-2 py-1.5" /></td>
+                  <td className="px-3 py-2"><textarea rows="2" value={row.measure_instruction || ""} onChange={(e) => changeMeasurement(index, "measure_instruction", e.target.value)} placeholder="Measure straight across, 2.5 cm below armhole" className="w-60 rounded-lg border border-slate-200 px-2 py-1.5" /></td>
+                  <td className="px-3 py-2"><select value={row.unit || "cm"} onChange={(e) => changeMeasurement(index, "unit", e.target.value)} className="w-20 rounded-lg border border-slate-200 px-2 py-1.5"><option>cm</option><option>inch</option><option>mm</option></select></td>
+                  <td className="px-3 py-2"><input value={row.sample_value} onChange={(e) => changeMeasurement(index, "sample_value", e.target.value)} placeholder="50" className="w-20 rounded-lg border border-slate-200 px-2 py-1.5" /></td>
+                  <td className="px-3 py-2"><input value={row.tolerance || ""} onChange={(e) => changeMeasurement(index, "tolerance", e.target.value)} placeholder="±0.5" className="w-20 rounded-lg border border-slate-200 px-2 py-1.5" /></td>
+                  <td className="px-3 py-2"><input value={row.grade_rule || ""} onChange={(e) => changeMeasurement(index, "grade_rule", e.target.value)} placeholder="+2 cm each size" className="w-36 rounded-lg border border-slate-200 px-2 py-1.5" /></td>
+                  {sizeList.map((size) => <td key={size} className="px-3 py-2"><input value={row.grades?.[size] || ""} onChange={(e) => changeMeasurement(index, "grade", e.target.value, size)} placeholder={size} className="w-20 rounded-lg border border-slate-200 px-2 py-1.5" /></td>)}
+                  <td className="px-1 py-2"><button type="button" disabled={measurementRows.length === 1} onClick={() => setMeasurementRows((rows) => rows.filter((_, i) => i !== index))} className="px-2 text-lg font-bold text-rose-500 disabled:text-slate-300">x</button></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
         <button type="button" onClick={() => setMeasurementRows((rows) => [...rows, emptyMeasurementRow(sizeList)])} className="text-sm font-bold text-violet-700">+ Add measurement point</button>
-        <Field label="Other spec sheet notes (optional)"><textarea rows="2" value={form.measurement_notes || ""} onChange={(e) => update("measurement_notes", e.target.value)} placeholder="Tolerance, grading rule exceptions, anything the table doesn't cover." /></Field>
       </Section>
 
       {/* 3. Details */}
@@ -647,9 +668,9 @@ function PackDetail({ pack, plans, onClose, onUpdated }) {
       {IMAGE_SECTIONS.map(([key, label]) => (pack[`${key}_images`]?.length > 0) && (
         <div key={key}><p className="mb-2 text-xs font-black uppercase tracking-wide text-slate-500">{label} images</p><div className="flex flex-wrap gap-2">{pack[`${key}_images`].map((src) => <img key={src} src={src} alt={label} className="h-20 w-20 rounded-xl border border-slate-200 object-cover" />)}</div></div>
       ))}
-      {pack.sizes?.length > 0 && pack.measurement_rows?.length > 0 && (
+      {pack.measurement_rows?.length > 0 && (
         <div><p className="mb-2 text-xs font-black uppercase tracking-wide text-slate-500">Spec sheet</p>
-          <div className="overflow-x-auto rounded-xl border border-slate-200"><table className="w-full text-xs"><thead className="bg-slate-50"><tr><th className="px-3 py-2 text-left">Point</th><th className="px-3 py-2 text-left">Sample</th>{pack.sizes.map((s) => <th key={s} className="px-3 py-2 text-left">{s}</th>)}</tr></thead><tbody>{pack.measurement_rows.map((row, i) => <tr key={i} className="border-t border-slate-100"><td className="px-3 py-1.5 font-bold">{row.point}</td><td className="px-3 py-1.5">{row.sample_value}</td>{pack.sizes.map((s) => <td key={s} className="px-3 py-1.5">{row.grades?.[s] || ""}</td>)}</tr>)}</tbody></table></div>
+          <div className="overflow-x-auto rounded-xl border border-slate-200"><table className="min-w-[1100px] w-full text-xs"><thead className="bg-slate-50"><tr>{["Code", "Point", "How to measure", "Unit", "Sample", "Tolerance", "Grade rule"].map((heading) => <th key={heading} className="px-3 py-2 text-left">{heading}</th>)}{(pack.sizes || []).map((s) => <th key={s} className="px-3 py-2 text-left">{s}</th>)}</tr></thead><tbody>{pack.measurement_rows.map((row, i) => <tr key={i} className="border-t border-slate-100"><td className="px-3 py-1.5 font-bold text-violet-700">{row.pom_code || `P${i + 1}`}</td><td className="px-3 py-1.5 font-bold">{row.point}</td><td className="max-w-[240px] px-3 py-1.5">{row.measure_instruction || "—"}</td><td className="px-3 py-1.5">{row.unit || "cm"}</td><td className="px-3 py-1.5">{row.sample_value}</td><td className="px-3 py-1.5">{row.tolerance || "—"}</td><td className="px-3 py-1.5">{row.grade_rule || "—"}</td>{(pack.sizes || []).map((s) => <td key={s} className="px-3 py-1.5">{row.grades?.[s] || ""}</td>)}</tr>)}</tbody></table></div>
         </div>
       )}
       {pack.trims_items?.length > 0 && (

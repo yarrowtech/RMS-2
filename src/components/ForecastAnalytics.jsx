@@ -5,6 +5,7 @@ import {
   LineChart, TrendingUp, TrendingDown, Minus, Building2, Wallet, LogOut,
   Search, RefreshCw, AlertTriangle, ShoppingCart, BarChart3,
   UploadCloud, FileSpreadsheet, CheckCircle2, XCircle, Undo2, History, Download, Trash2,
+  Warehouse,
 } from "lucide-react";
 import {
   Bar, BarChart as RechartsBarChart, CartesianGrid, Legend,
@@ -502,6 +503,7 @@ function RaphaaaVendorRankingView() {
           <div className="max-w-3xl">
             <h4 className="text-base font-black text-slate-900">Raphaaa vendor performance ranking</h4>
             <p className="mt-1 text-sm text-slate-600">Ranks suppliers from Raphaaa's actual product sales, returns, discounts, current stock and calculated repurchase need—not catalogue price or a hidden score.</p>
+            <p className="mt-2 text-xs text-slate-500">How it's built: every filtered product line (same population as Purchase Plan) is grouped by its attributed vendor, and each vendor's units sold, gross/net sales, discount amount and recommended purchase quantity are summed straight from that real history — then vendors are sorted by whichever measure you pick above. There is no weighted composite score; changing the measure changes the ranking.</p>
             <p className="mt-2 text-xs text-slate-500">Vendor attribution uses the latest posted GRN first, then the Product Master supplier. Imported vendor names remain visible as unlinked evidence until they are connected to an approved RMS vendor.</p>
           </div>
           <div className="flex flex-wrap items-end gap-2">
@@ -640,6 +642,72 @@ function AlertsView({ raphaaaMode = false }) {
                   </tr>
                 ))}
             </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ── Store Stock Value (same recorded-on-hand data as HQ Admin's
+   Store-wise Inventory, surfaced here so Forecast & Analytics users don't
+   need separate HQ Admin access to see it) ── */
+function StoreStockValueView() {
+  const [rows, setRows] = useState([]);
+  const [error, setError] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback(() => {
+    setLoading(true); setError(null);
+    faFetch("/stock-allocation/store-summary")
+      .then((r) => setRows(r.data || []))
+      .catch((e) => setError(e.message))
+      .finally(() => setLoading(false));
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const totalQty = rows.reduce((sum, r) => sum + Number(r.total_qty || 0), 0);
+  const totalValue = rows.reduce((sum, r) => sum + Number(r.total_value || 0), 0);
+
+  return (
+    <div className="space-y-5">
+      <ErrorBanner message={error} />
+      <div className="fa-panel flex flex-wrap items-center justify-between gap-3 p-5">
+        <div>
+          <h4 className="text-sm font-bold text-slate-900">Store-wise stock value</h4>
+          <p className="mt-0.5 text-xs text-slate-500">Central plus every store/branch's recorded on-hand quantity and stock value, side by side. Same figures as HQ Admin's Store-wise Inventory.</p>
+        </div>
+        <button onClick={load} className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-bold text-indigo-700 hover:bg-indigo-100"><RefreshCw size={13} /> Refresh</button>
+      </div>
+
+      <div className="grid gap-4 sm:grid-cols-2">
+        <StatTile label="Total quantity" value={totalQty.toLocaleString("en-IN")} />
+        <StatTile label="Total stock value" value={formatMoney(totalValue)} tone="emerald" />
+      </div>
+
+      <div className="fa-panel overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead><tr>{["Location", "Items in stock", "Total qty", "Stock value"].map((h) => <th key={h} className={`whitespace-nowrap px-4 py-2.5 font-bold uppercase ${h === "Location" ? "text-left" : "text-right"}`}>{h}</th>)}</tr></thead>
+            <tbody className="divide-y divide-slate-100">
+              {loading ? <tr><td colSpan={4} className="px-4 py-8 text-center text-slate-400">Loading…</td></tr>
+                : rows.length === 0 ? <tr><td colSpan={4} className="px-4 py-8 text-center text-slate-400">No stores found.</td></tr>
+                : rows.map((r) => (
+                  <tr key={r.store_id || "central"}>
+                    <td className="px-4 py-2.5 font-semibold text-slate-800">{r.store_name}</td>
+                    <td className="px-4 py-2.5 text-right font-mono">{Number(r.item_count || 0).toLocaleString("en-IN")}</td>
+                    <td className="px-4 py-2.5 text-right font-mono">{Number(r.total_qty || 0).toLocaleString("en-IN")}</td>
+                    <td className="px-4 py-2.5 text-right font-mono text-slate-600">{formatMoney(r.total_value)}</td>
+                  </tr>
+                ))}
+            </tbody>
+            {rows.length > 0 && <tfoot><tr className="border-t-2 border-slate-200 bg-slate-50">
+              <td className="px-4 py-2.5 font-bold text-slate-900">All locations</td>
+              <td className="px-4 py-2.5" />
+              <td className="px-4 py-2.5 text-right font-mono font-bold">{totalQty.toLocaleString("en-IN")}</td>
+              <td className="px-4 py-2.5 text-right font-mono font-bold">{formatMoney(totalValue)}</td>
+            </tr></tfoot>}
           </table>
         </div>
       </div>
@@ -956,8 +1024,8 @@ function RaphaaaPurchasePlanView() {
                 {periods.map((period) => <td key={period.key} className="px-3 py-3">{Number(line.quantities_by_period?.[period.key] || 0).toLocaleString("en-IN")}</td>)}
                 <td className="px-3 py-3 font-bold">{line.historical_peak_qty}</td>
                 <td className="px-3 py-3 font-bold text-indigo-700">{line.purchase_qty_before_stock}</td>
-                <td className="px-3 py-3">{line.current_stock_qty}</td>
-                <td className="px-3 py-3">{line.stock_credit_qty}</td>
+                <td className="px-3 py-3">{line.current_stock_qty}{line.aged_stock_qty > 0 && <span className="mt-0.5 block text-[10px] font-bold text-amber-600">Fresh {line.fresh_stock_qty} · Aged {line.aged_stock_qty}{line.aged_avg_months != null && ` (~${Math.round(line.aged_avg_months)} mo)`}</span>}</td>
+                <td className="px-3 py-3">{line.stock_credit_qty}{line.aged_stock_qty > 0 && <span className="mt-0.5 block text-[10px] text-slate-400">Aged stock not credited</span>}</td>
                 <td className="px-3 py-3 text-sm font-black text-emerald-700">{line.final_purchase_qty}</td>
                 <td className="px-3 py-3">{line.unit_cost ? formatMoney(line.unit_cost) : "Unavailable"}<span className="block text-[10px] text-slate-400">{line.cost_source}{line.cost_reference ? ` · ${line.cost_reference}` : ""}</span></td>
                 <td className="px-3 py-3 font-bold">{formatMoney(line.estimated_purchase_amount)}</td>
@@ -987,6 +1055,29 @@ function RaphaaaPurchasePlanView() {
             <li><b>5.</b> Export the filtered CSV and use approved quantities to prepare a PO in Procurement.</li>
           </ol>
           <div className="mt-4 rounded-xl bg-slate-50 p-3 text-[11px] leading-5 text-slate-500"><b>What happens next:</b> this screen does not bypass vendor approval, PO, GRC or GRN. After review, Procurement creates the PO; received goods continue through the existing GRC → GRN → inventory flow.</div>
+        </div>
+      </div>}
+
+      {plan && plan.ageing_clearance?.length > 0 && <div className="fa-panel overflow-hidden">
+        <div className="border-b border-slate-100 px-5 py-4">
+          <h4 className="text-sm font-black text-slate-900">Ageing — stock to clear out</h4>
+          <p className="mt-1 text-xs text-slate-500">Stock older than {plan.policy?.fresh_max_months ?? 2} months (by CATEGORY6/Ageing). It no longer reduces how much you buy fresh — it's shown here instead so it can be discounted or otherwise cleared.</p>
+        </div>
+        <div className="max-h-80 overflow-auto">
+          <table className="min-w-[700px] w-full text-xs">
+            <thead><tr>{["Product", "Vendor", "Fresh stock", "Aged stock", "Age"].map((heading) => <th key={heading} className="px-4 py-3 text-left font-black uppercase">{heading}</th>)}</tr></thead>
+            <tbody className="divide-y divide-slate-100">
+              {plan.ageing_clearance.map((row) => (
+                <tr key={row.barcode}>
+                  <td className="px-4 py-3 font-bold">{row.name}{row.design_no && <span className="block text-[10px] font-normal text-slate-400">Design {row.design_no}</span>}</td>
+                  <td className="px-4 py-3">{row.vendor_name || "Unavailable"}</td>
+                  <td className="px-4 py-3">{row.fresh_stock_qty}</td>
+                  <td className="px-4 py-3 font-black text-amber-700">{row.aged_stock_qty}</td>
+                  <td className="px-4 py-3">{row.aged_avg_months != null ? `~${Math.round(row.aged_avg_months)} mo` : "Unavailable"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       </div>}
     </div>
@@ -1056,11 +1147,12 @@ function aggregateRaphaaaVendors(lines) {
 }
 
 function downloadPurchasePlan(lines, periods) {
-  const headers = ["Product", "Design No.", "SKU", "Barcode", "Vendor", ...periods.map((p) => `${p.label} units`), "Peak units", "PQ before stock", "Current stock", "50% stock credit", "Final purchase qty", "Unit cost", "Purchase amount", "Gross sales", "Discount", "Net sales", "Promotion", "Confidence", "Cost source"];
+  const headers = ["Product", "Design No.", "SKU", "Barcode", "Vendor", ...periods.map((p) => `${p.label} units`), "Peak units", "PQ before stock", "Current stock", "Fresh stock", "Aged stock", "Aged stock avg months", "50% stock credit", "Final purchase qty", "Unit cost", "Purchase amount", "Gross sales", "Discount", "Net sales", "Promotion", "Confidence", "Cost source"];
   const values = lines.map((line) => [
     line.name, line.design_no, line.sku, line.barcode, line.vendor_name,
     ...periods.map((p) => line.quantities_by_period?.[p.key] || 0),
     line.historical_peak_qty, line.purchase_qty_before_stock, line.current_stock_qty,
+    line.fresh_stock_qty, line.aged_stock_qty, line.aged_avg_months ?? "",
     line.stock_credit_qty, line.final_purchase_qty, line.unit_cost,
     line.estimated_purchase_amount, line.gross_sales, line.discount_amount,
     line.net_sales, line.promotion, line.confidence, line.cost_source,
@@ -1578,7 +1670,9 @@ export default function ForecastAnalytics() {
       .catch(() => { setDataHubEnabled(false); setProductEnrichmentEnabled(false); });
   }, []);
 
-  const menu = dataHubEnabled ? [...MENU, { id: "import", label: "Data Import", icon: UploadCloud }] : MENU;
+  const menu = dataHubEnabled
+    ? [...MENU, { id: "store-value", label: "Store Stock Value", icon: Warehouse }, { id: "import", label: "Data Import", icon: UploadCloud }]
+    : MENU;
   const activeLabel = menu.find((item) => item.id === activeSection)?.label || "Overview";
 
   const renderContent = () => {
@@ -1588,6 +1682,7 @@ export default function ForecastAnalytics() {
       case "vendors": return <VendorRankingView raphaaaMode={productEnrichmentEnabled} />;
       case "purchase": return <PurchasePlanView raphaaaMode={productEnrichmentEnabled} />;
       case "alerts": return <AlertsView raphaaaMode={productEnrichmentEnabled} />;
+      case "store-value": return dataHubEnabled ? <StoreStockValueView /> : <DashboardView onNavigate={setActiveSection} raphaaaMode={productEnrichmentEnabled} />;
       case "import": return dataHubEnabled ? <DataImportView enrichmentEnabled={productEnrichmentEnabled} /> : <DashboardView onNavigate={setActiveSection} raphaaaMode={productEnrichmentEnabled} />;
       default: return <DashboardView onNavigate={setActiveSection} raphaaaMode={productEnrichmentEnabled} />;
     }

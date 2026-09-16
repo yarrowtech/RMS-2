@@ -14,6 +14,9 @@ from typing import Dict, List
 RAPHAAA_POLICY_CODE = "RAPHAAA_PEAK_PERIOD_18_STOCK_HALF_V1"
 RAPHAAA_UPLIFT_PCT = 18.0
 RAPHAAA_STOCK_CREDIT_PCT = 50.0
+# CATEGORY6/Ageing (an "MM/YY" receipt month) older than this many months from
+# today counts as aged rather than fresh stock for the purchase-plan credit.
+RAPHAAA_FRESH_MAX_MONTHS = 2
 
 
 def _month_after(year: int, month: int) -> datetime:
@@ -82,12 +85,23 @@ def build_purchase_math(
     avg_selling_price: float,
     uplift_pct: float = RAPHAAA_UPLIFT_PCT,
     stock_credit_pct: float = RAPHAAA_STOCK_CREDIT_PCT,
+    aged_stock: float = 0.0,
 ) -> dict:
-    """Apply Raphaaa's explicit peak + uplift - stock-credit formula."""
+    """Apply Raphaaa's explicit peak + uplift - stock-credit formula.
+
+    current_stock is FRESH stock only. The stock credit only ever reduces the
+    buy against stock that isn't already ageing — old unsold stock isn't real
+    competition for a new customer's attention, so it's reported via
+    aged_stock (a "clear this out" signal) without lowering final_purchase_qty.
+    A caller that never passes aged_stock gets the original all-stock-is-fresh
+    behaviour (aged_stock defaults to 0).
+    """
     values = [max(0.0, float(value or 0)) for value in quantities_by_period.values()]
     historical_peak = max(values, default=0.0)
     purchase_quantity_before_stock = math.ceil(historical_peak * (1 + uplift_pct / 100))
-    stock_credit = max(0.0, float(current_stock or 0)) * stock_credit_pct / 100
+    fresh_stock = max(0.0, float(current_stock or 0))
+    aged = max(0.0, float(aged_stock or 0))
+    stock_credit = fresh_stock * stock_credit_pct / 100
     final_purchase_quantity = max(0, math.ceil(purchase_quantity_before_stock - stock_credit))
     cost = max(0.0, float(unit_cost or 0))
     selling_price = max(0.0, float(avg_selling_price or 0))
@@ -95,7 +109,9 @@ def build_purchase_math(
         "historical_peak_qty": round(historical_peak, 2),
         "uplift_pct": round(uplift_pct, 2),
         "purchase_qty_before_stock": purchase_quantity_before_stock,
-        "current_stock_qty": round(max(0.0, float(current_stock or 0)), 2),
+        "current_stock_qty": round(fresh_stock + aged, 2),
+        "fresh_stock_qty": round(fresh_stock, 2),
+        "aged_stock_qty": round(aged, 2),
         "stock_credit_pct": round(stock_credit_pct, 2),
         "stock_credit_qty": round(stock_credit, 2),
         "final_purchase_qty": final_purchase_quantity,

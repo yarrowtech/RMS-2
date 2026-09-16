@@ -1,6 +1,6 @@
 import unittest
 
-from app.routes.job_work_routes import _clean_asset_urls, _parse_fabric_references, _theme_reference
+from app.routes.job_work_routes import _clean_asset_urls, _parse_fabric_references, _parse_measurement_rows, _theme_reference
 from app.routes.production_flow_routes import clean_steps, number, safe_barcode
 
 
@@ -38,6 +38,18 @@ class ProductionFlowHelperTests(unittest.TestCase):
         self.assertEqual(rows[0]["reference_name"], "Main fabric")
         self.assertEqual(rows[0]["usage"], "Body and sleeves")
         self.assertEqual(rows[0]["image_urls"], ["https://cdn.example.com/main.jpg"])
+
+    def test_measurement_rows_keep_pom_instructions_tolerance_and_grading(self):
+        rows = _parse_measurement_rows([{
+            "pom_code": " P1 ", "point": "Chest width", "measure_instruction": "Measure 2.5 cm below armhole",
+            "unit": "cm", "sample_value": "50", "tolerance": "±0.5", "grade_rule": "+2 cm per size",
+            "grades": {"S": "48", "M": "50", "L": "52"},
+        }])
+        self.assertEqual(rows[0]["pom_code"], "P1")
+        self.assertEqual(rows[0]["measure_instruction"], "Measure 2.5 cm below armhole")
+        self.assertEqual(rows[0]["tolerance"], "±0.5")
+        self.assertEqual(rows[0]["grade_rule"], "+2 cm per size")
+        self.assertEqual(rows[0]["grades"]["L"], "52")
     def test_theme_reference_contains_locked_creative_and_supplier_details(self):
         result = _theme_reference({
             "_id": "theme-1", "theme_name": "Monsoon Earth", "collection": "Festive 2027",

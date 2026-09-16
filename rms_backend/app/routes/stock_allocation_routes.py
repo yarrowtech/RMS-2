@@ -270,7 +270,15 @@ async def get_store_stock_summary(authorization: str = Header(None)):
         if qty > 0:
             central_items += 1
         central_qty += qty
-        central_value += qty * price
+        # Raphaaa only: when the Data Hub stock import captured this location's
+        # real Closing Amt for this product, use it verbatim instead of
+        # recomputing qty x cost_price — the file's own value already accounts
+        # for whatever Standard Rate applied to that specific batch, which one
+        # shared Product Master cost_price can't represent.
+        if is_raphaaa and doc.get("stockValue") is not None:
+            central_value += float(doc.get("stockValue") or 0)
+        else:
+            central_value += qty * price
 
     # Seed every active store/branch so locations with zero stock still show
     # a row, not just whichever ones happen to have store_stock documents.
@@ -289,7 +297,7 @@ async def get_store_stock_summary(authorization: str = Header(None)):
         qty = float(doc.get("stockQty", 0))
         own_price = float(doc.get("mrp") or doc.get("rate") or 0) if is_single_store else 0.0
         price = own_price or central_prices.get(barcode, 0.0) or product_prices.get(barcode, 0.0)
-        value = qty * price
+        value = float(doc.get("stockValue") or 0) if (is_raphaaa and doc.get("stockValue") is not None) else qty * price
         row = rows_by_store.setdefault(store_id, {
             "store_id": store_id, "store_name": doc.get("store_name", ""),
             "item_count": 0, "total_qty": 0.0, "total_value": 0.0,

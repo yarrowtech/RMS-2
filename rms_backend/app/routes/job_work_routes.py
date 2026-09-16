@@ -128,7 +128,12 @@ def _parse_measurement_rows(raw: Any) -> list[dict]:
             grades = {}
         rows.append({
             "point": point,
+            "pom_code": str(row.get("pom_code") or "").strip()[:30],
+            "measure_instruction": str(row.get("measure_instruction") or "").strip()[:300],
+            "unit": str(row.get("unit") or "").strip()[:20],
             "sample_value": str(row.get("sample_value") or "").strip()[:20],
+            "tolerance": str(row.get("tolerance") or "").strip()[:40],
+            "grade_rule": str(row.get("grade_rule") or "").strip()[:120],
             "grades": {str(size).strip()[:20]: str(value).strip()[:20] for size, value in grades.items() if str(size).strip()},
         })
     return rows
@@ -195,7 +200,7 @@ def _parse_fabric_references(raw: Any) -> list[dict]:
     return rows
 
 
-TECH_PACK_IMAGE_CATEGORIES = ("sketch", "details", "artwork", "trims", "colourway")
+TECH_PACK_IMAGE_CATEGORIES = ("sketch", "spec", "details", "artwork", "trims", "colourway")
 
 
 async def _tech_pack_payload_from_request(request: Request) -> tuple[dict, dict[str, list[str]]]:
@@ -1495,6 +1500,7 @@ async def create_tech_pack(request: Request, ctx: dict = Depends(_require_design
         ],
         # Per-guide-page image slots (Sketch / Details / Artwork / Trims & Label / Colourways).
         "sketch_images": _category_images("sketch"),
+        "spec_images": _category_images("spec"),
         "details_images": _category_images("details"),
         "artwork_images": _category_images("artwork"),
         "trims_images": _category_images("trims"),
@@ -1602,6 +1608,7 @@ async def update_tech_pack(tech_pack_id: str, request: Request, ctx: dict = Depe
         "colourways": colourways,
         "fabric_references": fabric_references,
         "sketch_images": category_images("sketch"),
+        "spec_images": category_images("spec"),
         "details_images": category_images("details"),
         "artwork_images": category_images("artwork"),
         "trims_images": category_images("trims"),
@@ -1848,6 +1855,7 @@ async def create_order(request: Request, ctx: dict = Depends(_require_job_work))
             "artwork_width_cm": tech_pack.get("artwork_width_cm", ""), "artwork_height_cm": tech_pack.get("artwork_height_cm", ""),
             "artwork_placement": tech_pack.get("artwork_placement", ""), "colourways": tech_pack.get("colourways", []),
             "sketch_images": tech_pack.get("sketch_images", []), "details_images": tech_pack.get("details_images", []),
+            "spec_images": tech_pack.get("spec_images", []),
             "artwork_images": tech_pack.get("artwork_images", []), "trims_images": tech_pack.get("trims_images", []),
             "colourway_images": tech_pack.get("colourway_images", []),
         }

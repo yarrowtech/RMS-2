@@ -31,6 +31,7 @@ from ..error_log import log_error
 from ..product_identity import stock_identity
 from ..raphaaa_product_enrichment import enrichment_patch, is_raphaaa_tenant, proposed_product_name
 from ..raphaaa_purchase_plan import (
+    RAPHAAA_FRESH_MAX_MONTHS,
     RAPHAAA_POLICY_CODE,
     RAPHAAA_STOCK_CREDIT_PCT,
     RAPHAAA_UPLIFT_PCT,
@@ -518,6 +519,45 @@ async def _tenant_stock_map(tenant_id: str, aliases: Dict[str, str]) -> Dict[str
     return dict(totals)
 
 
+async def _tenant_stock_ageing_map(tenant_id: str, aliases: Dict[str, str]) -> Dict[str, tuple]:
+    """Fresh vs aged on-hand, per stock identity — from the freshQty/agedQty/
+    agedAvgMonths fields the Raphaaa Data Hub stock import writes (CATEGORY6/
+    Ageing, parsed as an "MM/YY" receipt month). A stock doc without those
+    fields yet (written before this shipped, or by a non-Data-Hub flow) is
+    treated as entirely fresh — never labelled "aged" on data we don't
+    actually have. Returns {identity: (fresh_qty, aged_qty, aged_avg_months)};
+    aged_avg_months is a qty-weighted average across central+stores, None
+    when there's no aged stock to average.
+    """
+    totals: Dict[str, list] = defaultdict(lambda: [0.0, 0.0, 0.0])
+    projection = {
+        "barcode": 1, "stockQty": 1, "freshQty": 1, "agedQty": 1, "agedAvgMonths": 1,
+        "stock_identity": 1, "product_id": 1, "variant_id": 1, "design_no": 1,
+        "material_code": 1, "sku": 1, "vendor_barcode": 1, "barcode_policy": 1,
+    }
+    for collection in (inventory_collection, store_stock_collection):
+        async for doc in collection.find({"tenant_id": tenant_id}, projection):
+            barcode = str(doc.get("barcode") or "").strip()
+            identity = (
+                doc.get("stock_identity") or aliases.get(barcode) or stock_identity(doc)
+                or (f"barcode:{barcode.lower()}" if barcode else "")
+            )
+            if not identity:
+                continue
+            if "freshQty" in doc or "agedQty" in doc:
+                fresh, aged = _number(doc.get("freshQty")), _number(doc.get("agedQty"))
+                avg_months = _number(doc.get("agedAvgMonths"))
+            else:
+                fresh, aged, avg_months = _number(doc.get("stockQty")), 0.0, 0.0
+            totals[identity][0] += fresh
+            totals[identity][1] += aged
+            totals[identity][2] += aged * avg_months
+    return {
+        identity: (values[0], values[1], round(values[2] / values[1], 1) if values[1] > 0 else None)
+        for identity, values in totals.items()
+    }
+
+
 async def _latest_grn_costs(tenant_id: str, aliases: Dict[str, str]) -> Dict[str, dict]:
     """Latest posted receiving rate and supplier at the same stock identity."""
     result: Dict[str, dict] = {}
@@ -554,6 +594,7 @@ async def _compute_raphaaa_purchase_plan(tenant_id: str, payload: RaphaaaPurchas
     aliases = await _barcode_identity_aliases(tenant_id)
     product_metadata = await _raphaaa_product_metadata(tenant_id)
     stock_by_identity = await _tenant_stock_map(tenant_id, aliases)
+    ageing_by_identity = await _tenant_stock_ageing_map(tenant_id, aliases)
     grn_costs = await _latest_grn_costs(tenant_id, aliases)
     period_keys = [period["key"] for period in periods]
     rows: Dict[str, dict] = {}
@@ -672,10 +713,14 @@ async def _compute_raphaaa_purchase_plan(tenant_id: str, payload: RaphaaaPurchas
             record["net_sales"] / total_qty if total_qty > 0
             else _number(master.get("selling_price") or master.get("mrp"))
         )
-        calculation = build_purchase_math(
-            record["quantities_by_period"], stock_by_identity.get(identity, 0),
-            unit_cost, avg_selling_price,
+        fresh_qty, aged_qty, aged_avg_months = ageing_by_identity.get(
+            identity, (stock_by_identity.get(identity, 0), 0.0, None)
         )
+        calculation = build_purchase_math(
+            record["quantities_by_period"], fresh_qty,
+            unit_cost, avg_selling_price, aged_stock=aged_qty,
+        )
+        calculation["aged_avg_months"] = aged_avg_months
         quantities = {
             key: round(max(0.0, value), 2)
             for key, value in record["quantities_by_period"].items()
@@ -757,7 +802,8 @@ async def _compute_raphaaa_purchase_plan(tenant_id: str, payload: RaphaaaPurchas
             "season_end_month": payload.season_end_month if payload.period_mode == "seasonal_window" else None,
             "uplift_pct": RAPHAAA_UPLIFT_PCT,
             "stock_credit_pct": RAPHAAA_STOCK_CREDIT_PCT,
-            "formula": "PQ = ceil(max(period sales) × 1.18); final = max(0, ceil(PQ − recorded on-hand × 0.50))",
+            "fresh_max_months": RAPHAAA_FRESH_MAX_MONTHS,
+            "formula": "PQ = ceil(max(period sales) × 1.18); final = max(0, ceil(PQ − fresh on-hand × 0.50)). Aged stock (CATEGORY6/Ageing older than fresh_max_months) is reported but never credited.",
         },
         "periods": [
             {**period, "start": period["start"].isoformat(), "end_exclusive": period["end"].isoformat()}
@@ -777,11 +823,24 @@ async def _compute_raphaaa_purchase_plan(tenant_id: str, payload: RaphaaaPurchas
             "estimated_purchase_amount": round(sum(line["estimated_purchase_amount"] for line in result_lines), 2),
             "historical_net_sales": round(sum(line["net_sales"] for line in result_lines), 2),
             "historical_discount_amount": round(sum(line["discount_amount"] for line in result_lines), 2),
+            "aged_stock_qty": round(sum(line["aged_stock_qty"] for line in result_lines), 2),
         },
         "lines": result_lines,
         "vendor_performance": vendor_performance,
         "promotion_performance": sorted(
             promotion_rows, key=lambda row: row["net_sales"], reverse=True
+        ),
+        # Old, slow-moving stock — surfaced separately instead of quietly
+        "ageing_clearance": sorted(
+            (
+                {
+                    "barcode": line["barcode"], "name": line["name"], "design_no": line["design_no"],
+                    "vendor_name": line["vendor_name"], "aged_stock_qty": line["aged_stock_qty"],
+                    "fresh_stock_qty": line["fresh_stock_qty"], "aged_avg_months": line["aged_avg_months"],
+                }
+                for line in result_lines if line["aged_stock_qty"] > 0
+            ),
+            key=lambda row: row["aged_stock_qty"], reverse=True,
         ),
     }
 

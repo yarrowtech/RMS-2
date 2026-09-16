@@ -61,7 +61,7 @@ function chip(status) {
 }
 
 const TECH_PACK_IMAGE_KEYS = [
-  ["sketch_images", "Sketch"], ["details_images", "Details"], ["artwork_images", "Artwork"],
+  ["sketch_images", "Sketch"], ["spec_images", "Spec sheet"], ["details_images", "Details"], ["artwork_images", "Artwork"],
   ["trims_images", "Trims & label"], ["colourway_images", "Colourways"],
 ];
 
@@ -80,8 +80,8 @@ function TechPackSnapshot({ pack }) {
 
     {pack.fabric_references?.length > 0 && <div className="mt-2"><p className="font-black text-slate-700">Fabric references</p><div className="mt-1 grid gap-2 md:grid-cols-2">{pack.fabric_references.map((fabric, index) => <div key={`${fabric.reference_name}-${index}`} className="rounded-lg border border-white bg-white/80 p-2"><b>{fabric.reference_name}</b><p>{[fabric.usage, fabric.fabric_type, fabric.composition, fabric.color, fabric.color_code].filter(Boolean).join(" · ")}</p><p className="text-[10px] text-slate-500">{[fabric.gsm, fabric.width, fabric.consumption && `${fabric.consumption} ${fabric.unit || ""}/garment`, fabric.supplier, fabric.supplier_ref, fabric.lot_no].filter(Boolean).join(" · ")}</p>{[fabric.grain_notes, fabric.shrinkage, fabric.handling_notes].filter(Boolean).map((note, noteIndex) => <p key={noteIndex} className="mt-0.5 text-[10px] text-amber-700">{note}</p>)}{fabric.image_urls?.length > 0 && <div className="mt-1 flex flex-wrap gap-1">{fabric.image_urls.map((src, imageIndex) => <a key={`${src}-${imageIndex}`} href={src} target="_blank" rel="noreferrer"><img src={src} alt={`${fabric.reference_name} swatch`} className="h-12 w-12 rounded-lg border object-cover" /></a>)}</div>}</div>)}</div></div>}
 
-    {pack.sizes?.length > 0 && pack.measurement_rows?.length > 0 && (
-      <div className="mt-1.5 overflow-x-auto"><table className="w-full text-[11px]"><thead><tr><th className="pr-2 text-left font-bold">Point</th><th className="pr-2 text-left font-bold">Sample</th>{pack.sizes.map((s) => <th key={s} className="pr-2 text-left font-bold">{s}</th>)}</tr></thead><tbody>{pack.measurement_rows.map((row, i) => <tr key={i}><td className="pr-2">{row.point}</td><td className="pr-2">{row.sample_value}</td>{pack.sizes.map((s) => <td key={s} className="pr-2">{row.grades?.[s] || ""}</td>)}</tr>)}</tbody></table></div>
+    {pack.measurement_rows?.length > 0 && (
+      <div className="mt-1.5 overflow-x-auto"><table className="min-w-[900px] w-full text-[11px]"><thead><tr>{["Code / Point", "How to measure", "Unit", "Sample", "Tolerance", "Grade rule"].map((heading) => <th key={heading} className="pr-2 text-left font-bold">{heading}</th>)}{(pack.sizes || []).map((s) => <th key={s} className="pr-2 text-left font-bold">{s}</th>)}</tr></thead><tbody>{pack.measurement_rows.map((row, i) => <tr key={i}><td className="pr-2"><b>{row.pom_code || `P${i + 1}`}</b> · {row.point}</td><td className="pr-2">{row.measure_instruction || "—"}</td><td className="pr-2">{row.unit || "cm"}</td><td className="pr-2">{row.sample_value}</td><td className="pr-2">{row.tolerance || "—"}</td><td className="pr-2">{row.grade_rule || "—"}</td>{(pack.sizes || []).map((s) => <td key={s} className="pr-2">{row.grades?.[s] || ""}</td>)}</tr>)}</tbody></table></div>
     )}
 
     {pack.trims_items?.length > 0 && (

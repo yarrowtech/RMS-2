@@ -12,15 +12,21 @@ Two spreadsheet exports, previewed then committed:
   * STOCK  (physical count — Barcode/Item Code preferred; when absent, a row
       is identified by DIVISION|SECTION|DEPARTMENT|CATEGORY1-5, with Vendor
       and RSP/MRP/Standard Rate used only as soft tiebreakers when that
-      combination matches more than one product; CATEGORY6 = Ageing, ignored)
+      combination matches more than one product; CATEGORY6 = Ageing, an
+      "MM/YY" receipt month, parsed into freshQty/agedQty — see
+      RAPHAAA_FRESH_MAX_MONTHS)
       -> inventory        WAREHOUSE column  = Raphaa HQ / central on-hand
       -> store_stock       one column per store
       Each row is resolved to a barcode through the products the sales import
       created (their category attributes ARE the map). Rows that collapse to the
-      same product+location (different Ageing) are summed. A row that's still
-      genuinely ambiguous after both tiebreakers is left unresolved rather than
-      guessing. Absolute snapshot: $set stockQty, never $inc. Items absent from
-      the file are left untouched.
+      same product+location (different Ageing) are summed, fresh and aged
+      separately. A row that's still genuinely ambiguous after both tiebreakers
+      is left unresolved rather than guessing. Absolute snapshot: $set stockQty
+      (+ freshQty/agedQty, Raphaaa-only), never $inc. Items absent from the
+      file are left untouched. Long-format files also carry the row's own
+      Closing Amt (real cost-basis value for that product x site) into
+      stockValue (Raphaaa-only) instead of it being recomputed later as
+      qty x one shared Product Master cost_price — see _STOCK_VALUE_ALIASES.
 
 Isolation (enforced by _pilot_context on every route):
   * 404 for any tenant whose id does not start with "raphaa"
@@ -49,6 +55,7 @@ from ..raphaaa_product_enrichment import (
     product_quality_issues,
     proposed_product_name,
 )
+from ..raphaaa_purchase_plan import RAPHAAA_FRESH_MAX_MONTHS
 from ..db import (
     data_hub_imports_collection,
     inventory_collection,
@@ -77,6 +84,11 @@ CAT_ALIASES = {
     "cat4": ["category4", "cat-4 (plane, f/s, h/s)", "cat4", "cat 4"],
     "cat5": ["category5", "cat-5 (size)", "cat5", "cat 5", "size"],
 }
+
+# CATEGORY6 = Ageing, Raphaaa-only. Comes as an "MM/YY" receipt month (e.g.
+# "12/24"), not a ready-made day-bucket, so freshness has to be computed from
+# it relative to today rather than read off the file directly.
+_AGEING_ALIASES = ["category6", "cat-6 (ageing)", "cat6", "cat 6", "ageing", "age"]
 
 
 def _key(value: Any) -> str:
@@ -137,7 +149,7 @@ _KNOWN_COLUMN_KEYS = {
     "category1", "category2", "category3", "category4", "category5", "category6",
     "cat1designno", "cat2brand", "cat3style", "cat4planefshs", "cat5size",
     # stock layout — long (one row per product × site: Locname + a qty column)
-    "locname", "sourcesite", "closingqty", "closingamt", "lastinwardrate", "wsp", "uom",
+    "locname", "sourcesite", "closingqty", "closingamt", "closingamount", "closingvalue", "lastinwardrate", "wsp", "uom",
 }
 
 # Long-format stock: the on-hand quantity column and the site/location column.
@@ -148,6 +160,16 @@ _STOCK_QTY_ALIASES = (
 _STOCK_LOC_ALIASES = (
     "locname", "loc name", "location", "location name", "source site", "sourcesite",
     "site", "site name", "branch", "store", "store name", "outlet", "godown",
+)
+# Long-format stock only (Raphaaa-only downstream use): the row's own cost-basis
+# stock value for that product×site, straight from the file rather than
+# recomputed as qty x one shared Product Master cost_price (which can drift
+# when Standard Rate differs by store/batch). Several header spellings are
+# listed since "Closing Amt" / "Closing Amount" / "Closing Value" are
+# genuinely different strings after normalization, not just a case difference.
+_STOCK_VALUE_ALIASES = (
+    "closing amt", "closingamt", "closing amount", "closingamount",
+    "closing value", "closingvalue", "closing stock value", "stock value",
 )
 
 
@@ -234,6 +256,38 @@ def _row_cat_key(row: dict) -> str:
 
 def _row_cats(row: dict) -> List[str]:
     return [_column(row, *CAT_ALIASES[name]) for name in ("cat1", "cat2", "cat3", "cat4", "cat5")]
+
+
+def _parse_ageing_month(value: Any) -> Optional[datetime]:
+    """CATEGORY6 as an "MM/YY" or "MM/YYYY" receipt month, e.g. "12/24" ->
+    Dec 2024. Returns None for blank/unparseable values rather than guessing."""
+    text = _text(value)
+    match = re.match(r"^(\d{1,2})\s*[/-]\s*(\d{2,4})$", text)
+    if not match:
+        return None
+    month, year = int(match.group(1)), int(match.group(2))
+    if not 1 <= month <= 12:
+        return None
+    if year < 100:
+        year += 2000
+    try:
+        return datetime(year, month, 1)
+    except ValueError:
+        return None
+
+
+def _age_months(month: datetime, now: datetime) -> int:
+    return (now.year - month.year) * 12 + (now.month - month.month)
+
+
+def _is_aged(value: Any, now: datetime) -> bool:
+    """True only when CATEGORY6 parses cleanly AND is older than the fresh
+    window. A blank/unparseable ageing value is treated as fresh — we won't
+    label stock "aged" on data we can't actually read."""
+    month = _parse_ageing_month(value)
+    if month is None:
+        return False
+    return _age_months(month, now) > RAPHAAA_FRESH_MAX_MONTHS
 
 
 def _parse_dt(date_text: str, time_text: str = "") -> Optional[datetime]:
@@ -567,6 +621,12 @@ def _stock_rows(raw_rows: List[dict], barcode_index: dict, sku_index: dict, cat_
         single CLOSING_QTY column. Location is read from the row, not the header.
     """
     long_format = _stock_is_long_format(raw_rows)
+    ageing_now = datetime.utcnow()
+    # Real per-row stock value (Closing Amt) is only meaningful for a long-format
+    # file, where each row already carries its own single location — a wide
+    # file's GRANDTOTAL is a row total across every location, not attributable
+    # to one of them, so it's deliberately left alone here.
+    has_value_col = long_format and bool(raw_rows) and any(_key(a) in raw_rows[0].keys() for a in _STOCK_VALUE_ALIASES)
 
     location_columns = {"central": ["warehouse", "central", "central warehouse", "hq inventory"]}
     for store in stores:
@@ -606,6 +666,14 @@ def _stock_rows(raw_rows: List[dict], barcode_index: dict, sku_index: dict, cat_
         # commit time (see below); a location a product's rows never mention
         # is left completely alone, not zeroed out.
         touched: set = set()
+        value_touched: set = set()
+        loc_value: Dict[str, float] = {label: 0.0 for label in all_labels}
+        # CATEGORY6 / Ageing (Raphaaa-only downstream use — every stock row is
+        # classified fresh/aged here so it's available regardless of tenant;
+        # only the Raphaaa write path in commit_stock_snapshot actually stores it).
+        ageing_month = _parse_ageing_month(_column(raw, *_AGEING_ALIASES))
+        row_age_months = _age_months(ageing_month, ageing_now) if ageing_month else None
+        row_aged = row_age_months is not None and row_age_months > RAPHAAA_FRESH_MAX_MONTHS
         if long_format:
             loc_raw = _column(raw, *_STOCK_LOC_ALIASES)
             label = _match_location(loc_raw, stores)
@@ -619,6 +687,9 @@ def _stock_rows(raw_rows: List[dict], barcode_index: dict, sku_index: dict, cat_
             else:
                 loc_qty[label] = qty
                 touched.add(label)
+                if has_value_col:
+                    loc_value[label] = _number(_column(raw, *_STOCK_VALUE_ALIASES)) or 0.0
+                    value_touched.add(label)
         else:
             for location_id, aliases in location_columns.items():
                 value = ""
@@ -636,18 +707,41 @@ def _stock_rows(raw_rows: List[dict], barcode_index: dict, sku_index: dict, cat_
                 if present:
                     touched.add(label_for[location_id])
 
+        loc_fresh_qty = {label: (0.0 if label in touched and row_aged else loc_qty[label]) for label in all_labels}
+        loc_aged_qty = {label: (loc_qty[label] if label in touched and row_aged else 0.0) for label in all_labels}
+        # Qty-weighted so a later average (aged_months_weighted / aged_allocation)
+        # reflects "how old is the aged portion", not a raw row count.
+        loc_aged_months_weighted = {
+            label: (loc_qty[label] * row_age_months if label in touched and row_aged else 0.0)
+            for label in all_labels
+        }
+
         if product:
             bucket = agg.setdefault(product["barcode"], {
                 "product": product,
                 "matched_via": matched_via,
                 "allocation": {label: 0.0 for label in all_labels},
+                "fresh_allocation": {label: 0.0 for label in all_labels},
+                "aged_allocation": {label: 0.0 for label in all_labels},
+                "aged_months_weighted": {label: 0.0 for label in all_labels},
+                "value_allocation": {label: 0.0 for label in all_labels},
                 "touched": set(),
+                "value_touched": set(),
                 "source_rows": [],
                 "errors": [],
             })
             for label, qty in loc_qty.items():
                 bucket["allocation"][label] += qty
+            for label, qty in loc_fresh_qty.items():
+                bucket["fresh_allocation"][label] += qty
+            for label, qty in loc_aged_qty.items():
+                bucket["aged_allocation"][label] += qty
+            for label, weighted in loc_aged_months_weighted.items():
+                bucket["aged_months_weighted"][label] += weighted
+            for label, value in loc_value.items():
+                bucket["value_allocation"][label] += value
             bucket["touched"] |= touched
+            bucket["value_touched"] |= value_touched
             bucket["source_rows"].append(index)
             bucket["errors"].extend(row_errors)
         else:
@@ -678,7 +772,16 @@ def _stock_rows(raw_rows: List[dict], barcode_index: dict, sku_index: dict, cat_
             "product": bucket["product"]["product_name"],
             "matched_via": bucket["matched_via"],
             "allocation": allocation,
+            "fresh_allocation": {label: round(value, 2) for label, value in bucket["fresh_allocation"].items()},
+            "aged_allocation": {label: round(value, 2) for label, value in bucket["aged_allocation"].items()},
+            "aged_avg_months": {
+                label: (round(bucket["aged_months_weighted"][label] / bucket["aged_allocation"][label], 1)
+                        if bucket["aged_allocation"][label] > 0 else None)
+                for label in all_labels
+            },
+            "value_allocation": {label: round(value, 2) for label, value in bucket["value_allocation"].items()},
             "touched": sorted(bucket["touched"]),
+            "value_touched": sorted(bucket["value_touched"]),
             "grand_total": round(sum(allocation.values()), 2),
             "errors": list(dict.fromkeys(bucket["errors"])),
             "_product": bucket["product"],
@@ -1065,6 +1168,7 @@ async def commit_stock_snapshot(
         barcode = row["_product"]["barcode"]
         description = row["_product"]["product_name"]
         touched_labels = set(row.get("touched") or [])
+        raphaaa = is_raphaaa_tenant(tenant_id)
         for label, qty in row["allocation"].items():
             if label not in touched_labels:
                 # This product's rows in the file never mentioned this
@@ -1082,13 +1186,29 @@ async def commit_stock_snapshot(
                 flt = {"tenant_id": tenant_id, "barcode": barcode, "store_id": store["id"]}
                 extra = {"store_id": store["id"], "store_name": store["name"]}
 
-            existing = await collection.find_one(flt, {"stockQty": 1})
+            existing = await collection.find_one(flt, {"stockQty": 1, "freshQty": 1, "agedQty": 1, "agedAvgMonths": 1, "stockValue": 1})
             previous_qty = float((existing or {}).get("stockQty") or 0)
+            set_fields: Dict[str, Any] = {
+                **flt, **extra, "stockQty": float(qty), "description": description,
+                "source": "data_hub_import", "data_hub_batch_id": batch_id, "updatedAt": now,
+            }
+            previous_fresh_qty = previous_aged_qty = previous_aged_avg_months = None
+            previous_stock_value = None
+            if raphaaa:
+                previous_fresh_qty = float((existing or {}).get("freshQty") or 0)
+                previous_aged_qty = float((existing or {}).get("agedQty") or 0)
+                previous_aged_avg_months = (existing or {}).get("agedAvgMonths")
+                set_fields["freshQty"] = float(row["fresh_allocation"].get(label, 0.0))
+                set_fields["agedQty"] = float(row["aged_allocation"].get(label, 0.0))
+                set_fields["agedAvgMonths"] = row["aged_avg_months"].get(label)
+                value_touched_labels = set(row.get("value_touched") or [])
+                if label in value_touched_labels:
+                    previous_stock_value = (existing or {}).get("stockValue")
+                    set_fields["stockValue"] = float(row["value_allocation"].get(label, 0.0))
             await collection.update_one(
                 flt,
                 {
-                    "$set": {**flt, **extra, "stockQty": float(qty), "description": description,
-                             "source": "data_hub_import", "data_hub_batch_id": batch_id, "updatedAt": now},
+                    "$set": set_fields,
                     "$setOnInsert": {"createdAt": now},
                 },
                 upsert=True,
@@ -1096,6 +1216,10 @@ async def commit_stock_snapshot(
             changes.append({
                 "location": label, "store_id": extra.get("store_id"), "barcode": barcode,
                 "previous_qty": previous_qty, "new_qty": float(qty), "existed": bool(existing),
+                "previous_fresh_qty": previous_fresh_qty, "previous_aged_qty": previous_aged_qty,
+                "previous_aged_avg_months": previous_aged_avg_months,
+                "value_written": label in value_touched_labels if raphaaa else False,
+                "previous_stock_value": previous_stock_value,
             })
         applied += 1
 
@@ -1283,7 +1407,14 @@ async def rollback_import(batch_id: str, ctx: TenantCtx = Depends(_pilot_context
                 collection = store_stock_collection
                 flt = {"tenant_id": tenant_id, "barcode": change["barcode"], "store_id": change["store_id"], "data_hub_batch_id": batch_id}
             if change["existed"]:
-                updated = await collection.update_one(flt, {"$set": {"stockQty": change["previous_qty"], "source": "data_hub_rollback", "updatedAt": now}})
+                revert_fields: Dict[str, Any] = {"stockQty": change["previous_qty"], "source": "data_hub_rollback", "updatedAt": now}
+                if change.get("previous_fresh_qty") is not None:
+                    revert_fields["freshQty"] = change["previous_fresh_qty"]
+                    revert_fields["agedQty"] = change["previous_aged_qty"]
+                    revert_fields["agedAvgMonths"] = change.get("previous_aged_avg_months")
+                if change.get("value_written"):
+                    revert_fields["stockValue"] = change.get("previous_stock_value")
+                updated = await collection.update_one(flt, {"$set": revert_fields})
                 reverted += updated.modified_count
             else:
                 deleted = await collection.delete_one(flt)

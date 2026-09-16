@@ -46,6 +46,20 @@ const partners = [
   ["Store Owner / Retailer", "Request an RMS retail workspace for stores, staff, inventory and operations.", Building2, "from-amber-400 to-orange-500", "bg-amber-50 text-amber-700 ring-amber-100"],
 ];
 
+const partnerCardSurfaces = [
+  "from-indigo-50 via-white to-violet-100/70 ring-indigo-200/80",
+  "from-emerald-50 via-white to-teal-100/70 ring-emerald-200/80",
+  "from-cyan-50 via-white to-blue-100/70 ring-cyan-200/80",
+  "from-amber-50 via-white to-orange-100/70 ring-orange-200/80",
+];
+
+const partnerSteps = [
+  ["1", "Submit registration", "from-indigo-500 to-violet-600", "bg-indigo-50 text-indigo-950 ring-indigo-100"],
+  ["2", "Business verification", "from-violet-500 to-fuchsia-600", "bg-violet-50 text-violet-950 ring-violet-100"],
+  ["3", "Account approval", "from-cyan-500 to-blue-600", "bg-cyan-50 text-cyan-950 ring-cyan-100"],
+  ["4", "Connect and operate", "from-emerald-500 to-teal-600", "bg-emerald-50 text-emerald-950 ring-emerald-100"],
+];
+
 const steps = [
   ["01", "Configure the business", "Create the retailer, HQ, stores or branches and core product structure.", Building2, "from-indigo-500 to-violet-600", "bg-indigo-50 text-indigo-700 ring-indigo-100"],
   ["02", "Assign teams securely", "Give each administrator only the departments, store and permissions they manage.", ShieldCheck, "from-emerald-500 to-teal-600", "bg-emerald-50 text-emerald-700 ring-emerald-100"],
@@ -405,11 +419,13 @@ export default function ProfessionalRoleSelector() {
           </div>
         </section>
 
-        <section id="partners" className="bg-white py-20">
-          <div className="mx-auto max-w-7xl px-5 sm:px-8 lg:px-10">
-            <div className="mx-auto max-w-3xl text-center"><p className="text-xs font-extrabold uppercase tracking-[0.2em] text-violet-600">Join the RMS network</p><h2 className="mt-4 text-3xl font-black tracking-tight text-slate-950 sm:text-4xl">Built for retailers and their supply partners.</h2><p className="mt-4 leading-7 text-slate-600">Apply once, complete verification, and receive access to the workspace appropriate for your business.</p></div>
-            <div className="mt-10 grid gap-5 md:grid-cols-2 xl:grid-cols-4">{partners.map(([title,text,Icon,accent,soft]) => <div key={title} className="group relative overflow-hidden rounded-3xl border border-white bg-white p-6 shadow-[0_18px_55px_rgba(15,23,42,0.08)] ring-1 ring-slate-200/70 transition duration-300 hover:-translate-y-1 hover:shadow-[0_26px_70px_rgba(15,23,42,0.13)]"><span className={`absolute inset-x-0 top-0 h-1.5 bg-gradient-to-r ${accent}`} /><span className={`grid h-12 w-12 place-items-center rounded-2xl ring-1 ${soft}`}><Icon size={21}/></span><h3 className="mt-6 font-extrabold text-slate-950">{title}</h3><p className="mt-3 text-sm leading-6 text-slate-600">{text}</p></div>)}</div>
-            <div className="mt-10 grid gap-4 rounded-3xl border border-emerald-100 bg-emerald-50/60 p-6 sm:grid-cols-2 lg:grid-cols-4">{[["1","Submit registration"],["2","Business verification"],["3","Account approval"],["4","Connect and operate"]].map(([n,t]) => <div key={n} className="flex items-center gap-3"><span className="grid h-8 w-8 place-items-center rounded-full bg-emerald-600 text-xs font-black text-white">{n}</span><span className="text-sm font-bold text-emerald-950">{t}</span></div>)}</div>
+        <section id="partners" className="relative overflow-hidden border-y border-violet-100/70 bg-gradient-to-br from-violet-50 via-white to-cyan-50 py-20">
+          <div aria-hidden="true" className="absolute -left-24 top-16 h-72 w-72 rounded-full bg-fuchsia-200/35 blur-3xl" />
+          <div aria-hidden="true" className="absolute -right-20 bottom-0 h-80 w-80 rounded-full bg-cyan-200/40 blur-3xl" />
+          <div className="relative mx-auto max-w-7xl px-5 sm:px-8 lg:px-10">
+            <div className="mx-auto max-w-3xl text-center"><p className="inline-flex rounded-full bg-gradient-to-r from-violet-100 to-fuchsia-100 px-4 py-2 text-xs font-extrabold uppercase tracking-[0.2em] text-violet-700 ring-1 ring-violet-200/80">Join the RMS network</p><h2 className="mt-5 text-3xl font-black tracking-tight text-slate-950 sm:text-4xl">Built for retailers and their supply partners.</h2><p className="mt-4 leading-7 text-slate-600">Apply once, complete verification, and receive access to the workspace appropriate for your business.</p></div>
+            <div className="mt-10 grid gap-5 md:grid-cols-2 xl:grid-cols-4">{partners.map(([title,text,Icon,accent,soft], index) => <div key={title} className={`group relative overflow-hidden rounded-3xl bg-gradient-to-br ${partnerCardSurfaces[index]} p-6 shadow-[0_18px_55px_rgba(15,23,42,0.08)] ring-1 transition duration-300 hover:-translate-y-1 hover:shadow-[0_26px_70px_rgba(79,70,229,0.16)]`}><span className={`absolute inset-x-0 top-0 h-1.5 bg-gradient-to-r ${accent}`} /><span aria-hidden="true" className={`absolute -right-12 -top-12 h-32 w-32 rounded-full bg-gradient-to-br ${accent} opacity-[0.08] transition duration-300 group-hover:scale-125 group-hover:opacity-[0.16]`} /><span className={`relative grid h-12 w-12 place-items-center rounded-2xl ring-1 shadow-sm ${soft}`}><Icon size={21}/></span><h3 className="relative mt-6 font-extrabold text-slate-950">{title}</h3><p className="relative mt-3 text-sm leading-6 text-slate-600">{text}</p></div>)}</div>
+            <div className="mt-10 rounded-3xl border border-white/80 bg-white/75 p-3 shadow-xl shadow-violet-100/60 ring-1 ring-slate-200/70 backdrop-blur sm:p-4"><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">{partnerSteps.map(([n,t,accent,soft]) => <div key={n} className={`flex items-center gap-3 rounded-2xl p-3 ring-1 ${soft}`}><span className={`grid h-9 w-9 shrink-0 place-items-center rounded-full bg-gradient-to-br ${accent} text-xs font-black text-white shadow-md`}>{n}</span><span className="text-sm font-extrabold">{t}</span></div>)}</div></div>
           </div>
         </section>
 

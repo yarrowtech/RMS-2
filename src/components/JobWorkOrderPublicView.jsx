@@ -32,7 +32,7 @@ function InfoRow({ label, value }) {
 
 function TechPackContent({ pack }) {
   if (!pack) return null;
-  const images = [...new Set([...(pack.sketch_images || []), ...(pack.reference_images || [])])];
+  const images = [...new Set([...(pack.sketch_images || []), ...(pack.spec_images || []), ...(pack.reference_images || [])])];
   return (
     <div style={{ marginTop: 12, padding: 16, borderRadius: 12, background: "#F8FAFC", border: "1px solid #E2E8F0" }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
@@ -75,15 +75,25 @@ function TechPackContent({ pack }) {
           <table style={{ borderCollapse: "collapse", fontSize: 12, width: "100%" }}>
             <thead>
               <tr style={{ background: "#EEF2FF" }}>
-                <th style={{ textAlign: "left", padding: "5px 8px" }}>Point of Measure</th>
+                <th style={{ textAlign: "left", padding: "5px 8px" }}>Code / Point of Measure</th>
+                <th style={{ textAlign: "left", padding: "5px 8px" }}>How to measure</th>
+                <th style={{ textAlign: "left", padding: "5px 8px" }}>Unit</th>
+                <th style={{ textAlign: "right", padding: "5px 8px" }}>Sample</th>
+                <th style={{ textAlign: "left", padding: "5px 8px" }}>Tolerance</th>
+                <th style={{ textAlign: "left", padding: "5px 8px" }}>Grade rule</th>
                 {(pack.sizes || []).map((s, i) => <th key={i} style={{ textAlign: "right", padding: "5px 8px" }}>{s}</th>)}
               </tr>
             </thead>
             <tbody>
               {pack.measurement_rows.map((row, i) => (
                 <tr key={i} style={{ borderTop: "1px solid #E2E8F0" }}>
-                  <td style={{ padding: "5px 8px" }}>{row.point_of_measure || row.pom || ""}</td>
-                  {(pack.sizes || []).map((s, j) => <td key={j} style={{ textAlign: "right", padding: "5px 8px" }}>{row[s] ?? row.values?.[j] ?? ""}</td>)}
+                  <td style={{ padding: "5px 8px" }}>{[row.pom_code, row.point || row.point_of_measure || row.pom].filter(Boolean).join(" · ")}</td>
+                  <td style={{ padding: "5px 8px" }}>{row.measure_instruction || "—"}</td>
+                  <td style={{ padding: "5px 8px" }}>{row.unit || "cm"}</td>
+                  <td style={{ textAlign: "right", padding: "5px 8px" }}>{row.sample_value || "—"}</td>
+                  <td style={{ padding: "5px 8px" }}>{row.tolerance || "—"}</td>
+                  <td style={{ padding: "5px 8px" }}>{row.grade_rule || "—"}</td>
+                  {(pack.sizes || []).map((s, j) => <td key={j} style={{ textAlign: "right", padding: "5px 8px" }}>{row.grades?.[s] ?? row[s] ?? row.values?.[j] ?? ""}</td>)}
                 </tr>
               ))}
             </tbody>
