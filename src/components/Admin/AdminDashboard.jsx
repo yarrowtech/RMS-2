@@ -791,6 +791,16 @@ function detectSource(p) {
   return "admin";
 }
 
+// ─── Raphaaa Data Hub tenant only: real on-hand qty from inventory/store-stock.
+// Data Hub-imported products never populate product.quantity (their stock
+// lives only in inventory_collection/store_stock_collection), so this page's
+// existing fallback chain always reads 0 for them. stockMap is null for every
+// other tenant, so this exactly reproduces the original fallback there. ────
+function realQty(p, stockMap) {
+  if (stockMap && stockMap.has(p.barcode)) return stockMap.get(p.barcode);
+  return Number(p?.quantity || p?.stock || p?.stock_quantity || p?.qty || 0);
+}
+
 // ─── Safe GET — never throws, logs status clearly ─────────────────────────────
 async function safeGet(url, config) {
   try {
@@ -872,6 +882,7 @@ export default function AdminDashboardContent() {
   const [loading,       setLoading]       = useState(true);
   const [pageError,     setPageError]     = useState("");
   const [authWarning,   setAuthWarning]   = useState("");
+  const [raphaaaStockMap, setRaphaaaStockMap] = useState(null);
 
   const fetchDashboardData = async () => {
     setLoading(true);
@@ -926,6 +937,23 @@ export default function AdminDashboardContent() {
       setPageError("All API requests failed. Check your server and network connection.");
     }
 
+    // Raphaaa Data Hub tenant only — see realQty() above for why this is
+    // needed. Uses the same tenant-detection endpoint the Forecast &
+    // Analytics workspace already relies on, so no new gating logic.
+    let stockMap = null;
+    const hubStatusRes = await safeGet(`${API_BASE}/api/forecast-analytics/data-hub/status`, config);
+    if (hubStatusRes?.data?.enabled) {
+      const matrixRes = await safeGet(`${API_BASE}/stock-allocation/item-matrix?limit=1000`, config);
+      const matrixRows = extractArray(matrixRes, "data");
+      if (matrixRows.length) {
+        stockMap = new Map(matrixRows.map((row) => [
+          row.barcode,
+          Number(row.central_qty || 0) + Object.values(row.store_qty || {}).reduce((s, v) => s + Number(v || 0), 0),
+        ]));
+      }
+    }
+    setRaphaaaStockMap(stockMap);
+
     setLoading(false);
   };
 
@@ -948,7 +976,7 @@ export default function AdminDashboardContent() {
       // Fallback: sum (selling_price * quantity) across simple products
       revenue = products.reduce((sum, p) => {
         if (p.has_variants) return sum;
-        return sum + (Number(p.selling_price || p.mrp || 0) * Number(p.quantity || p.stock || 0));
+        return sum + (Number(p.selling_price || p.mrp || 0) * realQty(p, raphaaaStockMap));
       }, 0);
     }
 
@@ -961,7 +989,7 @@ export default function AdminDashboardContent() {
       { title: "Vendor Orders",  value: totalOrders.toLocaleString("en-IN"),   change: pct("ordersGrowth"),   up: isUp(pct("ordersGrowth")),   icon: FaShoppingCart, accent: "emerald" },
       { title: "Revenue",        value: formatCurrency(revenue),               change: pct("revenueGrowth"),  up: isUp(pct("revenueGrowth")),  icon: FaRupeeSign,   accent: "rose" },
     ];
-  }, [dashboardData, vendorOrders, products, users]);
+  }, [dashboardData, vendorOrders, products, users, raphaaaStockMap]);
 
   // ── Derived: product breakdown by source (mirrors ProductList tabs) ───────
   const productCounts = useMemo(() => ({
@@ -977,12 +1005,12 @@ export default function AdminDashboardContent() {
       .map((p) => ({
         name:  p?.product_name || p?.name || p?.title || "Unnamed",
         sales: Number(p?.sales || p?.soldCount || p?.totalSold || p?.orderCount || 0),
-        stock: Number(p?.stock || p?.quantity || p?.stock_quantity || p?.qty || 0),
+        stock: realQty(p, raphaaaStockMap),
         sku:   p?.sku || p?.base_sku || "—",
       }))
       .sort((a, b) => b.sales - a.sales || b.stock - a.stock)
       .slice(0, 5);
-  }, [dashboardData, products]);
+  }, [dashboardData, products, raphaaaStockMap]);
 
   // ── Derived: low stock (qty 1–10), same field names as ProductList ─────────
   const lowStockProducts = useMemo(() => {
@@ -991,12 +1019,12 @@ export default function AdminDashboardContent() {
       .map(p => ({
         name: p?.product_name || p?.name || "Unnamed",
         sku:  p?.sku || p?.base_sku || "—",
-        qty:  Number(p?.quantity || p?.stock || p?.stock_quantity || p?.qty || 0),
+        qty:  realQty(p, raphaaaStockMap),
       }))
       .filter(item => item.qty > 0 && item.qty <= 10)
       .sort((a, b) => a.qty - b.qty)
       .slice(0, 5);
-  }, [products]);
+  }, [products, raphaaaStockMap]);
 
   // ── Derived: recent vendor orders ─────────────────────────────────────────
   const recentVendorOrders = useMemo(() => {

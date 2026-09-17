@@ -152,6 +152,15 @@ async def _compute_demand_forecast(tenant_id: str, store_id: Optional[str], look
         if barcode and identity:
             barcode_aliases[barcode] = identity
 
+    # Same GRN-first vendor attribution Purchase Plan/Vendor Ranking already
+    # use — without this, a product whose real vendor is only recorded on a
+    # posted GRN (not the Product Master's own vendor_name field) shows up
+    # there but not here, so the two tabs' vendor filter lists disagree.
+    grn_vendor_by_identity: Dict[str, str] = {}
+    if is_raphaaa_tenant(tenant_id):
+        grn_costs = await _latest_grn_costs(tenant_id, barcode_aliases)
+        grn_vendor_by_identity = {identity: info["vendor_name"] for identity, info in grn_costs.items() if info.get("vendor_name")}
+
     weekly: Dict[str, Dict[tuple, float]] = defaultdict(lambda: defaultdict(float))
     meta: Dict[str, Dict[str, Any]] = {}
 
@@ -227,7 +236,7 @@ async def _compute_demand_forecast(tenant_id: str, store_id: Optional[str], look
             "style": master_context.get("style", ""),
             "product_type": master_context.get("product_type", ""),
             "size": master_context.get("size", ""),
-            "vendor_name": master_context.get("vendor_name", ""),
+            "vendor_name": grn_vendor_by_identity.get(identity) or master_context.get("vendor_name", ""),
             "vendor_linked": master_context.get("vendor_linked", False),
             "weeks_active": weeks_active,
             "total_qty_sold": round(m["total_qty"], 2),
@@ -945,6 +954,15 @@ def _build_alerts(
         alerts.append({
             "tenant_id": tenant_id, "store_id": store_id, "store_name": store_name,
             "barcode": row["barcode"], "stock_identity": identity, "name": row["name"], "sku": row["sku"],
+            # Carried straight from the forecast row (already computed there) so
+            # the hierarchy/vendor filters on this tab have the same population
+            # to filter against as Demand Forecast, Purchase Plan and Vendor
+            # Ranking — previously dropped here, leaving those filters empty.
+            "division": row.get("division", ""), "section": row.get("section", ""),
+            "department": row.get("department", ""), "design_no": row.get("design_no", ""),
+            "brand": row.get("brand", ""), "style": row.get("style", ""),
+            "product_type": row.get("product_type", ""), "size": row.get("size", ""),
+            "vendor_name": row.get("vendor_name", ""), "vendor_linked": row.get("vendor_linked", False),
             "stock_qty": round(stock_qty, 2), "avg_weekly_qty": row["avg_weekly_qty"],
             "days_remaining": days_remaining,
             "severity": "critical" if days_remaining < LOW_STOCK_CRITICAL_DAYS else "warning",

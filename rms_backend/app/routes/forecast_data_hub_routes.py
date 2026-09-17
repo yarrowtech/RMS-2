@@ -43,11 +43,14 @@ import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
+import cloudinary
+import cloudinary.uploader
 import pandas as pd
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+from ..config import settings
 from .deps import get_hq_tenant
 from ..raphaaa_product_enrichment import (
     enrichment_patch,
@@ -70,6 +73,22 @@ TenantCtx = Dict[str, Any]
 MAX_ROWS = 20_000
 PREVIEW_ROWS = 500
 CENTRAL_LABEL = "Central Warehouse / HQ"
+
+cloudinary.config(cloud_name=settings.cloudinary_cloud_name, api_key=settings.cloudinary_api_key, api_secret=settings.cloudinary_api_secret, secure=True)
+
+
+def _archive_uploaded_file(tenant_id: str, filename: str, content: bytes) -> str:
+    """Best-effort: store the original uploaded workbook so Import History can
+    offer it back for re-download later. Never blocks the actual import —
+    a Cloudinary hiccup just means that one batch has no download link."""
+    try:
+        result = cloudinary.uploader.upload(
+            content, folder=f"rms/data-hub/{tenant_id}", resource_type="raw",
+            use_filename=True, unique_filename=True, filename_override=filename,
+        )
+        return result.get("secure_url") or ""
+    except Exception:
+        return ""
 
 
 class ProductEnrichmentRequest(BaseModel):
@@ -534,6 +553,11 @@ def _sales_rows(raw_rows: List[dict], barcode_index: dict, sku_index: dict, stor
         rsp = _number(_column(raw, "rsp", "selling price")) or 0.0
         mrp = _number(_column(raw, "mrp")) or 0.0
         tax_rate = _number(_column(raw, "tax rate")) or 0.0
+        # Real promotion/discount evidence, straight from the file — captured
+        # verbatim (e.g. Promo Type as "F"/"P") rather than translated, since
+        # RMS doesn't know the tenant's own scheme codes.
+        promo_name = _column(raw, "promo name", "promotion name", "promoname", "promotionname", "offer name", "scheme name")
+        promo_type = _column(raw, "promo type", "promotion type", "promotype", "promotiontype", "discount type")
         parsed_dt = _parse_dt(bill_date, bill_time)
         cats = _row_cats(raw)
 
@@ -579,6 +603,8 @@ def _sales_rows(raw_rows: List[dict], barcode_index: dict, sku_index: dict, stor
             "gross_amt": round(gross_amt, 2),
             "new_product": will_create,
             "is_void": is_void,
+            "promo_name": promo_name,
+            "promo_type": promo_type,
             "errors": errors,
             "_store": store,
             "_product": product,
@@ -1002,7 +1028,9 @@ async def commit_sales_history(
         raise HTTPException(status_code=400, detail="Send confirm=true to write these historical sales into RMS.")
 
     tenant_id = ctx["tenant_id"]
-    raw_rows = _read_rows(file.filename or "", await file.read())
+    file_content = await file.read()
+    raw_rows = _read_rows(file.filename or "", file_content)
+    file_url = _archive_uploaded_file(tenant_id, file.filename or "sales.xlsx", file_content)
     barcode_index, sku_index, _ = await _catalogue(tenant_id)
     stores = await _stores(tenant_id)
     rows = _sales_rows(raw_rows, barcode_index, sku_index, stores)
@@ -1060,6 +1088,8 @@ async def commit_sales_history(
             "gross_amount": row["gross_amt"],
             "net_amount": row["net_amt"],
             "tax_rate": row["_tax_rate"],
+            "promotion_name": row["promo_name"],
+            "promotion_type": row["promo_type"],
         })
         bill["gross"] += row["gross_amt"]
         bill["net"] += row["net_amt"]
@@ -1101,7 +1131,7 @@ async def commit_sales_history(
 
     log = {
         "tenant_id": tenant_id, "kind": "sales", "batch_id": batch_id,
-        "file_name": file.filename or "", "created_at": now,
+        "file_name": file.filename or "", "file_url": file_url, "created_at": now,
         "created_by": ctx.get("admin_id"), "created_by_name": ctx.get("admin_name") or ctx.get("admin_email") or "",
         "bills_inserted": inserted,
         "line_items": sum(len(doc["items"]) for doc in docs),
@@ -1132,7 +1162,9 @@ async def commit_stock_snapshot(
         raise HTTPException(status_code=400, detail="Send confirm=true to write this stock snapshot into RMS.")
 
     tenant_id = ctx["tenant_id"]
-    raw_rows = _read_rows(file.filename or "", await file.read())
+    file_content = await file.read()
+    raw_rows = _read_rows(file.filename or "", file_content)
+    file_url = _archive_uploaded_file(tenant_id, file.filename or "stock.xlsx", file_content)
     barcode_index, sku_index, cat_index = await _catalogue(tenant_id)
     stores = await _stores(tenant_id)
     rows, totals, store_by_label, _ = _stock_rows(raw_rows, barcode_index, sku_index, cat_index, stores)
@@ -1225,7 +1257,7 @@ async def commit_stock_snapshot(
 
     log = {
         "tenant_id": tenant_id, "kind": "stock", "batch_id": batch_id,
-        "file_name": file.filename or "", "created_at": now,
+        "file_name": file.filename or "", "file_url": file_url, "created_at": now,
         "created_by": ctx.get("admin_id"), "created_by_name": ctx.get("admin_name") or ctx.get("admin_email") or "",
         "rows_applied": applied, "rows_skipped": len(skipped),
         "location_totals": totals, "changes": changes, "rolled_back": False,
@@ -1357,7 +1389,7 @@ async def list_imports(ctx: TenantCtx = Depends(_pilot_context)):
     async for doc in data_hub_imports_collection.find({"tenant_id": ctx["tenant_id"]}).sort("created_at", -1).limit(100):
         rows.append({
             "batch_id": doc.get("batch_id"), "kind": doc.get("kind"),
-            "file_name": doc.get("file_name", ""), "created_at": doc.get("created_at"),
+            "file_name": doc.get("file_name", ""), "file_url": doc.get("file_url", ""), "created_at": doc.get("created_at"),
             "created_by_name": doc.get("created_by_name", ""),
             "rows_applied": doc.get("rows_applied"),
             "bills_inserted": doc.get("bills_inserted"), "line_items": doc.get("line_items"),

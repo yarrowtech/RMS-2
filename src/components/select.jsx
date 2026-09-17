@@ -67,6 +67,13 @@ const steps = [
   ["04", "Track and improve", "Management reviews live operational data, exceptions and performance from one system.", TrendingUp, "from-amber-400 to-orange-500", "bg-amber-50 text-amber-700 ring-amber-100"],
 ];
 
+const stepNumberTones = [
+  "text-indigo-300 group-hover:text-indigo-500",
+  "text-emerald-300 group-hover:text-emerald-500",
+  "text-cyan-300 group-hover:text-cyan-500",
+  "text-amber-300 group-hover:text-orange-500",
+];
+
 const tone = {
   indigo: "bg-indigo-50 text-indigo-700 ring-indigo-100", violet: "bg-violet-50 text-violet-700 ring-violet-100",
   emerald: "bg-emerald-50 text-emerald-700 ring-emerald-100", amber: "bg-amber-50 text-amber-700 ring-amber-100",
@@ -314,7 +321,7 @@ export default function ProfessionalRoleSelector() {
               <div className="max-w-2xl"><p className="text-xs font-extrabold uppercase tracking-[0.2em] text-emerald-600">Retailer workflow</p><h2 className="mt-4 text-3xl font-black tracking-tight text-slate-950 sm:text-4xl">From setup to daily execution.</h2><p className="mt-4 leading-7 text-slate-600">RMS follows the way a retailer actually operates, while keeping access controlled by tenant, store and department.</p></div>
               <div className="hidden rounded-3xl border border-white bg-white/80 p-4 shadow-[0_20px_55px_rgba(15,23,42,0.09)] ring-1 ring-slate-200/70 lg:block"><p className="text-xs font-black uppercase tracking-widest text-slate-400">Connected flow</p><p className="mt-1 text-sm font-bold text-slate-700">Setup / access / operations / insights</p></div>
             </div>
-            <div className="mt-10 grid gap-5 md:grid-cols-2 xl:grid-cols-4">{steps.map(([number,title,text,Icon,accent,soft]) => <div key={number} className="group relative overflow-hidden rounded-3xl border border-white bg-white p-6 shadow-[0_18px_55px_rgba(15,23,42,0.08)] ring-1 ring-slate-200/70 transition duration-300 hover:-translate-y-1 hover:shadow-[0_26px_70px_rgba(15,23,42,0.13)]"><span className={`absolute inset-x-0 top-0 h-1.5 bg-gradient-to-r ${accent}`} /><div className="flex items-start justify-between gap-4"><span className={`grid h-12 w-12 place-items-center rounded-2xl ring-1 ${soft}`}><Icon size={21}/></span><span className="text-4xl font-black text-slate-100 transition group-hover:text-slate-200">{number}</span></div><h3 className="mt-6 font-extrabold text-slate-950">{title}</h3><p className="mt-3 text-sm leading-6 text-slate-600">{text}</p><span className="mt-5 inline-flex items-center gap-1.5 text-xs font-black text-indigo-600">Step {number}<ArrowRight size={13}/></span></div>)}</div>
+            <div className="mt-10 grid gap-5 md:grid-cols-2 xl:grid-cols-4">{steps.map(([number,title,text,Icon,accent,soft], index) => <div key={number} className="group relative overflow-hidden rounded-3xl border border-white bg-white p-6 shadow-[0_18px_55px_rgba(15,23,42,0.08)] ring-1 ring-slate-200/70 transition duration-300 hover:-translate-y-1 hover:shadow-[0_26px_70px_rgba(15,23,42,0.13)]"><span className={`absolute inset-x-0 top-0 h-1.5 bg-gradient-to-r ${accent}`} /><div className="flex items-start justify-between gap-4"><span className={`grid h-12 w-12 place-items-center rounded-2xl ring-1 ${soft}`}><Icon size={21}/></span><span className={`text-4xl font-black transition-colors ${stepNumberTones[index]}`}>{number}</span></div><h3 className="mt-6 font-extrabold text-slate-950">{title}</h3><p className="mt-3 text-sm leading-6 text-slate-600">{text}</p><span className="mt-5 inline-flex items-center gap-1.5 text-xs font-black text-indigo-600">Step {number}<ArrowRight size={13}/></span></div>)}</div>
           </div>
         </section>
 

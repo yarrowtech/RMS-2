@@ -913,8 +913,19 @@ function RaphaaaPurchasePlanView() {
   const vendorRows = React.useMemo(() => aggregatePlanVendors(visibleLines)
     .sort((a, b) => Number(b[vendorMetric]) - Number(a[vendorMetric])).slice(0, 10), [visibleLines, vendorMetric]);
   const visibleBarcodes = React.useMemo(() => new Set(visibleLines.map((line) => line.barcode)), [visibleLines]);
+  const [promoFilter, setPromoFilter] = useState({ promotion: "", promotion_type: "" });
+  const promoOptions = React.useMemo(() => {
+    const all = plan?.promotion_performance || [];
+    return {
+      promotion: [...new Set(all.map((row) => row.promotion).filter(Boolean))].sort(),
+      promotion_type: [...new Set(all.map((row) => row.promotion_type).filter(Boolean))].sort(),
+    };
+  }, [plan]);
   const promotionRows = React.useMemo(() => (plan?.promotion_performance || [])
-    .filter((row) => visibleBarcodes.has(row.barcode)).slice(0, 20), [plan, visibleBarcodes]);
+    .filter((row) => visibleBarcodes.has(row.barcode))
+    .filter((row) => !promoFilter.promotion || row.promotion === promoFilter.promotion)
+    .filter((row) => !promoFilter.promotion_type || row.promotion_type === promoFilter.promotion_type)
+    .slice(0, 20), [plan, visibleBarcodes, promoFilter]);
 
   return (
     <div className="space-y-5">
@@ -1042,7 +1053,24 @@ function RaphaaaPurchasePlanView() {
 
       {plan && <div className="grid gap-5 xl:grid-cols-[1.35fr_.65fr]">
         <div className="fa-panel overflow-hidden">
-          <div className="border-b border-slate-100 px-5 py-4"><h4 className="text-sm font-black text-slate-900">Promotion and discount evidence</h4><p className="mt-1 text-xs text-slate-500">Actual gross, discount and net amounts by product/promotion label. This is descriptive performance, not proof that a promotion caused the sale.</p></div>
+          <div className="border-b border-slate-100 px-5 py-4">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h4 className="text-sm font-black text-slate-900">Promotion and discount evidence</h4>
+                <p className="mt-1 text-xs text-slate-500">Actual gross, discount and net amounts by product/promotion label. This is descriptive performance, not proof that a promotion caused the sale.</p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <select value={promoFilter.promotion} onChange={(e) => setPromoFilter((f) => ({ ...f, promotion: e.target.value }))} className="rounded-lg border px-2.5 py-1.5 text-xs font-bold">
+                  <option value="">All promotions</option>
+                  {promoOptions.promotion.map((value) => <option key={value} value={value}>{value}</option>)}
+                </select>
+                <select value={promoFilter.promotion_type} onChange={(e) => setPromoFilter((f) => ({ ...f, promotion_type: e.target.value }))} className="rounded-lg border px-2.5 py-1.5 text-xs font-bold capitalize">
+                  <option value="">All types</option>
+                  {promoOptions.promotion_type.map((value) => <option key={value} value={value} className="capitalize">{value}</option>)}
+                </select>
+              </div>
+            </div>
+          </div>
           <div className="max-h-80 overflow-auto"><table className="min-w-[940px] w-full text-xs"><thead><tr>{["Promotion", "Type", "Product", "Vendor", "Qty", "Gross", "Discount", "Net"].map((heading) => <th key={heading} className="px-4 py-3 text-left font-black uppercase">{heading}</th>)}</tr></thead><tbody className="divide-y divide-slate-100">{promotionRows.length ? promotionRows.map((row, index) => <tr key={`${row.barcode}-${row.promotion}-${row.promotion_type}-${index}`}><td className="px-4 py-3 font-bold">{row.promotion}</td><td className="px-4 py-3 capitalize">{row.promotion_type}</td><td className="px-4 py-3">{row.name}{row.design_no && <span className="block text-[10px] text-slate-400">Design {row.design_no}</span>}</td><td className="px-4 py-3">{row.vendor_name}</td><td className="px-4 py-3">{row.qty}</td><td className="px-4 py-3">{formatMoney(row.gross_sales)}</td><td className="px-4 py-3 text-rose-600">{formatMoney(row.discount_amount)}</td><td className="px-4 py-3 font-bold">{formatMoney(row.net_sales)}</td></tr>) : <tr><td colSpan={8} className="px-4 py-8 text-center text-slate-400">No promotion evidence matches this selection.</td></tr>}</tbody></table></div>
         </div>
         <div className="fa-panel p-5">
@@ -1147,9 +1175,9 @@ function aggregateRaphaaaVendors(lines) {
 }
 
 function downloadPurchasePlan(lines, periods) {
-  const headers = ["Product", "Design No.", "SKU", "Barcode", "Vendor", ...periods.map((p) => `${p.label} units`), "Peak units", "PQ before stock", "Current stock", "Fresh stock", "Aged stock", "Aged stock avg months", "50% stock credit", "Final purchase qty", "Unit cost", "Purchase amount", "Gross sales", "Discount", "Net sales", "Promotion", "Confidence", "Cost source"];
+  const headers = ["Product", "Division", "Section", "Department", "Design No.", "SKU", "Barcode", "Vendor", ...periods.map((p) => `${p.label} units`), "Peak units", "PQ before stock", "Current stock", "Fresh stock", "Aged stock", "Aged stock avg months", "50% stock credit", "Final purchase qty", "Unit cost", "Purchase amount", "Gross sales", "Discount", "Net sales", "Promotion", "Confidence", "Cost source"];
   const values = lines.map((line) => [
-    line.name, line.design_no, line.sku, line.barcode, line.vendor_name,
+    line.name, line.division, line.section, line.department, line.design_no, line.sku, line.barcode, line.vendor_name,
     ...periods.map((p) => line.quantities_by_period?.[p.key] || 0),
     line.historical_peak_qty, line.purchase_qty_before_stock, line.current_stock_qty,
     line.fresh_stock_qty, line.aged_stock_qty, line.aged_avg_months ?? "",
@@ -1405,6 +1433,31 @@ function ImportPanel({ kind, title, blurb, onCommitted }) {
   );
 }
 
+function downloadImportHistory(rows) {
+  const headers = ["When", "Type", "File", "File URL", "By", "Batch ID", "Products / Bills applied", "Line items", "Products created", "Rows skipped", "Duplicate bills skipped", "Status", "Rolled back at"];
+  const values = rows.map((row) => [
+    row.created_at ? new Date(row.created_at).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" }) : "",
+    row.kind,
+    row.file_name || "",
+    row.file_url || "",
+    row.created_by_name || "",
+    row.batch_id || "",
+    row.kind === "stock" ? (row.rows_applied ?? 0) : (row.bills_inserted ?? 0),
+    row.line_items ?? "",
+    row.products_created_count ?? 0,
+    row.rows_skipped ?? 0,
+    row.duplicate_bills_skipped ?? 0,
+    row.rolled_back ? "Rolled back" : "Active",
+    row.rolled_back_at ? new Date(row.rolled_back_at).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" }) : "",
+  ]);
+  const escape = (value) => `"${String(value ?? "").replaceAll('"', '""')}"`;
+  const csv = [headers, ...values].map((row) => row.map(escape).join(",")).join("\n");
+  const url = URL.createObjectURL(new Blob([`\uFEFF${csv}`], { type: "text/csv;charset=utf-8" }));
+  const link = document.createElement("a");
+  link.href = url; link.download = "raphaaa-data-hub-import-history.csv"; link.click();
+  URL.revokeObjectURL(url);
+}
+
 function ImportHistory({ refreshKey }) {
   const [rows, setRows] = useState([]);
   const [error, setError] = useState(null);
@@ -1447,7 +1500,10 @@ function ImportHistory({ refreshKey }) {
           <h4 className="text-sm font-bold text-slate-900">Import history</h4>
           <p className="mt-0.5 text-xs text-slate-500">Every committed stock / sales import, newest first. Rollback is exact — it only touches rows this batch still owns. A rolled-back entry can then be deleted from the log.</p>
         </div>
-        <button onClick={load} className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-bold text-indigo-700 hover:bg-indigo-100"><RefreshCw size={13} /> Refresh</button>
+        <div className="flex items-center gap-2">
+          <button onClick={() => downloadImportHistory(rows)} disabled={!rows.length} className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-bold text-indigo-700 hover:bg-indigo-100 disabled:opacity-50"><Download size={13} /> Download CSV</button>
+          <button onClick={load} className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-bold text-indigo-700 hover:bg-indigo-100"><RefreshCw size={13} /> Refresh</button>
+        </div>
       </div>
 
       <div className="fa-panel overflow-hidden">
@@ -1463,7 +1519,15 @@ function ImportHistory({ refreshKey }) {
                   <tr key={row.batch_id}>
                     <td className="px-4 py-2.5 text-xs text-slate-500">{row.created_at ? new Date(row.created_at).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" }) : "—"}</td>
                     <td className="px-4 py-2.5"><span className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] font-bold ${row.kind === "stock" ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-blue-200 bg-blue-50 text-blue-700"}`}>{row.kind}</span></td>
-                    <td className="px-4 py-2.5 max-w-[220px] truncate text-xs text-slate-600" title={row.file_name}>{row.file_name || "—"}</td>
+                    <td className="px-4 py-2.5 max-w-[220px] truncate text-xs" title={row.file_url ? `Download ${row.file_name}` : row.file_name}>
+                      {row.file_url ? (
+                        <a href={row.file_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 font-semibold text-indigo-700 hover:underline">
+                          <Download size={12} className="shrink-0" /> {row.file_name || "Download"}
+                        </a>
+                      ) : (
+                        <span className="text-slate-600">{row.file_name || "—"}</span>
+                      )}
+                    </td>
                     <td className="px-4 py-2.5 text-xs text-slate-600">{row.created_by_name || "—"}</td>
                     <td className="px-4 py-2.5 text-xs font-semibold text-slate-800">
                       {row.kind === "stock"

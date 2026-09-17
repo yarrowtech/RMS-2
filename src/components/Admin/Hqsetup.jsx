@@ -1126,9 +1126,10 @@ function StoresSection() {
   const [loading,   setLoading]   = useState(false);
   const [saving,    setSaving]    = useState(false);
   const [showForm,  setShowForm]  = useState(false);
+  const [editingStoreId, setEditingStoreId] = useState(null);
   const [showBuyStores, setShowBuyStores] = useState(false);
   const [expanded,  setExpanded]  = useState({});
-  const [form,      setForm]      = useState({ name:"", code:"", type:"store", city:"", address:"", phone:"", parent_id:"" });
+  const [form,      setForm]      = useState({ name:"", code:"", type:"store", city:"", address:"", phone:"", parent_id:"", active:true });
 
   const fetchStores = useCallback(async () => {
     try {
@@ -1141,15 +1142,55 @@ function StoresSection() {
 
   useEffect(() => { fetchStores(); }, [fetchStores]);
 
+  const resetForm = () => {
+    setForm({ name:"", code:"", type:"store", city:"", address:"", phone:"", parent_id:"", active:true });
+    setEditingStoreId(null);
+    setShowForm(false);
+  };
+
+  const startCreate = () => {
+    setEditingStoreId(null);
+    setForm({ name:"", code:"", type:"store", city:"", address:"", phone:"", parent_id:"", active:true });
+    setShowForm(true);
+  };
+
+  const startEdit = (store) => {
+    setEditingStoreId(store.id);
+    setForm({
+      name: store.name || "",
+      code: store.code || "",
+      type: store.type || "store",
+      city: store.city || "",
+      address: store.address || "",
+      phone: store.phone || "",
+      parent_id: store.parent_id || "",
+      active: store.active !== false,
+    });
+    setShowForm(true);
+  };
+
   const handleSave = async () => {
     if (!form.name.trim() || !form.code.trim()) { toast.error("Name and Code are required"); return; }
     if (form.type === "branch" && !form.parent_id) { toast.error("Select a parent store for the branch"); return; }
     try {
       setSaving(true);
-      await api("/hq/stores", { method:"POST", body: JSON.stringify(form) });
-      toast.success(`${form.type === "branch" ? "Branch" : "Store"} created!`);
-      setShowForm(false);
-      setForm({ name:"", code:"", type:"store", city:"", address:"", phone:"", parent_id:"" });
+      if (editingStoreId) {
+        await api("/hq/stores/" + editingStoreId, {
+          method:"PUT",
+          body: JSON.stringify({
+            name: form.name,
+            city: form.city,
+            address: form.address,
+            phone: form.phone,
+            active: form.active,
+          }),
+        });
+        toast.success((form.type === "branch" ? "Branch" : "Store") + " updated!");
+      } else {
+        await api("/hq/stores", { method:"POST", body: JSON.stringify(form) });
+        toast.success((form.type === "branch" ? "Branch" : "Store") + " created!");
+      }
+      resetForm();
       fetchStores();
     } catch (e) { toast.error(e.message); }
     finally { setSaving(false); }
@@ -1192,7 +1233,7 @@ function StoresSection() {
             className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-bold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-xl transition">
             <CreditCard className="w-3.5 h-3.5"/> Buy Store Slots
           </button>
-          <button onClick={() => setShowForm(s => !s)}
+          <button onClick={startCreate}
             className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-bold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-xl transition">
             <Plus className="w-3.5 h-3.5"/> Add Store / Branch
           </button>
@@ -1207,16 +1248,17 @@ function StoresSection() {
       {showForm && (
         <div className="bg-indigo-50 border border-indigo-200 rounded-2xl p-5 space-y-4">
           <div className="flex items-center justify-between">
-            <p className="text-sm font-bold text-indigo-800">New Store / Branch</p>
-            <button onClick={() => setShowForm(false)} className="text-slate-400 hover:text-slate-600"><X className="w-4 h-4"/></button>
+            <p className="text-sm font-bold text-indigo-800">{editingStoreId ? "Edit Store / Branch" : "New Store / Branch"}</p>
+            <button onClick={resetForm} className="text-slate-400 hover:text-slate-600"><X className="w-4 h-4"/></button>
           </div>
 
           {/* Type toggle */}
           <div className="flex gap-2">
             {[["store","Store","🏪"],["branch","Branch","🌿"]].map(([val,label,emoji]) => (
               <button key={val} type="button"
+                disabled={Boolean(editingStoreId)}
                 onClick={() => setForm(f => ({ ...f, type:val, parent_id: val==="store"?"":f.parent_id }))}
-                className={`flex-1 py-2 text-xs font-bold rounded-xl border-2 transition ${form.type===val?"border-indigo-500 bg-white text-indigo-700":"border-slate-200 bg-white text-slate-500 hover:border-slate-300"}`}>
+                className={`flex-1 py-2 text-xs font-bold rounded-xl border-2 transition disabled:cursor-not-allowed disabled:opacity-60 ${form.type===val?"border-indigo-500 bg-white text-indigo-700":"border-slate-200 bg-white text-slate-500 hover:border-slate-300"}`}>
                 {emoji} {label}
               </button>
             ))}
@@ -1226,7 +1268,7 @@ function StoresSection() {
           {form.type === "branch" && (
             <div>
               <label className={LBL}>Parent Store *</label>
-              <select className={INP} value={form.parent_id} onChange={e => setForm(f => ({...f, parent_id:e.target.value}))}>
+              <select disabled={Boolean(editingStoreId)} className={INP + " disabled:bg-slate-100 disabled:cursor-not-allowed"} value={form.parent_id} onChange={e => setForm(f => ({...f, parent_id:e.target.value}))}>
                 <option value="">— Select parent store —</option>
                 {parentStores.map(s => <option key={s.id} value={s.id}>{s.name} ({s.code})</option>)}
               </select>
@@ -1240,7 +1282,8 @@ function StoresSection() {
             </div>
             <div>
               <label className={LBL}>Code *</label>
-              <input className={INP + " uppercase font-mono"} value={form.code} onChange={e => setForm(f=>({...f,code:e.target.value.toUpperCase()}))} placeholder="e.g. PHX"/>
+              <input disabled={Boolean(editingStoreId)} className={INP + " uppercase font-mono disabled:bg-slate-100 disabled:cursor-not-allowed"} value={form.code} onChange={e => setForm(f=>({...f,code:e.target.value.toUpperCase()}))} placeholder="e.g. PHX"/>
+              {editingStoreId && <p className="text-[10px] text-slate-500 mt-1">Store code is a permanent system identifier.</p>}
             </div>
             <div>
               <label className={LBL}>City</label>
@@ -1254,13 +1297,22 @@ function StoresSection() {
               <label className={LBL}>Address</label>
               <input className={INP} value={form.address} onChange={e => setForm(f=>({...f,address:e.target.value}))} placeholder="Full address"/>
             </div>
+            {editingStoreId && (
+              <div className="col-span-2">
+                <label className={LBL}>Operational Status</label>
+                <select className={INP} value={form.active ? "active" : "inactive"} onChange={e => setForm(f=>({...f,active:e.target.value==="active"}))}>
+                  <option value="active">Active</option>
+                  <option value="inactive">Inactive</option>
+                </select>
+              </div>
+            )}
           </div>
 
           <div className="flex justify-end gap-2">
-            <button onClick={() => setShowForm(false)} className="px-4 py-2 text-sm font-bold text-slate-600 bg-white border border-slate-200 rounded-xl hover:bg-slate-50 transition">Cancel</button>
+            <button onClick={resetForm} className="px-4 py-2 text-sm font-bold text-slate-600 bg-white border border-slate-200 rounded-xl hover:bg-slate-50 transition">Cancel</button>
             <button onClick={handleSave} disabled={saving}
               className="px-5 py-2 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl transition disabled:opacity-50">
-              {saving ? "Saving…" : `Create ${form.type === "branch" ? "Branch" : "Store"}`}
+              {saving ? "Saving…" : editingStoreId ? "Save Changes" : "Create " + (form.type === "branch" ? "Branch" : "Store")}
             </button>
           </div>
         </div>
@@ -1285,7 +1337,10 @@ function StoresSection() {
                     {s.type === "store" ? "S" : "B"}
                   </div>
                   <div>
-                    <p className="text-sm font-bold text-slate-900">{s.name}</p>
+                    <div className="flex items-center gap-2">
+                      <p className="text-sm font-bold text-slate-900">{s.name}</p>
+                      {s.active === false && <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[9px] font-black uppercase text-slate-500">Inactive</span>}
+                    </div>
                     <p className="text-xs text-slate-400 font-mono">{s.code} {s.city ? `· ${s.city}` : ""}</p>
                   </div>
                 </div>
@@ -1297,6 +1352,8 @@ function StoresSection() {
                       {s.branches.length} branch{s.branches.length!==1?"es":""}
                     </button>
                   )}
+                  <button onClick={() => startEdit(s)} title="Edit store"
+                    className="p-1.5 text-indigo-500 hover:bg-indigo-50 rounded-lg transition"><Edit className="w-3.5 h-3.5"/></button>
                   <button onClick={() => handleDelete(s.id, s.name)}
                     className="p-1.5 text-rose-400 hover:bg-rose-50 rounded-lg transition"><Trash2 className="w-3.5 h-3.5"/></button>
                 </div>
@@ -1314,8 +1371,12 @@ function StoresSection() {
                           <p className="text-[10px] text-slate-400 font-mono">{b.code}</p>
                         </div>
                       </div>
-                      <button onClick={() => handleDelete(b.id, b.name)}
-                        className="p-1 text-rose-400 hover:bg-rose-50 rounded-lg transition"><Trash2 className="w-3 h-3"/></button>
+                      <div className="flex items-center gap-1">
+                        <button onClick={() => startEdit(b)} title="Edit branch"
+                          className="p-1 text-indigo-500 hover:bg-indigo-50 rounded-lg transition"><Edit className="w-3 h-3"/></button>
+                        <button onClick={() => handleDelete(b.id, b.name)}
+                          className="p-1 text-rose-400 hover:bg-rose-50 rounded-lg transition"><Trash2 className="w-3 h-3"/></button>
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -1337,7 +1398,8 @@ function StoreAdminsSection() {
   const [loading,  setLoading]  = useState(false);
   const [saving,   setSaving]   = useState(false);
   const [showForm, setShowForm] = useState(false);
-  const [form,     setForm]     = useState({ name:"", email:"", phone:"", store_id:"" });
+  const [editingAdmin, setEditingAdmin] = useState(null);
+  const [form,     setForm]     = useState({ name:"", email:"", phone:"", store_id:"", status:"PENDING" });
 
   const fetchAll = useCallback(async () => {
     try {
@@ -1354,16 +1416,50 @@ function StoreAdminsSection() {
 
   useEffect(() => { fetchAll(); }, [fetchAll]);
 
+  const resetForm = () => {
+    setForm({ name:"", email:"", phone:"", store_id:"", status:"PENDING" });
+    setEditingAdmin(null);
+    setShowForm(false);
+  };
+
+  const startCreate = () => {
+    setEditingAdmin(null);
+    setForm({ name:"", email:"", phone:"", store_id:"", status:"PENDING" });
+    setShowForm(true);
+  };
+
+  const startEdit = (admin) => {
+    setEditingAdmin(admin);
+    setForm({
+      name: admin.name || "",
+      email: admin.email || "",
+      phone: admin.phone || "",
+      store_id: admin.store_id || "",
+      status: String(admin.status || "").toUpperCase() === "SUSPENDED" ? "SUSPENDED" : (admin.password_set ? "ACTIVE" : "PENDING"),
+    });
+    setShowForm(true);
+  };
+
   const handleSave = async () => {
     if (!form.name.trim())     { toast.error("Name is required"); return; }
     if (!form.email.trim())    { toast.error("Email is required"); return; }
     if (!form.store_id)        { toast.error("Assign to a store"); return; }
     try {
       setSaving(true);
-      await api("/hq/store-admins", { method:"POST", body: JSON.stringify(form) });
-      toast.success("Store Admin created! Setup email sent.");
-      setShowForm(false);
-      setForm({ name:"", email:"", phone:"", store_id:"" });
+      if (editingAdmin) {
+        const payload = {
+          name: form.name,
+          phone: form.phone,
+          store_id: form.store_id,
+        };
+        if (editingAdmin.password_set) payload.status = form.status;
+        await api("/hq/store-admins/" + editingAdmin.id, { method:"PUT", body: JSON.stringify(payload) });
+        toast.success("Store Admin updated!");
+      } else {
+        await api("/hq/store-admins", { method:"POST", body: JSON.stringify(form) });
+        toast.success("Store Admin created! Setup email sent.");
+      }
+      resetForm();
       fetchAll();
     } catch (e) { toast.error(e.message); }
     finally { setSaving(false); }
@@ -1405,7 +1501,7 @@ function StoreAdminsSection() {
           </h3>
           <p className="text-xs text-slate-500 mt-0.5">{admins.length} admin{admins.length!==1?"s":""} assigned</p>
         </div>
-        <button onClick={() => setShowForm(s=>!s)}
+        <button onClick={startCreate}
           className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-bold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-xl transition">
           <Plus className="w-3.5 h-3.5"/> Add Store Admin
         </button>
@@ -1414,8 +1510,8 @@ function StoreAdminsSection() {
       {showForm && (
         <div className="bg-indigo-50 border border-indigo-200 rounded-2xl p-5 space-y-4">
           <div className="flex items-center justify-between">
-            <p className="text-sm font-bold text-indigo-800">New Store Admin</p>
-            <button onClick={() => setShowForm(false)}><X className="w-4 h-4 text-slate-400"/></button>
+            <p className="text-sm font-bold text-indigo-800">{editingAdmin ? "Edit Store Admin" : "New Store Admin"}</p>
+            <button onClick={resetForm}><X className="w-4 h-4 text-slate-400"/></button>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div className="col-span-2">
@@ -1435,15 +1531,24 @@ function StoreAdminsSection() {
             </div>
             <div className="col-span-2">
               <label className={LBL}>Email *</label>
-              <input type="email" className={INP} value={form.email} onChange={e=>setForm(f=>({...f,email:e.target.value}))} placeholder="store@company.com"/>
-              <p className="text-[10px] text-indigo-600 mt-1">A setup email will be sent to this address.</p>
+              <input disabled={Boolean(editingAdmin)} type="email" className={INP + " disabled:bg-slate-100 disabled:cursor-not-allowed"} value={form.email} onChange={e=>setForm(f=>({...f,email:e.target.value}))} placeholder="store@company.com"/>
+              <p className="text-[10px] text-indigo-600 mt-1">{editingAdmin ? "Login email is permanent; create a new account if it must change." : "A setup email will be sent to this address."}</p>
             </div>
+            {editingAdmin?.password_set && (
+              <div className="col-span-2">
+                <label className={LBL}>Account Status</label>
+                <select className={INP} value={form.status} onChange={e=>setForm(f=>({...f,status:e.target.value}))}>
+                  <option value="ACTIVE">Active</option>
+                  <option value="SUSPENDED">Suspended</option>
+                </select>
+              </div>
+            )}
           </div>
           <div className="flex justify-end gap-2">
-            <button onClick={() => setShowForm(false)} className="px-4 py-2 text-sm font-bold text-slate-600 bg-white border border-slate-200 rounded-xl hover:bg-slate-50 transition">Cancel</button>
+            <button onClick={resetForm} className="px-4 py-2 text-sm font-bold text-slate-600 bg-white border border-slate-200 rounded-xl hover:bg-slate-50 transition">Cancel</button>
             <button onClick={handleSave} disabled={saving}
               className="px-5 py-2 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl transition disabled:opacity-50">
-              {saving ? "Creating…" : "Create & Send Email"}
+              {saving ? "Saving…" : editingAdmin ? "Save Changes" : "Create & Send Email"}
             </button>
           </div>
         </div>
@@ -1470,8 +1575,10 @@ function StoreAdminsSection() {
               </div>
               <div className="flex items-center gap-2">
                 <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${a.status==="ACTIVE"||a.status==="Active"?"bg-emerald-100 text-emerald-700":"bg-amber-100 text-amber-700"}`}>
-                  {a.password_set ? "Active" : "Pending Setup"}
+                  {a.password_set ? (a.status === "SUSPENDED" ? "Suspended" : "Active") : "Pending Setup"}
                 </span>
+                <button onClick={() => startEdit(a)} title="Edit store admin"
+                  className="p-1.5 text-indigo-500 hover:bg-indigo-50 rounded-lg transition"><Edit className="w-3.5 h-3.5"/></button>
                 <button onClick={() => handleDelete(a.id, a.name)}
                   className="p-1.5 text-rose-400 hover:bg-rose-50 rounded-lg transition"><Trash2 className="w-3.5 h-3.5"/></button>
               </div>

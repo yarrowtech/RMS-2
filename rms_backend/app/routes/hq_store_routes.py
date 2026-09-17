@@ -24,6 +24,7 @@ from .deps import get_hq_tenant, get_hq_or_store_hr_tenant
 from ..db import stores_collection, admins_collection, tenants_collection, retailer_store_addons_collection
 from ..auth import create_password_setup_token
 from ..email_utils import send_password_setup_email
+from ..activity_log import log_activity
 from ..config import settings
 from ..retailer_plans import retailer_plan_config
 from ..utils import gstin_checksum_valid
@@ -145,6 +146,13 @@ class StoreAdminCreate(BaseModel):
     permissions:        List[str] = ["store_stock", "cashier", "sales"]
 
 
+class StoreAdminUpdate(BaseModel):
+    name:     Optional[str] = None
+    phone:    Optional[str] = None
+    store_id: Optional[str] = None
+    status:   Optional[str] = None
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # STORES & BRANCHES
 # ══════════════════════════════════════════════════════════════════════════════
@@ -257,13 +265,24 @@ async def update_store(
         raise HTTPException(status_code=403, detail="Access denied.")
 
     patch: Dict[str, Any] = {"updated_at": datetime.utcnow()}
-    if payload.name    is not None: patch["name"]    = payload.name.strip()
+    if payload.name is not None:
+        if not payload.name.strip():
+            raise HTTPException(status_code=400, detail="Store name is required.")
+        patch["name"] = payload.name.strip()
     if payload.city    is not None: patch["city"]    = payload.city.strip()
     if payload.address is not None: patch["address"] = payload.address.strip()
     if payload.phone   is not None: patch["phone"]   = payload.phone.strip()
     if payload.active  is not None: patch["active"]  = payload.active
 
     await stores_collection.update_one({"_id": oid}, {"$set": patch})
+    await log_activity(
+        ctx.get("admin_name", "HQ Admin"),
+        f"Updated {store.get('type', 'store')} {patch.get('name', store.get('name', store_id))}",
+        type="update",
+        tenant_id=ctx["tenant_id"],
+        actor_email=ctx.get("admin_email"),
+        actor_role="HQ Admin",
+    )
     return JSONResponse({"status": "success", "message": "Store updated."})
 
 
@@ -425,6 +444,69 @@ async def create_store_admin(
         "id":         admin_id,
         "setup_link": setup_link,
     }, status_code=201)
+
+
+@router.put("/store-admins/{admin_id}")
+async def update_store_admin(
+    admin_id: str,
+    payload: StoreAdminUpdate,
+    ctx: TenantCtx = Depends(get_hq_tenant),
+):
+    """Edit a store-scoped admin without changing login identity or tenant ownership."""
+    try:
+        oid = ObjectId(admin_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid admin ID")
+
+    admin = await admins_collection.find_one({
+        "_id": oid,
+        "tenant_id": ctx["tenant_id"],
+        "scope": "store",
+    })
+    if not admin:
+        raise HTTPException(status_code=404, detail="Store admin not found")
+
+    patch: Dict[str, Any] = {"updated_at": datetime.utcnow()}
+    if payload.name is not None:
+        if not payload.name.strip():
+            raise HTTPException(status_code=400, detail="Admin name is required.")
+        patch["name"] = payload.name.strip()
+    if payload.phone is not None:
+        patch["phone"] = payload.phone.strip()
+    if payload.status is not None:
+        if payload.status not in ("ACTIVE", "SUSPENDED"):
+            raise HTTPException(status_code=400, detail="status must be ACTIVE or SUSPENDED")
+        patch["status"] = payload.status
+    if payload.store_id is not None:
+        try:
+            store_oid = ObjectId(payload.store_id)
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid store ID")
+        store = await stores_collection.find_one({
+            "_id": store_oid,
+            "tenant_id": ctx["tenant_id"],
+        })
+        if not store:
+            raise HTTPException(
+                status_code=404,
+                detail="Store not found or does not belong to your tenant.",
+            )
+        patch.update({
+            "store_id": payload.store_id,
+            "store_name": store.get("name", ""),
+            "store_type": store.get("type", "store"),
+        })
+
+    await admins_collection.update_one({"_id": oid}, {"$set": patch})
+    await log_activity(
+        ctx.get("admin_name", "HQ Admin"),
+        f"Updated store admin {patch.get('name', admin.get('name', admin_id))}",
+        type="update",
+        tenant_id=ctx["tenant_id"],
+        actor_email=ctx.get("admin_email"),
+        actor_role="HQ Admin",
+    )
+    return JSONResponse({"status": "success", "message": "Store admin updated."})
 
 
 @router.delete("/store-admins/{admin_id}")
