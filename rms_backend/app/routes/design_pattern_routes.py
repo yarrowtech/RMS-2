@@ -28,6 +28,34 @@ cloudinary.config(cloud_name=settings.cloudinary_cloud_name, api_key=settings.cl
 PROJECT_STATUSES = {"IDEA", "IN_DEVELOPMENT", "PATTERN_DEVELOPMENT", "SAMPLE_DEVELOPMENT", "REVISION_REQUIRED", "AWAITING_APPROVAL", "APPROVED_FOR_PRODUCTION", "RELEASED_TO_PRODUCTION", "ON_HOLD", "REJECTED", "ARCHIVED"}
 SAMPLE_DECISIONS = {"PENDING", "APPROVED", "APPROVED_WITH_COMMENTS", "REVISION_REQUIRED", "REJECTED", "RESAMPLE_REQUIRED"}
 
+# Standard pattern-making vocabulary so construction method is picked from a
+# fixed list on a Pattern record instead of typed free text each time — makes
+# it consistent across patternmakers and filterable/reportable later. Not
+# tenant-configurable (unlike DEFAULT_SETTINGS above); this is generic
+# garment-construction terminology, not a business preference.
+PATTERN_VOCABULARY = {
+    "base_block": [
+        "Bodice block", "Sleeve block", "Skirt block", "Trouser block",
+        "Dress block", "Collar block", "Custom / draped",
+    ],
+    "seam_types": [
+        "Plain (open) seam", "French seam", "Flat-felled seam", "Overlocked seam",
+        "Bound seam", "Lapped seam", "Welt seam", "Mock flat-felled seam",
+    ],
+    "closure_types": [
+        "Concealed zipper", "Exposed zipper", "Buttons", "Hooks & eyes",
+        "Drawstring", "Elastic", "Snap buttons", "Velcro", "None",
+    ],
+    "dart_pleat_tuck_details": [
+        "Bust dart", "Waist dart", "Box pleat", "Knife pleat", "Accordion pleat",
+        "Pin tucks", "Shirring", "Smocking", "None",
+    ],
+    "hem_finishes": [
+        "Blind hem", "Rolled hem", "Bound hem", "Overlocked hem",
+        "Double-fold hem", "Lettuce hem", "Raw / unfinished edge",
+    ],
+}
+
 DEFAULT_SETTINGS = {
     "departments": ["Men", "Women", "Kids Boys", "Kids Girls", "Infant", "Accessories", "Other"],
     "sample_types": ["Proto sample", "Development sample", "Fit sample", "Size-set sample", "Print / embroidery sample", "Wash sample", "Pre-production sample", "Production sample"],
@@ -367,6 +395,10 @@ async def record_approval(project_id: str, payload: dict, ctx: dict = Depends(re
     await design_projects_collection.update_one({"_id": project["_id"]}, {"$push": {"approvals": approval}, "$set": {"updated_at": datetime.utcnow()}})
     return {"message": f"{approval_type.replace('_', ' ').title()} decision recorded."}
 
+@router.get("/pattern-vocabulary")
+async def get_pattern_vocabulary(ctx: dict = Depends(require_design)):
+    return {"status": "success", "data": PATTERN_VOCABULARY}
+
 @router.post("/patterns", status_code=201)
 async def create_pattern(payload: dict, ctx: dict = Depends(require_design)):
     project = await project_or_404(clean(payload.get("project_id"), 40), ctx["tenant_id"])
@@ -379,6 +411,15 @@ async def create_pattern(payload: dict, ctx: dict = Depends(require_design)):
            "fabric_width": clean(payload.get("fabric_width"), 50), "consumption_per_unit": number(payload.get("consumption_per_unit")),
            "wastage_pct": number(payload.get("wastage_pct")), "marker_length": clean(payload.get("marker_length"), 50), "marker_efficiency": number(payload.get("marker_efficiency")),
            "seam_allowance": clean(payload.get("seam_allowance"), 100), "shrinkage_allowance": clean(payload.get("shrinkage_allowance"), 100),
+           # Structured construction vocabulary — picked from a fixed list
+           # (PATTERN_VOCABULARY below) instead of typed free text, so
+           # construction method is consistent and filterable across styles.
+           # "notes" still stays free text for anything non-standard.
+           "base_block": clean(payload.get("base_block"), 60),
+           "seam_types": [clean(x, 60) for x in (payload.get("seam_types") or []) if clean(x, 60)][:20],
+           "closure_types": [clean(x, 60) for x in (payload.get("closure_types") or []) if clean(x, 60)][:20],
+           "dart_pleat_tuck_details": [clean(x, 60) for x in (payload.get("dart_pleat_tuck_details") or []) if clean(x, 60)][:20],
+           "hem_finishes": [clean(x, 60) for x in (payload.get("hem_finishes") or []) if clean(x, 60)][:20],
            "file_urls": [clean(x, 1000) for x in payload.get("file_urls", []) if clean(x)][:30], "notes": clean(payload.get("notes"), 2000), "status": clean(payload.get("status"), 40) or "DRAFT",
            "created_by": ctx.get("admin_id"), "created_at": now, "updated_at": now}
     result = await design_patterns_collection.insert_one(row); row["_id"] = result.inserted_id
