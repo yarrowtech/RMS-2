@@ -900,6 +900,9 @@ function RaphaaaPurchasePlanView() {
     final_purchase_qty: visibleLines.reduce((sum, line) => sum + Number(line.final_purchase_qty || 0), 0),
     estimated_purchase_amount: visibleLines.reduce((sum, line) => sum + Number(line.estimated_purchase_amount || 0), 0),
     historical_net_sales: visibleLines.reduce((sum, line) => sum + Number(line.net_sales || 0), 0),
+    aged_product_count: visibleLines.filter((line) => Number(line.aged_stock_qty) > 0).length,
+    aged_stock_qty: visibleLines.reduce((sum, line) => sum + Number(line.aged_stock_qty || 0), 0),
+    limited_history_count: visibleLines.filter((line) => line.confidence === "Limited history").length,
   }), [visibleLines]);
   const productChart = React.useMemo(() => visibleLines
     .filter((line) => Number(line.historical_peak_qty) > 0 || Number(line.final_purchase_qty) > 0)
@@ -963,6 +966,24 @@ function RaphaaaPurchasePlanView() {
           <StatTile label="Final purchase quantity" value={summary.final_purchase_qty.toLocaleString("en-IN")} />
           <StatTile label="Estimated purchase amount" value={formatMoney(summary.estimated_purchase_amount)} tone="amber" />
           <StatTile label="Historical net sales" value={formatMoney(summary.historical_net_sales)} />
+        </div>
+
+        <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-4 text-sm leading-6 text-indigo-900">
+          <p className="font-black">In plain words</p>
+          <p className="mt-1">
+            Comparing {periods.map((p) => p.label).join(" vs ")}, RMS suggests buying about{" "}
+            <b>{summary.final_purchase_qty.toLocaleString("en-IN")} units</b> across{" "}
+            <b>{summary.recommended_products.toLocaleString("en-IN")} products</b>, costing roughly{" "}
+            <b>{formatMoney(summary.estimated_purchase_amount)}</b>. This already accounts for your best-selling
+            season plus a safety margin, minus half of the fresh stock you're currently sitting on.
+            {summary.aged_product_count > 0 ? (
+              <> Separately, <b>{summary.aged_product_count} product{summary.aged_product_count === 1 ? "" : "s"}</b>{" "}
+                (<b>{summary.aged_stock_qty.toLocaleString("en-IN")} units</b>) are old stock that didn't get any credit toward
+                lowering this number — see "Ageing — stock to clear out" below for what to discount or clear instead.</>
+            ) : " None of your current stock is old enough to be treated as ageing."}
+            {summary.limited_history_count > 0 && <> {summary.limited_history_count} of these products only have one period of real sales, so treat their numbers as a rough guide, not a firm figure.</>}
+            {" "}Nothing here is ordered automatically — a person still reviews this and creates the actual PO in Procurement.
+          </p>
         </div>
 
         <div className="grid gap-3 lg:grid-cols-2">
