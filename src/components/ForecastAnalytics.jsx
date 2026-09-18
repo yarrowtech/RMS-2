@@ -1108,9 +1108,12 @@ function RaphaaaPurchasePlanView() {
       </div>}
 
       {plan && plan.ageing_clearance?.length > 0 && <div className="fa-panel overflow-hidden">
-        <div className="border-b border-slate-100 px-5 py-4">
-          <h4 className="text-sm font-black text-slate-900">Ageing — stock to clear out</h4>
-          <p className="mt-1 text-xs text-slate-500">Stock older than {plan.policy?.fresh_max_months ?? 2} months (by CATEGORY6/Ageing). It no longer reduces how much you buy fresh — it's shown here instead so it can be discounted or otherwise cleared.</p>
+        <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-100 px-5 py-4">
+          <div>
+            <h4 className="text-sm font-black text-slate-900">Ageing — stock to clear out</h4>
+            <p className="mt-1 text-xs text-slate-500">Stock older than {plan.policy?.fresh_max_months ?? 2} months (by CATEGORY6/Ageing). It no longer reduces how much you buy fresh — it's shown here instead so it can be discounted or otherwise cleared.</p>
+          </div>
+          <button type="button" onClick={() => downloadAgeingClearance(plan.ageing_clearance)} className="inline-flex items-center gap-2 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs font-bold text-indigo-700 hover:bg-indigo-100"><Download size={14} />Export CSV</button>
         </div>
         <div className="max-h-80 overflow-auto">
           <table className="min-w-[700px] w-full text-xs">
@@ -1211,6 +1214,20 @@ function downloadPurchasePlan(lines, periods) {
   const url = URL.createObjectURL(new Blob([`\uFEFF${csv}`], { type: "text/csv;charset=utf-8" }));
   const link = document.createElement("a");
   link.href = url; link.download = "raphaaa-purchase-plan.csv"; link.click();
+  URL.revokeObjectURL(url);
+}
+
+function downloadAgeingClearance(rows) {
+  const headers = ["Product", "Design No.", "Barcode", "Vendor", "Fresh stock", "Aged stock", "Aged stock avg months"];
+  const values = rows.map((row) => [
+    row.name, row.design_no, row.barcode, row.vendor_name || "Unavailable",
+    row.fresh_stock_qty, row.aged_stock_qty, row.aged_avg_months ?? "",
+  ]);
+  const escape = (value) => `"${String(value ?? "").replaceAll('"', '""')}"`;
+  const csv = [headers, ...values].map((row) => row.map(escape).join(",")).join("\n");
+  const url = URL.createObjectURL(new Blob([`\uFEFF${csv}`], { type: "text/csv;charset=utf-8" }));
+  const link = document.createElement("a");
+  link.href = url; link.download = "raphaaa-ageing-clearance.csv"; link.click();
   URL.revokeObjectURL(url);
 }
 
