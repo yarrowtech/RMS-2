@@ -21,6 +21,7 @@ from ..db import (
     sales_collection,
     tech_packs_collection,
     tenants_collection,
+    unstitched_stock_collection,
 )
 from .job_work_routes import (
     _increase_central_stock, _require_job_work, _require_vendor_job_work_access,
@@ -97,11 +98,21 @@ async def _unstitched_opportunities(tenant_id: str) -> list[dict]:
         row["unstitched_qty"] += number(p.get("quantity"))
         if p.get("product_name"):
             row["product_names"].add(p["product_name"])
-    if not grouped:
+    # Pieces imported through Forecast & Analytics' Data Hub (Raphaaa only — no
+    # other tenant has documents in this collection). Kept in their own bucket
+    # and matched case-insensitively; the product-based flow above is untouched.
+    imported: dict[str, dict] = {}
+    async for doc in unstitched_stock_collection.find({"tenant_id": tenant_id, "pcs": {"$gt": 0}}):
+        design_no = clean(doc.get("design_no"))
+        key = " ".join(design_no.lower().split())
+        if key:
+            imported[key] = {"design_no": design_no, "unstitched_qty": number(doc.get("pcs")), "description": clean(doc.get("description"))}
+    if not grouped and not imported:
         return []
 
     since = datetime.utcnow() - timedelta(days=365)
     sold: dict[str, float] = {}
+    imported_sold: dict[str, float] = {}
     async for doc in sales_collection.find(
         {"tenant_id": tenant_id, "type": "sale", "created_at": {"$gte": since}},
         {"items.design_no": 1, "items.qty": 1},
@@ -110,6 +121,10 @@ async def _unstitched_opportunities(tenant_id: str) -> list[dict]:
             d = clean(item.get("design_no"))
             if d in grouped:
                 sold[d] = sold.get(d, 0.0) + number(item.get("qty"))
+            if imported:
+                k = " ".join(d.lower().split())
+                if k in imported:
+                    imported_sold[k] = imported_sold.get(k, 0.0) + number(item.get("qty"))
 
     rows = []
     for design_no, info in grouped.items():
@@ -124,6 +139,21 @@ async def _unstitched_opportunities(tenant_id: str) -> list[dict]:
             "sold_qty": sold_qty,
             "sold": sold_qty > 0,
             "product_names": sorted(info["product_names"]),
+            "tech_pack_id": str(pack["_id"]) if pack else None,
+            "tech_pack_no": pack.get("tech_pack_no") if pack else None,
+        })
+    for key, info in imported.items():
+        pack = await tech_packs_collection.find_one(
+            {"tenant_id": tenant_id, "design_no": {"$regex": f"^{re.escape(info['design_no'])}$", "$options": "i"}, "status": "Released to Production"},
+            sort=[("updated_at", -1)],
+        )
+        sold_qty = round(imported_sold.get(key, 0.0), 2)
+        rows.append({
+            "design_no": info["design_no"],
+            "unstitched_qty": round(info["unstitched_qty"], 2),
+            "sold_qty": sold_qty,
+            "sold": sold_qty > 0,
+            "product_names": [info["description"]] if info["description"] else [],
             "tech_pack_id": str(pack["_id"]) if pack else None,
             "tech_pack_no": pack.get("tech_pack_no") if pack else None,
         })
@@ -262,6 +292,22 @@ async def create_batch(payload: dict, ctx: dict = Depends(_require_job_work)):
             if take > 0:
                 await product_collection.update_one({"_id": src["_id"]}, {"$inc": {"quantity": -take}})
                 remaining -= take
+        if remaining > 0:
+            # Pieces imported via the Raphaaa Data Hub live in their own
+            # collection; use up whatever the product-based stock didn't cover.
+            imported_doc = await unstitched_stock_collection.find_one(
+                {"tenant_id": tenant_id, "design_key": " ".join(source_design_no.lower().split()), "pcs": {"$gt": 0}}
+            )
+            if imported_doc:
+                new_pcs = max(0.0, number(imported_doc.get("pcs")) - remaining)
+                await unstitched_stock_collection.update_one(
+                    {"_id": imported_doc["_id"]},
+                    {"$set": {
+                        "pcs": new_pcs,
+                        "fabric_total": round(new_pcs * number(imported_doc.get("fabric_per_piece")), 3),
+                        "updatedAt": datetime.utcnow(),
+                    }},
+                )
 
     return {"message": f"Batch {row['batch_no']} created. Next, assign and start {operations[0]['name']}.", "data": serialize(row)}
 

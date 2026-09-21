@@ -27,6 +27,7 @@ from ..db import (
     vendor_tenant_links_collection,
     vendors_collection,
 )
+from ..tech_pack_numbering import next_tech_pack_no
 from .deps import get_hq_tenant
 from ..config import settings
 import cloudinary
@@ -1446,10 +1447,9 @@ async def create_tech_pack(request: Request, ctx: dict = Depends(_require_design
         return _clean_asset_urls([*existing, *uploaded])
 
     now = datetime.utcnow()
-    sequence = await tech_packs_collection.count_documents({"tenant_id": ctx["tenant_id"]}) + 1
     pack = {
         "tenant_id": ctx["tenant_id"],
-        "tech_pack_no": f"TP-{now.strftime('%y%m%d')}-{sequence:04d}",
+        "tech_pack_no": await next_tech_pack_no(ctx["tenant_id"], now),
         "design_no": design_no,
         "style_name": style_name,
         "department": (linked_design_theme or {}).get("department") or str(payload.get("department") or "").strip()[:80],

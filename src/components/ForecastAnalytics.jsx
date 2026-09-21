@@ -5,7 +5,7 @@ import {
   LineChart, TrendingUp, TrendingDown, Minus, Building2, Wallet, LogOut,
   Search, RefreshCw, AlertTriangle, ShoppingCart, BarChart3,
   UploadCloud, FileSpreadsheet, CheckCircle2, XCircle, Undo2, History, Download, Trash2,
-  Warehouse,
+  Warehouse, Scissors,
 } from "lucide-react";
 import {
   Bar, BarChart as RechartsBarChart, CartesianGrid, Legend,
@@ -1136,6 +1136,203 @@ function RaphaaaPurchasePlanView() {
   );
 }
 
+const DESIGN_ACTION_STYLE = {
+  stitch_and_buy: { label: "Stitch + Buy", cls: "bg-violet-50 text-violet-700 border-violet-200" },
+  stitch: { label: "Stitch", cls: "bg-teal-50 text-teal-700 border-teal-200" },
+  buy: { label: "Buy / Make", cls: "bg-indigo-50 text-indigo-700 border-indigo-200" },
+  clear: { label: "Clear out", cls: "bg-rose-50 text-rose-700 border-rose-200" },
+  hold: { label: "Hold", cls: "bg-emerald-50 text-emerald-700 border-emerald-200" },
+  watch: { label: "Watch", cls: "bg-amber-50 text-amber-700 border-amber-200" },
+  none: { label: "No action", cls: "bg-slate-100 text-slate-500 border-slate-200" },
+};
+const DESIGN_PERFORMANCE_FILTERS = [...BASIC_PRODUCT_FILTERS, ["action_label", "Action"], ["tech_pack_label", "Tech pack"]];
+const TECH_PACK_STYLE = {
+  Released: "bg-emerald-50 text-emerald-700 border-emerald-200",
+  "Not released": "bg-amber-50 text-amber-700 border-amber-200",
+  Missing: "bg-slate-100 text-slate-500 border-slate-200",
+};
+
+// Fabric Consume in the source file can be in KG or MTR (or mixed across
+// designs) — never blindly summed across units. This renders a {unit: total}
+// map as "120.5 KG · 340 MTR", or a fallback when there's nothing to show.
+function formatUnitTotals(byUnit, emptyLabel = "None") {
+  const entries = Object.entries(byUnit || {}).filter(([, value]) => Number(value) > 0);
+  if (!entries.length) return emptyLabel;
+  return entries.map(([unit, value]) => `${Number(value).toLocaleString("en-IN")} ${unit}`).join(" · ");
+}
+
+function downloadDesignPerformance(rows, years) {
+  const headers = ["Design No.", "Product", "Division", "Section", "Department", "Vendor",
+    ...years.map((y) => `${y} qty`), ...years.map((y) => `${y} net`),
+    "Trend", "Growth %", "Good seller", "Stitched fresh", "Stitched aged", "Unstitched pcs",
+    "Expected demand", "Need after stock credit", "Action", "Stitch qty", "Buy/Make qty", "Fabric needed", "Fabric unit",
+    "Tech pack no.", "Tech pack version", "Tech pack status"];
+  const values = rows.map((row) => [
+    row.design_no, row.name, row.division, row.section, row.department, row.vendor_name || "Unavailable",
+    ...years.map((y) => row.years?.[y]?.qty ?? 0), ...years.map((y) => row.years?.[y]?.net ?? 0),
+    row.trend, row.growth_pct ?? "", row.is_good ? "Yes" : "No",
+    row.stitched_fresh, row.stitched_aged, row.unstitched_pcs,
+    row.expected_qty, row.need_qty, row.action_label, row.stitch_qty, row.buy_qty, row.fabric_needed, row.fabric_unit,
+    row.tech_pack_no, row.tech_pack_version, row.tech_pack_label,
+  ]);
+  const escape = (value) => `"${String(value ?? "").replaceAll('"', '""')}"`;
+  const csv = [headers, ...values].map((row) => row.map(escape).join(",")).join("\n");
+  const url = URL.createObjectURL(new Blob([`\uFEFF${csv}`], { type: "text/csv;charset=utf-8" }));
+  const link = document.createElement("a");
+  link.href = url; link.download = "raphaaa-design-performance.csv"; link.click();
+  URL.revokeObjectURL(url);
+}
+
+function DesignPerformanceView() {
+  const [historyYears, setHistoryYears] = useState(2);
+  const [goodTopPct, setGoodTopPct] = useState(30);
+  const [maxDeclinePct, setMaxDeclinePct] = useState(50);
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [search, setSearch] = useState("");
+  const [filters, setFilters] = useState({});
+
+  const load = useCallback(async () => {
+    setLoading(true); setError(null);
+    try {
+      const params = new URLSearchParams({
+        history_years: historyYears, good_top_pct: goodTopPct, max_decline_pct: maxDeclinePct,
+      });
+      setData(await faFetch(`/api/forecast-analytics/design-performance/raphaaa?${params}`));
+    } catch (e) { setError(e.message); } finally { setLoading(false); }
+  }, [historyYears, goodTopPct, maxDeclinePct]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const rows = React.useMemo(() => data?.rows || [], [data]);
+  const years = data?.years || [];
+  const visibleRows = React.useMemo(
+    () => filterProductRows(rows, search, filters, DESIGN_PERFORMANCE_FILTERS),
+    [rows, search, filters],
+  );
+  const summary = data?.summary || {};
+
+  return (
+    <div className="space-y-5">
+      <ErrorBanner message={error} />
+      <div className="fa-panel p-5">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="max-w-3xl">
+            <h4 className="text-base font-black text-slate-900">Design performance — by Design No.</h4>
+            <p className="mt-1 text-sm text-slate-600">Sales for every Design No. across financial years, next to stitched stock and unstitched pieces on hand, with what to do about each design.</p>
+            <p className="mt-2 rounded-lg bg-indigo-50 px-3 py-2 text-xs font-bold text-indigo-800">{data?.policy?.formula}</p>
+          </div>
+          <div className="flex flex-wrap items-end gap-2">
+            <label className="text-xs font-bold text-slate-600">Years shown
+              <select value={historyYears} onChange={(e) => setHistoryYears(Number(e.target.value))} className="mt-1 block rounded-lg border px-2.5 py-2 text-sm">
+                {[1, 2, 3, 4, 5].map((value) => <option key={value} value={value}>{value}</option>)}
+              </select>
+            </label>
+            <label className="text-xs font-bold text-slate-600">Good seller = top
+              <select value={goodTopPct} onChange={(e) => setGoodTopPct(Number(e.target.value))} className="mt-1 block rounded-lg border px-2.5 py-2 text-sm">
+                {[10, 20, 30, 40, 50, 100].map((value) => <option key={value} value={value}>{value}%</option>)}
+              </select>
+            </label>
+            <label className="text-xs font-bold text-slate-600">Unless it fell more than
+              <select value={maxDeclinePct} onChange={(e) => setMaxDeclinePct(Number(e.target.value))} className="mt-1 block rounded-lg border px-2.5 py-2 text-sm">
+                {[20, 30, 50, 75, 100].map((value) => <option key={value} value={value}>{value}%</option>)}
+              </select>
+            </label>
+            <button onClick={load} disabled={loading} className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-bold text-white disabled:opacity-60"><RefreshCw size={14} />{loading ? "Calculating…" : "Recalculate"}</button>
+          </div>
+        </div>
+        {data && <p className="mt-3 text-xs text-slate-500">Years compared: {years.join(", ")} (current: {data.current_year}) · {data.data_quality?.bills_scanned || 0} bills scanned{data.data_quality?.sales_lines_without_design_no ? ` · ${data.data_quality.sales_lines_without_design_no} sales line(s) had no Design No. and were skipped` : ""}.</p>}
+      </div>
+
+      <ProductFilterPanel rows={rows} search={search} setSearch={setSearch} filters={filters} setFilters={setFilters} fields={DESIGN_PERFORMANCE_FILTERS} title="Design filters" description="The table, totals and CSV export below use this same filtered set of designs." />
+
+      {data && <>
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <StatTile label="Designs tracked" value={summary.designs?.toLocaleString("en-IN")} />
+          <StatTile label="Good sellers" value={summary.good_designs?.toLocaleString("en-IN")} tone="emerald" />
+          <StatTile label="Pieces to stitch" value={summary.stitch_pcs?.toLocaleString("en-IN")} tone="amber" />
+          <StatTile label="Pieces still to buy/make" value={summary.buy_qty?.toLocaleString("en-IN")} />
+        </div>
+
+        <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-4 text-sm leading-6 text-indigo-900">
+          <p className="font-black">In plain words</p>
+          <p className="mt-1">
+            Of <b>{summary.designs?.toLocaleString("en-IN")} designs</b>, <b>{summary.good_designs?.toLocaleString("en-IN")}</b> are good sellers.
+            For those, RMS suggests stitching <b>{summary.stitch_pcs?.toLocaleString("en-IN")} unstitched pcs</b> already
+            on hand ({formatUnitTotals(summary.fabric_needed_by_unit)} of fabric needed) across{" "}
+            <b>{summary.stitch_designs?.toLocaleString("en-IN")} design(s)</b>, and buying or making{" "}
+            <b>{summary.buy_qty?.toLocaleString("en-IN")} more pcs</b> where unstitched pieces aren't enough.
+            {summary.clear_designs > 0 && <> Separately, <b>{summary.clear_designs} slow-selling design(s)</b> still have{" "}
+              <b>{summary.clear_pcs?.toLocaleString("en-IN")} stitched pcs</b> left — clear these out instead of reordering.</>}
+            {summary.stitch_waiting_on_tech_pack > 0 && <> <b>{summary.stitch_waiting_on_tech_pack} of the stitch suggestion(s)</b> can't go to stitching yet because that design has no released tech pack — see the Tech pack column.</>}
+            {" "}Nothing is stitched or purchased automatically — use "Send to stitch" in Production &amp; Job Work → Hybrid Production
+            (the same Design Nos. and piece counts show there automatically) and place any purchase through Procurement.
+          </p>
+        </div>
+
+        <div className="fa-panel overflow-hidden">
+          <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-100 px-5 py-4">
+            <div><h4 className="text-sm font-black text-slate-900">Every design, what to do next</h4><p className="mt-1 text-xs text-slate-500">Sorted so the designs needing action come first.</p></div>
+            <button type="button" onClick={() => downloadDesignPerformance(visibleRows, years)} disabled={!visibleRows.length} className="inline-flex items-center gap-2 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs font-bold text-indigo-700 disabled:opacity-50"><Download size={14} />Export filtered CSV</button>
+          </div>
+          <div className="max-h-[560px] overflow-auto">
+            <table className="min-w-[1500px] w-full text-xs">
+              <thead className="sticky top-0 z-10"><tr>
+                {["Design / hierarchy", "Vendor", ...years.map((y) => `${y} sold`), "Trend", "Stitched (fresh/aged)", "Unstitched pcs", "Need", "Tech pack", "Action", "Split"].map((heading) => <th key={heading} className="whitespace-nowrap px-3 py-3 text-left font-black uppercase">{heading}</th>)}
+              </tr></thead>
+              <tbody className="divide-y divide-slate-100">
+                {!visibleRows.length ? <tr><td colSpan={10 + years.length} className="px-4 py-10 text-center text-slate-400">{loading ? "Calculating…" : "No designs match the selected filters."}</td></tr> : visibleRows.map((row) => {
+                  const style = DESIGN_ACTION_STYLE[row.action] || DESIGN_ACTION_STYLE.none;
+                  return (
+                    <tr key={row.design_key}>
+                      <td className="px-3 py-3"><p className="max-w-[220px] font-bold text-slate-900">{row.design_no}{row.name ? ` · ${row.name}` : ""}</p><p className="mt-0.5 text-[10px] text-slate-500">{[row.division, row.section, row.department].filter(Boolean).join(" / ")}</p></td>
+                      <td className="px-3 py-3">{row.vendor_name || "Unavailable"}</td>
+                      {years.map((y) => <td key={y} className="px-3 py-3">{Number(row.years?.[y]?.qty || 0).toLocaleString("en-IN")}</td>)}
+                      <td className="px-3 py-3"><span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-bold ${row.trend === "Growing" ? "bg-emerald-50 text-emerald-700 border-emerald-200" : row.trend === "Declining" ? "bg-rose-50 text-rose-700 border-rose-200" : "bg-slate-100 text-slate-600 border-slate-200"}`}>{row.trend === "Growing" ? <TrendingUp size={11} /> : row.trend === "Declining" ? <TrendingDown size={11} /> : <Minus size={11} />}{row.trend}</span>{row.growth_pct != null && <span className="mt-0.5 block text-[10px] text-slate-400">{row.growth_pct > 0 ? "+" : ""}{row.growth_pct}%</span>}</td>
+                      <td className="px-3 py-3">{row.stitched_fresh} / {row.stitched_aged}</td>
+                      <td className="px-3 py-3 font-bold">{row.unstitched_pcs}</td>
+                      <td className="px-3 py-3 font-bold text-indigo-700">{row.need_qty}</td>
+                      <td className="px-3 py-3"><span className={`rounded-full border px-2 py-1 text-[10px] font-black ${TECH_PACK_STYLE[row.tech_pack_label] || TECH_PACK_STYLE.Missing}`}>{row.tech_pack_label || "Missing"}</span>{row.tech_pack_no && <span className="mt-1 block font-mono text-[10px] text-slate-500">{row.tech_pack_no}{row.tech_pack_version ? ` · ${row.tech_pack_version}` : ""}</span>}</td>
+                      <td className="px-3 py-3"><span className={`rounded-full border px-2 py-1 text-[10px] font-black ${style.cls}`}>{style.label}</span><p className="mt-1 max-w-[240px] text-[10px] leading-4 text-slate-500">{row.reason}</p>{row.tech_pack_hint && <p className="mt-1 max-w-[240px] text-[10px] font-semibold leading-4 text-indigo-600">{row.tech_pack_hint}</p>}</td>
+                      <td className="px-3 py-3">{row.stitch_qty > 0 && <span className="block font-bold text-teal-700">Stitch {row.stitch_qty}</span>}{row.buy_qty > 0 && <span className="block font-bold text-indigo-700">Buy {row.buy_qty}</span>}{row.fabric_needed > 0 && <span className="block text-[10px] text-slate-400">{row.fabric_needed} {row.fabric_unit} fabric</span>}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {data.section_summary?.length > 0 && <div className="fa-panel overflow-hidden">
+          <div className="border-b border-slate-100 px-5 py-4"><h4 className="text-sm font-black text-slate-900">Roll-up by section &amp; department</h4><p className="mt-1 text-xs text-slate-500">Same shape as a manual purchase-plan sheet — Section, Department, and the pieces to stitch, buy or clear.</p></div>
+          <div className="max-h-80 overflow-auto">
+            <table className="min-w-[860px] w-full text-xs">
+              <thead><tr>{["Section", "Department", "Designs", "Good sellers", "Stitched on hand", "Unstitched pcs", "Need (good sellers)", "Stitch qty", "Buy/Make qty", "Clear qty"].map((h) => <th key={h} className="px-4 py-3 text-left font-black uppercase">{h}</th>)}</tr></thead>
+              <tbody className="divide-y divide-slate-100">
+                {data.section_summary.map((g) => (
+                  <tr key={`${g.section}-${g.department}`}>
+                    <td className="px-4 py-3">{g.section || "—"}</td>
+                    <td className="px-4 py-3 font-bold">{g.department || "—"}</td>
+                    <td className="px-4 py-3">{g.designs}</td>
+                    <td className="px-4 py-3">{g.good_designs}</td>
+                    <td className="px-4 py-3">{g.stitched_total}</td>
+                    <td className="px-4 py-3">{g.unstitched_pcs}</td>
+                    <td className="px-4 py-3 font-bold text-indigo-700">{g.need_qty}</td>
+                    <td className="px-4 py-3 font-bold text-teal-700">{g.stitch_qty}</td>
+                    <td className="px-4 py-3 font-bold text-indigo-700">{g.buy_qty}</td>
+                    <td className="px-4 py-3 font-bold text-rose-600">{g.clear_qty}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>}
+      </>}
+    </div>
+  );
+}
+
 function PurchasePlanView({ raphaaaMode = false }) {
   return raphaaaMode ? <RaphaaaPurchasePlanView /> : <GenericPurchasePlanView />;
 }
@@ -1471,6 +1668,170 @@ function ImportPanel({ kind, title, blurb, onCommitted }) {
   );
 }
 
+function UnstitchedImportPanel({ onCommitted }) {
+  const [file, setFile] = useState(null);
+  const [fabricBasis, setFabricBasis] = useState("total");
+  const [preview, setPreview] = useState(null);
+  const [result, setResult] = useState(null);
+  const [error, setError] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [committing, setCommitting] = useState(false);
+
+  const reset = () => { setFile(null); setPreview(null); setResult(null); setError(null); };
+
+  const onPick = async (e) => {
+    const picked = e.target.files?.[0];
+    e.target.value = "";
+    if (!picked) return;
+    setError(null); setResult(null); setPreview(null); setFile(picked); setLoading(true);
+    try {
+      setPreview(await faUpload("/api/forecast-analytics/data-hub/unstitched/preview", picked, { fabric_basis: fabricBasis }));
+    } catch (err) {
+      setError(err.message); setFile(null);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const commit = async () => {
+    if (!file) return;
+    if (!window.confirm("Commit this unstitched stock? Each Design No. is set to the PCS in this file (an absolute snapshot) — designs left out of the file keep their current pieces.")) return;
+    setCommitting(true); setError(null);
+    try {
+      const r = await faUpload("/api/forecast-analytics/data-hub/unstitched/commit", file, { confirm: "true", fabric_basis: fabricBasis });
+      setResult(r); setPreview(null); setFile(null);
+      onCommitted?.();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setCommitting(false);
+    }
+  };
+
+  const s = preview?.summary;
+  const goodRows = (preview?.rows || []).filter((r) => !r.errors?.length);
+  const badRows = (preview?.rows || []).filter((r) => r.errors?.length);
+  const canCommit = Boolean(preview) && goodRows.length > 0 && !committing;
+
+  return (
+    <div className="space-y-5">
+      <ErrorBanner message={error} />
+
+      <div className="fa-panel p-5">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h4 className="flex items-center gap-2 text-sm font-bold text-slate-900"><Scissors size={15} className="text-indigo-600" /> Unstitched / cut pieces waiting to be stitched</h4>
+            <p className="mt-1 max-w-2xl text-xs leading-5 text-slate-500">One row per Design No.: Design No., Department, Description, PCS, Fabric Consume. Rows for the same design are added together. This never touches products, inventory or sellable stock — it only feeds Design Performance and Hybrid Production's "Send to stitch".</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => faDownload("/api/forecast-analytics/data-hub/template/unstitched", "raphaa-unstitched-template.csv").catch((e) => setError(e.message))}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-bold text-slate-600 hover:bg-slate-50"
+          >
+            <Download size={13} /> Template
+          </button>
+        </div>
+
+        <label className="mt-4 block text-xs font-bold text-slate-600">Fabric Consume in the file is
+          <select value={fabricBasis} onChange={(e) => setFabricBasis(e.target.value)} className="mt-1 block w-full max-w-sm rounded-lg border px-2.5 py-2 text-sm sm:inline-block sm:w-auto">
+            <option value="total">The total for that row's PCS</option>
+            <option value="per_piece">The amount for one piece</option>
+          </select>
+        </label>
+
+        <label className="mt-4 flex cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed border-indigo-200 bg-indigo-50/40 px-4 py-8 text-center transition hover:bg-indigo-50">
+          <UploadCloud className="h-7 w-7 text-indigo-500" />
+          <span className="text-sm font-semibold text-slate-700">{file ? file.name : "Choose a .xlsx / .xls / .csv file"}</span>
+          <span className="text-xs text-slate-400">{loading ? "Validating…" : "Nothing is written until you press Commit"}</span>
+          <input type="file" accept=".xlsx,.xls,.csv" onChange={onPick} disabled={loading || committing} className="hidden" />
+        </label>
+      </div>
+
+      {preview && (
+        <>
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <StatTile label="Designs" value={s?.designs ?? 0} />
+            <StatTile label="Total pieces" value={Number(s?.total_pcs || 0).toLocaleString("en-IN")} tone="emerald" />
+            <StatTile label="Total fabric" value={formatUnitTotals(s?.fabric_by_unit)} />
+            <StatTile label="Rows with problems" value={s?.error_rows ?? 0} tone={s?.error_rows ? "rose" : "slate"} />
+          </div>
+          {s?.designs_not_in_catalogue > 0 && (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs font-semibold text-amber-800">
+              ⚠ {s.designs_not_in_catalogue} design(s) don't match any Design No. already in the product catalogue yet — they'll still be stored and matched once a matching product exists.
+            </div>
+          )}
+          {s?.designs_without_tech_pack > 0 && (
+            <div className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-2.5 text-xs font-semibold text-sky-800">
+              ℹ {s.designs_without_tech_pack} design(s) have no tech pack in Design &amp; Pattern yet. They can still be imported, but can't be sent to stitching until a tech pack is created and released to Production.
+            </div>
+          )}
+          {s?.unit_mismatch_designs > 0 && (
+            <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2.5 text-xs font-semibold text-rose-800">
+              ⚠ {s.unit_mismatch_designs} design(s) have Fabric Consume in more than one unit (e.g. some rows in KG, others in MTR) — check those rows below; the stored total mixes units and won't be meaningful until fixed.
+            </div>
+          )}
+
+          <div className="fa-panel overflow-hidden">
+            <div className="border-b border-slate-100 bg-slate-50 px-4 py-2.5 text-xs font-bold uppercase tracking-wide text-slate-500">
+              {badRows.length ? `${badRows.length} row(s) with problems` : "Sample of parsed designs"}
+            </div>
+            <div className="max-h-80 overflow-auto">
+              <table className="w-full text-sm">
+                <thead><tr>{["Design No.", "Department", "PCS", "Fabric total", "Unit", "Fabric / pc", "In catalogue", "Tech pack", "Issues"].map((h) => <th key={h} className="whitespace-nowrap px-4 py-2.5 text-left font-bold uppercase">{h}</th>)}</tr></thead>
+                <tbody className="divide-y divide-slate-100">
+                  {(badRows.length ? badRows : goodRows).slice(0, 25).map((r, index) => (
+                    <tr key={r.design_key || r.row_no || index}>
+                      <td className="px-4 py-2.5 font-semibold text-slate-800">{r.design_no || "—"}</td>
+                      <td className="px-4 py-2.5 text-slate-600">{r.department || "—"}</td>
+                      <td className="px-4 py-2.5 font-mono">{r.pcs ?? "—"}</td>
+                      <td className="px-4 py-2.5 font-mono">{r.fabric_total ?? "—"}</td>
+                      <td className="px-4 py-2.5">{r.unit_mismatch ? <span className="font-bold text-rose-600">Mixed!</span> : (r.fabric_unit || "—")}</td>
+                      <td className="px-4 py-2.5 font-mono">{r.fabric_per_piece ?? "—"}</td>
+                      <td className="px-4 py-2.5">{r.in_catalogue == null ? "—" : r.in_catalogue ? <span className="text-emerald-600">Yes</span> : <span className="text-amber-600">Not yet</span>}</td>
+                      <td className="px-4 py-2.5 text-xs">{r.tech_pack_label == null ? "—" : <span className={r.tech_pack_label === "Released" ? "font-semibold text-emerald-600" : r.tech_pack_label === "Not released" ? "font-semibold text-amber-600" : "text-slate-400"}>{r.tech_pack_label}{r.tech_pack_no ? ` · ${r.tech_pack_no}` : ""}</span>}</td>
+                      <td className="px-4 py-2.5">
+                        {r.errors && r.errors.length
+                          ? <span className="text-xs font-semibold text-rose-600">{r.errors.join(" ")}</span>
+                          : <span className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-600"><CheckCircle2 size={12} /> ok</span>}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+          {preview.truncated && <p className="text-xs text-slate-400">Preview shows the first rows only — every design in the file is validated and committed.</p>}
+
+          <div className="flex items-center gap-3">
+            <button
+              onClick={commit}
+              disabled={!canCommit}
+              className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-5 py-2.5 text-sm font-bold text-white hover:bg-indigo-700 disabled:opacity-50"
+            >
+              <CheckCircle2 size={15} /> {committing ? "Committing…" : `Commit ${goodRows.length} design(s)`}
+            </button>
+            <button onClick={reset} className="rounded-lg border border-slate-200 px-4 py-2.5 text-sm font-bold text-slate-600 hover:bg-slate-50">Cancel</button>
+          </div>
+        </>
+      )}
+
+      {result && (
+        <div className="fa-panel border-l-4 border-emerald-400 p-5">
+          <h4 className="flex items-center gap-2 text-sm font-bold text-emerald-800"><CheckCircle2 size={15} /> Import committed</h4>
+          <div className="mt-2 grid gap-2 text-xs text-slate-600 sm:grid-cols-2">
+            <p>Designs applied: <b className="text-slate-900">{result.rows_applied}</b></p>
+            <p>Total pieces: <b className="text-slate-900">{result.total_pcs}</b></p>
+            <p>Total fabric: <b className="text-slate-900">{formatUnitTotals(result.fabric_by_unit)}</b></p>
+            <p>Rows skipped: <b className="text-slate-900">{result.rows_skipped}</b></p>
+            <p>Batch: <span className="font-mono">{result.batch_id?.slice(0, 12)}</span></p>
+          </div>
+          <p className="mt-3 text-xs text-slate-400">You can undo this run from the History tab.</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function downloadImportHistory(rows) {
   const headers = ["When", "Type", "File", "File URL", "By", "Batch ID", "Products / Bills applied", "Line items", "Products created", "Rows skipped", "Duplicate bills skipped", "Status", "Rolled back at"];
   const values = rows.map((row) => [
@@ -1556,7 +1917,7 @@ function ImportHistory({ refreshKey }) {
                 : rows.map((row) => (
                   <tr key={row.batch_id}>
                     <td className="px-4 py-2.5 text-xs text-slate-500">{row.created_at ? new Date(row.created_at).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" }) : "—"}</td>
-                    <td className="px-4 py-2.5"><span className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] font-bold ${row.kind === "stock" ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-blue-200 bg-blue-50 text-blue-700"}`}>{row.kind}</span></td>
+                    <td className="px-4 py-2.5"><span className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] font-bold ${row.kind === "stock" ? "border-emerald-200 bg-emerald-50 text-emerald-700" : row.kind === "unstitched" ? "border-teal-200 bg-teal-50 text-teal-700" : "border-blue-200 bg-blue-50 text-blue-700"}`}>{row.kind}</span></td>
                     <td className="px-4 py-2.5 max-w-[220px] truncate text-xs" title={row.file_url ? `Download ${row.file_name}` : row.file_name}>
                       {row.file_url ? (
                         <a href={row.file_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 font-semibold text-indigo-700 hover:underline">
@@ -1570,6 +1931,8 @@ function ImportHistory({ refreshKey }) {
                     <td className="px-4 py-2.5 text-xs font-semibold text-slate-800">
                       {row.kind === "stock"
                         ? `${row.rows_applied ?? 0} products`
+                        : row.kind === "unstitched"
+                        ? `${row.rows_applied ?? 0} designs`
                         : `${row.bills_inserted ?? 0} bills · ${row.line_items ?? 0} lines${row.products_created_count ? ` · +${row.products_created_count} products` : ""}`}
                     </td>
                     <td className="px-4 py-2.5 text-xs text-slate-500">{(row.rows_skipped ?? 0) + (row.duplicate_bills_skipped ?? 0)}</td>
@@ -1702,13 +2065,16 @@ const IMPORT_TABS = [
   { id: "history", label: "History" },
 ];
 
-function DataImportView({ enrichmentEnabled = false }) {
+function DataImportView({ enrichmentEnabled = false, unstitchedEnabled = false }) {
   const [tab, setTab] = useState("sales");
   const [historyKey, setHistoryKey] = useState(0);
   const bumpHistory = () => setHistoryKey((k) => k + 1);
-  const importTabs = enrichmentEnabled
-    ? [IMPORT_TABS[0], IMPORT_TABS[1], { id: "cleanup", label: "3 · Product cleanup" }, IMPORT_TABS[2]]
-    : IMPORT_TABS;
+  const importTabs = [
+    IMPORT_TABS[0], IMPORT_TABS[1],
+    ...(enrichmentEnabled ? [{ id: "cleanup", label: "3 · Product cleanup" }] : []),
+    ...(unstitchedEnabled ? [{ id: "unstitched", label: "Unstitched stock" }] : []),
+    IMPORT_TABS[2],
+  ];
 
   return (
     <div className="space-y-5">
@@ -1747,6 +2113,7 @@ function DataImportView({ enrichmentEnabled = false }) {
         />
       )}
       {tab === "cleanup" && enrichmentEnabled && <ProductCleanupView />}
+      {tab === "unstitched" && unstitchedEnabled && <UnstitchedImportPanel onCommitted={bumpHistory} />}
       {tab === "history" && <ImportHistory refreshKey={historyKey} />}
     </div>
   );
@@ -1756,6 +2123,7 @@ export default function ForecastAnalytics() {
   const [activeSection, setActiveSection] = useState("dashboard");
   const [dataHubEnabled, setDataHubEnabled] = useState(false);
   const [productEnrichmentEnabled, setProductEnrichmentEnabled] = useState(false);
+  const [unstitchedImportEnabled, setUnstitchedImportEnabled] = useState(false);
   const [dataHubTenantId, setDataHubTenantId] = useState("");
   const isStoreWorkspace = getAdminScope() !== "hq";
   const workspaceName = isStoreWorkspace ? (getStoreName() || "Store workspace") : "Head office workspace";
@@ -1767,13 +2135,19 @@ export default function ForecastAnalytics() {
       .then((r) => {
         setDataHubEnabled(Boolean(r.enabled));
         setProductEnrichmentEnabled(Boolean(r.product_enrichment_enabled));
+        setUnstitchedImportEnabled(Boolean(r.unstitched_import_enabled));
         setDataHubTenantId(r.tenant_id || "");
       })
-      .catch(() => { setDataHubEnabled(false); setProductEnrichmentEnabled(false); });
+      .catch(() => { setDataHubEnabled(false); setProductEnrichmentEnabled(false); setUnstitchedImportEnabled(false); });
   }, []);
 
   const menu = dataHubEnabled
-    ? [...MENU, { id: "store-value", label: "Store Stock Value", icon: Warehouse }, { id: "import", label: "Data Import", icon: UploadCloud }]
+    ? [
+        ...MENU,
+        ...(productEnrichmentEnabled ? [{ id: "design-performance", label: "Design Performance", icon: Scissors }] : []),
+        { id: "store-value", label: "Store Stock Value", icon: Warehouse },
+        { id: "import", label: "Data Import", icon: UploadCloud },
+      ]
     : MENU;
   const activeLabel = menu.find((item) => item.id === activeSection)?.label || "Overview";
 
@@ -1784,8 +2158,9 @@ export default function ForecastAnalytics() {
       case "vendors": return <VendorRankingView raphaaaMode={productEnrichmentEnabled} />;
       case "purchase": return <PurchasePlanView raphaaaMode={productEnrichmentEnabled} />;
       case "alerts": return <AlertsView raphaaaMode={productEnrichmentEnabled} />;
+      case "design-performance": return productEnrichmentEnabled ? <DesignPerformanceView /> : <DashboardView onNavigate={setActiveSection} raphaaaMode={productEnrichmentEnabled} />;
       case "store-value": return dataHubEnabled ? <StoreStockValueView /> : <DashboardView onNavigate={setActiveSection} raphaaaMode={productEnrichmentEnabled} />;
-      case "import": return dataHubEnabled ? <DataImportView enrichmentEnabled={productEnrichmentEnabled} /> : <DashboardView onNavigate={setActiveSection} raphaaaMode={productEnrichmentEnabled} />;
+      case "import": return dataHubEnabled ? <DataImportView enrichmentEnabled={productEnrichmentEnabled} unstitchedEnabled={unstitchedImportEnabled} /> : <DashboardView onNavigate={setActiveSection} raphaaaMode={productEnrichmentEnabled} />;
       default: return <DashboardView onNavigate={setActiveSection} raphaaaMode={productEnrichmentEnabled} />;
     }
   };

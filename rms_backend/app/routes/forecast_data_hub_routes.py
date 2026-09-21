@@ -58,6 +58,7 @@ from ..raphaaa_product_enrichment import (
     product_quality_issues,
     proposed_product_name,
 )
+from ..raphaaa_design_performance import best_tech_packs, tech_pack_label
 from ..raphaaa_purchase_plan import RAPHAAA_FRESH_MAX_MONTHS
 from ..db import (
     data_hub_imports_collection,
@@ -66,6 +67,8 @@ from ..db import (
     sales_collection,
     store_stock_collection,
     stores_collection,
+    tech_packs_collection,
+    unstitched_stock_collection,
 )
 
 router = APIRouter(prefix="/api/forecast-analytics/data-hub", tags=["Forecast Data Hub"])
@@ -930,6 +933,7 @@ async def get_data_hub_status(ctx: TenantCtx = Depends(_forecast_context)):
         "status": "success",
         "enabled": enabled,
         "product_enrichment_enabled": enabled and is_raphaaa_tenant(ctx["tenant_id"]),
+        "unstitched_import_enabled": enabled and is_raphaaa_tenant(ctx["tenant_id"]),
         "mode": "preview_then_commit",
         "message": "Import the sales file first (it also builds the product catalogue), then the stock file. Multi-sheet workbooks are read in full — every tab whose headers match is combined, cover/filter/summary tabs are skipped. The stock file can be wide (a column per location: WAREHOUSE + store columns) or long (one row per product per site: a Locname / Source Site column plus CLOSING_QTY) — both are auto-detected. Matching uses ITEM_CODE / BARCODE first, then DIVISION/SECTION/DEPARTMENT/VENDOR/CAT1-5 with RSP/MRP. Finance, GST and POS flows are never touched.",
         "catalogue_size": catalogue_size,
@@ -951,6 +955,8 @@ async def download_template(kind: str, ctx: TenantCtx = Depends(_pilot_context))
         headers = ["Item Code", "Barcode", "Division", "Section", "Department", "Vendor",
                    "Category1", "Category2", "Category3", "Category4", "Category5", "Category6",
                    "Standard_Rate", "RSP", "MRP", *store_headers, "WAREHOUSE", "Grand Total"]
+    elif kind == "unstitched" and is_raphaaa_tenant(ctx["tenant_id"]):
+        headers = ["Design No.", "Department", "Description", "PCS", "Fabric Consume"]
     else:
         raise HTTPException(status_code=404, detail="Template type must be 'sales' or 'stock'.")
     body = ",".join(f'"{header}"' for header in headers) + "\n"
@@ -1380,6 +1386,271 @@ async def apply_product_enrichment(
     }
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Unstitched stock import (Raphaaa only)
+#
+# Cut / unstitched pieces waiting to be stitched: Design No., Department,
+# Description, PCS, Fabric Consume. Stored per design in its own collection —
+# never in products / inventory / store_stock — so these pieces can never be
+# counted as sellable stock by any existing screen. The Design Performance view
+# reads it to suggest "stitch N pcs" for designs that are selling well.
+# Absolute snapshot per design (a design absent from the file is untouched;
+# put 0 pieces to clear one). Reversible through the normal import rollback.
+# ─────────────────────────────────────────────────────────────────────────────
+
+_UNSTITCHED_DESIGN_ALIASES = ("design no.", "design no", "design number", "design", "cat-1 (design no.)", "category1", "cat1")
+_UNSTITCHED_PCS_ALIASES = ("pcs", "pieces", "piece", "unstitched pcs", "unstitched qty", "qty", "quantity")
+_UNSTITCHED_FABRIC_ALIASES = ("fabric consume", "fabric consumed", "fabric consumption", "fabric used", "fabric")
+_UNSTITCHED_SKIP_DESIGNS = {"total", "grandtotal", "subtotal"}
+_LEADING_NUMBER_RE = re.compile(r"^\s*(-?\d+(?:\.\d+)?)")
+_UNIT_TAIL_RE = re.compile(r"([a-zA-Z]+)\s*$")
+
+
+def _number_and_unit(value: Any) -> tuple:
+    """Fabric Consume routinely carries its unit in the same cell ("22.372 KG",
+    "26.10 MTR") — the number is parsed by taking the leading numeric token and
+    the unit is whatever alphabetic text trails it, rather than requiring the
+    cell to be a bare number."""
+    text = _text(value).replace(",", "")
+    if not text:
+        return 0.0, ""
+    match = _LEADING_NUMBER_RE.match(text)
+    if not match:
+        return None, ""
+    unit_match = _UNIT_TAIL_RE.search(text)
+    unit = unit_match.group(1).strip().upper() if unit_match else ""
+    try:
+        return float(match.group(1)), unit
+    except ValueError:
+        return None, ""
+
+
+def _design_key(value: Any) -> str:
+    return re.sub(r"\s+", " ", _text(value)).lower()
+
+
+def _read_unstitched_rows(filename: str, content: bytes) -> List[dict]:
+    name = (filename or "").lower()
+    try:
+        if name.endswith(".csv"):
+            frames = [pd.read_csv(io.BytesIO(content), dtype=str)]
+        elif name.endswith((".xlsx", ".xls")):
+            frames = list(pd.read_excel(io.BytesIO(content), dtype=str, sheet_name=None).values())
+        else:
+            raise HTTPException(status_code=400, detail="Upload a CSV or Excel file (.csv, .xlsx, .xls).")
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=400, detail="The file could not be read. Download the template and keep the headers unchanged.")
+
+    design_keys = {_key(alias) for alias in _UNSTITCHED_DESIGN_ALIASES}
+    pcs_keys = {_key(alias) for alias in _UNSTITCHED_PCS_ALIASES}
+    usable = []
+    for frame in frames:
+        frame.columns = [_key(column) for column in frame.columns]
+        columns = set(frame.columns)
+        if columns & design_keys and columns & pcs_keys and len(frame.index) > 0:
+            usable.append(frame)
+    if not usable:
+        raise HTTPException(status_code=400, detail="No sheet with both a 'Design No.' and a 'PCS' column was found. Download the template and keep the headers unchanged.")
+    frame = pd.concat(usable, ignore_index=True, sort=False) if len(usable) > 1 else usable[0]
+    frame = frame.where(pd.notnull(frame), "")
+    if len(frame.index) > MAX_ROWS:
+        raise HTTPException(status_code=400, detail=f"A maximum of {MAX_ROWS:,} rows is allowed per file.")
+    return frame.to_dict(orient="records")
+
+
+def _unstitched_rows(raw_rows: List[dict], fabric_basis: str = "total") -> tuple[List[dict], List[dict]]:
+    """Returns (designs, error_rows). Rows of the same design are summed.
+
+    fabric_basis "total": the Fabric Consume value is the total for that row's
+    PCS. "per_piece": it is the fabric for one piece, so the row total is
+    value x PCS. Either way both figures are stored.
+    """
+    designs: Dict[str, dict] = {}
+    error_rows: List[dict] = []
+    for index, raw in enumerate(raw_rows, start=2):
+        design_no = re.sub(r"\s+", " ", _column(raw, *_UNSTITCHED_DESIGN_ALIASES))
+        pcs_text = _column(raw, *_UNSTITCHED_PCS_ALIASES)
+        fabric_text = _column(raw, *_UNSTITCHED_FABRIC_ALIASES)
+        department = _column(raw, "department", "dept")
+        description = _column(raw, "description", "desc")
+        if not design_no and not pcs_text and not fabric_text:
+            continue
+        if _key(design_no) in _UNSTITCHED_SKIP_DESIGNS:
+            continue
+        errors: List[str] = []
+        pcs = _number(pcs_text)
+        fabric, fabric_unit = _number_and_unit(fabric_text)
+        if not design_no:
+            errors.append("Design No. is missing.")
+        if pcs is None:
+            errors.append("PCS must be a number.")
+        elif pcs < 0:
+            errors.append("PCS must be zero or greater.")
+        if fabric is None:
+            errors.append("Fabric Consume must be a number.")
+        elif fabric < 0:
+            errors.append("Fabric Consume must be zero or greater.")
+        if errors:
+            error_rows.append({"row_no": index, "design_no": design_no, "department": department,
+                               "description": description, "pcs": pcs_text, "fabric_total": fabric_text, "errors": errors})
+            continue
+        row_fabric_total = fabric * pcs if fabric_basis == "per_piece" else fabric
+        key = _design_key(design_no)
+        entry = designs.setdefault(key, {
+            "design_key": key, "design_no": design_no, "department": "", "description": "",
+            "pcs": 0.0, "fabric_total": 0.0, "fabric_unit": "", "unit_mismatch": False, "rows": 0, "errors": [],
+        })
+        entry["pcs"] += pcs
+        entry["fabric_total"] += row_fabric_total
+        entry["rows"] += 1
+        entry["department"] = entry["department"] or department
+        entry["description"] = entry["description"] or description
+        if fabric_unit:
+            if entry["fabric_unit"] and entry["fabric_unit"] != fabric_unit:
+                entry["unit_mismatch"] = True
+            else:
+                entry["fabric_unit"] = fabric_unit
+    result = []
+    for entry in designs.values():
+        entry["pcs"] = round(entry["pcs"], 2)
+        entry["fabric_total"] = round(entry["fabric_total"], 3)
+        entry["fabric_per_piece"] = round(entry["fabric_total"] / entry["pcs"], 3) if entry["pcs"] > 0 else 0.0
+        result.append(entry)
+    return result, error_rows
+
+
+async def _catalogue_design_keys(tenant_id: str) -> set:
+    keys: set = set()
+    async for product in product_collection.find({"tenant_id": tenant_id}, {"design_no": 1, "category1": 1}):
+        key = _design_key(product.get("design_no") or product.get("category1"))
+        if key:
+            keys.add(key)
+    return keys
+
+
+def _clean_fabric_basis(value: str) -> str:
+    return "per_piece" if _key(value) == "perpiece" else "total"
+
+
+def _fabric_by_unit(designs: List[dict]) -> Dict[str, float]:
+    totals: Dict[str, float] = {}
+    for entry in designs:
+        unit = entry.get("fabric_unit") or "Unspecified"
+        totals[unit] = round(totals.get(unit, 0.0) + entry["fabric_total"], 3)
+    return totals
+
+
+@router.post("/unstitched/preview")
+async def preview_unstitched_stock(
+    file: UploadFile = File(...),
+    fabric_basis: str = Form("total"),
+    ctx: TenantCtx = Depends(_raphaaa_enrichment_context),
+):
+    basis = _clean_fabric_basis(fabric_basis)
+    raw_rows = _read_unstitched_rows(file.filename or "", await file.read())
+    designs, error_rows = _unstitched_rows(raw_rows, basis)
+    known = await _catalogue_design_keys(ctx["tenant_id"])
+    packs = best_tech_packs([
+        pack async for pack in tech_packs_collection.find(
+            {"tenant_id": ctx["tenant_id"]},
+            {"design_no": 1, "tech_pack_no": 1, "version": 1, "status": 1, "updated_at": 1, "created_at": 1},
+        )
+    ])
+    rows = [
+        {
+            **entry, "in_catalogue": entry["design_key"] in known, "errors": [],
+            "tech_pack_no": (packs.get(entry["design_key"]) or {}).get("tech_pack_no", ""),
+            "tech_pack_label": tech_pack_label((packs.get(entry["design_key"]) or {}).get("state")),
+        }
+        for entry in designs
+    ]
+    rows.sort(key=lambda row: row["pcs"], reverse=True)
+    return {
+        "status": "success", "mode": "preview_only", "import_type": "unstitched_stock",
+        "fabric_basis": basis,
+        "summary": {
+            "designs": len(designs), "total_pcs": round(sum(entry["pcs"] for entry in designs), 2),
+            "fabric_by_unit": _fabric_by_unit(designs),
+            "error_rows": len(error_rows),
+            "designs_not_in_catalogue": sum(1 for row in rows if not row["in_catalogue"]),
+            "unit_mismatch_designs": sum(1 for entry in designs if entry.get("unit_mismatch")),
+            "designs_without_tech_pack": sum(1 for row in rows if row["tech_pack_label"] == "Missing"),
+        },
+        "rows": (error_rows + rows)[:PREVIEW_ROWS],
+        "truncated": len(rows) + len(error_rows) > PREVIEW_ROWS,
+    }
+
+
+@router.post("/unstitched/commit")
+async def commit_unstitched_stock(
+    file: UploadFile = File(...),
+    confirm: bool = Form(False),
+    fabric_basis: str = Form("total"),
+    ctx: TenantCtx = Depends(_raphaaa_enrichment_context),
+):
+    if not confirm:
+        raise HTTPException(status_code=400, detail="Send confirm=true to write this unstitched stock into RMS.")
+    tenant_id = ctx["tenant_id"]
+    basis = _clean_fabric_basis(fabric_basis)
+    file_content = await file.read()
+    raw_rows = _read_unstitched_rows(file.filename or "", file_content)
+    designs, error_rows = _unstitched_rows(raw_rows, basis)
+    if not designs:
+        raise HTTPException(status_code=400, detail="No valid rows to import.")
+    file_url = _archive_uploaded_file(tenant_id, file.filename or "unstitched.xlsx", file_content)
+
+    batch_id = uuid.uuid4().hex
+    now = datetime.utcnow()
+    changes: List[dict] = []
+    for entry in designs:
+        flt = {"tenant_id": tenant_id, "design_key": entry["design_key"]}
+        existing = await unstitched_stock_collection.find_one(flt)
+        previous = {
+            "design_no": (existing or {}).get("design_no"), "department": (existing or {}).get("department"),
+            "description": (existing or {}).get("description"), "pcs": (existing or {}).get("pcs"),
+            "fabric_total": (existing or {}).get("fabric_total"),
+            "fabric_per_piece": (existing or {}).get("fabric_per_piece"),
+            "fabric_unit": (existing or {}).get("fabric_unit"),
+            "data_hub_batch_id": (existing or {}).get("data_hub_batch_id"),
+        }
+        await unstitched_stock_collection.update_one(
+            flt,
+            {
+                "$set": {
+                    **flt, "design_no": entry["design_no"], "department": entry["department"],
+                    "description": entry["description"], "pcs": entry["pcs"],
+                    "fabric_total": entry["fabric_total"], "fabric_per_piece": entry["fabric_per_piece"],
+                    "fabric_unit": entry.get("fabric_unit") or "",
+                    "source": "data_hub_import", "data_hub_batch_id": batch_id, "updatedAt": now,
+                },
+                "$setOnInsert": {"createdAt": now},
+            },
+            upsert=True,
+        )
+        changes.append({
+            "design_key": entry["design_key"], "design_no": entry["design_no"],
+            "existed": existing is not None, "previous": previous,
+        })
+
+    total_pcs = round(sum(entry["pcs"] for entry in designs), 2)
+    await data_hub_imports_collection.insert_one({
+        "tenant_id": tenant_id, "kind": "unstitched", "batch_id": batch_id,
+        "file_name": file.filename or "", "file_url": file_url, "created_at": now,
+        "created_by": ctx.get("admin_id"), "created_by_name": ctx.get("admin_name") or ctx.get("admin_email") or "",
+        "rows_applied": len(designs), "rows_skipped": len(error_rows),
+        "location_totals": {"Unstitched pieces": total_pcs}, "changes": changes, "rolled_back": False,
+        "fabric_basis": basis,
+    })
+    return {
+        "status": "success", "mode": "committed", "import_type": "unstitched_stock", "batch_id": batch_id,
+        "rows_applied": len(designs), "rows_skipped": len(error_rows), "total_pcs": total_pcs,
+        "fabric_by_unit": _fabric_by_unit(designs),
+        "skipped_rows": error_rows[:PREVIEW_ROWS],
+    }
+
+
 # Import history + rollback
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -1430,6 +1701,24 @@ async def rollback_import(batch_id: str, ctx: TenantCtx = Depends(_pilot_context
             if not has_stock:
                 await product_collection.delete_one({"_id": product["_id"]})
                 products_removed += 1
+    elif doc["kind"] == "unstitched":
+        for change in doc.get("changes", []):
+            flt = {"tenant_id": tenant_id, "design_key": change["design_key"], "data_hub_batch_id": batch_id}
+            if change["existed"]:
+                previous = change.get("previous") or {}
+                updated = await unstitched_stock_collection.update_one(flt, {"$set": {
+                    "design_no": previous.get("design_no"), "department": previous.get("department"),
+                    "description": previous.get("description"), "pcs": previous.get("pcs") or 0,
+                    "fabric_total": previous.get("fabric_total") or 0,
+                    "fabric_per_piece": previous.get("fabric_per_piece") or 0,
+                    "fabric_unit": previous.get("fabric_unit") or "",
+                    "data_hub_batch_id": previous.get("data_hub_batch_id") or "",
+                    "source": "data_hub_rollback", "updatedAt": now,
+                }})
+                reverted += updated.modified_count
+            else:
+                deleted = await unstitched_stock_collection.delete_one(flt)
+                reverted += deleted.deleted_count
     else:
         for change in doc.get("changes", []):
             if change["location"] == CENTRAL_LABEL:

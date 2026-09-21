@@ -176,6 +176,11 @@ forecast_restock_drafts_collection   = db["forecast_restock_drafts"]
 # batch id for sales runs).
 data_hub_imports_collection = db["data_hub_imports"]
 
+# Raphaaa-only: cut/unstitched pieces waiting to be stitched, one document per
+# (tenant, design_no). Kept apart from products/inventory on purpose so these
+# pieces are never counted as sellable stock by any existing screen.
+unstitched_stock_collection = db["unstitched_stock"]
+
 # Product-usage analytics (page views, feature clicks, session start/end,
 # device type) — separate from audit_logs_collection, which is a
 # compliance-style record of discrete admin actions. This is aggregate

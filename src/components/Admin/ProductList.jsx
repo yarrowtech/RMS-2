@@ -1601,7 +1601,7 @@ import React, { useEffect, useState } from "react";
 import ReactDOM from "react-dom";
 import axios from "axios";
 import { useNavigate } from "react-router-dom";
-import QuickFillPanel from "../Quickfillpanel";
+import ProductClassificationFix from "../ProductClassificationFix";
 import BarcodeStickerPrint from "../Barcodestickerprint.jsx";
 
 const API_BASE = `${APP_API_URL}`;
@@ -1954,7 +1954,7 @@ function ProductModal({ product, onClose, onSaved }) {
                   <span style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginLeft: "auto" }}>{product.product_name}</span>
                 </div>
                 <div style={{ padding: 18 }}>
-                  <QuickFillPanel product={product} onSaved={() => { onSaved && onSaved(); onClose(); }} />
+                  <ProductClassificationFix product={product} onSaved={() => { onSaved && onSaved(); onClose(); }} />
                 </div>
               </div>
             </div>

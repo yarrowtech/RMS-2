@@ -20,6 +20,7 @@ from ..db import (
     fabric_themes_collection, job_work_orders_collection, sales_collection,
     style_bom_plans_collection, tech_packs_collection,
 )
+from ..tech_pack_numbering import next_tech_pack_no
 from .deps import get_hq_tenant
 
 router = APIRouter(prefix="/api/design-pattern", tags=["Design & Pattern"])
@@ -440,8 +441,8 @@ async def revise_tech_pack(tech_pack_id: str, payload: dict, ctx: dict = Depends
     if not ObjectId.is_valid(tech_pack_id): raise HTTPException(status_code=400, detail="Invalid tech pack.")
     source = await tech_packs_collection.find_one({"_id": ObjectId(tech_pack_id), "tenant_id": ctx["tenant_id"]})
     if not source: raise HTTPException(status_code=404, detail="Tech pack not found.")
-    source.pop("_id"); now=datetime.utcnow(); seq=await tech_packs_collection.count_documents({"tenant_id":ctx["tenant_id"]})+1
-    source.update({"tech_pack_no":f"TP-{now.strftime('%y%m%d')}-{seq:04d}", "version":clean(payload.get("version"),30) or f"{source.get('version','v1')}-revision", "status":"Draft", "revision_reason":clean(payload.get("reason"),1000), "revised_from":tech_pack_id, "created_at":now, "updated_at":now, "created_by":ctx.get("admin_id")})
+    source.pop("_id"); now=datetime.utcnow()
+    source.update({"tech_pack_no":await next_tech_pack_no(ctx["tenant_id"], now), "version":clean(payload.get("version"),30) or f"{source.get('version','v1')}-revision", "status":"Draft", "revision_reason":clean(payload.get("reason"),1000), "revised_from":tech_pack_id, "created_at":now, "updated_at":now, "created_by":ctx.get("admin_id")})
     result=await tech_packs_collection.insert_one(source); source["_id"]=result.inserted_id
     return {"message":f"Tech Pack revision {source['version']} created.", "data":serialize(source)}
 

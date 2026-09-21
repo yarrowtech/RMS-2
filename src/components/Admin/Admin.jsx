@@ -392,9 +392,11 @@ import { logoutOrReturnToDepartmentSelector } from "../../utils/authRedirect";
 
 
 
-import React, { Suspense, useMemo, useState } from "react";
+import React, { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { FaBars } from "react-icons/fa";
-import { CircleHelp, Settings as SettingsIcon } from "lucide-react";
+import { CircleHelp, Settings as SettingsIcon, ShieldCheck } from "lucide-react";
+import toast from "react-hot-toast";
+import { API_BASE_URL } from "../../config/api.js";
 import AdminSidebar from "./AdminSidebar";
 import AdminSettings from "./AdminSettings";
 import RetailerHelpSupport from "../RetailerHelpSupport";
@@ -510,15 +512,71 @@ export default function AdminModule() {
   const [active, setActive]                         = useState(defaultTab);
   const [desktopSidebarOpen, setDesktopSidebarOpen] = useState(true);
   const [drawerOpen, setDrawerOpen]                 = useState(false);
+  const [settingsInitialTab, setSettingsInitialTab] = useState("account");
+  const [kyb, setKyb]                               = useState(null);
+  const [kybLoading, setKybLoading]                 = useState(isHQ);
 
   const pageTitle = useMemo(() => labelFromKey(active), [active]);
 
   const handleLogout = () => logoutOrReturnToDepartmentSelector();
 
-  const onSettingsClick = () => setActive("__settings");
+  const onSettingsClick = () => {
+    setSettingsInitialTab("account");
+    setActive("__settings");
+  };
+
+  const loadKyb = useCallback(async () => {
+    if (!isHQ) return;
+    try {
+      setKybLoading(true);
+      const token = localStorage.getItem("admin_token") || localStorage.getItem("token") || "";
+      const response = await fetch(API_BASE_URL + "/hq/kyb", {
+        headers: { Authorization: "Bearer " + token },
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.detail || "Could not load business verification.");
+      setKyb(body.data || null);
+    } catch {
+      setKyb(null);
+    } finally {
+      setKybLoading(false);
+    }
+  }, [isHQ]);
+
+  useEffect(() => {
+    if (!isHQ) return undefined;
+    loadKyb();
+    const intervalId = window.setInterval(loadKyb, 60000);
+    window.addEventListener("focus", loadKyb);
+    return () => {
+      window.clearInterval(intervalId);
+      window.removeEventListener("focus", loadKyb);
+    };
+  }, [isHQ, loadKyb]);
+
+  const kybStatus = String(kyb?.status || "Not started").trim();
+  const kybVerified = kybStatus.toLowerCase() === "verified";
+  const openVerification = () => {
+    setSettingsInitialTab("verification");
+    setActive("__settings");
+  };
+  const showKybReminder = () => {
+    if (kybLoading || kybVerified) return;
+    const normalized = kybStatus.toLowerCase();
+    const message = normalized === "rejected"
+      ? "Your business verification needs correction. Open it to fix and resubmit."
+      : normalized === "submitted"
+        ? "Your business verification is waiting for RMS approval."
+        : "You haven't verified your business yet. Open Verification to complete it.";
+    toast(message, {
+      id: "hq-admin-kyb-reminder",
+      icon: normalized === "rejected" ? "⚠️" : normalized === "submitted" ? "⏳" : "🛡️",
+      duration: 4000,
+    });
+  };
 
   const renderPage = () => {
-    if (active === "__settings") return <AdminSettings />;
+    if (active === "__settings") return <AdminSettings initialTab={settingsInitialTab} />;
     if (active === "__support") return <RetailerHelpSupport />;
 
     // ── HQ ADMIN ─────────────────────────────────────────────────────────────
@@ -625,14 +683,35 @@ export default function AdminModule() {
             </h1>
             <p className="text-xs text-slate-700">{pageTitle}</p>
           </div>
-          <button
-            type="button"
-            onClick={onSettingsClick}
-            className="rounded-lg border border-slate-200 bg-slate-50 p-2 text-slate-700 transition hover:bg-slate-100"
-            aria-label="Settings"
-          >
-            <SettingsIcon size={18} className="text-slate-900" />
-          </button>
+          <div className="flex items-center gap-2">
+            {isHQ && (
+              <button
+                type="button"
+                onClick={openVerification}
+                onMouseEnter={showKybReminder}
+                onFocus={showKybReminder}
+                className={`relative rounded-lg border p-2 transition ${kybVerified ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100"}`}
+                aria-label={kybVerified ? "Business verified" : "Business verification required"}
+                title={kybVerified ? "Business verified" : "Business verification required"}
+              >
+                <ShieldCheck size={18} />
+                {!kybLoading && !kybVerified && (
+                  <>
+                    <span className="absolute -right-1 -top-1 h-3 w-3 rounded-full border-2 border-white bg-rose-500" />
+                    <span className="absolute -right-1 -top-1 h-3 w-3 animate-ping rounded-full bg-rose-400" />
+                  </>
+                )}
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={onSettingsClick}
+              className="rounded-lg border border-slate-200 bg-slate-50 p-2 text-slate-700 transition hover:bg-slate-100"
+              aria-label="Settings"
+            >
+              <SettingsIcon size={18} className="text-slate-900" />
+            </button>
+          </div>
         </div>
       </div>
 
@@ -690,6 +769,25 @@ export default function AdminModule() {
               <p className="mt-0.5 text-xs font-medium capitalize text-slate-500">{pageTitle}</p>
             </div>
             <div className="flex items-center gap-3">
+              {isHQ && (
+                <button
+                  type="button"
+                  onClick={openVerification}
+                  onMouseEnter={showKybReminder}
+                  onFocus={showKybReminder}
+                  className={`relative grid h-9 w-9 place-items-center rounded-lg border transition ${kybVerified ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100"}`}
+                  aria-label={kybVerified ? "Business verified" : "Business verification required"}
+                  title={kybVerified ? "Business verified" : "Business verification required"}
+                >
+                  <ShieldCheck size={18} />
+                  {!kybLoading && !kybVerified && (
+                    <>
+                      <span className="absolute -right-1 -top-1 h-3 w-3 rounded-full border-2 border-white bg-rose-500" />
+                      <span className="absolute -right-1 -top-1 h-3 w-3 animate-ping rounded-full bg-rose-400" />
+                    </>
+                  )}
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => setActive("__support")}

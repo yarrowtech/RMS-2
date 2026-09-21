@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import {
   ArrowRight, BarChart2, Boxes, Building2, CalendarClock, CheckCircle2, CircleDot, CreditCard, Crown, LogOut, PackagePlus, Settings, ShieldCheck, ShoppingCart, Store, Tags, UsersRound, X,
 } from "lucide-react";
+import toast from "react-hot-toast";
 import { clearAuthData } from "../../utils/authRedirect.js";
 import { API_BASE_URL } from "../../config/api.js";
 
@@ -94,27 +95,6 @@ const WORKSPACES = [
     icon: UsersRound,
     color: "from-slate-600 to-slate-800",
   },
-  {
-    title: "Business Verification",
-    description: "Submit GST/PAN proof (KYB) once — required before raising purchase orders or paying vendors.",
-    path: "/dashboard/store-owner/verification",
-    icon: ShieldCheck,
-    color: "from-emerald-500 to-teal-600",
-  },
-  {
-    title: "Usage Analytics",
-    description: "See which of your staff are actually using RMS — sessions, pages opened, features used, last active.",
-    path: "/dashboard/store-owner/usage-analytics",
-    icon: BarChart2,
-    color: "from-indigo-500 to-violet-600",
-  },
-  {
-    title: "Settings",
-    description: "Edit your store name, contact details, password and document settings.",
-    path: "/dashboard/store-owner/settings",
-    icon: Settings,
-    color: "from-slate-500 to-slate-700",
-  },
 ];
 
 const STARTING_STEPS = [
@@ -168,6 +148,8 @@ export default function StoreOwnerDashboard() {
   const [subscription, setSubscription] = useState(null);
   const [subscriptionLoading, setSubscriptionLoading] = useState(true);
   const [renewingSubscription, setRenewingSubscription] = useState(false);
+  const [kyb, setKyb] = useState(null);
+  const [kybLoading, setKybLoading] = useState(true);
 
   const upgradeRequest = useCallback(async (path, options = {}) => {
     const token = localStorage.getItem("admin_token") || localStorage.getItem("access_token") || localStorage.getItem("token") || "";
@@ -212,6 +194,28 @@ export default function StoreOwnerDashboard() {
   }, [upgradeRequest]);
 
   useEffect(() => { loadSubscription(); }, [loadSubscription]);
+
+  const loadKyb = useCallback(async () => {
+    try {
+      setKybLoading(true);
+      const response = await upgradeRequest("/hq/kyb");
+      setKyb(response?.data || null);
+    } catch {
+      setKyb(null);
+    } finally {
+      setKybLoading(false);
+    }
+  }, [upgradeRequest]);
+
+  useEffect(() => {
+    loadKyb();
+    const intervalId = window.setInterval(loadKyb, 60000);
+    window.addEventListener("focus", loadKyb);
+    return () => {
+      window.clearInterval(intervalId);
+      window.removeEventListener("focus", loadKyb);
+    };
+  }, [loadKyb]);
 
   const renewSubscription = async () => {
     try {
@@ -307,6 +311,23 @@ export default function StoreOwnerDashboard() {
     requestStatus === "PAID_PENDING_REVIEW" ? { label: "In review", cls: "bg-indigo-400 text-indigo-950" } :
     (requestStatus === "APPROVED" || !upgrade?.eligible) ? { label: "Approved", cls: "bg-emerald-400 text-emerald-950" } :
     null;
+  const kybStatus = String(kyb?.status || "").trim();
+  const kybVerified = kybStatus.toLowerCase() === "verified";
+  const kybSubmitted = kybStatus.toLowerCase() === "submitted";
+  const kybRejected = kybStatus.toLowerCase() === "rejected";
+  const showKybReminder = () => {
+    if (kybLoading || kybVerified) return;
+    const message = kybRejected
+      ? "Your business verification needs correction. Open it to fix and resubmit."
+      : kybSubmitted
+        ? "Your business verification is submitted and waiting for approval."
+        : "You haven't verified your business yet. Open Business Verification to complete it.";
+    toast(message, {
+      id: "store-owner-kyb-reminder",
+      icon: kybRejected ? "⚠️" : kybSubmitted ? "⏳" : "🛡️",
+      duration: 4000,
+    });
+  };
 
   return (
     <main className="min-h-screen bg-slate-950 text-slate-900">
@@ -324,14 +345,43 @@ export default function StoreOwnerDashboard() {
             </div>
           </div>
           <div className="flex items-center gap-3">
+            <nav className="flex items-center gap-2" aria-label="Store owner quick actions">
+              <Link
+                to="/dashboard/store-owner/verification"
+                title={kybVerified ? "Business verified" : "Business verification required"}
+                aria-label={kybVerified ? "Business verified" : "Open required business verification"}
+                onMouseEnter={showKybReminder}
+                onFocus={showKybReminder}
+                className={`relative grid h-10 w-10 place-items-center rounded-xl border transition ${kybVerified ? "border-emerald-300/40 bg-emerald-400/15 text-emerald-200 hover:bg-emerald-400/25" : "border-amber-300/50 bg-amber-400/15 text-amber-200 hover:bg-amber-400/25"}`}
+              >
+                <ShieldCheck className="h-5 w-5" />
+                {!kybLoading && !kybVerified && <span className="absolute -right-1 -top-1 h-3 w-3 rounded-full border-2 border-slate-950 bg-rose-500" />}
+              </Link>
+              <Link
+                to="/dashboard/store-owner/usage-analytics"
+                title="Usage Analytics"
+                aria-label="Open Usage Analytics"
+                className="hidden h-10 w-10 place-items-center rounded-xl border border-white/15 bg-white/5 text-white transition hover:bg-white/10 sm:grid"
+              >
+                <BarChart2 className="h-5 w-5" />
+              </Link>
+              <Link
+                to="/dashboard/store-owner/settings"
+                title="Settings"
+                aria-label="Open Settings"
+                className="hidden h-10 w-10 place-items-center rounded-xl border border-white/15 bg-white/5 text-white transition hover:bg-white/10 sm:grid"
+              >
+                <Settings className="h-5 w-5" />
+              </Link>
+            </nav>
             <button onClick={() => setShowUpgradeModal(true)} className="relative flex items-center gap-2 rounded-xl border border-cyan-300/25 bg-cyan-300/10 px-4 py-2.5 text-sm font-bold text-cyan-100 transition hover:bg-cyan-300/20">
-              <Crown className="h-4 w-4" /> Grow with RMS
+              <Crown className="h-4 w-4" /> <span className="hidden md:inline">Grow with RMS</span>
               {upgradeBadge && (
                 <span className={`ml-1 rounded-full px-2 py-0.5 text-[10px] font-black uppercase tracking-wide ${upgradeBadge.cls}`}>{upgradeBadge.label}</span>
               )}
             </button>
             <button onClick={logout} className="flex items-center gap-2 rounded-xl border border-white/15 bg-white/5 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-white/10">
-              <LogOut className="h-4 w-4" /> Logout
+              <LogOut className="h-4 w-4" /> <span className="hidden sm:inline">Logout</span>
             </button>
           </div>
         </header>

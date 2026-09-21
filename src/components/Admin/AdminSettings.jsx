@@ -20,9 +20,9 @@ const api = async (path, options = {}) => {
 const input = "mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 disabled:bg-slate-50 disabled:text-slate-500";
 const Label = ({ children, ...props }) => <label className="block text-xs font-bold text-slate-600">{children}<input {...props} className={input}/></label>;
 
-export default function AdminSettings({ departmentMode = false }) {
+export default function AdminSettings({ departmentMode = false, initialTab = "account" }) {
   const [data, setData] = useState(null);
-  const [tab, setTab] = useState("account");
+  const [tab, setTab] = useState(initialTab);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
@@ -43,6 +43,7 @@ export default function AdminSettings({ departmentMode = false }) {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+  useEffect(() => { setTab(initialTab); }, [initialTab]);
 
   const saveProfile = async () => { try { setBusy(true); setError(""); const response = await api("/profile", { method: "PATCH", body: JSON.stringify(profile) }); setMessage(response.message); } catch (e) { setError(e.message); } finally { setBusy(false); } };
   const savePassword = async () => { if (password.new_password !== password.confirm) return setError("New password and confirmation do not match."); try { setBusy(true); setError(""); const response = await api("/password", { method: "PATCH", body: JSON.stringify({ current_password: password.current_password, new_password: password.new_password }) }); setMessage(response.message); setPassword({ current_password: "", new_password: "", confirm: "" }); } catch (e) { setError(e.message); } finally { setBusy(false); } };

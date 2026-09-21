@@ -30,6 +30,16 @@ from ..email_utils import send_demand_signal_email
 from ..error_log import log_error
 from ..product_identity import stock_identity
 from ..raphaaa_product_enrichment import enrichment_patch, is_raphaaa_tenant, proposed_product_name
+from ..raphaaa_design_performance import (
+    best_tech_packs,
+    decide_action,
+    financial_year_label,
+    financial_year_start,
+    mark_good_sellers,
+    tech_pack_hint,
+    tech_pack_label,
+    trend_of,
+)
 from ..raphaaa_purchase_plan import (
     RAPHAAA_FRESH_MAX_MONTHS,
     RAPHAAA_POLICY_CODE,
@@ -43,7 +53,7 @@ from ..raphaaa_purchase_plan import (
 from ..db import (
     admins_collection, grn_collection, inventory_collection, product_collection,
     procurement_notifications_collection, purchaseorders_collection, sales_collection,
-    stores_collection, store_stock_collection, tenants_collection,
+    stores_collection, store_stock_collection, tech_packs_collection, tenants_collection, unstitched_stock_collection,
     vendor_catalogue_collection, vendor_tenant_links_collection, vendors_collection,
     forecast_low_stock_alerts_collection, forecast_restock_drafts_collection,
 )
@@ -865,6 +875,270 @@ async def build_raphaaa_purchase_plan(
             detail="This purchase policy is configured only for the Raphaaa tenant.",
         )
     return await _compute_raphaaa_purchase_plan(ctx["tenant_id"], payload)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# DESIGN PERFORMANCE (Raphaaa only) — sales by financial year per Design No.,
+# stitched stock, unstitched pieces, and what to do about each design.
+# Read-only: writes nothing. Purchase arithmetic reuses build_purchase_math so
+# it always agrees with the Purchase Plan tab.
+# ═══════════════════════════════════════════════════════════════════════════
+
+_DESIGN_ACTION_ORDER = {"stitch_and_buy": 0, "stitch": 1, "buy": 2, "clear": 3, "hold": 4, "watch": 5, "none": 6}
+
+
+def _design_key(value: Any) -> str:
+    return " ".join(str(value or "").split()).lower()
+
+
+async def _compute_design_performance(
+    tenant_id: str, history_years: int, good_top_pct: float, max_decline_pct: float,
+) -> dict:
+    now = datetime.utcnow()
+    current_fy = financial_year_start(now)
+    product_metadata = await _raphaaa_product_metadata(tenant_id)
+    designs: Dict[str, dict] = {}
+
+    def entry(key: str, design_no: str) -> dict:
+        return designs.setdefault(key, {
+            "design_key": key, "design_no": design_no, "name": "", "division": "", "section": "",
+            "department": "", "vendor_name": "", "years": defaultdict(lambda: {"qty": 0.0, "net": 0.0}),
+            "stitched_fresh": 0.0, "stitched_aged": 0.0, "unstitched_pcs": 0.0,
+            "fabric_total": 0.0, "fabric_per_piece": 0.0, "fabric_unit": "",
+        })
+
+    def fill_meta(row: dict, master: dict, fallback: Optional[dict] = None) -> None:
+        fallback = fallback or {}
+        if master:
+            context = _raphaaa_master_context(master)
+            row["name"] = row["name"] or context.get("name", "")
+            row["division"] = row["division"] or context.get("division", "")
+            row["section"] = row["section"] or context.get("section", "")
+            row["department"] = row["department"] or context.get("department", "")
+            row["vendor_name"] = row["vendor_name"] or context.get("vendor_name", "")
+        row["name"] = row["name"] or str(fallback.get("name") or "").strip()
+        row["division"] = row["division"] or str(fallback.get("division") or "").strip()
+        row["section"] = row["section"] or str(fallback.get("section") or "").strip()
+        row["department"] = row["department"] or str(fallback.get("department") or "").strip()
+
+    bills_scanned = 0
+    lines_without_design = 0
+    cursor = sales_collection.find(
+        {"tenant_id": tenant_id, "type": {"$in": ["sale", "return"]}},
+        {"type": 1, "created_at": 1, "items": 1},
+    )
+    async for sale in cursor:
+        created_at = sale.get("created_at")
+        if not isinstance(created_at, datetime):
+            continue
+        bills_scanned += 1
+        fy = financial_year_start(created_at)
+        sign = -1.0 if sale.get("type") == "return" else 1.0
+        for item in sale.get("items") or []:
+            qty = abs(_number(item.get("qty") or item.get("quantity")))
+            if qty <= 0:
+                continue
+            barcode = str(item.get("barcode") or "").strip()
+            master = product_metadata.get(barcode) or {}
+            design_no = str(item.get("design_no") or master.get("design_no") or master.get("category1") or "").strip()
+            key = _design_key(design_no)
+            if not key:
+                lines_without_design += 1
+                continue
+            net_raw = item.get("net_amount", item.get("netAmount"))
+            if net_raw not in (None, ""):
+                net = max(0.0, _number(net_raw))
+            else:
+                net = abs(_number(item.get("total"))) or qty * _number(item.get("price"))
+            row = entry(key, design_no)
+            bucket = row["years"][fy]
+            bucket["qty"] += sign * qty
+            bucket["net"] += sign * net
+            fill_meta(row, master, item)
+
+    for collection in (inventory_collection, store_stock_collection):
+        async for doc in collection.find(
+            {"tenant_id": tenant_id},
+            {"barcode": 1, "stockQty": 1, "freshQty": 1, "agedQty": 1, "design_no": 1},
+        ):
+            barcode = str(doc.get("barcode") or "").strip()
+            master = product_metadata.get(barcode) or {}
+            design_no = str(master.get("design_no") or master.get("category1") or doc.get("design_no") or "").strip()
+            key = _design_key(design_no)
+            if not key:
+                continue
+            if "freshQty" in doc or "agedQty" in doc:
+                fresh, aged = _number(doc.get("freshQty")), _number(doc.get("agedQty"))
+            else:
+                fresh, aged = _number(doc.get("stockQty")), 0.0
+            if fresh <= 0 and aged <= 0:
+                continue
+            row = entry(key, design_no)
+            row["stitched_fresh"] += max(0.0, fresh)
+            row["stitched_aged"] += max(0.0, aged)
+            fill_meta(row, master)
+
+    async for doc in unstitched_stock_collection.find({"tenant_id": tenant_id}):
+        key = _design_key(doc.get("design_key") or doc.get("design_no"))
+        pcs = _number(doc.get("pcs"))
+        if not key or pcs <= 0:
+            continue
+        row = entry(key, str(doc.get("design_no") or "").strip())
+        row["unstitched_pcs"] += pcs
+        row["fabric_total"] += _number(doc.get("fabric_total"))
+        row["fabric_per_piece"] = _number(doc.get("fabric_per_piece")) or row["fabric_per_piece"]
+        row["fabric_unit"] = row["fabric_unit"] or str(doc.get("fabric_unit") or "").strip()
+        row["name"] = row["name"] or str(doc.get("description") or "").strip()
+        row["department"] = row["department"] or str(doc.get("department") or "").strip()
+
+    seen_years = sorted({fy for row in designs.values() for fy in row["years"]} | {current_fy})
+    history_starts = [current_fy - offset for offset in range(history_years, 0, -1)]
+    year_starts = sorted(set(seen_years) | set(history_starts))
+    year_labels = [financial_year_label(fy) for fy in year_starts]
+
+    rows: List[dict] = []
+    for row in designs.values():
+        by_year = {fy: max(0.0, row["years"][fy]["qty"]) for fy in row["years"]}
+        net_by_year = {fy: max(0.0, row["years"][fy]["net"]) for fy in row["years"]}
+        total_qty = sum(by_year.values())
+        total_net = sum(net_by_year.values())
+        if total_qty <= 0 and row["unstitched_pcs"] <= 0 and row["stitched_fresh"] + row["stitched_aged"] <= 0:
+            continue
+        history ={financial_year_label(fy): by_year.get(fy, 0.0) for fy in history_starts}
+        if not any(history.values()) and by_year.get(current_fy, 0.0) > 0:
+            history = {financial_year_label(current_fy): by_year[current_fy]}
+        latest_qty = by_year.get(current_fy - 1, 0.0)
+        previous_qty = by_year.get(current_fy - 2, 0.0)
+        if latest_qty <= 0 and previous_qty <= 0 and by_year.get(current_fy, 0.0) > 0:
+            latest_qty = by_year[current_fy]
+        trend_label, growth_pct = trend_of(latest_qty, previous_qty)
+        avg_price = total_net / total_qty if total_qty > 0 else 0.0
+        math_result = build_purchase_math(history, row["stitched_fresh"], 0.0, avg_price, aged_stock=row["stitched_aged"])
+        rows.append({
+            "design_key": row["design_key"], "design_no": row["design_no"], "name": row["name"],
+            "division": row["division"], "section": row["section"], "department": row["department"],
+            "vendor_name": row["vendor_name"],
+            "years": {
+                financial_year_label(fy): {"qty": round(by_year.get(fy, 0.0), 2), "net": round(net_by_year.get(fy, 0.0), 2)}
+                for fy in year_starts
+            },
+            "total_qty": round(total_qty, 2), "total_net": round(total_net, 2),
+            "latest_qty": latest_qty, "previous_qty": previous_qty,
+            "trend": trend_label, "growth_pct": growth_pct,
+            "stitched_fresh": round(row["stitched_fresh"], 2), "stitched_aged": round(row["stitched_aged"], 2),
+            "stitched_total": round(row["stitched_fresh"] + row["stitched_aged"], 2),
+            "unstitched_pcs": round(row["unstitched_pcs"], 2),
+            "fabric_total": round(row["fabric_total"], 3), "fabric_per_piece": round(row["fabric_per_piece"], 3),
+            "fabric_unit": row["fabric_unit"] or "Unspecified",
+            "expected_qty": math_result["purchase_qty_before_stock"],
+            "stock_credit_qty": math_result["stock_credit_qty"],
+            "need_qty": math_result["final_purchase_qty"],
+        })
+
+    mark_good_sellers(rows, good_top_pct, max_decline_pct)
+    tech_packs = best_tech_packs([
+        pack async for pack in tech_packs_collection.find(
+            {"tenant_id": tenant_id},
+            {"design_no": 1, "tech_pack_no": 1, "version": 1, "status": 1, "updated_at": 1, "created_at": 1},
+        )
+    ])
+    for row in rows:
+        decision = decide_action(
+            is_good=row["is_good"], total_qty=row["total_qty"],
+            stitched_fresh=row["stitched_fresh"], stitched_aged=row["stitched_aged"],
+            unstitched_pcs=row["unstitched_pcs"], need_qty=row["need_qty"],
+        )
+        row.update(decision)
+        pack = tech_packs.get(row["design_key"])
+        row["tech_pack_no"] = pack["tech_pack_no"] if pack else ""
+        row["tech_pack_version"] = pack["version"] if pack else ""
+        row["tech_pack_status"] = pack["status"] if pack else ""
+        row["tech_pack_label"] = tech_pack_label(pack["state"] if pack else None)
+        row["tech_pack_hint"] = tech_pack_hint(decision["action"], pack)
+        row["fabric_needed"] = round(decision["stitch_qty"] * row["fabric_per_piece"], 3)
+        if not row.get("dept_rank"):
+            row["dept_rank"] = None
+            row["dept_designs_selling"] = None
+    rows.sort(key=lambda r: (_DESIGN_ACTION_ORDER.get(r["action"], 9), -r["total_qty"]))
+
+    section_map: Dict[tuple, dict] = {}
+    for row in rows:
+        group = section_map.setdefault((row["section"], row["department"]), {
+            "section": row["section"], "department": row["department"], "designs": 0, "good_designs": 0,
+            "total_qty": 0.0, "stitched_total": 0.0, "unstitched_pcs": 0.0,
+            "need_qty": 0, "stitch_qty": 0, "buy_qty": 0, "clear_qty": 0.0,
+        })
+        group["designs"] += 1
+        group["good_designs"] += 1 if row["is_good"] else 0
+        group["total_qty"] += row["total_qty"]
+        group["stitched_total"] += row["stitched_total"]
+        group["unstitched_pcs"] += row["unstitched_pcs"]
+        group["need_qty"] += row["need_qty"] if row["is_good"] else 0
+        group["stitch_qty"] += row["stitch_qty"]
+        group["buy_qty"] += row["buy_qty"]
+        group["clear_qty"] += row["stitched_total"] if row["action"] == "clear" else 0.0
+    section_summary = sorted(
+        ({**g, "total_qty": round(g["total_qty"], 2), "stitched_total": round(g["stitched_total"], 2),
+          "unstitched_pcs": round(g["unstitched_pcs"], 2), "clear_qty": round(g["clear_qty"], 2)}
+         for g in section_map.values()),
+        key=lambda g: (g["section"], g["department"]),
+    )
+
+    action_counts: Dict[str, int] = defaultdict(int)
+    for row in rows:
+        action_counts[row["action"]] += 1
+    fabric_needed_by_unit: Dict[str, float] = defaultdict(float)
+    for row in rows:
+        if row["fabric_needed"] > 0:
+            fabric_needed_by_unit[row["fabric_unit"]] += row["fabric_needed"]
+    return {
+        "status": "success", "tenant_id": tenant_id, "generated_at": now,
+        "years": year_labels, "current_year": financial_year_label(current_fy),
+        "policy": {
+            "history_years": history_years, "good_top_pct": good_top_pct, "max_decline_pct": max_decline_pct,
+            "uplift_pct": RAPHAAA_UPLIFT_PCT, "stock_credit_pct": RAPHAAA_STOCK_CREDIT_PCT,
+            "formula": "Expected demand = peak completed-year sales x 1.18; need = expected - 50% of fresh stitched stock (same as the Purchase Plan tab). Need is met from unstitched pieces first, the rest is bought/made. Old stock is never counted.",
+        },
+        "summary": {
+            "designs": len(rows), "good_designs": sum(1 for r in rows if r["is_good"]),
+            "stitch_designs": action_counts["stitch"] + action_counts["stitch_and_buy"],
+            "stitch_pcs": sum(r["stitch_qty"] for r in rows),
+            "buy_designs": action_counts["buy"] + action_counts["stitch_and_buy"],
+            "buy_qty": sum(r["buy_qty"] for r in rows),
+            "clear_designs": action_counts["clear"],
+            "clear_pcs": round(sum(r["stitched_total"] for r in rows if r["action"] == "clear"), 2),
+            "unstitched_pcs": round(sum(r["unstitched_pcs"] for r in rows), 2),
+            "fabric_needed_by_unit": {unit: round(value, 3) for unit, value in fabric_needed_by_unit.items()},
+            "stitch_waiting_on_tech_pack": sum(
+                1 for r in rows if r["action"] in ("stitch", "stitch_and_buy") and r["tech_pack_label"] != "Released"
+            ),
+            "tech_pack_counts": {
+                label: sum(1 for r in rows if r["tech_pack_label"] == label)
+                for label in ("Released", "Not released", "Missing")
+            },
+            "action_counts": dict(action_counts),
+        },
+        "data_quality": {
+            "bills_scanned": bills_scanned, "sales_lines_without_design_no": lines_without_design,
+            "unstitched_designs_without_sales": sum(
+                1 for r in rows if r["unstitched_pcs"] > 0 and r["total_qty"] <= 0
+            ),
+        },
+        "section_summary": section_summary,
+        "rows": rows,
+    }
+
+
+@router.get("/design-performance/raphaaa")
+async def get_raphaaa_design_performance(
+    history_years: int = Query(2, ge=1, le=5),
+    good_top_pct: float = Query(30, ge=1, le=100),
+    max_decline_pct: float = Query(50, ge=0, le=100),
+    ctx: TenantCtx = Depends(_require_forecast_context),
+):
+    if not is_raphaaa_tenant(ctx["tenant_id"]):
+        raise HTTPException(status_code=404, detail="Design Performance is available only for the Raphaaa tenant.")
+    return await _compute_design_performance(ctx["tenant_id"], history_years, good_top_pct, max_decline_pct)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
