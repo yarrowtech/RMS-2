@@ -637,6 +637,9 @@ async def release_project(project_id: str, payload: dict, ctx: dict = Depends(re
     if not ObjectId.is_valid(tech_pack_id): raise HTTPException(status_code=400, detail="Select an approved tech pack.")
     pack = await tech_packs_collection.find_one({"_id": ObjectId(tech_pack_id), "tenant_id": ctx["tenant_id"], "design_no": project["design_no"]})
     if not pack: raise HTTPException(status_code=400, detail="The selected tech pack must belong to this design number.")
+    allowance_status = str((pack.get("allowance_approval") or {}).get("status") or "NOT_REQUIRED").upper()
+    if allowance_status in {"PENDING", "REJECTED", "CHANGES_REQUESTED"}:
+        raise HTTPException(status_code=400, detail="The Tech Pack's manual allowance exception must be approved by HQ before release.")
 
     # A tech pack is always mandatory (above). The three sign-off checks are
     # per-tenant configurable in Settings, and a design/HQ admin can override

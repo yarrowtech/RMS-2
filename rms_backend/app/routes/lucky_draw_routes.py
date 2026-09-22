@@ -128,7 +128,10 @@ async def _execute_draw(
 @router.get("/campaigns")
 async def list_campaigns(ctx: Dict[str, Any] = Depends(get_tenant)):
     ctx = require_crm_access(ctx)
-    rows = await lucky_draw_campaigns_collection.find({"tenant_id": ctx["tenant_id"]}).sort("created_at", -1).to_list(200)
+    rows = await lucky_draw_campaigns_collection.find({
+        "tenant_id": ctx["tenant_id"],
+        "status": {"$ne": "REMOVED"},
+    }).sort("created_at", -1).to_list(200)
     return [serialize_doc(r) for r in rows]
 
 
@@ -170,6 +173,34 @@ async def set_campaign_status(campaign_id: str, payload: dict, ctx: Dict[str, An
         raise HTTPException(status_code=404, detail="Campaign not found.")
     await lucky_draw_campaigns_collection.update_one({"_id": campaign["_id"]}, {"$set": {"status": new_status, "updated_at": now_utc()}})
     return {"message": f"Campaign marked {new_status.title()}."}
+
+
+@router.delete("/campaigns/{campaign_id}")
+async def remove_campaign(campaign_id: str, ctx: Dict[str, Any] = Depends(get_tenant)):
+    """Remove a campaign from active use without destroying its entry/draw
+    history. Only an HQ-scoped CRM administrator can perform this action."""
+    ctx = require_hq(require_crm_access(ctx))
+    if not ObjectId.is_valid(campaign_id):
+        raise HTTPException(status_code=400, detail="Invalid campaign ID.")
+    campaign = await lucky_draw_campaigns_collection.find_one({
+        "_id": ObjectId(campaign_id),
+        "tenant_id": ctx["tenant_id"],
+        "status": {"$ne": "REMOVED"},
+    })
+    if not campaign:
+        raise HTTPException(status_code=404, detail="Campaign not found.")
+    now = now_utc()
+    await lucky_draw_campaigns_collection.update_one(
+        {"_id": campaign["_id"], "tenant_id": ctx["tenant_id"]},
+        {"$set": {
+            "status": "REMOVED",
+            "removed_at": now,
+            "removed_by": ctx.get("admin_id"),
+            "removed_by_name": ctx.get("admin_name"),
+            "updated_at": now,
+        }},
+    )
+    return {"message": "Campaign removed. Existing entries and draw history were retained for audit."}
 
 
 @router.get("/entries")

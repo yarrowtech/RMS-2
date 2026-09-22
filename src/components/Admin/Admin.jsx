@@ -409,6 +409,7 @@ import AdminStoreWiseInventory from "./AdminStoreWiseInventory.jsx";
 import HQSetup from "./Hqsetup.jsx";
 import HQAdminManagement from "./Hqadminmanagement.jsx";
 import HqVendorOverview from "./HqVendorOverview.jsx";
+import HqAllowanceApprovals from "./HqAllowanceApprovals.jsx";
 
 // ─── Store context from localStorage ─────────────────────────────────────────
 // Read INSIDE each component that needs it, never at module top-level.
@@ -440,6 +441,7 @@ function labelFromKey(key) {
     "storeInventory":        "Store-wise Inventory",
     "reports":               "Sales Reports",
     "vendorOverview":         "Vendor Overview",
+    "allowanceApprovals":     "Allowance Approvals",
     // Store
     "storeStock":            "Store Stock",
     "storeSales":            "Sales Report",
@@ -587,6 +589,9 @@ export default function AdminModule() {
 
         case "vendorOverview":
           return <HqVendorOverview />;
+
+        case "allowanceApprovals":
+          return <HqAllowanceApprovals />;
 
         case "setup":
           return <HQSetup />;

@@ -3,6 +3,7 @@ import {
   BellRing,
   CalendarClock,
   CircleDollarSign,
+  FileSpreadsheet,
   Gift,
   HeartHandshake,
   Phone,
@@ -13,6 +14,7 @@ import {
   Sparkles,
   Star,
   Tags,
+  Trash2,
   Trophy,
   Users,
   X,
@@ -81,6 +83,15 @@ function money(value) {
 
 function today() {
   return new Date().toISOString().slice(0, 10);
+}
+
+function normalizedContact(value) {
+  return String(value || "").replace(/\D/g, "").slice(-10);
+}
+
+function exportDate(value) {
+  const date = value ? new Date(value) : null;
+  return date && !Number.isNaN(date.getTime()) ? date.toLocaleString("en-IN") : "";
 }
 
 function Stat({ label, value, helper, icon: Icon, color }) {
@@ -234,6 +245,7 @@ export default function CustomerCRM() {
   const [lookupPhone, setLookupPhone] = useState("");
   const [lookupResult, setLookupResult] = useState(null);
   const [lookupBusy, setLookupBusy] = useState(false);
+  const [exportingEntries, setExportingEntries] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true); setError("");
@@ -321,6 +333,16 @@ export default function CustomerCRM() {
     } catch (e) { setError(e.message || "Unable to update campaign."); }
   };
 
+  const removeCampaign = async (campaign) => {
+    const confirmed = window.confirm("Remove '" + campaign.campaign_name + "'? It will disappear and stop accepting entries. Existing slips and draw history will remain retained for audit.");
+    if (!confirmed) return;
+    try {
+      await crmFetch("/api/customer-crm/lucky-draw/campaigns/" + campaign.id, { method: "DELETE" });
+      if (ldCampaignFilter === campaign.id) setLdCampaignFilter("");
+      loadLuckyDraw();
+    } catch (e) { setError(e.message || "Unable to remove campaign."); }
+  };
+
   const saveEntry = async (form) => {
     try {
       await crmFetch("/api/customer-crm/lucky-draw/entries", { method: "POST", body: JSON.stringify(form) });
@@ -365,6 +387,126 @@ export default function CustomerCRM() {
     if (!mobile) return "#";
     const text = encodeURIComponent(`Hi ${customer.name || "there"}, thank you for shopping with us. We have new offers and collections for you.`);
     return `https://wa.me/91${mobile.slice(-10)}?text=${text}`;
+  };
+
+  const exportLuckyDrawEntries = async (entries) => {
+    if (!entries.length) {
+      setError("There are no slip entries in the current campaign filter to export.");
+      return;
+    }
+    setExportingEntries(true);
+    setError("");
+    try {
+      const XLSX = await import("xlsx");
+      const profilesByPhone = new Map();
+      for (const customer of data.customers || []) {
+        const phone = normalizedContact(customer.mobile);
+        if (phone && !profilesByPhone.has(phone)) profilesByPhone.set(phone, customer);
+      }
+
+      const campaignContacts = new Map();
+      const slipRows = entries.map((entry) => {
+        const phone = normalizedContact(entry.contact_no);
+        const profile = phone ? profilesByPhone.get(phone) : null;
+        const whatsappConsent = profile ? Boolean(profile.consent_whatsapp) : null;
+        const smsConsent = profile ? Boolean(profile.consent_sms) : null;
+        const emailConsent = profile ? Boolean(profile.consent_email) : null;
+        const eligible = Boolean(whatsappConsent || smsConsent || emailConsent);
+        const consentLabel = (value) => value === null ? "Not recorded" : value ? "Yes" : "No";
+        const contactKey = phone ? "phone:" + phone : "entry:" + entry.id;
+        const existing = campaignContacts.get(contactKey) || {
+          "Customer Name": entry.customer_name || profile?.name || "",
+          "Contact Number": phone || String(entry.contact_no || ""),
+          "Email": profile?.email || "",
+          "Address": entry.address || "",
+          "Profession": entry.profession || "",
+          "CRM Segment": profile?.segment || "",
+          "Preferred Channel": profile?.preferred_channel || "",
+          "WhatsApp Consent": consentLabel(whatsappConsent),
+          "SMS Consent": consentLabel(smsConsent),
+          "Email Consent": consentLabel(emailConsent),
+          "Marketing Eligible": eligible ? "Yes" : "No",
+          "Consent Check": profile ? "CRM profile matched" : "Not recorded - do not message",
+          campaigns: new Set(),
+          stores: new Set(),
+          bills: new Set(),
+          entries: 0,
+          latestEntry: "",
+        };
+        existing.campaigns.add(entry.campaign_name || "");
+        existing.stores.add(entry.store_name || data.scope?.store_name || "HQ");
+        existing.bills.add(entry.bill_no || "");
+        existing.entries += 1;
+        if (String(entry.created_at || "") > existing.latestEntry) existing.latestEntry = String(entry.created_at || "");
+        campaignContacts.set(contactKey, existing);
+        return {
+          "Customer Name": entry.customer_name || "",
+          "Contact Number": phone || String(entry.contact_no || ""),
+          "Address": entry.address || "",
+          "Profession": entry.profession || "",
+          "Bill No.": entry.bill_no || "",
+          "Campaign": entry.campaign_name || "",
+          "Store": entry.store_name || data.scope?.store_name || "HQ",
+          "Entered By": entry.entered_by_name || "",
+          "Entry Date": exportDate(entry.created_at),
+          "WhatsApp Consent": consentLabel(whatsappConsent),
+          "SMS Consent": consentLabel(smsConsent),
+          "Email Consent": consentLabel(emailConsent),
+          "Marketing Eligible": eligible ? "Yes" : "No",
+          "Consent Check": profile ? "CRM profile matched" : "Not recorded - do not message",
+        };
+      });
+
+      const contactRows = [...campaignContacts.values()].map((row) => ({
+        "Customer Name": row["Customer Name"],
+        "Contact Number": row["Contact Number"],
+        "Email": row.Email,
+        "Address": row.Address,
+        "Profession": row.Profession,
+        "CRM Segment": row["CRM Segment"],
+        "Preferred Channel": row["Preferred Channel"],
+        "WhatsApp Consent": row["WhatsApp Consent"],
+        "SMS Consent": row["SMS Consent"],
+        "Email Consent": row["Email Consent"],
+        "Marketing Eligible": row["Marketing Eligible"],
+        "Consent Check": row["Consent Check"],
+        "Campaign(s)": [...row.campaigns].filter(Boolean).join(", "),
+        "Store(s)": [...row.stores].filter(Boolean).join(", "),
+        "Bill No(s).": [...row.bills].filter(Boolean).join(", "),
+        "Slip Entries": row.entries,
+        "Latest Entry Date": exportDate(row.latestEntry),
+      }));
+
+      const selectedCampaign = (luckyDraw.campaigns || []).find((campaign) => campaign.id === ldCampaignFilter);
+      const campaignLabel = selectedCampaign?.campaign_name || "All campaigns";
+      const workbook = XLSX.utils.book_new();
+      const contactSheet = XLSX.utils.json_to_sheet(contactRows);
+      contactSheet["!cols"] = [{wch:24},{wch:16},{wch:28},{wch:28},{wch:20},{wch:16},{wch:18},{wch:18},{wch:14},{wch:16},{wch:18},{wch:30},{wch:28},{wch:22},{wch:24},{wch:12},{wch:22}];
+      const slipSheet = XLSX.utils.json_to_sheet(slipRows);
+      slipSheet["!cols"] = [{wch:24},{wch:16},{wch:28},{wch:20},{wch:16},{wch:26},{wch:22},{wch:20},{wch:22},{wch:18},{wch:14},{wch:16},{wch:18},{wch:30}];
+      const readMeSheet = XLSX.utils.aoa_to_sheet([
+        ["RMS Customer Campaign Export"],
+        ["Campaign filter", campaignLabel],
+        ["Scope", data.scope?.scope === "hq" ? "Tenant - all stores" : data.scope?.store_name || "Current store"],
+        ["Generated at", new Date().toLocaleString("en-IN")],
+        ["Slip entries", entries.length],
+        ["Unique contacts", contactRows.length],
+        [],
+        ["Important", "Send promotional messages only where the relevant channel consent is Yes. 'Not recorded' is not consent."],
+        ["Campaign Contacts", "Deduplicated by the last 10 digits of the contact number and intended for campaign planning."],
+        ["Slip Entries", "Raw tenant/store-scoped entry records retained for audit and campaign analysis."],
+      ]);
+      readMeSheet["!cols"] = [{wch:24},{wch:100}];
+      XLSX.utils.book_append_sheet(workbook, contactSheet, "Campaign Contacts");
+      XLSX.utils.book_append_sheet(workbook, slipSheet, "Slip Entries");
+      XLSX.utils.book_append_sheet(workbook, readMeSheet, "Read Me");
+      const safeCampaign = campaignLabel.replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "").slice(0, 50) || "campaign";
+      XLSX.writeFile(workbook, "rms-customer-" + safeCampaign + "-" + today() + ".xlsx", { compression: true });
+    } catch (e) {
+      setError(e.message || "Unable to export the Excel file.");
+    } finally {
+      setExportingEntries(false);
+    }
   };
 
   const renderCustomers = () => (
@@ -416,7 +558,7 @@ export default function CustomerCRM() {
               <div key={c.id} className={`rounded-xl border p-5 ${c.status === "ACTIVE" ? "border-indigo-200 bg-indigo-50/40" : "border-slate-200 bg-slate-50"}`}>
                 <div className="flex items-center justify-between">
                   <span className={`rounded-full px-3 py-1 text-[11px] font-bold uppercase tracking-wide ${c.status === "ACTIVE" ? "bg-emerald-100 text-emerald-700" : "bg-slate-200 text-slate-600"}`}>{c.status}</span>
-                  {isHq && <button onClick={() => toggleCampaignStatus(c.id, c.status === "ACTIVE" ? "CLOSED" : "ACTIVE")} className="text-xs font-bold text-slate-500 underline hover:text-slate-700">{c.status === "ACTIVE" ? "Close" : "Reopen"}</button>}
+                  {isHq && <div className="flex items-center gap-3"><button onClick={() => toggleCampaignStatus(c.id, c.status === "ACTIVE" ? "CLOSED" : "ACTIVE")} className="text-xs font-bold text-slate-500 underline hover:text-slate-700">{c.status === "ACTIVE" ? "Close" : "Reopen"}</button><button onClick={() => removeCampaign(c)} title="Remove campaign" className="inline-flex items-center gap-1 text-xs font-bold text-rose-600 hover:text-rose-800"><Trash2 size={13}/>Remove</button></div>}
                 </div>
                 <p className="mt-3 text-base font-bold text-slate-900">{c.campaign_name}</p>
                 <p className="text-xs text-slate-500">{c.starts_on || "No start date"} - {c.ends_on || "No end date"}</p>
@@ -452,7 +594,7 @@ export default function CustomerCRM() {
         <div className="crm-card overflow-hidden">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 p-5">
             <div><h2 className="text-lg font-bold text-slate-900">Slip entries{isHq ? " (all stores)" : ""}</h2><p className="text-sm text-slate-500">One row per customer slip entered at the counter.</p></div>
-            <button disabled={!activeCampaigns.length} onClick={() => setEntryModal({})} className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-bold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-40"><Plus size={16} className="inline"/> Add entry</button>
+            <div className="flex flex-wrap gap-2"><button disabled={!filteredEntries.length || exportingEntries} onClick={() => exportLuckyDrawEntries(filteredEntries)} className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-bold text-emerald-700 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-40"><FileSpreadsheet size={16} className="mr-1 inline"/>{exportingEntries ? "Preparing..." : "Export Excel"}</button><button disabled={!activeCampaigns.length} onClick={() => setEntryModal({})} className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-bold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-40"><Plus size={16} className="inline"/> Add entry</button></div>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full min-w-[900px] text-left text-sm">

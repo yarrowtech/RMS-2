@@ -656,13 +656,14 @@ function EditPermissionsModal({ admin, onClose, onSaved, deptConfig, admins = []
 function ViewAdminModal({ admin, onClose }) {
   if (!admin) return null;
   return (
-    <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4" style={{zIndex:99999}}>
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
+    <div className="fixed inset-0 overflow-y-auto overscroll-contain bg-black/40 p-4 backdrop-blur-sm" style={{zIndex:99999}}>
+      <div className="flex min-h-full items-start justify-center sm:items-center">
+      <div className="flex max-h-[calc(100dvh-2rem)] w-full max-w-md flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+        <div className="flex shrink-0 items-center justify-between border-b border-slate-100 bg-white px-6 py-4">
           <h2 className="text-base font-bold text-slate-900">Admin Details</h2>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-600 p-1 rounded-lg"><X className="w-4 h-4"/></button>
         </div>
-        <div className="p-6 space-y-4">
+        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain p-6">
           <div className="flex items-center gap-4">
             <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white font-black text-xl">
               {admin.name?.charAt(0).toUpperCase()}
@@ -708,6 +709,7 @@ function ViewAdminModal({ admin, onClose }) {
             </div>
           </div>
         </div>
+      </div>
       </div>
     </div>
   );

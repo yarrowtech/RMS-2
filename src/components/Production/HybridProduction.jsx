@@ -128,6 +128,18 @@ function packImages(pack, sections) {
   return groups.filter(([key]) => !wanted.size || wanted.has(key)).flatMap(([key, urls]) => urls.map((url) => ({ key, url }))).slice(0, 12);
 }
 
+function allowanceMatchesOperation(process, operationName) {
+  const operation = String(operationName || "").toUpperCase();
+  const aliases = {
+    PATTERN: ["PATTERN"],
+    LAYERING: ["LAYER", "LAYING"],
+    CUTTING: ["CUT"],
+    STITCHING: ["STITCH", "SEW"],
+    FINISHING: ["FINISH", "BUTTON", "TAG", "PACK", "EMBROID"],
+  };
+  return (aliases[String(process || "").toUpperCase()] || [String(process || "").toUpperCase()]).some((word) => operation.includes(word));
+}
+
 export function WorkstationDisplay({ publicToken = "" }) {
   const [batches, setBatches] = useState([]);
   const [selectedId, setSelectedId] = useState("");
@@ -168,6 +180,15 @@ export function WorkstationDisplay({ publicToken = "" }) {
   const images = useMemo(() => packImages(pack, sections), [pack, sections]);
   const measurements = pack.measurement_rows || [];
   const sizes = pack.sizes || [];
+  const allowanceRows = useMemo(() => {
+    const mode = String(operation?.mode || (publicToken ? "EXTERNAL" : "INTERNAL")).toUpperCase();
+    return (pack.process_allowances || [])
+      .filter((row) => {
+        const scope = String(row.worker_scope || "ANY").toUpperCase();
+        return scope === "ANY" || scope === mode;
+      })
+      .sort((left, right) => Number(allowanceMatchesOperation(right.process, operation?.name)) - Number(allowanceMatchesOperation(left.process, operation?.name)));
+  }, [pack, operation, publicToken]);
   const displayLink = batch?.display_token ? `${window.location.origin}/production-display/${batch.display_token}` : "";
 
   const copyLink = async () => {
@@ -201,6 +222,7 @@ export function WorkstationDisplay({ publicToken = "" }) {
         </div>
         <div className="space-y-5">
           <article className="rounded-2xl border border-white/10 bg-white/5 p-5"><h2 className="text-lg font-black">Operator checklist</h2><ol className="mt-3 space-y-3 text-sm text-slate-300"><li>1. Confirm batch, design number and Tech Pack version.</li><li>2. Count the input bundle before work starts.</li><li>3. Follow only the sections shown for this operation: {sections.map((key) => SECTIONS[key] || key).join(", ") || "all Tech Pack sections"}.</li><li>4. Keep accepted, rejected and rework pieces physically separate.</li><li>5. Tell the supervisor to record completion; workers do not post inventory.</li></ol></article>
+          {allowanceRows.length > 0 && <article className="overflow-hidden rounded-2xl border border-amber-300/40 bg-amber-300/10"><div className="bg-amber-300/15 px-4 py-3"><h2 className="font-black text-amber-200">Approved manual process allowances</h2><p className="mt-1 text-xs text-amber-100/80">Use the approved value only. It is not permission to add extra material or change the batch quantity.</p></div><div className="divide-y divide-white/10">{allowanceRows.map((row,index)=>{const current=allowanceMatchesOperation(row.process,operation?.name);return <div key={String(row.process)+"-"+index} className={"p-4 text-sm "+(current?"bg-cyan-400/10 ring-1 ring-inset ring-cyan-300/30":"")}><div className="flex flex-wrap items-center justify-between gap-2"><p className="font-black"><span className={current?"text-cyan-300":"text-amber-200"}>{row.process}</span> · {row.allowance_type || "Manual allowance"}</p>{current&&<span className="rounded-full bg-cyan-300 px-2 py-0.5 text-[10px] font-black text-slate-950">CURRENT OPERATION</span>}</div><p className="mt-1 text-slate-200"><b>{row.value} {String(row.unit||"").replaceAll("_"," / ")}</b> · {row.basis || "per garment"} · Fabric: {row.fabric_reference || "all"}</p>{row.reason&&<p className="mt-1 text-xs text-slate-300">Reason: {row.reason}</p>}</div>})}</div></article>}
           {sections.includes("measurements") && measurements.length > 0 && <article className="overflow-hidden rounded-2xl border border-white/10"><h2 className="bg-white/10 px-4 py-3 font-black">Measurements · base size {pack.sample_size || "not set"}</h2><div className="overflow-x-auto"><table className="min-w-[1050px] w-full text-sm"><thead><tr className="text-left text-slate-400"><th className="p-3">Code / POM</th><th className="p-3">How to measure</th><th className="p-3">Unit</th><th className="p-3">Sample</th><th className="p-3">Tolerance</th><th className="p-3">Grade rule</th>{sizes.map((size) => <th key={size} className="p-3">{size}</th>)}</tr></thead><tbody>{measurements.map((row, index) => <tr key={index} className="border-t border-white/10"><td className="p-3 font-bold"><span className="text-cyan-300">{row.pom_code || `P${index + 1}`}</span> · {row.point}</td><td className="max-w-[260px] p-3 text-slate-300">{row.measure_instruction || "—"}</td><td className="p-3">{row.unit || "cm"}</td><td className="p-3">{row.sample_value}</td><td className="p-3">{row.tolerance || "—"}</td><td className="p-3">{row.grade_rule || "—"}</td>{sizes.map((size) => <td key={size} className="p-3">{row.grades?.[size]}</td>)}</tr>)}</tbody></table></div></article>}
           {(sections.includes("fabric") || sections.includes("sketch")) && (pack.fabric_references || []).length > 0 && <article className="overflow-hidden rounded-2xl border border-white/10"><h2 className="bg-white/10 px-4 py-3 font-black">Fabric references</h2>{pack.fabric_references.map((fabric, index) => <div key={`${fabric.reference_name}-${index}`} className="border-t border-white/10 p-3 text-sm"><b>{fabric.reference_name}</b><p className="mt-1 text-slate-300">{[fabric.usage, fabric.fabric_type, fabric.composition, fabric.color, fabric.color_code].filter(Boolean).join(" · ")}</p><p className="mt-1 text-xs text-cyan-300">{[fabric.gsm, fabric.width, fabric.consumption && `${fabric.consumption} ${fabric.unit || ""}/garment`, fabric.supplier, fabric.supplier_ref, fabric.lot_no].filter(Boolean).join(" · ")}</p>{[fabric.grain_notes, fabric.shrinkage, fabric.handling_notes].filter(Boolean).map((note, noteIndex) => <p key={noteIndex} className="mt-1 text-xs text-amber-200">{note}</p>)}</div>)}</article>}
           {sections.includes("details") && pack.construction_notes && <article className="rounded-2xl border border-white/10 bg-white/5 p-5"><h2 className="font-black">Construction notes</h2><p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-300">{pack.construction_notes}</p></article>}

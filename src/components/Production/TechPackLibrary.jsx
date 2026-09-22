@@ -43,6 +43,24 @@ const emptyFabricReference = () => ({
   gsm: "", width: "", consumption: "", unit: "metres", supplier: "", supplier_ref: "", lot_no: "",
   grain_notes: "", shrinkage: "", handling_notes: "", bom_material: "", image_urls: [], image_files: [], image_previews: [],
 });
+const DEFAULT_ALLOWANCE_POLICY = {
+  PATTERN:{value:7,unit:"inches"}, LAYERING:{value:7,unit:"inches_per_lay"},
+  CUTTING:{value:5,unit:"percent"}, STITCHING:{value:2,unit:"percent"}, FINISHING:{value:2,unit:"percent"},
+};
+const emptyProcessAllowance = () => ({
+  process:"PATTERN", allowance_type:"", fabric_reference:"", value:"", unit:"inches",
+  basis:"per garment", reason:"", worker_scope:"ANY",
+});
+function allowanceExceedsPolicy(row,rule){
+  const value=Number(row.value||0);
+  if(value<=0)return false;
+  if(row.unit===rule.unit)return value>Number(rule.value||0);
+  const lengthToInches={inches:1,centimetres:0.3937007874,metres:39.37007874};
+  if(lengthToInches[row.unit]&&lengthToInches[rule.unit]){
+    return value*lengthToInches[row.unit]/lengthToInches[rule.unit]>Number(rule.value||0);
+  }
+  return true;
+}
 
 function cleanAssetUrls(value) {
   if (!Array.isArray(value)) return [];
@@ -202,6 +220,15 @@ async function buildTechPackPdf(pack, plans = []) {
       y = await imageGrid(linkedTheme.swatches.map((s) => s.image_url).filter(Boolean), y, 100);
     }
   }
+  if (pack.process_allowances?.length) {
+    y = sectionBar("Manual process allowances - "+String(pack.allowance_approval?.status||"NOT REQUIRED").replaceAll("_"," "), y);
+    y = table(["Process", "Allowance", "Fabric", "Value / basis", "Worker", "Reason"], pack.process_allowances.map((row) => [
+      row.process, row.allowance_type, row.fabric_reference || "All",
+      row.value+" "+String(row.unit||"").replaceAll("_"," / ")+" · "+row.basis,
+      row.worker_scope, row.reason,
+    ]), y, [60, 88, 70, 105, 65, 143]);
+    if (pack.allowance_approval?.note) y = textBox("HQ decision note", pack.allowance_approval.note, y, 38);
+  }
   y = sectionBar("Front, back and reference views", y); y = await imageGrid(imageGroups.sketch, y, 190);
   if (!imageGroups.sketch.length) y = textBox("Sketch reference", "No sketch image attached. Use the written description and upload a front/back reference before issuing to the job worker.", y, 50); footer();
 
@@ -329,7 +356,35 @@ function FabricReferenceEditor({ rows, onChange, onAddImages, onRemoveImage, onA
   );
 }
 
-function PackModal({ plans = [], themes = [], pack = null, onClose, onSaved }) {
+function ProcessAllowanceEditor({ rows, onChange, onAdd, onRemove, policy, fabricReferences }) {
+  const input = "w-full rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-xs outline-none focus:border-violet-400";
+  const units = ["inches","centimetres","metres","percent","pieces","inches_per_lay"];
+  const setProcess = (index, process) => {
+    const rule = policy[process] || DEFAULT_ALLOWANCE_POLICY[process];
+    onChange(index, "process", process);
+    onChange(index, "unit", rule.unit);
+  };
+  return <div className="rounded-2xl border border-amber-200 bg-amber-50/50 p-4">
+    <div className="flex flex-wrap items-start justify-between gap-2"><div><p className="text-sm font-black text-slate-900">Manual process allowances &amp; wastage</p><p className="mt-1 text-xs leading-5 text-slate-600">Nothing is added automatically. Add only what this design needs. An entry above its tenant limit is sent to HQ and blocks release until approved.</p></div><span className="rounded-full bg-white px-2.5 py-1 text-[10px] font-black text-amber-700">OPTIONAL · MANUAL</span></div>
+    <div className="mt-4 space-y-3">{rows.map((row,index)=>{const rule=policy[row.process]||DEFAULT_ALLOWANCE_POLICY[row.process];const exceeds=allowanceExceedsPolicy(row,rule);return <article key={index} className={"rounded-xl border bg-white p-3 "+(exceeds?"border-rose-300":"border-slate-200")}>
+      <div className="grid gap-2 md:grid-cols-2 lg:grid-cols-4">
+        <label className="text-[10px] font-black uppercase text-slate-500">Process<select value={row.process} onChange={event=>setProcess(index,event.target.value)} className={input}>{Object.keys(DEFAULT_ALLOWANCE_POLICY).map(value=><option key={value}>{value}</option>)}</select></label>
+        <label className="text-[10px] font-black uppercase text-slate-500">Allowance / loss type<input value={row.allowance_type} onChange={event=>onChange(index,"allowance_type",event.target.value)} placeholder="Seam, end loss, defects..." className={input}/></label>
+        <label className="text-[10px] font-black uppercase text-slate-500">Fabric reference<select value={row.fabric_reference} onChange={event=>onChange(index,"fabric_reference",event.target.value)} className={input}><option value="">All / not fabric-specific</option>{fabricReferences.filter(item=>item.reference_name).map((item,i)=><option key={i}>{item.reference_name}</option>)}</select></label>
+        <label className="text-[10px] font-black uppercase text-slate-500">Internal / external<select value={row.worker_scope} onChange={event=>onChange(index,"worker_scope",event.target.value)} className={input}><option value="ANY">Any worker</option><option value="INTERNAL">Internal</option><option value="EXTERNAL">External job worker</option></select></label>
+        <label className="text-[10px] font-black uppercase text-slate-500">Manual value<input type="number" min="0" step="0.01" value={row.value} onChange={event=>onChange(index,"value",event.target.value)} className={input}/></label>
+        <label className="text-[10px] font-black uppercase text-slate-500">Unit<select value={row.unit} onChange={event=>onChange(index,"unit",event.target.value)} className={input}>{units.map(value=><option key={value} value={value}>{value.replaceAll("_"," / ")}</option>)}</select></label>
+        <label className="text-[10px] font-black uppercase text-slate-500">Basis<input value={row.basis} onChange={event=>onChange(index,"basis",event.target.value)} placeholder="per garment / per lay" className={input}/></label>
+        <div className="flex items-end"><button type="button" disabled={rows.length===1} onClick={()=>onRemove(index)} className="w-full rounded-lg border border-rose-200 px-3 py-2 text-xs font-bold text-rose-600 disabled:opacity-30">Remove</button></div>
+      </div>
+      <label className="mt-2 block text-[10px] font-black uppercase text-slate-500">Reason / technical justification<textarea rows="2" value={row.reason} onChange={event=>onChange(index,"reason",event.target.value)} placeholder={exceeds?"Required because this exceeds the HQ limit.":"Explain why this allowance is needed."} className={input}/></label>
+      <p className={"mt-2 text-[11px] font-bold "+(exceeds?"text-rose-700":"text-slate-500")}>{exceeds?"HQ approval required before release.":"HQ exception limit: "+rule.value+" "+rule.unit.replaceAll("_"," / ")+". Length units are converted; a non-comparable unit is sent to HQ for review."}</p>
+    </article>})}</div>
+    <button type="button" onClick={onAdd} className="mt-3 rounded-lg border border-amber-300 bg-white px-3 py-2 text-xs font-black text-amber-800">+ Add process allowance</button>
+  </div>;
+}
+
+function PackModal({ plans = [], themes = [], allowancePolicy = DEFAULT_ALLOWANCE_POLICY, pack = null, onClose, onSaved }) {
   const editing = Boolean(pack?.id);
   const [form, setForm] = useState(() => Object.fromEntries(Object.keys(emptyPack).map((key) => [key, key === "sizes" ? (pack?.sizes || []).join(", ") : key === "reference_images" || key === "document_urls" ? (pack?.[key] || []).join("\n") : pack?.[key] ?? emptyPack[key]])));
   const [sizeList, setSizeList] = useState(() => pack?.sizes || []);
@@ -341,6 +396,9 @@ function PackModal({ plans = [], themes = [], pack = null, onClose, onSaved }) {
   const [fabricReferences, setFabricReferences] = useState(() => pack?.fabric_references?.length
     ? pack.fabric_references.map((row) => ({ ...emptyFabricReference(), ...row, image_urls: cleanAssetUrls(row.image_urls), image_previews: cleanAssetUrls(row.image_urls) }))
     : [emptyFabricReference()]);
+  const [processAllowances, setProcessAllowances] = useState(() => pack?.process_allowances?.length
+    ? pack.process_allowances.map((row) => ({ ...emptyProcessAllowance(), ...row }))
+    : [emptyProcessAllowance()]);
   const [images, setImages] = useState({}); // newly selected files by category
   const [previews, setPreviews] = useState(() => Object.fromEntries(IMAGE_SECTIONS.map(([key]) => [key, pack?.[`${key}_images`] || []])));
   const [saving, setSaving] = useState(false);
@@ -420,6 +478,7 @@ function PackModal({ plans = [], themes = [], pack = null, onClose, onSaved }) {
       const cleanTrimRows = trimRows.filter((row) => row.description.trim());
       const cleanColourways = colourways.filter((row) => row.name.trim());
       const cleanFabricReferences = fabricReferences.filter((row) => row.reference_name.trim());
+      const cleanProcessAllowances = processAllowances.filter((row) => Number(row.value) > 0);
       const serializableColourways = cleanColourways.map((row) => ({ name: row.name, fabric_ref: row.fabric_ref, thread_ref: row.thread_ref, image_url: row.image_url || "" }));
       const serializableFabricReferences = cleanFabricReferences.map((row) => ({
         reference_name: row.reference_name, usage: row.usage, fabric_type: row.fabric_type, composition: row.composition,
@@ -447,6 +506,7 @@ function PackModal({ plans = [], themes = [], pack = null, onClose, onSaved }) {
         body.append("trims_items", JSON.stringify(cleanTrimRows));
         body.append("colourways", JSON.stringify(serializableColourways));
         body.append("fabric_references", JSON.stringify(serializableFabricReferences));
+        body.append("process_allowances", JSON.stringify(cleanProcessAllowances));
         IMAGE_SECTIONS.forEach(([category]) => body.append(`${category}_images`, JSON.stringify((previews[category] || []).filter((url) => !url.startsWith("blob:")))));
         Object.entries(images).forEach(([category, files]) => (files || []).forEach((file) => body.append(`pack_image_${category}`, file)));
         cleanColourways.forEach((row, index) => { if (row.image_file) body.append(`pack_image_colourway_row_${index}`, row.image_file); });
@@ -462,6 +522,7 @@ function PackModal({ plans = [], themes = [], pack = null, onClose, onSaved }) {
           trims_items: JSON.stringify(cleanTrimRows),
           colourways: JSON.stringify(serializableColourways),
           fabric_references: JSON.stringify(serializableFabricReferences),
+          process_allowances: JSON.stringify(cleanProcessAllowances),
           ...Object.fromEntries(IMAGE_SECTIONS.map(([category]) => [`${category}_images`, (previews[category] || []).filter((url) => !url.startsWith("blob:"))])),
         };
         result = await api(editing ? `/tech-packs/${pack.id}` : "/tech-packs", { method: editing ? "PUT" : "POST", body: JSON.stringify(jsonPayload) });
@@ -500,6 +561,14 @@ function PackModal({ plans = [], themes = [], pack = null, onClose, onSaved }) {
           onAddRow={() => setFabricReferences((rows) => [...rows, emptyFabricReference()])}
           onRemoveRow={(index) => setFabricReferences((rows) => rows.filter((_, i) => i !== index))}
           linkedPlan={plans.find((plan) => plan.id === form.material_plan_id)}
+        />
+        <ProcessAllowanceEditor
+          rows={processAllowances}
+          policy={allowancePolicy}
+          fabricReferences={fabricReferences}
+          onChange={(index,key,value)=>setProcessAllowances(current=>current.map((row,i)=>i===index?{...row,[key]:value}:row))}
+          onAdd={()=>setProcessAllowances(current=>[...current,emptyProcessAllowance()])}
+          onRemove={(index)=>setProcessAllowances(current=>current.filter((_,i)=>i!==index))}
         />
         <ImageUploadSection label="Sketch images" hint="Enlarge details with measurements - can be in colour." files={images.sketch} previews={previews.sketch} onAdd={(f) => addImages("sketch", f)} onRemove={(i) => removeImage("sketch", i)} />
       </Section>
@@ -668,6 +737,7 @@ function PackDetail({ pack, plans, onClose, onUpdated }) {
       {IMAGE_SECTIONS.map(([key, label]) => (pack[`${key}_images`]?.length > 0) && (
         <div key={key}><p className="mb-2 text-xs font-black uppercase tracking-wide text-slate-500">{label} images</p><div className="flex flex-wrap gap-2">{pack[`${key}_images`].map((src) => <img key={src} src={src} alt={label} className="h-20 w-20 rounded-xl border border-slate-200 object-cover" />)}</div></div>
       ))}
+      {pack.process_allowances?.length > 0 && <div><div className="mb-2 flex flex-wrap items-center justify-between gap-2"><p className="text-xs font-black uppercase tracking-wide text-slate-500">Manual process allowances</p><span className={"rounded-full px-2 py-1 text-[10px] font-black "+(["APPROVED","NOT_REQUIRED"].includes(pack.allowance_approval?.status)?"bg-emerald-100 text-emerald-700":pack.allowance_approval?.status==="PENDING"?"bg-amber-100 text-amber-800":"bg-rose-100 text-rose-700")}>{String(pack.allowance_approval?.status||"NOT_REQUIRED").replaceAll("_"," ")}</span></div><div className="overflow-x-auto rounded-xl border border-slate-200"><table className="w-full text-xs"><thead className="bg-slate-50"><tr>{["Process","Type","Fabric","Value","Basis","Scope","Reason"].map(value=><th key={value} className="px-3 py-2 text-left">{value}</th>)}</tr></thead><tbody>{pack.process_allowances.map((row,index)=><tr key={index} className="border-t border-slate-100"><td className="px-3 py-2 font-bold">{row.process}</td><td className="px-3 py-2">{row.allowance_type}</td><td className="px-3 py-2">{row.fabric_reference||"All"}</td><td className="px-3 py-2">{row.value} {String(row.unit||"").replaceAll("_"," / ")}</td><td className="px-3 py-2">{row.basis}</td><td className="px-3 py-2">{row.worker_scope}</td><td className="max-w-xs px-3 py-2">{row.reason||"—"}</td></tr>)}</tbody></table></div>{pack.allowance_approval?.note&&<p className="mt-2 rounded-lg bg-slate-50 p-2 text-xs text-slate-600"><b>HQ note:</b> {pack.allowance_approval.note}</p>}</div>}
       {pack.measurement_rows?.length > 0 && (
         <div><p className="mb-2 text-xs font-black uppercase tracking-wide text-slate-500">Spec sheet</p>
           <div className="overflow-x-auto rounded-xl border border-slate-200"><table className="min-w-[1100px] w-full text-xs"><thead className="bg-slate-50"><tr>{["Code", "Point", "How to measure", "Unit", "Sample", "Tolerance", "Grade rule"].map((heading) => <th key={heading} className="px-3 py-2 text-left">{heading}</th>)}{(pack.sizes || []).map((s) => <th key={s} className="px-3 py-2 text-left">{s}</th>)}</tr></thead><tbody>{pack.measurement_rows.map((row, i) => <tr key={i} className="border-t border-slate-100"><td className="px-3 py-1.5 font-bold text-violet-700">{row.pom_code || `P${i + 1}`}</td><td className="px-3 py-1.5 font-bold">{row.point}</td><td className="max-w-[240px] px-3 py-1.5">{row.measure_instruction || "—"}</td><td className="px-3 py-1.5">{row.unit || "cm"}</td><td className="px-3 py-1.5">{row.sample_value}</td><td className="px-3 py-1.5">{row.tolerance || "—"}</td><td className="px-3 py-1.5">{row.grade_rule || "—"}</td>{(pack.sizes || []).map((s) => <td key={s} className="px-3 py-1.5">{row.grades?.[s] || ""}</td>)}</tr>)}</tbody></table></div>
@@ -697,6 +767,7 @@ function PackDetail({ pack, plans, onClose, onUpdated }) {
 
 export default function TechPackLibrary({ plans = [], themes = [], onSelectForOrder }) {
   const [packs, setPacks] = useState([]);
+  const [allowancePolicy, setAllowancePolicy] = useState(DEFAULT_ALLOWANCE_POLICY);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [showCreate, setShowCreate] = useState(false);
@@ -705,7 +776,11 @@ export default function TechPackLibrary({ plans = [], themes = [], onSelectForOr
 
   const load = async () => {
     setLoading(true);
-    try { const result = await api("/tech-packs"); setPacks(result.data || []); }
+    try {
+      const [result, policyResult] = await Promise.all([api("/tech-packs"), api("/allowance-policy")]);
+      setPacks(result.data || []);
+      setAllowancePolicy(policyResult.data || DEFAULT_ALLOWANCE_POLICY);
+    }
     catch (err) { setError(err.message); }
     finally { setLoading(false); }
   };
@@ -767,6 +842,7 @@ export default function TechPackLibrary({ plans = [], themes = [], onSelectForOr
       </div>
     </details>
 
+    {packs.some(pack=>["PENDING","REJECTED","CHANGES_REQUESTED","APPROVED"].includes(pack.allowance_approval?.status))&&<div className="mx-6 mt-4 space-y-2">{packs.filter(pack=>["PENDING","REJECTED","CHANGES_REQUESTED","APPROVED"].includes(pack.allowance_approval?.status)).slice(0,6).map(pack=>{const status=pack.allowance_approval.status;const good=status==="APPROVED";const pending=status==="PENDING";return <button type="button" onClick={()=>setViewPack(pack)} key={pack.id} className={"block w-full rounded-xl border p-3 text-left text-xs font-bold "+(good?"border-emerald-200 bg-emerald-50 text-emerald-800":pending?"border-amber-200 bg-amber-50 text-amber-900":"border-rose-200 bg-rose-50 text-rose-800")}>{pack.tech_pack_no} · {pack.design_no}: allowance exception {status.replaceAll("_"," ").toLowerCase()}{pack.allowance_approval.note?" — "+pack.allowance_approval.note:""}. {pending?"Waiting for HQ.":good?"HQ approved it; normal handoff gates still apply.":"Edit the draft and correct/resubmit the allowance."}</button>})}</div>}
     {error && <p className="m-5 rounded-xl bg-rose-50 p-3 text-sm font-bold text-rose-700">{error}</p>}
     {loading ? <p className="p-8 text-center text-sm text-slate-400">Loading tech packs...</p> : packs.length ? <div className="divide-y divide-slate-100">
       {packs.map((pack) => {
@@ -784,8 +860,8 @@ export default function TechPackLibrary({ plans = [], themes = [], onSelectForOr
         </article>;
       })}
     </div> : <div className="p-9 text-center"><p className="font-bold text-slate-700">No tech packs yet</p><p className="mt-1 text-sm text-slate-500">Create a pack first, then choose it for the relevant design line in a job work order.</p></div>}
-    {showCreate && <PackModal plans={plans} themes={themes} onClose={() => setShowCreate(false)} onSaved={() => { setShowCreate(false); load(); }} />}
-    {editingPack && <PackModal plans={plans} themes={themes} pack={editingPack} onClose={() => setEditingPack(null)} onSaved={() => { setEditingPack(null); load(); }} />}
+    {showCreate && <PackModal plans={plans} themes={themes} allowancePolicy={allowancePolicy} onClose={() => setShowCreate(false)} onSaved={() => { setShowCreate(false); load(); }} />}
+    {editingPack && <PackModal plans={plans} themes={themes} allowancePolicy={allowancePolicy} pack={editingPack} onClose={() => setEditingPack(null)} onSaved={() => { setEditingPack(null); load(); }} />}
     {viewPack && <PackDetail pack={viewPack} plans={plans} onClose={() => setViewPack(null)} onUpdated={(updated) => { setViewPack(updated); setPacks((current) => current.map((p) => p.id === updated.id ? { ...p, ...updated } : p)); }} />}
   </section>;
 }

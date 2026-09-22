@@ -16,6 +16,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 
 from ..db import (
     design_projects_collection,
+    design_settings_collection,
     fabric_themes_collection,
     inventory_collection,
     job_work_orders_collection,
@@ -51,6 +52,16 @@ router = APIRouter(prefix="/api/job-work", tags=["Production & Job Work"])
 JOB_WORK_TYPES = {"Cutting", "Stitching", "Finishing", "Embroidery", "Washing", "Packing", "Other"}
 CONSUMPTION_OVERAGE_WARNING_PCT = 10
 
+DEFAULT_ALLOWANCE_LIMITS = {
+    "PATTERN": {"value": 7.0, "unit": "inches"},
+    "LAYERING": {"value": 7.0, "unit": "inches_per_lay"},
+    "CUTTING": {"value": 5.0, "unit": "percent"},
+    "STITCHING": {"value": 2.0, "unit": "percent"},
+    "FINISHING": {"value": 2.0, "unit": "percent"},
+}
+ALLOWANCE_PROCESSES = set(DEFAULT_ALLOWANCE_LIMITS)
+ALLOWANCE_UNITS = {"inches", "centimetres", "metres", "percent", "pieces", "inches_per_lay"}
+
 
 def _number(value: Any, default: float = 0.0) -> float:
     try:
@@ -58,6 +69,81 @@ def _number(value: Any, default: float = 0.0) -> float:
         return number if number >= 0 else default
     except (TypeError, ValueError):
         return default
+
+
+async def _allowance_policy(tenant_id: str) -> dict:
+    stored = await design_settings_collection.find_one({"tenant_id": tenant_id}, {"allowance_limits": 1})
+    supplied = (stored or {}).get("allowance_limits")
+    result = {}
+    for process, fallback in DEFAULT_ALLOWANCE_LIMITS.items():
+        row = supplied.get(process) if isinstance(supplied, dict) and isinstance(supplied.get(process), dict) else {}
+        result[process] = {
+            "value": _number(row.get("value"), fallback["value"]),
+            "unit": str(row.get("unit") or fallback["unit"]).strip()[:40],
+        }
+    return result
+
+
+def _parse_process_allowances(raw: Any) -> list[dict]:
+    rows = []
+    for item in _parse_json_list(raw)[:50]:
+        if not isinstance(item, dict):
+            continue
+        process = str(item.get("process") or "").strip().upper()
+        value = _number(item.get("value"))
+        if process not in ALLOWANCE_PROCESSES or value <= 0:
+            continue
+        unit = str(item.get("unit") or DEFAULT_ALLOWANCE_LIMITS[process]["unit"]).strip().lower()[:40]
+        if unit not in ALLOWANCE_UNITS:
+            unit = DEFAULT_ALLOWANCE_LIMITS[process]["unit"]
+        rows.append({
+            "process": process,
+            "allowance_type": str(item.get("allowance_type") or "Manual allowance").strip()[:100],
+            "fabric_reference": str(item.get("fabric_reference") or "").strip()[:100],
+            "value": round(value, 4),
+            "unit": unit,
+            "basis": str(item.get("basis") or "per garment").strip()[:80],
+            "reason": str(item.get("reason") or "").strip()[:800],
+            "worker_scope": str(item.get("worker_scope") or "ANY").strip().upper()[:20],
+        })
+    return rows
+
+
+def _evaluate_allowances(rows: list[dict], policy: dict) -> tuple[list[dict], bool]:
+    evaluated, needs_approval = [], False
+    length_to_inches = {"inches": 1.0, "centimetres": 0.3937007874, "metres": 39.37007874}
+    for row in rows:
+        rule = policy.get(row["process"], DEFAULT_ALLOWANCE_LIMITS[row["process"]])
+        entered_unit, limit_unit = row["unit"], str(rule.get("unit") or "")
+        entered_for_comparison = row["value"]
+        comparable = entered_unit == limit_unit
+        if entered_unit in length_to_inches and limit_unit in length_to_inches:
+            entered_for_comparison = row["value"] * length_to_inches[entered_unit] / length_to_inches[limit_unit]
+            comparable = True
+        # A different/non-convertible basis cannot silently bypass control:
+        # send it to HQ so a human can judge whether the configured threshold
+        # is relevant to that exceptional unit/basis.
+        exceeds = (not comparable) or entered_for_comparison > _number(rule.get("value"))
+        item = {**row, "approval_limit": rule["value"], "approval_limit_unit": rule["unit"], "exceeds_limit": exceeds}
+        if exceeds and not row.get("reason"):
+            raise HTTPException(status_code=400, detail=f"Explain why the {row['process'].title()} allowance exceeds the HQ limit.")
+        evaluated.append(item)
+        needs_approval = needs_approval or exceeds
+    return evaluated, needs_approval
+
+
+def _allowance_approval_state(needs_approval: bool, previous: dict | None = None, unchanged: bool = False) -> dict:
+    if unchanged and previous:
+        return previous
+    now = datetime.utcnow()
+    return {
+        "status": "PENDING" if needs_approval else "NOT_REQUIRED",
+        "submitted_at": now if needs_approval else None,
+        "submitted_by": None,
+        "decided_at": None,
+        "decided_by": None,
+        "note": "",
+    }
 
 def _parse_design_lines(raw: Any) -> list[dict]:
     if isinstance(raw, str):
@@ -1411,6 +1497,48 @@ async def list_tech_packs(ctx: dict = Depends(_require_design_or_job_work)):
     return {"data": rows}
 
 
+@router.get("/allowance-policy")
+async def get_allowance_policy(ctx: dict = Depends(_require_design_or_job_work)):
+    return {"data": await _allowance_policy(ctx["tenant_id"])}
+
+
+@router.get("/allowance-approvals")
+async def list_allowance_approvals(status: str = Query("PENDING"), ctx: dict = Depends(get_hq_tenant)):
+    query: dict[str, Any] = {"tenant_id": ctx["tenant_id"], "allowance_approval.status": status.strip().upper()}
+    rows = [_serialize(row) async for row in tech_packs_collection.find(query).sort("allowance_approval.submitted_at", -1).limit(300)]
+    return {"data": rows}
+
+
+@router.post("/tech-packs/{tech_pack_id}/allowance-decision")
+async def decide_allowance_exception(tech_pack_id: str, payload: dict, ctx: dict = Depends(get_hq_tenant)):
+    if not ObjectId.is_valid(tech_pack_id):
+        raise HTTPException(status_code=400, detail="Invalid tech pack.")
+    decision = str(payload.get("decision") or "").strip().upper()
+    if decision not in {"APPROVED", "REJECTED", "CHANGES_REQUESTED"}:
+        raise HTTPException(status_code=400, detail="Choose Approved, Rejected or Changes requested.")
+    note = str(payload.get("note") or "").strip()[:1000]
+    if decision != "APPROVED" and not note:
+        raise HTTPException(status_code=400, detail="Add a reason when rejecting or requesting changes.")
+    pack = await tech_packs_collection.find_one({"_id": ObjectId(tech_pack_id), "tenant_id": ctx["tenant_id"]})
+    if not pack:
+        raise HTTPException(status_code=404, detail="Tech pack not found.")
+    current = str((pack.get("allowance_approval") or {}).get("status") or "NOT_REQUIRED").upper()
+    if current != "PENDING":
+        raise HTTPException(status_code=409, detail="This allowance request is no longer pending.")
+    approval = {
+        **(pack.get("allowance_approval") or {}),
+        "status": decision,
+        "decided_at": datetime.utcnow(),
+        "decided_by": ctx.get("admin_name") or ctx.get("admin_email") or "",
+        "note": note,
+    }
+    await tech_packs_collection.update_one(
+        {"_id": pack["_id"], "tenant_id": ctx["tenant_id"]},
+        {"$set": {"allowance_approval": approval, "updated_at": datetime.utcnow()}},
+    )
+    return {"message": f"Allowance exception {decision.lower().replace('_', ' ')} for {pack.get('tech_pack_no', '')}."}
+
+
 @router.post("/tech-packs", status_code=201)
 async def create_tech_pack(request: Request, ctx: dict = Depends(_require_design_or_job_work)):
     payload, uploaded_by_category = await _tech_pack_payload_from_request(request)
@@ -1447,6 +1575,12 @@ async def create_tech_pack(request: Request, ctx: dict = Depends(_require_design
         uploaded = uploaded_by_category.get(category, [])
         return _clean_asset_urls([*existing, *uploaded])
 
+    policy = await _allowance_policy(ctx["tenant_id"])
+    process_allowances, needs_allowance_approval = _evaluate_allowances(
+        _parse_process_allowances(payload.get("process_allowances")), policy
+    )
+    allowance_approval = _allowance_approval_state(needs_allowance_approval)
+    allowance_approval["submitted_by"] = (ctx.get("admin_name") or ctx.get("admin_email") or "") if needs_allowance_approval else None
     now = datetime.utcnow()
     pack = {
         "tenant_id": ctx["tenant_id"],
@@ -1499,6 +1633,9 @@ async def create_tech_pack(request: Request, ctx: dict = Depends(_require_design
             }
             for index, row in enumerate(_parse_fabric_references(payload.get("fabric_references")))
         ],
+        "process_allowances": process_allowances,
+        "allowance_policy_snapshot": policy,
+        "allowance_approval": allowance_approval,
         # Per-guide-page image slots (Sketch / Details / Artwork / Trims & Label / Colourways).
         "sketch_images": _category_images("sketch"),
         "spec_images": _category_images("spec"),
@@ -1581,6 +1718,17 @@ async def update_tech_pack(tech_pack_id: str, request: Request, ctx: dict = Depe
             *uploaded_by_category.get(f"fabric_row_{index}", []),
         ], 8)
 
+    policy = await _allowance_policy(ctx["tenant_id"])
+    process_allowances, needs_allowance_approval = _evaluate_allowances(
+        _parse_process_allowances(payload.get("process_allowances")), policy
+    )
+    unchanged_allowances = process_allowances == (pack.get("process_allowances") or [])
+    allowance_approval = _allowance_approval_state(
+        needs_allowance_approval, pack.get("allowance_approval"), unchanged_allowances
+    )
+    if needs_allowance_approval and not unchanged_allowances:
+        allowance_approval["submitted_by"] = ctx.get("admin_name") or ctx.get("admin_email") or ""
+
     update = {
         "design_no": design_no, "style_name": style_name,
         "department": (linked_design_theme or {}).get("department") or str(payload.get("department") or "").strip()[:80],
@@ -1608,6 +1756,9 @@ async def update_tech_pack(tech_pack_id: str, request: Request, ctx: dict = Depe
         "artwork_placement": str(payload.get("artwork_placement") or "").strip()[:300],
         "colourways": colourways,
         "fabric_references": fabric_references,
+        "process_allowances": process_allowances,
+        "allowance_policy_snapshot": policy,
+        "allowance_approval": allowance_approval,
         "sketch_images": category_images("sketch"),
         "spec_images": category_images("spec"),
         "details_images": category_images("details"),
@@ -1657,6 +1808,9 @@ async def quick_release_tech_pack(tech_pack_id: str, payload: dict, ctx: dict = 
         raise HTTPException(status_code=404, detail="Tech pack not found.")
     if str(pack.get("status") or "Draft").strip().upper() != "DRAFT":
         raise HTTPException(status_code=409, detail="This tech pack is already released.")
+    allowance_status = str((pack.get("allowance_approval") or {}).get("status") or "NOT_REQUIRED").upper()
+    if allowance_status in {"PENDING", "REJECTED", "CHANGES_REQUESTED"}:
+        raise HTTPException(status_code=409, detail="Resolve the HQ allowance exception before releasing this Tech Pack.")
     design_no = str(pack.get("design_no") or "").strip()
     if design_no and await design_projects_collection.find_one({"tenant_id": ctx["tenant_id"], "design_no": design_no}, {"_id": 1}):
         raise HTTPException(status_code=400, detail="A design project already exists for this design — release it from Production Handoff instead so its sign-off is recorded there.")
@@ -1882,6 +2036,9 @@ async def create_order(request: Request, ctx: dict = Depends(_require_job_work))
             "designer_name": tech_pack.get("designer_name", ""),
             "description": tech_pack.get("description", ""), "fabric_notes": tech_pack.get("fabric_notes", ""),
             "fabric_references": tech_pack.get("fabric_references", []),
+            "process_allowances": tech_pack.get("process_allowances", []),
+            "allowance_policy_snapshot": tech_pack.get("allowance_policy_snapshot", {}),
+            "allowance_approval": tech_pack.get("allowance_approval", {}),
             "measurement_notes": tech_pack.get("measurement_notes", ""), "construction_notes": tech_pack.get("construction_notes", ""),
             "artwork_notes": tech_pack.get("artwork_notes", ""), "trims_labels_notes": tech_pack.get("trims_labels_notes", ""),
             "colourway_notes": tech_pack.get("colourway_notes", ""), "reference_images": tech_pack.get("reference_images", []),

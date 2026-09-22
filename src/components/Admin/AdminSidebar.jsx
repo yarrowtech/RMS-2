@@ -323,7 +323,7 @@ import {
   FaShoppingCart,
   FaIdBadge,
 } from "react-icons/fa";
-import { PanelLeft, PanelRight, PackageCheck, Building2, Wrench, Shield, DollarSign, Palette, TrendingUp, Network, Factory, Package, LineChart, Megaphone, HeartHandshake } from "lucide-react";
+import { PanelLeft, PanelRight, PackageCheck, Building2, Wrench, Shield, DollarSign, Palette, TrendingUp, Network, Factory, Package, LineChart, Megaphone, HeartHandshake, Ruler } from "lucide-react";
 import { FaSitemap } from "react-icons/fa";
 import { useNavigate } from "react-router-dom";
 
@@ -551,6 +551,7 @@ export default function AdminSidebar({
             {sectionLabel("Overview")}
             {topBtn("dashboard",      <FaChartPie />,  "Dashboard")}
             {topBtn("vendorOverview", <FaUsers />,      "Vendor Overview")}
+            {topBtn("allowanceApprovals", <Ruler size={14}/>, "Allowance Approvals")}
 
             {sectionLabel("Inventory")}
             {topBtn("products",       <FaBoxes />,     "Products")}
