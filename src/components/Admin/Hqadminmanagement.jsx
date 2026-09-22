@@ -117,6 +117,21 @@ const PERMISSIONS = [
   { id:"customer_crm",    label:"Customer CRM",      group:"Growth"     },
 ];
 
+// Customer CRM's own internal tabs — shown as a separate checklist (not part
+// of the Operations/Store/Admin groups above) only once "Customer CRM" is
+// among the selected departments. Leaving all of these unticked means "every
+// tab" (today's behaviour, unchanged); ticking any of them narrows that
+// admin down to exactly the ones ticked. See customer_crm_routes.py's
+// CRM_TAB_PERMISSIONS for the backend side — the ids below must match it.
+const CRM_TAB_PERMISSIONS = [
+  { id: "crm_customers",   label: "Customers" },
+  { id: "crm_followups",   label: "Follow-ups" },
+  { id: "crm_feedback",    label: "Feedback" },
+  { id: "crm_segments",    label: "Segments" },
+  { id: "crm_lucky_draw",  label: "Lucky Draw" },
+  { id: "crm_coupons",     label: "Coupons" },
+];
+
 // Quick permission presets — still a frontend-only UX convenience; the
 // backend enforces whatever ends up in the saved `permissions` array
 // regardless of how it got there (preset click, department default, or
@@ -414,6 +429,27 @@ function AddAdminModal({ onClose, onCreated, stores = [], deptConfig, admins = [
             )}
           </div>
 
+          {/* Customer CRM tabs — store-scope only; an HQ-scope admin always
+              gets full CRM access by design (see admin_crm_tabs backend
+              logic), so this picker would have no effect for them. */}
+          {isStoreScope && selectedDepts.includes("Customer CRM") && (
+            <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3">
+              <p className={LBL}>Customer CRM tabs <span className="text-slate-400 font-normal normal-case tracking-normal">— untick any this admin shouldn't use; leaving all as-is gives full access</span></p>
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                {CRM_TAB_PERMISSIONS.map(tab => {
+                  const active = form.permissions.includes(tab.id);
+                  return <button key={tab.id} type="button" onClick={() => togglePerm(tab.id)}
+                    className={`flex items-center gap-3 rounded-xl border p-3 text-left text-sm font-semibold transition ${active ? "border-indigo-300 bg-indigo-50 text-indigo-800" : "border-slate-200 text-slate-600 hover:border-indigo-200"}`}>
+                    <span className={`flex h-4 w-4 items-center justify-center rounded border ${active ? "border-indigo-600 bg-indigo-600 text-white" : "border-slate-300"}`}>
+                      {active && <CheckCircle className="h-3 w-3"/>}
+                    </span>
+                    {tab.label}
+                  </button>;
+                })}
+              </div>
+            </div>
+          )}
+
           {/* Org placement — purely descriptive, doesn't affect access.
               Division/Section/Floor/Head are all store-level concepts — an
               HQ department usually has just one or two people anyway, so
@@ -595,6 +631,26 @@ function EditPermissionsModal({ admin, onClose, onSaved, deptConfig, admins = []
               </p>
             )}
           </section>
+          {admin.scope === "store" && departments.includes("Customer CRM") && (
+            <section className="mb-6 bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3">
+              <p className="text-xs font-black uppercase tracking-widest text-slate-500">Customer CRM tabs <span className="text-slate-400 font-normal normal-case tracking-normal">— leave all unticked for access to every tab</span></p>
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                {CRM_TAB_PERMISSIONS.map(tab => {
+                  const active = permissions.includes(tab.id);
+                  return <button key={tab.id} type="button" onClick={() => toggle(tab.id)}
+                    className={`flex items-center gap-3 rounded-xl border p-3 text-left text-sm font-semibold transition ${active ? "border-indigo-300 bg-indigo-50 text-indigo-800" : "border-slate-200 text-slate-600 hover:border-indigo-200"}`}>
+                    <span className={`flex h-4 w-4 items-center justify-center rounded border ${active ? "border-indigo-600 bg-indigo-600 text-white" : "border-slate-300"}`}>
+                      {active && <CheckCircle className="h-3 w-3"/>}
+                    </span>
+                    {tab.label}
+                  </button>;
+                })}
+              </div>
+              {CRM_TAB_PERMISSIONS.some(tab => permissions.includes(tab.id)) && (
+                <p className="text-[11px] text-slate-400">This admin will only see the ticked tab(s) above in Customer CRM — everything else stays hidden.</p>
+              )}
+            </section>
+          )}
           {admin.scope === "store" && (
             <section className="mb-6 bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3">
               <p className="text-xs font-black uppercase tracking-widest text-slate-500">Org placement <span className="text-slate-400 font-normal normal-case tracking-normal">— optional, for org structure only</span></p>

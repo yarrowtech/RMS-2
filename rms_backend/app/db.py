@@ -219,6 +219,11 @@ lucky_draw_campaigns_collection = db["lucky_draw_campaigns"]
 lucky_draw_entries_collection = db["lucky_draw_entries"]
 lucky_draw_results_collection = db["lucky_draw_results"]
 
+# Customer CRM coupons — its own tab, its own collection. A coupon isn't
+# tied to Lucky Draw specifically (HQ can hand one to any customer), but
+# lives in Customer CRM because that's where customer-facing offers live.
+coupons_collection = db["customer_crm_coupons"]
+
 async def ensure_procurement_indexes():
     """Create the indexes required by catalogue/RFQ hot paths and idempotency."""
     await purchaseorders_collection.create_index([("tenant_id", 1), ("orderNo", 1)], name="po_tenant_number")
@@ -330,6 +335,7 @@ async def ensure_procurement_indexes():
     await lucky_draw_campaigns_collection.create_index([("tenant_id", 1), ("status", 1), ("created_at", -1)], name="lucky_draw_campaign_tenant_status")
     await lucky_draw_entries_collection.create_index([("tenant_id", 1), ("campaign_id", 1), ("created_at", -1)], name="lucky_draw_entry_campaign_created")
     await lucky_draw_entries_collection.create_index([("tenant_id", 1), ("store_id", 1), ("campaign_id", 1), ("bill_no", 1)], unique=True, name="lucky_draw_entry_bill_unique")
+    await lucky_draw_entries_collection.create_index([("tenant_id", 1), ("store_id", 1), ("printed", 1)], name="lucky_draw_entry_print_queue")
     # Only one *active* (non-redone) result per campaign+store scope; a redo
     # marks the old one superseded rather than deleting it, so the audit
     # trail of who drew what, and why it was redone, is never lost.
@@ -339,6 +345,9 @@ async def ensure_procurement_indexes():
         name="lucky_draw_result_active_unique",
     )
     await lucky_draw_results_collection.create_index([("tenant_id", 1), ("winners.entry_id", 1)], name="lucky_draw_result_winner_lookup")
+    await coupons_collection.create_index([("tenant_id", 1), ("code", 1)], unique=True, name="coupon_tenant_code_unique")
+    await coupons_collection.create_index([("tenant_id", 1), ("contact_no", 1)], name="coupon_tenant_contact")
+    await coupons_collection.create_index([("tenant_id", 1), ("status", 1), ("created_at", -1)], name="coupon_tenant_status_created")
     await error_logs_collection.create_index([("created_at", -1)], name="error_logs_created")
     await error_logs_collection.create_index([("resolved", 1), ("created_at", -1)], name="error_logs_resolved_created")
     await error_logs_collection.create_index([("source", 1), ("created_at", -1)], name="error_logs_source_created")

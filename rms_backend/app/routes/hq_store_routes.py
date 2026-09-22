@@ -626,6 +626,11 @@ HQ_PERMISSIONS = [
     "cashier", "store_stock", "sales",
     "hr", "finance", "logistics", "reports",
     "user_management", "forecast_analytics", "marketing", "customer_crm",
+    # Customer CRM tab-level narrowing — an admin with none of these ticked
+    # gets every CRM tab (unchanged legacy behaviour); ticking one or more
+    # limits them to exactly those tabs. See customer_crm_routes.py's
+    # CRM_TAB_PERMISSIONS / admin_crm_tabs for the enforcement side.
+    "crm_customers", "crm_followups", "crm_feedback", "crm_segments", "crm_lucky_draw", "crm_coupons",
 ]
 
 # Suggested default permissions when a department is picked at STORE scope
@@ -639,7 +644,10 @@ STORE_DEPARTMENT_DEFAULT_PERMISSIONS = {
     "Inventory":    ["store_stock", "stock_ledger", "stock_adjustment", "stock_transfer", "grc", "grn"],
     "Finance":      ["finance", "reports"],
     "HR":           ["hr"],
-    "Customer CRM": ["customer_crm"],
+    # All 5 tab permissions pre-checked by default — new grants keep today's
+    # "sees every tab" behaviour; HQ unchecks specific ones afterward (via
+    # Edit Admin Access) only if they want to narrow a particular admin down.
+    "Customer CRM": ["customer_crm", "crm_customers", "crm_followups", "crm_feedback", "crm_segments", "crm_lucky_draw", "crm_coupons"],
 }
 
 

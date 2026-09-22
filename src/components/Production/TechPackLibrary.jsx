@@ -776,13 +776,23 @@ export default function TechPackLibrary({ plans = [], themes = [], onSelectForOr
 
   const load = async () => {
     setLoading(true);
+    setError("");
     try {
-      const [result, policyResult] = await Promise.all([api("/tech-packs"), api("/allowance-policy")]);
+      const result = await api("/tech-packs");
       setPacks(result.data || []);
-      setAllowancePolicy(policyResult.data || DEFAULT_ALLOWANCE_POLICY);
+    } catch (err) {
+      setError(err.message);
     }
-    catch (err) { setError(err.message); }
-    finally { setLoading(false); }
+    try {
+      const policyResult = await api("/allowance-policy");
+      setAllowancePolicy(policyResult.data || DEFAULT_ALLOWANCE_POLICY);
+    } catch {
+      // Secondary config for the fabric-allowance workflow — never let it
+      // block the tech pack list itself from showing (that used to happen
+      // when both calls shared one Promise.all and this one alone failed).
+      setAllowancePolicy(DEFAULT_ALLOWANCE_POLICY);
+    }
+    setLoading(false);
   };
   useEffect(() => { load(); }, []);
 

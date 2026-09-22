@@ -60,6 +60,40 @@ def require_crm_access(ctx: Dict[str, Any]) -> Dict[str, Any]:
     raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Customer CRM access is required.")
 
 
+# Tab-level access, layered on top of require_crm_access. HQ Admin can now
+# narrow a store admin down to specific Customer CRM tabs (e.g. Lucky Draw
+# only) instead of the whole module. To never silently take access away
+# from anyone who already had the full module before this existed: an admin
+# with NONE of these five permissions ticked is treated as "not narrowed" —
+# full access to every tab, same as before. Only once HQ explicitly ticks at
+# least one of these does that admin become limited to just the ticked ones.
+CRM_TAB_PERMISSIONS = {
+    "customers": "crm_customers",
+    "followups": "crm_followups",
+    "feedback": "crm_feedback",
+    "segments": "crm_segments",
+    "luckydraw": "crm_lucky_draw",
+    "coupons": "crm_coupons",
+}
+
+
+def admin_crm_tabs(ctx: Dict[str, Any]) -> Optional[set]:
+    """None means unrestricted (every tab). A set means only those tabs."""
+    if ctx.get("scope") == "hq":
+        return None
+    permissions = set(ctx.get("_permissions") or [])
+    granted = {tab for tab, perm in CRM_TAB_PERMISSIONS.items() if perm in permissions}
+    return granted or None
+
+
+def require_crm_tab(ctx: Dict[str, Any], tab: str) -> Dict[str, Any]:
+    ctx = require_crm_access(ctx)
+    tabs = admin_crm_tabs(ctx)
+    if tabs is not None and tab not in tabs:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"You don't have access to the {tab.title()} tab of Customer CRM.")
+    return ctx
+
+
 def scoped_query(ctx: Dict[str, Any]) -> Dict[str, Any]:
     query = {"tenant_id": ctx["tenant_id"]}
     if ctx.get("scope") in ("store", "branch") and ctx.get("store_id"):
@@ -194,9 +228,12 @@ async def build_customer_rows(ctx: Dict[str, Any]) -> List[Dict[str, Any]]:
 @router.get("/overview")
 async def overview(ctx: Dict[str, Any] = Depends(get_tenant)):
     ctx = require_crm_access(ctx)
-    customers = await build_customer_rows(ctx)
-    followups = await customer_crm_followups_collection.find(scoped_query(ctx)).sort("due_date", 1).to_list(500)
-    feedback = await customer_crm_feedback_collection.find(scoped_query(ctx)).sort("created_at", -1).to_list(300)
+    tabs = admin_crm_tabs(ctx)
+    can = lambda tab: tabs is None or tab in tabs
+
+    customers = await build_customer_rows(ctx) if (can("customers") or can("segments")) else []
+    followups = await customer_crm_followups_collection.find(scoped_query(ctx)).sort("due_date", 1).to_list(500) if can("followups") else []
+    feedback = await customer_crm_feedback_collection.find(scoped_query(ctx)).sort("created_at", -1).to_list(300) if can("feedback") else []
     total_customers = len([c for c in customers if c.get("mobile") or c.get("name") != "Walk-in customer"])
     repeat_customers = len([c for c in customers if int(c.get("bill_count") or 0) > 1])
     total_spend = round(sum(money(c.get("total_spend")) for c in customers), 2)
@@ -212,12 +249,16 @@ async def overview(ctx: Dict[str, Any] = Depends(get_tenant)):
         "followups": [serialize_doc(x) for x in followups],
         "feedback": [serialize_doc(x) for x in feedback],
         "scope": {"tenant_id": ctx["tenant_id"], "scope": ctx.get("scope"), "store_id": ctx.get("store_id"), "store_name": ctx.get("store_name")},
+        # None = every tab; otherwise the exact list of tab keys this admin
+        # was narrowed down to (see admin_crm_tabs). The frontend uses this
+        # to decide which of its tabs to even render.
+        "crm_tabs": sorted(tabs) if tabs is not None else None,
     }
 
 
 @router.post("/customers")
 async def create_customer(payload: CustomerProfilePayload, ctx: Dict[str, Any] = Depends(get_tenant)):
-    ctx = require_crm_access(ctx)
+    ctx = require_crm_tab(ctx, "customers")
     doc = profile_doc(payload)
     if not doc["name"] and not doc["mobile"]:
         raise HTTPException(status_code=400, detail="Customer name or mobile is required.")
@@ -233,7 +274,7 @@ async def create_customer(payload: CustomerProfilePayload, ctx: Dict[str, Any] =
 
 @router.patch("/customers/{customer_id}")
 async def update_customer(customer_id: str, payload: CustomerProfilePayload, ctx: Dict[str, Any] = Depends(get_tenant)):
-    ctx = require_crm_access(ctx)
+    ctx = require_crm_tab(ctx, "customers")
     try:
         oid = ObjectId(customer_id)
     except Exception:
@@ -248,7 +289,7 @@ async def update_customer(customer_id: str, payload: CustomerProfilePayload, ctx
 
 @router.post("/followups")
 async def create_followup(payload: FollowupPayload, ctx: Dict[str, Any] = Depends(get_tenant)):
-    ctx = require_crm_access(ctx)
+    ctx = require_crm_tab(ctx, "followups")
     if not clean(payload.title):
         raise HTTPException(status_code=400, detail="Follow-up title is required.")
     doc = {
@@ -273,7 +314,7 @@ async def create_followup(payload: FollowupPayload, ctx: Dict[str, Any] = Depend
 
 @router.patch("/followups/{followup_id}/status")
 async def update_followup_status(followup_id: str, payload: FollowupStatusPayload, ctx: Dict[str, Any] = Depends(get_tenant)):
-    ctx = require_crm_access(ctx)
+    ctx = require_crm_tab(ctx, "followups")
     status_value = clean(payload.status, "Pending")
     if status_value not in {"Pending", "Done", "Cancelled"}:
         raise HTTPException(status_code=400, detail="Invalid follow-up status.")
@@ -289,7 +330,7 @@ async def update_followup_status(followup_id: str, payload: FollowupStatusPayloa
 
 @router.post("/feedback")
 async def create_feedback(payload: FeedbackPayload, ctx: Dict[str, Any] = Depends(get_tenant)):
-    ctx = require_crm_access(ctx)
+    ctx = require_crm_tab(ctx, "feedback")
     if not clean(payload.note):
         raise HTTPException(status_code=400, detail="Feedback note is required.")
     doc = {

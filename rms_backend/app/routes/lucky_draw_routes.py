@@ -18,7 +18,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 
 from ..db import lucky_draw_campaigns_collection, lucky_draw_entries_collection, lucky_draw_results_collection
-from .customer_crm_routes import clean, now_utc, require_crm_access, scoped_query, serialize_doc
+from .customer_crm_routes import clean, now_utc, require_crm_tab, scoped_query, serialize_doc
 from .deps import get_tenant
 
 router = APIRouter(prefix="/api/customer-crm/lucky-draw", tags=["Lucky Draw"])
@@ -30,11 +30,17 @@ class CampaignPayload(BaseModel):
     ends_on: str = ""
     min_bill_amount: float = 0
     notes: str = ""
+    # 0 = no automatic reward. When set, every QR self-entry submitted while
+    # this campaign is active gets an instant coupon at this percentage,
+    # shown right on the Thank You screen — a small "thanks for entering"
+    # perk, separate from actually winning the draw.
+    entry_reward_pct: float = 0
 
 
 class EntryPayload(BaseModel):
     campaign_id: str
     customer_name: str
+    email: str = ""
     address: str = ""
     contact_no: str = ""
     profession: str = ""
@@ -127,7 +133,7 @@ async def _execute_draw(
 
 @router.get("/campaigns")
 async def list_campaigns(ctx: Dict[str, Any] = Depends(get_tenant)):
-    ctx = require_crm_access(ctx)
+    ctx = require_crm_tab(ctx, "luckydraw")
     rows = await lucky_draw_campaigns_collection.find({
         "tenant_id": ctx["tenant_id"],
         "status": {"$ne": "REMOVED"},
@@ -137,7 +143,7 @@ async def list_campaigns(ctx: Dict[str, Any] = Depends(get_tenant)):
 
 @router.post("/campaigns", status_code=status.HTTP_201_CREATED)
 async def create_campaign(payload: CampaignPayload, ctx: Dict[str, Any] = Depends(get_tenant)):
-    ctx = require_hq(require_crm_access(ctx))
+    ctx = require_hq(require_crm_tab(ctx, "luckydraw"))
     name = clean(payload.campaign_name)
     if not name:
         raise HTTPException(status_code=400, detail="Campaign name is required.")
@@ -149,6 +155,7 @@ async def create_campaign(payload: CampaignPayload, ctx: Dict[str, Any] = Depend
         "ends_on": clean(payload.ends_on),
         "min_bill_amount": max(0.0, float(payload.min_bill_amount or 0)),
         "notes": clean(payload.notes),
+        "entry_reward_pct": max(0.0, min(100.0, float(payload.entry_reward_pct or 0))),
         "status": "ACTIVE",
         "created_by": ctx.get("admin_id"),
         "created_by_name": ctx.get("admin_name"),
@@ -162,7 +169,7 @@ async def create_campaign(payload: CampaignPayload, ctx: Dict[str, Any] = Depend
 
 @router.patch("/campaigns/{campaign_id}/status")
 async def set_campaign_status(campaign_id: str, payload: dict, ctx: Dict[str, Any] = Depends(get_tenant)):
-    ctx = require_hq(require_crm_access(ctx))
+    ctx = require_hq(require_crm_tab(ctx, "luckydraw"))
     if not ObjectId.is_valid(campaign_id):
         raise HTTPException(status_code=400, detail="Invalid campaign ID.")
     new_status = clean(payload.get("status")).upper()
@@ -179,7 +186,7 @@ async def set_campaign_status(campaign_id: str, payload: dict, ctx: Dict[str, An
 async def remove_campaign(campaign_id: str, ctx: Dict[str, Any] = Depends(get_tenant)):
     """Remove a campaign from active use without destroying its entry/draw
     history. Only an HQ-scoped CRM administrator can perform this action."""
-    ctx = require_hq(require_crm_access(ctx))
+    ctx = require_hq(require_crm_tab(ctx, "luckydraw"))
     if not ObjectId.is_valid(campaign_id):
         raise HTTPException(status_code=400, detail="Invalid campaign ID.")
     campaign = await lucky_draw_campaigns_collection.find_one({
@@ -205,7 +212,7 @@ async def remove_campaign(campaign_id: str, ctx: Dict[str, Any] = Depends(get_te
 
 @router.get("/entries")
 async def list_entries(campaign_id: Optional[str] = Query(None), ctx: Dict[str, Any] = Depends(get_tenant)):
-    ctx = require_crm_access(ctx)
+    ctx = require_crm_tab(ctx, "luckydraw")
     query = scoped_query(ctx)
     if campaign_id:
         if not ObjectId.is_valid(campaign_id):
@@ -217,7 +224,7 @@ async def list_entries(campaign_id: Optional[str] = Query(None), ctx: Dict[str, 
 
 @router.post("/entries", status_code=status.HTTP_201_CREATED)
 async def create_entry(payload: EntryPayload, ctx: Dict[str, Any] = Depends(get_tenant)):
-    ctx = require_crm_access(ctx)
+    ctx = require_crm_tab(ctx, "luckydraw")
     if not ObjectId.is_valid(payload.campaign_id):
         raise HTTPException(status_code=400, detail="Invalid campaign ID.")
     campaign = await lucky_draw_campaigns_collection.find_one({"_id": ObjectId(payload.campaign_id), "tenant_id": ctx["tenant_id"]})
@@ -242,12 +249,17 @@ async def create_entry(payload: EntryPayload, ctx: Dict[str, Any] = Depends(get_
         "campaign_id": payload.campaign_id,
         "campaign_name": campaign.get("campaign_name"),
         "customer_name": customer_name,
+        "email": clean(payload.email),
         "address": clean(payload.address),
         "contact_no": clean(payload.contact_no),
         "profession": clean(payload.profession),
         "bill_no": bill_no,
         "entered_by": ctx.get("admin_id"),
         "entered_by_name": ctx.get("admin_name"),
+        # Staff typed this straight off the physical slip already in hand —
+        # nothing further needs printing, unlike a QR self-entry.
+        "source": "COUNTER_STAFF",
+        "printed": True,
         "created_at": now,
         "updated_at": now,
     }
@@ -258,7 +270,7 @@ async def create_entry(payload: EntryPayload, ctx: Dict[str, Any] = Depends(get_
 
 @router.delete("/entries/{entry_id}")
 async def delete_entry(entry_id: str, ctx: Dict[str, Any] = Depends(get_tenant)):
-    ctx = require_crm_access(ctx)
+    ctx = require_crm_tab(ctx, "luckydraw")
     if not ObjectId.is_valid(entry_id):
         raise HTTPException(status_code=400, detail="Invalid entry ID.")
     query = {**scoped_query(ctx), "_id": ObjectId(entry_id)}
@@ -269,9 +281,30 @@ async def delete_entry(entry_id: str, ctx: Dict[str, Any] = Depends(get_tenant))
     return {"message": "Entry removed."}
 
 
+@router.patch("/entries/{entry_id}/printed")
+async def mark_entry_printed(entry_id: str, ctx: Dict[str, Any] = Depends(get_tenant)):
+    """Staff clicks Print on a QR self-entry, gets the paper slip out of the
+    counter printer, and marks it done here so it drops off the 'needs
+    printing' queue. Marking printed does not require the print to have
+    visibly succeeded — same as any receipt printer, staff can tell at a
+    glance if it misfired and just print again."""
+    ctx = require_crm_tab(ctx, "luckydraw")
+    if not ObjectId.is_valid(entry_id):
+        raise HTTPException(status_code=400, detail="Invalid entry ID.")
+    query = {**scoped_query(ctx), "_id": ObjectId(entry_id)}
+    entry = await lucky_draw_entries_collection.find_one(query)
+    if not entry:
+        raise HTTPException(status_code=404, detail="Entry not found, or belongs to another store.")
+    await lucky_draw_entries_collection.update_one(
+        {"_id": entry["_id"]},
+        {"$set": {"printed": True, "printed_by": ctx.get("admin_id"), "printed_by_name": ctx.get("admin_name"), "printed_at": now_utc()}},
+    )
+    return {"message": "Marked as printed."}
+
+
 @router.post("/campaigns/{campaign_id}/draw", status_code=status.HTTP_201_CREATED)
 async def run_draw(campaign_id: str, payload: DrawPayload, ctx: Dict[str, Any] = Depends(get_tenant)):
-    ctx = require_crm_access(ctx)
+    ctx = require_crm_tab(ctx, "luckydraw")
     if not ObjectId.is_valid(campaign_id):
         raise HTTPException(status_code=400, detail="Invalid campaign ID.")
     campaign = await lucky_draw_campaigns_collection.find_one({"_id": ObjectId(campaign_id), "tenant_id": ctx["tenant_id"]})
@@ -290,7 +323,7 @@ async def run_draw(campaign_id: str, payload: DrawPayload, ctx: Dict[str, Any] =
 
 @router.post("/campaigns/{campaign_id}/draw/redo", status_code=status.HTTP_201_CREATED)
 async def redo_draw(campaign_id: str, payload: RedoPayload, ctx: Dict[str, Any] = Depends(get_tenant)):
-    ctx = require_crm_access(ctx)
+    ctx = require_crm_tab(ctx, "luckydraw")
     reason = clean(payload.reason)
     if not reason:
         raise HTTPException(status_code=400, detail="A reason is required to redo a draw.")
@@ -315,7 +348,7 @@ async def redo_draw(campaign_id: str, payload: RedoPayload, ctx: Dict[str, Any] 
 
 @router.get("/results")
 async def list_results(campaign_id: Optional[str] = Query(None), ctx: Dict[str, Any] = Depends(get_tenant)):
-    ctx = require_crm_access(ctx)
+    ctx = require_crm_tab(ctx, "luckydraw")
     query: Dict[str, Any] = {"tenant_id": ctx["tenant_id"]}
     if campaign_id:
         if not ObjectId.is_valid(campaign_id):
@@ -333,7 +366,7 @@ async def lookup_by_phone(contact_no: str = Query(...), ctx: Dict[str, Any] = De
     """Staff-facing single-customer check — used to tell one customer at the
     counter whether they won, without showing the whole winner list or
     anyone else's entries."""
-    ctx = require_crm_access(ctx)
+    ctx = require_crm_tab(ctx, "luckydraw")
     contact = clean(contact_no)
     if not contact:
         raise HTTPException(status_code=400, detail="Enter a contact number to search.")

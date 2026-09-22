@@ -1,4 +1,5 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import QRCodeStyling from "qr-code-styling";
 import {
   BellRing,
   CalendarClock,
@@ -8,12 +9,14 @@ import {
   HeartHandshake,
   Phone,
   Plus,
+  Printer,
   RefreshCw,
   Search,
   Send,
   Sparkles,
   Star,
   Tags,
+  Ticket,
   Trash2,
   Trophy,
   Users,
@@ -48,6 +51,26 @@ const styles = `
   .crm-input:focus { border-color: #6366f1; box-shadow: 0 0 0 3px rgba(99,102,241,.12); }
   .crm-label { display:block; font-size:11px; font-weight:800; letter-spacing:.06em; text-transform:uppercase; color:#64748b; margin-bottom:6px; }
   @media (max-width: 900px) { .crm-layout { flex-direction: column; } .crm-sidebar { width: 100%; min-height: auto; } .crm-main { padding: 14px; } }
+  #ld-print-slip, #ld-print-qr { display: none; }
+  @page { size: 120mm 72mm; margin: 0; }
+  @media print {
+    body * { visibility: hidden; }
+
+    /* Print-slip job — unchanged, still the default page size (a receipt
+       for the draw box), only shown when the slip modal set this class. */
+    body.printing-ld-slip { width: 120mm; height: 72mm; margin: 0 !important; padding: 0 !important; background: #fff !important; }
+    body.printing-ld-slip #ld-print-slip, body.printing-ld-slip #ld-print-slip * { visibility: visible; }
+    body.printing-ld-slip #ld-print-slip { display: flex; position: absolute; inset: 0; width: 120mm; height: 72mm; box-sizing: border-box; align-items: stretch; padding: 0; background: #fff; }
+    body.printing-ld-slip #ld-print-slip .ld-slip-card { width: 100% !important; height: 100% !important; min-height: 0 !important; box-sizing: border-box; border: 0 !important; border-radius: 0 !important; padding: 0 !important; box-shadow: none !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    body.printing-ld-slip #ld-print-slip .ld-template-image { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    body.printing-ld-slip #ld-print-slip .ld-template-value { font-size: 7.5pt !important; line-height: 1 !important; background: #fff4c9 !important; color: #172554 !important; }
+
+    /* Print-QR job — a full-page counter poster, one store at a time. Its
+       own body class so it never fights the slip's fixed 120x72mm @page. */
+    body.printing-ld-qr { width: auto; height: auto; margin: 0 !important; padding: 0 !important; background: #fff !important; }
+    body.printing-ld-qr #ld-print-qr, body.printing-ld-qr #ld-print-qr * { visibility: visible; }
+    body.printing-ld-qr #ld-print-qr { display: flex; position: absolute; inset: 0; width: 100%; box-sizing: border-box; background: #fff; }
+  }
 `;
 
 const tabs = [
@@ -56,6 +79,7 @@ const tabs = [
   { key: "feedback", label: "Feedback", icon: HeartHandshake },
   { key: "segments", label: "Segments", icon: Tags },
   { key: "luckydraw", label: "Lucky Draw", icon: Gift },
+  { key: "coupons", label: "Coupons", icon: Ticket },
 ];
 
 const emptyCustomer = {
@@ -76,6 +100,37 @@ const emptyCustomer = {
 
 const emptyFollowup = { customer_id: "", customer_name: "", mobile: "", title: "", due_date: "", channel: "WhatsApp", purpose: "Follow-up", note: "" };
 const emptyFeedback = { customer_id: "", customer_name: "", mobile: "", source: "In-store", sentiment: "Neutral", note: "" };
+
+// Blue square finder-pattern corners with a black dot center, black square
+// data modules — matches the branded QR style the user asked for, drawn
+// client-side (SVG) instead of the old plain-black api.qrserver.com image so
+// print output stays crisp at any size.
+function StyledQrCode({ data, size = 180 }) {
+  const holderRef = useRef(null);
+  const qrRef = useRef(null);
+  useEffect(() => {
+    if (!data || !holderRef.current) return;
+    if (!qrRef.current) {
+      qrRef.current = new QRCodeStyling({
+        width: size,
+        height: size,
+        type: "svg",
+        data,
+        margin: 4,
+        qrOptions: { errorCorrectionLevel: "H" },
+        dotsOptions: { type: "square", color: "#0f172a" },
+        cornersSquareOptions: { type: "square", color: "#1a73e8" },
+        cornersDotOptions: { type: "dot", color: "#0f172a" },
+        backgroundOptions: { color: "#ffffff" },
+      });
+      holderRef.current.innerHTML = "";
+      qrRef.current.append(holderRef.current);
+    } else {
+      qrRef.current.update({ data, width: size, height: size });
+    }
+  }, [data, size]);
+  return <div ref={holderRef} style={{ width: size, height: size }} />;
+}
 
 function money(value) {
   return new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(Number(value || 0));
@@ -156,7 +211,7 @@ function CustomerModal({ initial, onClose, onSave }) {
 }
 
 function CampaignModal({ onClose, onSave }) {
-  const [form, setForm] = useState({ campaign_name: "", starts_on: "", ends_on: "", min_bill_amount: "", notes: "" });
+  const [form, setForm] = useState({ campaign_name: "", starts_on: "", ends_on: "", min_bill_amount: "", notes: "", entry_reward_pct: "" });
   const set = (key, value) => setForm((f) => ({ ...f, [key]: value }));
   return (
     <div className="fixed inset-0 z-[1000] grid place-items-center bg-slate-950/50 p-4 backdrop-blur-sm">
@@ -169,6 +224,11 @@ function CampaignModal({ onClose, onSave }) {
             <div><label className="crm-label">Ends on</label><input type="date" className="crm-input" value={form.ends_on} onChange={(e) => set("ends_on", e.target.value)} /></div>
           </div>
           <div><label className="crm-label">Minimum bill amount (info only, shown to staff)</label><input type="number" min="0" className="crm-input" value={form.min_bill_amount} onChange={(e) => set("min_bill_amount", e.target.value)} placeholder="e.g. 2000" /></div>
+          <div>
+            <label className="crm-label">Instant thank-you coupon (optional)</label>
+            <input type="number" min="0" max="100" className="crm-input" value={form.entry_reward_pct} onChange={(e) => set("entry_reward_pct", e.target.value)} placeholder="e.g. 10 for 10% off" />
+            <p className="mt-1 text-xs text-slate-400">Leave blank for none. If set, every QR self-entry gets its own coupon at this % automatically, shown right on their Thank You screen — separate from actually winning the draw.</p>
+          </div>
           <div><label className="crm-label">Notes</label><textarea className="crm-input min-h-20" value={form.notes} onChange={(e) => set("notes", e.target.value)} placeholder="Prize details, rules for staff at the counter..." /></div>
         </div>
         <ModalFooter onClose={onClose} onSave={() => onSave(form)} saveLabel="Create campaign" />
@@ -178,7 +238,7 @@ function CampaignModal({ onClose, onSave }) {
 }
 
 function LuckyDrawEntryModal({ campaigns, defaultCampaignId, onClose, onSave }) {
-  const [form, setForm] = useState({ campaign_id: defaultCampaignId || (campaigns[0]?.id || ""), customer_name: "", address: "", contact_no: "", profession: "", bill_no: "" });
+  const [form, setForm] = useState({ campaign_id: defaultCampaignId || (campaigns[0]?.id || ""), customer_name: "", email: "", address: "", contact_no: "", profession: "", bill_no: "" });
   const set = (key, value) => setForm((f) => ({ ...f, [key]: value }));
   return (
     <div className="fixed inset-0 z-[1000] grid place-items-center bg-slate-950/50 p-4 backdrop-blur-sm">
@@ -192,8 +252,9 @@ function LuckyDrawEntryModal({ campaigns, defaultCampaignId, onClose, onSave }) 
             </select>
           </div>
           <div><label className="crm-label">Customer name</label><input className="crm-input" value={form.customer_name} onChange={(e) => set("customer_name", e.target.value)} placeholder="As written on the slip" /></div>
-          <div><label className="crm-label">Contact no.</label><input type="tel" inputMode="numeric" pattern="[0-9]{10}" maxLength={10} className="crm-input" value={form.contact_no} onChange={(e) => set("contact_no", e.target.value.replace(/\D/g, "").slice(0, 10))} placeholder="10 digit mobile" /></div>
+          <div><label className="crm-label">Email</label><input type="email" className="crm-input" value={form.email} onChange={(e) => set("email", e.target.value)} placeholder="customer@email.com" /></div>
           <div className="md:col-span-2"><label className="crm-label">Address</label><input className="crm-input" value={form.address} onChange={(e) => set("address", e.target.value)} placeholder="As written on the slip" /></div>
+          <div><label className="crm-label">Contact no.</label><input type="tel" inputMode="numeric" pattern="[0-9]{10}" maxLength={10} className="crm-input" value={form.contact_no} onChange={(e) => set("contact_no", e.target.value.replace(/\D/g, "").slice(0, 10))} placeholder="10 digit mobile" /></div>
           <div><label className="crm-label">Profession</label><input className="crm-input" value={form.profession} onChange={(e) => set("profession", e.target.value)} placeholder="e.g. Teacher, Business" /></div>
           <div><label className="crm-label">Bill no.</label><input className="crm-input" value={form.bill_no} onChange={(e) => set("bill_no", e.target.value)} placeholder="From the purchase bill" /></div>
         </div>
@@ -228,9 +289,87 @@ function DrawModal({ campaign, isHq, defaultRedo, onClose, onSave }) {
   );
 }
 
+function PrintSlipModal({ entry, onClose, onPrinted }) {
+  const doPrint = () => {
+    document.body.classList.add("printing-ld-slip");
+    window.print();
+    document.body.classList.remove("printing-ld-slip");
+    onPrinted(entry.id);
+  };
+  return (
+    <div className="fixed inset-0 z-[1000] grid place-items-center overflow-y-auto bg-slate-950/50 p-4 backdrop-blur-sm">
+      <div className="flex max-h-[94dvh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+        <ModalHeader eyebrow="Lucky Draw" title="Print slip" onClose={onClose} />
+        <div className="overflow-y-auto p-6">
+          <p className="mb-4 text-sm text-slate-500">Uses the approved Citi Mart template as a compact 120 x 72 mm landscape slip. Print at Actual size / 100%, then place it in the draw box.</p>
+          <SlipCard entry={entry} />
+        </div>
+        <ModalFooter onClose={onClose} onSave={doPrint} saveLabel="Print & mark done" />
+      </div>
+      <div id="ld-print-slip" className="p-8"><SlipCard entry={entry} /></div>
+    </div>
+  );
+}
+
+function SlipCard({ entry }) {
+  // One element per field, sized to fit its own text (inline-block, no
+  // fixed width) \u2014 the highlight only ever covers exactly as much of the
+  // dotted line as the value actually needs, so a short value like "Nandu"
+  // doesn't leave a big pale rectangle stretching past it. An empty field
+  // renders nothing at all, leaving the printed dots untouched.
+  // Uppercased for print only (never touches the stored value) — at this
+  // small bold size, a lowercase "g" reads as a "q" and other lowercase
+  // letters have similar mix-ups, so caps avoids that ambiguity entirely.
+  const field = (className, maxWidthClass, text) => text ? (
+    <span className={"ld-template-value absolute inline-block truncate whitespace-nowrap rounded-[1px] bg-[#fff4c9] px-0.5 font-sans text-[13px] font-extrabold uppercase leading-none text-[#172554] " + maxWidthClass + " " + className}>{text}</span>
+  ) : null;
+  return (
+    <div className="ld-slip-card relative aspect-[5/3] min-h-[360px] overflow-hidden rounded-2xl bg-[#fff2bd] shadow-inner" style={{ fontFamily: "Georgia, 'Times New Roman', serif" }}>
+      <img src="/lucky-draw-slip-template.png" alt="Citi Mart lucky draw slip template" className="ld-template-image absolute inset-0 h-full w-full object-fill" />
+      {/* 6 evenly-spaced lines matching the template: Name, Address, Contact
+          No, Email Id, Profession, Bill No \u2014 Email Id is a real printed line
+          on this template now, not squeezed into leftover whitespace. */}
+      <div className="absolute inset-0" aria-label="Lucky draw entry details">
+        {field("left-[22%] top-[27.8%]", "max-w-[41%]", entry.customer_name)}
+        {field("left-[22%] top-[38.2%]", "max-w-[41%]", entry.address)}
+        {field("left-[22%] top-[48.6%]", "max-w-[41%]", entry.contact_no)}
+        {field("left-[22%] top-[59%]", "max-w-[41%]", entry.email)}
+        {field("left-[22%] top-[69.1%]", "max-w-[41%]", entry.profession)}
+        {field("left-[22%] top-[76.3%]", "max-w-[41%]", entry.bill_no)}
+      </div>
+    </div>
+  );
+}
+
+function CouponModal({ onClose, onSave }) {
+  const [form, setForm] = useState({ discount_pct: "", min_bill_amount: "", expiry_date: "", customer_name: "", contact_no: "", notes: "" });
+  const set = (key, value) => setForm((f) => ({ ...f, [key]: value }));
+  return (
+    <div className="fixed inset-0 z-[1000] grid place-items-center bg-slate-950/50 p-4 backdrop-blur-sm">
+      <div className="w-full max-w-lg overflow-hidden rounded-2xl bg-white shadow-2xl">
+        <ModalHeader eyebrow="Customer CRM" title="New coupon" onClose={onClose} />
+        <div className="grid gap-4 p-6">
+          <div className="grid grid-cols-2 gap-4">
+            <div><label className="crm-label">Discount %</label><input type="number" min="1" max="100" className="crm-input" value={form.discount_pct} onChange={(e) => set("discount_pct", e.target.value)} placeholder="e.g. 10" /></div>
+            <div><label className="crm-label">Minimum bill amount</label><input type="number" min="0" className="crm-input" value={form.min_bill_amount} onChange={(e) => set("min_bill_amount", e.target.value)} placeholder="e.g. 500" /></div>
+          </div>
+          <div><label className="crm-label">Expiry date (optional)</label><input type="date" className="crm-input" value={form.expiry_date} onChange={(e) => set("expiry_date", e.target.value)} /></div>
+          <div className="grid grid-cols-2 gap-4">
+            <div><label className="crm-label">Customer name (optional)</label><input className="crm-input" value={form.customer_name} onChange={(e) => set("customer_name", e.target.value)} placeholder="Leave blank for a general code" /></div>
+            <div><label className="crm-label">Contact no. (optional)</label><input className="crm-input" value={form.contact_no} onChange={(e) => set("contact_no", e.target.value)} placeholder="If issued to one customer" /></div>
+          </div>
+          <div><label className="crm-label">Notes</label><textarea className="crm-input min-h-20" value={form.notes} onChange={(e) => set("notes", e.target.value)} placeholder="Why this was issued..." /></div>
+          <p className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs font-semibold text-amber-800">There's no automatic checkout integration yet — staff look this code up at the counter, apply the discount by hand, then mark it redeemed here.</p>
+        </div>
+        <ModalFooter onClose={onClose} onSave={() => onSave(form)} saveLabel="Create coupon" />
+      </div>
+    </div>
+  );
+}
+
 export default function CustomerCRM() {
   const [active, setActive] = useState("customers");
-  const [data, setData] = useState({ stats: {}, customers: [], followups: [], feedback: [], scope: {} });
+  const [data, setData] = useState({ stats: {}, customers: [], followups: [], feedback: [], scope: {}, crm_tabs: null });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [query, setQuery] = useState("");
@@ -246,6 +385,14 @@ export default function CustomerCRM() {
   const [lookupResult, setLookupResult] = useState(null);
   const [lookupBusy, setLookupBusy] = useState(false);
   const [exportingEntries, setExportingEntries] = useState(false);
+  const [printSlip, setPrintSlip] = useState(null);
+  const [hqStores, setHqStores] = useState([]);
+  const [hqQrStoreId, setHqQrStoreId] = useState("");
+  const [coupons, setCoupons] = useState([]);
+  const [couponModal, setCouponModal] = useState(null);
+  const [couponLookupCode, setCouponLookupCode] = useState("");
+  const [couponLookupResult, setCouponLookupResult] = useState(null);
+  const [couponLookupBusy, setCouponLookupBusy] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true); setError("");
@@ -255,6 +402,17 @@ export default function CustomerCRM() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  // null = every tab (HQ, or a store admin nobody has narrowed down yet);
+  // otherwise the exact list of tab keys this admin was granted.
+  const visibleTabs = useMemo(
+    () => (data.crm_tabs ? tabs.filter((t) => data.crm_tabs.includes(t.key)) : tabs),
+    [data.crm_tabs]
+  );
+
+  useEffect(() => {
+    if (visibleTabs.length && !visibleTabs.some((t) => t.key === active)) setActive(visibleTabs[0].key);
+  }, [visibleTabs, active]);
 
   const loadLuckyDraw = useCallback(async () => {
     try {
@@ -268,6 +426,29 @@ export default function CustomerCRM() {
   }, []);
 
   useEffect(() => { if (active === "luckydraw") loadLuckyDraw(); }, [active, loadLuckyDraw]);
+
+  const loadHqStores = useCallback(async () => {
+    try {
+      const res = await crmFetch("/hq/stores");
+      const rows = res.data || [];
+      const flat = [];
+      for (const store of rows) {
+        flat.push({ id: store.id, name: store.name });
+        for (const branch of store.branches || []) flat.push({ id: branch.id, name: `${store.name} - ${branch.name}` });
+      }
+      setHqStores(flat);
+      setHqQrStoreId((current) => current || flat[0]?.id || "");
+    } catch (e) { setError(e.message || "Unable to load store list."); }
+  }, []);
+
+  useEffect(() => { if (active === "luckydraw" && data.scope?.scope === "hq") loadHqStores(); }, [active, data.scope?.scope, loadHqStores]);
+
+  const loadCoupons = useCallback(async () => {
+    try { setCoupons(await crmFetch("/api/customer-crm/coupons")); }
+    catch (e) { setError(e.message || "Unable to load coupons."); }
+  }, []);
+
+  useEffect(() => { if (active === "coupons") loadCoupons(); }, [active, loadCoupons]);
 
   const customers = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -320,7 +501,7 @@ export default function CustomerCRM() {
     try {
       await crmFetch("/api/customer-crm/lucky-draw/campaigns", {
         method: "POST",
-        body: JSON.stringify({ ...form, min_bill_amount: Number(form.min_bill_amount || 0) }),
+        body: JSON.stringify({ ...form, min_bill_amount: Number(form.min_bill_amount || 0), entry_reward_pct: Number(form.entry_reward_pct || 0) }),
       });
       setCampaignModal(null); loadLuckyDraw();
     } catch (e) { setError(e.message || "Unable to create campaign."); }
@@ -372,6 +553,49 @@ export default function CustomerCRM() {
     } catch (e) { setError(e.message || "Unable to run the draw."); }
   };
 
+  const markPrinted = async (id) => {
+    try {
+      await crmFetch(`/api/customer-crm/lucky-draw/entries/${id}/printed`, { method: "PATCH" });
+      setPrintSlip(null);
+      loadLuckyDraw();
+    } catch (e) { setError(e.message || "Unable to mark this entry as printed."); }
+  };
+
+  const createCoupon = async (form) => {
+    try {
+      await crmFetch("/api/customer-crm/coupons", {
+        method: "POST",
+        body: JSON.stringify({ ...form, discount_pct: Number(form.discount_pct || 0), min_bill_amount: Number(form.min_bill_amount || 0) }),
+      });
+      setCouponModal(null); loadCoupons();
+    } catch (e) { setError(e.message || "Unable to create coupon."); }
+  };
+
+  const toggleCouponStatus = async (id, status) => {
+    try {
+      await crmFetch(`/api/customer-crm/coupons/${id}/status`, { method: "PATCH", body: JSON.stringify({ status }) });
+      loadCoupons();
+    } catch (e) { setError(e.message || "Unable to update coupon."); }
+  };
+
+  const checkCouponCode = async () => {
+    if (!couponLookupCode.trim()) return;
+    setCouponLookupBusy(true);
+    try {
+      const res = await crmFetch(`/api/customer-crm/coupons/lookup?code=${encodeURIComponent(couponLookupCode.trim())}`);
+      setCouponLookupResult(res);
+    } catch (e) { setError(e.message || "Unable to check this code."); }
+    finally { setCouponLookupBusy(false); }
+  };
+
+  const redeemCoupon = async (id) => {
+    if (!window.confirm("Confirm the discount has already been applied on the bill? This marks the coupon used and it cannot be reused.")) return;
+    try {
+      await crmFetch(`/api/customer-crm/coupons/${id}/redeem`, { method: "POST" });
+      setCouponLookupResult(null); setCouponLookupCode(""); loadCoupons();
+    } catch (e) { setError(e.message || "Unable to redeem this coupon."); }
+  };
+
   const checkPhone = async () => {
     if (!lookupPhone.trim()) return;
     setLookupBusy(true);
@@ -417,7 +641,7 @@ export default function CustomerCRM() {
         const existing = campaignContacts.get(contactKey) || {
           "Customer Name": entry.customer_name || profile?.name || "",
           "Contact Number": phone || String(entry.contact_no || ""),
-          "Email": profile?.email || "",
+          "Email": entry.email || profile?.email || "",
           "Address": entry.address || "",
           "Profession": entry.profession || "",
           "CRM Segment": profile?.segment || "",
@@ -442,6 +666,7 @@ export default function CustomerCRM() {
         return {
           "Customer Name": entry.customer_name || "",
           "Contact Number": phone || String(entry.contact_no || ""),
+          "Email": entry.email || "",
           "Address": entry.address || "",
           "Profession": entry.profession || "",
           "Bill No.": entry.bill_no || "",
@@ -483,7 +708,7 @@ export default function CustomerCRM() {
       const contactSheet = XLSX.utils.json_to_sheet(contactRows);
       contactSheet["!cols"] = [{wch:24},{wch:16},{wch:28},{wch:28},{wch:20},{wch:16},{wch:18},{wch:18},{wch:14},{wch:16},{wch:18},{wch:30},{wch:28},{wch:22},{wch:24},{wch:12},{wch:22}];
       const slipSheet = XLSX.utils.json_to_sheet(slipRows);
-      slipSheet["!cols"] = [{wch:24},{wch:16},{wch:28},{wch:20},{wch:16},{wch:26},{wch:22},{wch:20},{wch:22},{wch:18},{wch:14},{wch:16},{wch:18},{wch:30}];
+      slipSheet["!cols"] = [{wch:24},{wch:16},{wch:28},{wch:28},{wch:20},{wch:16},{wch:26},{wch:22},{wch:20},{wch:22},{wch:18},{wch:14},{wch:16},{wch:18},{wch:30}];
       const readMeSheet = XLSX.utils.aoa_to_sheet([
         ["RMS Customer Campaign Export"],
         ["Campaign filter", campaignLabel],
@@ -543,8 +768,67 @@ export default function CustomerCRM() {
     const activeCampaigns = (luckyDraw.campaigns || []).filter((c) => c.status === "ACTIVE");
     const filteredEntries = ldCampaignFilter ? (luckyDraw.entries || []).filter((e) => e.campaign_id === ldCampaignFilter) : (luckyDraw.entries || []);
     const hasOwnDraw = (campaignId) => (luckyDraw.results || []).some((r) => r.campaign_id === campaignId && !r.superseded && (isHq ? true : r.store_id === myStoreId));
+    const qrStoreId = isHq ? hqQrStoreId : myStoreId;
+    const scanUrl = qrStoreId ? `${window.location.origin}/lucky-draw-scan/${qrStoreId}` : "";
+    const qrStoreName = isHq ? (hqStores.find((s) => s.id === hqQrStoreId)?.name || "") : (data.scope?.store_name || "");
+    // Each store gets its own poster on demand — printed one at a time so
+    // HQ can walk through every branch without any of them colliding, and
+    // this is a separate print job from the slip (its own body class), so
+    // it's free to use a normal full page instead of the slip's fixed
+    // 120x72mm receipt size.
+    const printQr = () => {
+      document.body.classList.add("printing-ld-qr");
+      const pageStyle = document.createElement("style");
+      pageStyle.textContent = "@page { size: auto; margin: 14mm; }";
+      document.head.appendChild(pageStyle);
+      window.print();
+      document.body.classList.remove("printing-ld-qr");
+      pageStyle.remove();
+    };
+    const QrBlock = () => (
+      <>
+        <div className="flex flex-wrap items-start gap-4">
+          <div className="rounded-xl border border-slate-200 p-2"><StyledQrCode data={scanUrl} size={164} /></div>
+          <div className="min-w-0 flex-1">
+            <p className="crm-label">Link</p>
+            <p className="break-all rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-700">{scanUrl}</p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              <button onClick={() => { navigator.clipboard?.writeText(scanUrl); }} className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-bold text-slate-600 hover:bg-slate-50">Copy link</button>
+              <button onClick={printQr} className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-indigo-700"><Printer size={13} className="mr-1 inline"/>Print QR poster{qrStoreName ? ` — ${qrStoreName}` : ""}</button>
+            </div>
+          </div>
+        </div>
+        <div id="ld-print-qr" className="flex-col items-center justify-center gap-6 p-16 text-center">
+          <p className="text-3xl font-black uppercase tracking-wide text-indigo-700">{qrStoreName || "Lucky Draw"}</p>
+          <p className="text-xl font-bold text-slate-700">Scan to enter the Lucky Draw</p>
+          <StyledQrCode data={scanUrl} size={420} />
+          <p className="max-w-md break-all text-sm text-slate-400">{scanUrl}</p>
+        </div>
+      </>
+    );
     return (
       <div className="space-y-5">
+        {!isHq && myStoreId && (
+          <div className="crm-card p-5">
+            <h2 className="text-base font-bold text-slate-900">Your store's QR entry link</h2>
+            <p className="mb-3 text-sm text-slate-500">Print this and display it at the counter. Customers scan it on their own phone to fill in their slip — it always points at whichever campaign is currently active, so it never needs reprinting.</p>
+            <QrBlock />
+          </div>
+        )}
+        {isHq && (
+          <div className="crm-card p-5">
+            <h2 className="text-base font-bold text-slate-900">Get a store's QR entry link</h2>
+            <p className="mb-3 text-sm text-slate-500">Pick a store to get its QR code and link, ready to print at that counter.</p>
+            {hqStores.length ? (
+              <>
+                <select className="crm-input mb-4 max-w-sm" value={hqQrStoreId} onChange={(e) => setHqQrStoreId(e.target.value)}>
+                  {hqStores.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                </select>
+                {qrStoreId && <QrBlock />}
+              </>
+            ) : <p className="text-sm text-slate-500">No stores set up yet.</p>}
+          </div>
+        )}
         <div className="crm-card overflow-hidden">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 p-5">
             <div>
@@ -563,6 +847,7 @@ export default function CustomerCRM() {
                 <p className="mt-3 text-base font-bold text-slate-900">{c.campaign_name}</p>
                 <p className="text-xs text-slate-500">{c.starts_on || "No start date"} - {c.ends_on || "No end date"}</p>
                 {c.min_bill_amount > 0 && <p className="mt-2 text-xs font-semibold text-amber-700">Min. bill: {money(c.min_bill_amount)} (staff reminder only, not auto-checked)</p>}
+                {c.entry_reward_pct > 0 && <p className="mt-1 text-xs font-semibold text-indigo-700"><Ticket size={12} className="mr-1 inline"/>{c.entry_reward_pct}% instant coupon on every QR entry</p>}
                 {c.notes && <p className="mt-2 text-xs text-slate-500">{c.notes}</p>}
                 <div className="mt-3 flex gap-2">
                   <button onClick={() => setLdCampaignFilter(ldCampaignFilter === c.id ? "" : c.id)} className="flex-1 rounded-lg bg-slate-900 px-3 py-2 text-xs font-bold text-white hover:bg-slate-800">{ldCampaignFilter === c.id ? "Clear filter" : "View entries"}</button>
@@ -599,21 +884,30 @@ export default function CustomerCRM() {
           <div className="overflow-x-auto">
             <table className="w-full min-w-[900px] text-left text-sm">
               <thead className="bg-slate-50 text-xs font-bold uppercase text-slate-500">
-                <tr><th className="px-5 py-3">Customer</th><th className="px-5 py-3">Contact</th><th className="px-5 py-3">Profession</th><th className="px-5 py-3">Bill no.</th><th className="px-5 py-3">Campaign</th>{isHq && <th className="px-5 py-3">Store</th>}<th className="px-5 py-3">Entered by</th><th className="px-5 py-3"></th></tr>
+                <tr><th className="px-5 py-3">Customer</th><th className="px-5 py-3">Contact</th><th className="px-5 py-3">Profession</th><th className="px-5 py-3">Bill no.</th><th className="px-5 py-3">Campaign</th>{isHq && <th className="px-5 py-3">Store</th>}<th className="px-5 py-3">Entered by</th><th className="px-5 py-3">Slip</th><th className="px-5 py-3"></th></tr>
               </thead>
               <tbody>
-                {filteredEntries.map((e) => (
-                  <tr key={e.id} className="border-t border-slate-100">
+                {filteredEntries.map((e) => {
+                  const isQr = e.source === "QR_SELF_ENTRY";
+                  const needsPrint = isQr && !e.printed;
+                  return (
+                  <tr key={e.id} className={`border-t border-slate-100 ${needsPrint ? "bg-amber-50/50" : ""}`}>
                     <td className="px-5 py-3"><p className="font-bold text-slate-900">{e.customer_name}</p><p className="text-xs text-slate-500">{e.address}</p></td>
-                    <td className="px-5 py-3 text-slate-700">{e.contact_no || "-"}</td>
+                    <td className="px-5 py-3 text-slate-700"><p>{e.contact_no || "-"}</p>{e.email && <p className="text-xs text-slate-500">{e.email}</p>}</td>
                     <td className="px-5 py-3 text-slate-700">{e.profession || "-"}</td>
                     <td className="px-5 py-3 font-semibold text-slate-900">{e.bill_no}</td>
                     <td className="px-5 py-3 text-slate-700">{e.campaign_name}</td>
                     {isHq && <td className="px-5 py-3 text-slate-700">{e.store_name || "HQ"}</td>}
                     <td className="px-5 py-3 text-xs text-slate-500">{e.entered_by_name || "-"}</td>
+                    <td className="px-5 py-3">
+                      {!isQr && <span className="text-xs font-semibold text-slate-400">Counter slip</span>}
+                      {isQr && needsPrint && <button onClick={() => setPrintSlip(e)} className="rounded-lg bg-amber-500 px-3 py-1.5 text-xs font-bold text-white hover:bg-amber-600">Needs printing</button>}
+                      {isQr && !needsPrint && <span className="text-xs font-bold text-emerald-600">Printed</span>}
+                    </td>
                     <td className="px-5 py-3"><button onClick={() => removeEntry(e.id)} className="rounded-lg border border-rose-200 px-3 py-1.5 text-xs font-bold text-rose-600 hover:bg-rose-50">Remove</button></td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
             {!filteredEntries.length && <p className="p-8 text-center text-sm font-semibold text-slate-500">No entries yet.</p>}
@@ -652,13 +946,69 @@ export default function CustomerCRM() {
     );
   };
 
+  const renderCoupons = () => {
+    const isHq = data.scope?.scope === "hq";
+    return (
+      <div className="space-y-5">
+        <div className="crm-card overflow-hidden">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 p-5">
+            <div><h2 className="text-lg font-bold text-slate-900">Coupons</h2><p className="text-sm text-slate-500">Percentage-off codes. There's no automatic checkout step yet — staff apply the discount by hand, then mark it redeemed here.</p></div>
+            {isHq && <button onClick={() => setCouponModal({})} className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-bold text-white hover:bg-indigo-700"><Plus size={16} className="inline"/> New coupon</button>}
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[820px] text-left text-sm">
+              <thead className="bg-slate-50 text-xs font-bold uppercase text-slate-500">
+                <tr><th className="px-5 py-3">Code</th><th className="px-5 py-3">Discount</th><th className="px-5 py-3">Min. bill</th><th className="px-5 py-3">Issued to</th><th className="px-5 py-3">Status</th><th className="px-5 py-3"></th></tr>
+              </thead>
+              <tbody>
+                {coupons.map((c) => (
+                  <tr key={c.id} className="border-t border-slate-100">
+                    <td className="px-5 py-3 font-bold text-slate-900">{c.code}</td>
+                    <td className="px-5 py-3 text-slate-700">{c.discount_pct}%</td>
+                    <td className="px-5 py-3 text-slate-700">{c.min_bill_amount > 0 ? money(c.min_bill_amount) : "-"}</td>
+                    <td className="px-5 py-3 text-slate-700">{c.customer_name || c.contact_no ? `${c.customer_name || ""} ${c.contact_no || ""}`.trim() : "Anyone (general code)"}</td>
+                    <td className="px-5 py-3"><span className={`rounded-full px-3 py-1 text-[11px] font-bold uppercase ${c.status === "ACTIVE" ? "bg-emerald-100 text-emerald-700" : c.status === "REDEEMED" ? "bg-slate-200 text-slate-600" : "bg-rose-100 text-rose-700"}`}>{c.status}</span></td>
+                    <td className="px-5 py-3">{isHq && c.status === "ACTIVE" && <button onClick={() => toggleCouponStatus(c.id, "DISABLED")} className="text-xs font-bold text-rose-600 underline hover:text-rose-800">Disable</button>}{isHq && c.status === "DISABLED" && <button onClick={() => toggleCouponStatus(c.id, "ACTIVE")} className="text-xs font-bold text-slate-500 underline hover:text-slate-700">Reactivate</button>}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {!coupons.length && <p className="p-8 text-center text-sm font-semibold text-slate-500">No coupons yet.</p>}
+          </div>
+        </div>
+
+        <div className="crm-card p-5">
+          <h2 className="text-base font-bold text-slate-900"><Ticket size={16} className="mr-1 inline text-indigo-600"/> Check a code at the counter</h2>
+          <p className="mb-3 text-sm text-slate-500">Look up a code the customer gives you, apply the discount on the bill yourself, then mark it redeemed here.</p>
+          <div className="flex gap-2">
+            <input className="crm-input uppercase" value={couponLookupCode} onChange={(e) => setCouponLookupCode(e.target.value.toUpperCase())} placeholder="e.g. SAVE-A1B2C3" />
+            <button onClick={checkCouponCode} disabled={couponLookupBusy} className="whitespace-nowrap rounded-xl bg-slate-900 px-4 py-2 text-sm font-bold text-white hover:bg-slate-800 disabled:opacity-50">{couponLookupBusy ? "Checking..." : "Check"}</button>
+          </div>
+          {couponLookupResult && (couponLookupResult.found ? (
+            <div className="mt-4 rounded-xl border border-slate-200 p-4">
+              {couponLookupResult.coupon.status === "ACTIVE" ? (
+                <>
+                  <p className="text-sm font-bold text-emerald-700">Valid — {couponLookupResult.coupon.discount_pct}% off{couponLookupResult.coupon.min_bill_amount > 0 ? ` on bills over ${money(couponLookupResult.coupon.min_bill_amount)}` : ""}.</p>
+                  {couponLookupResult.coupon.customer_name && <p className="mt-1 text-xs text-slate-500">Issued to {couponLookupResult.coupon.customer_name}{couponLookupResult.coupon.contact_no ? ` (${couponLookupResult.coupon.contact_no})` : ""}</p>}
+                  <button onClick={() => redeemCoupon(couponLookupResult.coupon.id)} className="mt-3 rounded-lg bg-emerald-600 px-4 py-2 text-xs font-bold text-white hover:bg-emerald-700">I've applied the discount — mark redeemed</button>
+                </>
+              ) : (
+                <p className="text-sm font-bold text-rose-600">This code is {couponLookupResult.coupon.status.toLowerCase()} and cannot be used.</p>
+              )}
+            </div>
+          ) : <p className="mt-4 text-sm text-slate-500">No coupon found with that code.</p>)}
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="crm-shell">
       <style>{styles}</style>
       <div className="crm-layout flex min-h-screen">
         <aside className="crm-sidebar p-5 text-white">
           <div className="rounded-2xl border border-white/10 bg-white/10 p-4"><p className="text-[11px] font-bold uppercase tracking-widest text-teal-200">RMS Growth</p><h1 className="mt-1.5 text-xl font-bold">Customer CRM</h1><p className="mt-1.5 text-xs text-teal-50/80">Profiles, loyalty signals, follow-ups and feedback in one customer view.</p></div>
-          <nav className="mt-4 space-y-1.5">{tabs.map(({ key, label, icon: Icon }) => <button key={key} onClick={() => setActive(key)} className={`flex w-full items-center gap-3 rounded-xl px-4 py-2.5 text-left text-sm transition ${active === key ? "bg-white font-bold text-slate-900 shadow" : "font-semibold text-white/85 hover:bg-white/10"}`}><Icon size={18}/><span>{label}</span></button>)}</nav>
+          <nav className="mt-4 space-y-1.5">{visibleTabs.map(({ key, label, icon: Icon }) => <button key={key} onClick={() => setActive(key)} className={`flex w-full items-center gap-3 rounded-xl px-4 py-2.5 text-left text-sm transition ${active === key ? "bg-white font-bold text-slate-900 shadow" : "font-semibold text-white/85 hover:bg-white/10"}`}><Icon size={18}/><span>{label}</span></button>)}</nav>
           <button onClick={logoutOrReturnToDepartmentSelector} className="mt-6 w-full rounded-xl bg-rose-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-rose-700">Logout</button>
         </aside>
         <main className="crm-main min-w-0 flex-1 p-6">
@@ -678,13 +1028,15 @@ export default function CustomerCRM() {
             <Stat label="Pending follow-ups" value={loading ? "..." : data.stats.pending_followups || 0} helper="Callbacks and reminders" icon={BellRing} color="bg-violet-50 text-violet-600" />
           </section>
           <section className="mt-5 rounded-xl border border-indigo-100 bg-indigo-50/60 p-4 text-sm text-indigo-900"><Sparkles size={16} className="mr-2 inline"/><b>Workflow:</b> cashier captures customer mobile during billing to CRM profile/history to marketing segments to WhatsApp/SMS/email follow-up to customer feedback history.</section>
-          <section className="mt-5">{active === "customers" && renderCustomers()}{active === "followups" && renderFollowups()}{active === "feedback" && renderFeedback()}{active === "segments" && renderSegments()}{active === "luckydraw" && renderLuckyDraw()}</section>
+          <section className="mt-5">{active === "customers" && renderCustomers()}{active === "followups" && renderFollowups()}{active === "feedback" && renderFeedback()}{active === "segments" && renderSegments()}{active === "luckydraw" && renderLuckyDraw()}{active === "coupons" && renderCoupons()}</section>
         </main>
       </div>
       {customerModal && <CustomerModal initial={customerModal.id ? customerModal : null} onClose={() => setCustomerModal(null)} onSave={saveCustomer} />}
       {campaignModal && <CampaignModal onClose={() => setCampaignModal(null)} onSave={createCampaign} />}
       {entryModal && <LuckyDrawEntryModal campaigns={luckyDraw.campaigns || []} defaultCampaignId={ldCampaignFilter} onClose={() => setEntryModal(null)} onSave={saveEntry} />}
       {drawModal && <DrawModal campaign={drawModal.campaign} isHq={data.scope?.scope === "hq"} defaultRedo={drawModal.defaultRedo} onClose={() => setDrawModal(null)} onSave={runDraw} />}
+      {printSlip && <PrintSlipModal entry={printSlip} onClose={() => setPrintSlip(null)} onPrinted={markPrinted} />}
+      {couponModal && <CouponModal onClose={() => setCouponModal(null)} onSave={createCoupon} />}
     </div>
   );
 }

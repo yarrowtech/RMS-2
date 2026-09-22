@@ -55,6 +55,7 @@ import VendorSetPassword from "./components/Merchandiser_Seller/VendorSetPasswor
 
 import POPublicView from "./components/Popublicview.jsx";
 import JobWorkOrderPublicView from "./components/JobWorkOrderPublicView.jsx";
+import LuckyDrawPublicEntry from "./components/LuckyDrawPublicEntry.jsx";
 import InvoicePublicView from "./components/InvoicePublicView.jsx";
 import StoreOwnerDashboard from "./components/StoreOwner/StoreOwnerDashboard.jsx";
 import StorePurchasing from "./components/StoreOwner/StorePurchasing.jsx";
@@ -160,6 +161,7 @@ export default function App() {
         <Route path="/po-view/:token" element={<POPublicView />} />
         <Route path="/invoice/:token" element={<InvoicePublicView />} />
         <Route path="/job-work-view/:token" element={<JobWorkOrderPublicView />} />
+        <Route path="/lucky-draw-scan/:token" element={<LuckyDrawPublicEntry />} />
         <Route path="/production-display/:token" element={<PublicWorkstationDisplay />} />
         
         
