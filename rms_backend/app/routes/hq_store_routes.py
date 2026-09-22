@@ -588,7 +588,7 @@ from ..models import AdminCreate
 HQ_ONLY_DEPARTMENTS = [
     "Merchandiser Buyer", "Logistics", "IT", "Design & Pattern",
     "Stock Planning & Forecasting", "Third Party", "Production & Job Work",
-    "Forecast & Analytics", "Marketing", "Customer CRM",
+    "Forecast & Analytics", "Marketing",
 ]
 
 # Departments that ONLY make sense at a single store (no HQ equivalent).
@@ -602,8 +602,13 @@ STORE_ONLY_DEPARTMENTS = [
 # the identical department string "Inventory". Which one they are is
 # determined by the explicit `scope` field + `store_id` at creation time,
 # not by which checkbox they ticked.
+#
+# Customer CRM joined this list so a store can run its own Lucky Draw and
+# capture its own customer follow-ups/feedback at the counter — the routes
+# already scope everything by store_id once an admin has this department,
+# so no route logic needed to change, only where this string is allowed.
 SHARED_DEPARTMENTS = [
-    "Inventory", "Finance", "HR",
+    "Inventory", "Finance", "HR", "Customer CRM",
 ]
 
 HQ_DEPARTMENTS    = HQ_ONLY_DEPARTMENTS + SHARED_DEPARTMENTS
@@ -630,10 +635,11 @@ HQ_PERMISSIONS = [
 # deps.py enforces whatever ends up actually saved, regardless of how it
 # got there.
 STORE_DEPARTMENT_DEFAULT_PERMISSIONS = {
-    "Cashier":   ["cashier", "sales"],
-    "Inventory": ["store_stock", "stock_ledger", "stock_adjustment", "stock_transfer", "grc", "grn"],
-    "Finance":   ["finance", "reports"],
-    "HR":        ["hr"],
+    "Cashier":      ["cashier", "sales"],
+    "Inventory":    ["store_stock", "stock_ledger", "stock_adjustment", "stock_transfer", "grc", "grn"],
+    "Finance":      ["finance", "reports"],
+    "HR":           ["hr"],
+    "Customer CRM": ["customer_crm"],
 }
 
 

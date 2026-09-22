@@ -26,6 +26,59 @@ queries:["Select the affected design, category and priority.","Describe one clea
 changes:["Record reason, previous spec, new spec, and material/cost/delivery impact.","The system identifies affected open job orders.","Production accepts/rejects and acknowledges; accepted changes require a new controlled version."],
 reports:["Review release rate, sample cost and revisions.","Balance work using Designer Workload and Deadline Calendar.","Compare target, BOM material and sample cost with matched sales units."]
 };
+// Per-button reference: what each button on a tab actually does, and when
+// (not) to use it. Kept separate from GUIDES (the 3-step workflow order)
+// since this is about individual buttons, not sequence.
+const BUTTON_GUIDES = {
+  themes: [
+    ["+ New theme", "Starts a new collection/theme record.", "Use once per season/collection direction.", "Don't create a second theme for a direction that already exists — edit the draft instead."],
+    ["Edit", "Changes any field while still deciding (Draft only).", "Use freely before Approve.", "Not available once Approved — that's intentional, so a locked reference can't quietly change under Production."],
+    ["Approve", "Permanently locks the creative direction; Production can then source fabric against it.", "Use only when the direction is truly final.", "There is no \"unapprove\" — don't approve early just to unblock someone; create the theme as Draft until it's really settled."],
+    ["Delete", "Removes an unused Draft theme.", "Use to clean up a draft that was never used.", "Blocked automatically once any project or Tech Pack links to it — you can't delete a theme that's actually in use."],
+  ],
+  projects: [
+    ["+ New project / New design", "Creates one master record per style.", "Use the same Design No. everywhere for that style.", "Don't create a second project for a design that already exists — find it and update its status instead."],
+    ["Status dropdown", "Moves the project's lifecycle stage by hand (Idea → ... → Released to Production).", "Use to keep the pipeline view accurate as work progresses.", "This is a visibility flag only — it doesn't release anything to Production. Do the actual release from Production Handoff, with its approvals."],
+    ["Pattern / Sample / Query buttons", "Jump straight to adding a pattern, sample or query already scoped to this project.", "Use instead of re-selecting the project by hand in those tabs.", ""],
+  ],
+  patterns: [
+    ["+ Add pattern", "Creates the first pattern/grading version for a project.", "Use once per project to start pattern work.", ""],
+    ["Revise", "Creates a NEW version (v2, v3…) rather than editing the old one.", "Use for any change to sizing, grading or consumption.", "There is no plain \"Edit\" for a saved pattern by design — this keeps historical grading intact for anything already cut against an earlier version. Don't try to work around it; always revise."],
+  ],
+  artwork: [
+    ["+ Add artwork", "Creates a new print/embroidery/placement reference.", "Use for a new design.", ""],
+    ["Edit", "Changes the record in place — artwork has no version lock like Tech Packs or Patterns.", "Use for small corrections.", "For a real creative change, consider a new artwork record instead so the old placement stays on file for anything already produced with it."],
+  ],
+  samples: [
+    ["Review sample", "Logs a new sample round: type, quantity, cost, due date.", "Use each time a new physical sample is requested.", ""],
+    ["Decision filter", "Filters the list shown on screen only.", "Use to find samples by decision.", "Changes nothing on any record."],
+    ["Edit / decision", "Records the fit/construction result and the decision once the sample is back.", "Use as soon as a sample round is reviewed.", "\"Approved\" is what satisfies Production Handoff's sample gate (when that gate is turned on in Settings) — don't mark Approved before it's actually been checked."],
+  ],
+  techpacks: [
+    ["+ Create tech pack", "Creates one tech pack for a Design No.", "Use once per design; use the exact Design No.", ""],
+    ["View", "Read-only preview.", "Safe to use anytime.", ""],
+    ["Edit", "Changes any field (Draft only).", "Use freely before release.", "Disabled once Released — protects the exact spec Production is already building against."],
+    ["Delete", "Removes an unused Draft pack.", "Use to clean up a draft never used.", "Blocked once a job order already references it, and never available once Released."],
+    ["Release", "Releases a Draft pack straight to Production, skipping Production Handoff's approval screen.", "Use ONLY for a design with no Design Project to route it through — e.g. it already sold in an earlier season, before this pack was tracked here.", "If a Design Project for this design exists, use Production Handoff instead so the real sign-off gets recorded. Don't use this as a shortcut to skip approvals on a design that's genuinely still under review — it's blocked automatically when a matching project exists, but still needs a written reason every time."],
+    ["Download PDF", "Exports the pack for sharing outside RMS.", "Safe anytime, any status.", ""],
+    ["Use in job order", "Jumps to Production Handoff with this pack pre-selected.", "Use to move straight to releasing it.", "Doesn't release anything by itself — Handoff still applies its own gates."],
+  ],
+  handoff: [
+    ["Approve (Design Head)", "Records one sign-off on the project.", "Use when a Design Head has actually reviewed it.", "This alone doesn't release anything — it just clears one of the configured gates."],
+    ["Release", "The real release: locks the selected Tech Pack as Production's reference, and optionally creates/links a BOM.", "Enabled once every gate this tenant has turned on (sample, Design Head, feasibility) is satisfied.", "Once released, the Tech Pack is locked — further changes need a new version, not an edit."],
+    ["Override", "Releases anyway when a gate is missing, with a mandatory written reason saved permanently on the record.", "Use for a genuine, explainable exception — e.g. urgent reorder of an already-proven style.", "Don't use this as a habit to skip approvals — the reason is kept as a permanent audit note, and it's meant to stand out precisely because it's an exception."],
+  ],
+  queries: [
+    ["Raise query", "Logs a technical question for Production to see.", "Use for a clarification, not a spec change.", "If the released spec itself needs to change, use Change Control instead."],
+    ["Resolve", "Writes the answer and closes the query.", "Use once you have a real answer.", ""],
+  ],
+  changes: [
+    ["Change request", "Records a spec change after release, with its material/cost/delivery impact.", "Use for a real change to something already released — RMS lists every open job order it affects.", ""],
+    ["Accept / Reject", "Not done here — Production decides and acknowledges change requests from their own Production & Job Work screen.", "Check there for the decision.", "Don't look for an accept/reject button in this tab; it doesn't exist here by design, since Production is the one whose work is affected."],
+  ],
+};
+function ButtonGuide({tab}){const rows=BUTTON_GUIDES[tab]||[];if(!rows.length)return null;return <details className="mb-5 overflow-hidden rounded-2xl border border-slate-200 bg-white"><summary className="flex cursor-pointer list-none items-center gap-2 px-5 py-3 text-xs font-bold uppercase tracking-wide text-slate-500 hover:bg-slate-50"><BookOpen className="h-3.5 w-3.5"/>What each button does</summary><div className="divide-y divide-slate-100 border-t border-slate-100">{rows.map(([name,what,use,avoid])=><div key={name} className="grid gap-2 p-4 sm:grid-cols-[160px_1fr] sm:gap-4"><p className="text-sm font-black text-slate-900">{name}</p><div className="space-y-1 text-sm leading-6 text-slate-600"><p>{what}</p><p><span className="font-bold text-emerald-700">Use when:</span> {use}</p>{avoid&&<p><span className="font-bold text-rose-700">Don't:</span> {avoid}</p>}</div></div>)}</div></details>}
+
 const SUBTITLES = {
   dashboard: "Live status across the design-to-production pipeline.",
   research: "Season, market and trend references for design projects.",
@@ -55,13 +108,13 @@ const DP_UI_STYLES = `
   .dp-workspace .dp-header { background: rgba(255,255,255,.9); border-bottom: 1px solid #e2e8f0; backdrop-filter: blur(12px); }
 `;
 const DEPARTMENTS = ["Men", "Women", "Kids Boys", "Kids Girls", "Infant", "Accessories", "Other"];
-const DEFAULT_SETTINGS = { departments: DEPARTMENTS, sample_types: ["Proto sample", "Development sample", "Fit sample", "Size-set sample", "Print / embroidery sample", "Wash sample", "Pre-production sample", "Production sample"], default_base_size: "M", default_size_run: "S, M, L, XL", default_wastage_pct: 5, require_sample_approval: true, require_design_head_approval: true, require_production_feasibility: true };
+const DEFAULT_SETTINGS = { departments: DEPARTMENTS, sample_types: ["Proto sample", "Development sample", "Fit sample", "Size-set sample", "Print / embroidery sample", "Wash sample", "Pre-production sample", "Production sample"], default_base_size: "M", default_size_run: "S, M, L, XL", allowance_limits:{PATTERN:{value:7,unit:"inches"},LAYERING:{value:7,unit:"inches_per_lay"},CUTTING:{value:5,unit:"percent"},STITCHING:{value:2,unit:"percent"},FINISHING:{value:2,unit:"percent"}}, require_sample_approval: true, require_design_head_approval: true, require_production_feasibility: true };
 const PROJECT_STATUSES = ["IDEA", "IN_DEVELOPMENT", "PATTERN_DEVELOPMENT", "SAMPLE_DEVELOPMENT", "REVISION_REQUIRED", "AWAITING_APPROVAL", "APPROVED_FOR_PRODUCTION", "ON_HOLD", "REJECTED", "ARCHIVED"];
 const SAMPLE_TYPES = ["Proto sample", "Development sample", "Fit sample", "Size-set sample", "Print / embroidery sample", "Wash sample", "Pre-production sample", "Production sample"];
 const DECISIONS = ["PENDING", "APPROVED", "APPROVED_WITH_COMMENTS", "REVISION_REQUIRED", "REJECTED", "RESAMPLE_REQUIRED"];
 const emptyProject = { design_no:"", style_name:"", department:"Women", category:"", theme_id:"", theme:"", collection:"", season:"", designer:"", target_customer:"", target_cost:"", planned_quantity:"", launch_date:"", priority:"MEDIUM", description:"", moodboard_urls:"", document_urls:"" };
 const emptyTheme = { id:"", theme_name:"", collection:"", season:"", department:"Women", target_customer:"", target_date:"", creative_direction:"", palette:"", moodboard_urls:"", document_urls:"" };
-const emptyPattern = { project_id:"", pattern_no:"", pattern_name:"", version:"v1", base_size:"M", sizes:"S, M, L, XL", fabric_width:"", consumption_per_unit:"", wastage_pct:"5", marker_length:"", marker_efficiency:"", seam_allowance:"", shrinkage_allowance:"", measurement_rows:"", file_urls:"", notes:"", base_block:"", seam_types:[], closure_types:[], dart_pleat_tuck_details:[], hem_finishes:[] };
+const emptyPattern = { project_id:"", pattern_no:"", pattern_name:"", version:"v1", base_size:"M", sizes:"S, M, L, XL", fabric_width:"", consumption_per_unit:"", wastage_pct:"", marker_length:"", marker_efficiency:"", seam_allowance:"", shrinkage_allowance:"", measurement_rows:"", file_urls:"", notes:"", base_block:"", seam_types:[], closure_types:[], dart_pleat_tuck_details:[], hem_finishes:[] };
 // Fallback if /pattern-vocabulary hasn't loaded yet — kept in sync with
 // PATTERN_VOCABULARY in design_pattern_routes.py.
 const DEFAULT_PATTERN_VOCABULARY = {
@@ -225,7 +278,7 @@ export default function DesignPattern(){
   const cfg = settings || DEFAULT_SETTINGS;
   const deptOptions = cfg.departments?.length ? cfg.departments : DEPARTMENTS;
   const sampleTypeOptions = cfg.sample_types?.length ? cfg.sample_types : DEFAULT_SETTINGS.sample_types;
-  const startPattern=(id="")=>{setPatternForm({...emptyPattern,project_id:id,base_size:cfg.default_base_size||emptyPattern.base_size,sizes:cfg.default_size_run||emptyPattern.sizes,wastage_pct:String(cfg.default_wastage_pct ?? emptyPattern.wastage_pct)});setCustomVocabInput({base_block:"",seam_types:"",closure_types:"",dart_pleat_tuck_details:"",hem_finishes:""});setModal("pattern");};
+  const startPattern=(id="")=>{setPatternForm({...emptyPattern,project_id:id,base_size:cfg.default_base_size||emptyPattern.base_size,sizes:cfg.default_size_run||emptyPattern.sizes,wastage_pct:""});setCustomVocabInput({base_block:"",seam_types:"",closure_types:"",dart_pleat_tuck_details:"",hem_finishes:""});setModal("pattern");};
   const openFor=(kind,id)=>{if(kind==="pattern")return startPattern(id);if(kind==="sample")setSampleForm({...emptySample,project_id:id,sample_type:sampleTypeOptions[1]||sampleTypeOptions[0]});if(kind==="query")setQueryForm({...emptyQuery,project_id:id});setModal(kind);};
   const updateStatus=async(project,status)=>{try{await api(`/projects/${project.id}`,{method:"PATCH",body:JSON.stringify({status})});setNotice(`${project.design_no} updated.`);await load();}catch(e){setError(e.message);}};
   const approveTheme=async(theme)=>{if(!window.confirm(`Approve "${theme.theme_name}"? Its creative direction will be locked and released to Production.`))return;try{const result=await api(`/themes/${theme.id}/approve`,{method:"POST"});setNotice(result.message);await load();}catch(e){setError(e.message);}};
@@ -277,6 +330,7 @@ export default function DesignPattern(){
       <div className="mx-auto w-full max-w-[1540px] p-4 sm:p-6 lg:p-9">
         {notice&&<div className="mb-4 rounded-2xl border border-emerald-200 bg-emerald-50 p-3 text-sm font-bold text-emerald-800">✓ {notice}</div>}{error&&<div className="mb-4 flex gap-2 rounded-2xl border border-rose-200 bg-rose-50 p-3 text-sm font-bold text-rose-800"><AlertCircle className="h-5 w-5 shrink-0"/>{error}</div>}
       {GUIDES[active]&&<TabGuide tab={active}/>}
+      {BUTTON_GUIDES[active]&&<ButtonGuide tab={active}/>}
       {active==="settings"&&<SettingsPanel key={settings?"ready":"loading"} settings={settings} onSaved={(d,m)=>{setSettings(d);setNotice(m||"Settings saved.");setError("");}} onError={setError}/>}
       {active!=="settings"&&(loading?<div className="p-20 text-center text-slate-400">Loading Design & Pattern workspace…</div>:<>
         {active==="dashboard"&&<div className="space-y-5">
@@ -347,7 +401,7 @@ export default function DesignPattern(){
             {key:"version",label:"Version"},{key:"base_size",label:"Base"},
             {key:"base_block",label:"Block",render:r=>r.base_block||"—"},
             {key:"graded",label:"Graded pts",align:"right",render:r=>r.measurement_rows?.length||0},
-            {key:"consumption_per_unit",label:"Consumption",align:"right"},{key:"wastage_pct",label:"Wastage %",align:"right"},
+            {key:"consumption_per_unit",label:"Consumption",align:"right"},{key:"wastage_pct",label:"Manual cutting wastage %",align:"right",render:r=>r.wastage_pct||"—"},
             {key:"status",label:"Status",render:r=><Badge value={r.status}/>},
             {key:"act",label:"",align:"right",render:r=><button onClick={()=>{setRevisionForm({id:r.id,version:`v${(Number(String(r.version).replace(/\D/g,""))||1)+1}`,reason:""});setModal("revision");}} className={`${BTN_SUBTLE} !px-2 !py-1 text-xs`}>Revise</button>},
           ]} rows={data.patterns} empty="No pattern versions yet."/>
@@ -475,7 +529,7 @@ function SettingsPanel({settings,onSaved,onError}){
     sample_types:(base.sample_types||[]).join("\n"),
     default_base_size:base.default_base_size||"M",
     default_size_run:base.default_size_run||"S, M, L, XL",
-    default_wastage_pct:String(base.default_wastage_pct??5),
+    allowance_limits:{...DEFAULT_SETTINGS.allowance_limits,...(base.allowance_limits||{})},
     require_sample_approval:base.require_sample_approval!==false,
     require_design_head_approval:base.require_design_head_approval!==false,
     require_production_feasibility:base.require_production_feasibility!==false,
@@ -490,7 +544,7 @@ function SettingsPanel({settings,onSaved,onError}){
         sample_types:form.sample_types.split("\n").map(value=>value.trim()).filter(Boolean),
         default_base_size:form.default_base_size.trim(),
         default_size_run:form.default_size_run.trim(),
-        default_wastage_pct:Number(form.default_wastage_pct)||0,
+        allowance_limits:form.allowance_limits,
         require_sample_approval:form.require_sample_approval,
         require_design_head_approval:form.require_design_head_approval,
         require_production_feasibility:form.require_production_feasibility,
@@ -514,23 +568,26 @@ function SettingsPanel({settings,onSaved,onError}){
       <div className="grid gap-4 sm:grid-cols-3">
         <StatCard label="Departments" value={form.departments.split("\n").filter(Boolean).length} accent="violet"/>
         <StatCard label="Sample stages" value={form.sample_types.split("\n").filter(Boolean).length} accent="cyan"/>
-        <StatCard label="Pattern default" value={`${form.default_base_size||"—"} · ${form.default_wastage_pct||0}%`} accent="emerald" hint="base size · wastage"/>
+        <StatCard label="Pattern base size" value={form.default_base_size||"—"} accent="emerald" hint="No automatic wastage"/>
       </div>
       <div className="grid gap-5 lg:grid-cols-2">
         <label className="block"><span className={labelClass}>Product departments <span className="font-semibold normal-case text-slate-400">— one per line</span></span><textarea rows="8" value={form.departments} onChange={event=>set("departments",event.target.value)} className={box}/><span className="mt-1 block text-xs text-slate-400">Used by Design Projects and Research &amp; Mood Boards.</span></label>
         <label className="block"><span className={labelClass}>Sample types <span className="font-semibold normal-case text-slate-400">— one per line</span></span><textarea rows="8" value={form.sample_types} onChange={event=>set("sample_types",event.target.value)} className={box}/><span className="mt-1 block text-xs text-slate-400">Used when recording sample requests and approvals.</span></label>
       </div>
-      <div className="grid gap-4 sm:grid-cols-3">
+      <div className="grid gap-4 sm:grid-cols-2">
         <label className="block"><span className={labelClass}>Default base size</span><input value={form.default_base_size} onChange={event=>set("default_base_size",event.target.value)} className={box}/></label>
         <label className="block"><span className={labelClass}>Default size run</span><input value={form.default_size_run} onChange={event=>set("default_size_run",event.target.value)} className={box}/></label>
-        <label className="block"><span className={labelClass}>Default wastage %</span><input type="number" min="0" max="100" value={form.default_wastage_pct} onChange={event=>set("default_wastage_pct",event.target.value)} className={box}/></label>
+      </div>
+      <div className="space-y-3 rounded-2xl border border-violet-200 bg-violet-50/50 p-4">
+        <div><p className={labelClass}>Manual allowance exception limits</p><p className="text-xs leading-5 text-slate-500">These numbers never add wastage automatically. They only decide when a manually entered Tech Pack allowance must be approved by HQ.</p></div>
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">{Object.entries(form.allowance_limits||{}).map(([process,rule])=><label key={process} className="block"><span className={labelClass}>{pretty(process)}</span><div className="flex"><input type="number" min="0" step="0.01" value={rule.value} onChange={event=>setForm(current=>({...current,allowance_limits:{...current.allowance_limits,[process]:{...rule,value:Number(event.target.value)||0}}}))} className={box}/><span className="ml-1 grid min-w-20 place-items-center rounded-xl border border-slate-200 bg-white px-2 text-[10px] font-bold text-slate-500">{String(rule.unit||"").replaceAll("_"," / ")}</span></div></label>)}</div>
       </div>
       <div className="space-y-2 rounded-2xl border border-slate-200 p-4">
         <p className={labelClass}>Production handoff gates</p>
         <p className="text-xs text-slate-400">Which sign-offs a design needs before it can be released to Production. Turn off what your shop doesn't do — a design-owned Tech Pack can still always be released without them via "Release without sign-off".</p>
         {[["require_sample_approval","Require an approved sample"],["require_design_head_approval","Require Design Head approval"],["require_production_feasibility","Require Production feasibility approval"]].map(([key,label])=><label key={key} className="flex items-center gap-2 text-sm font-semibold text-slate-700"><input type="checkbox" checked={form[key]} onChange={event=>set(key,event.target.checked)}/>{label}</label>)}
       </div>
-      <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900"><b>Safe default behavior:</b> these values prefill new records only. Existing projects, approved patterns and released production references are never rewritten.</div>
+      <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900"><b>Safe additive behavior:</b> existing projects, saved pattern wastage and released production references are never rewritten. New wastage and allowances are always entered manually.</div>
       <div className="flex justify-end border-t border-slate-100 pt-5"><button type="button" onClick={save} disabled={saving} className={BTN_PRIMARY}>{saving?"Saving…":"Save workflow defaults"}</button></div>
     </section>}
   </div>;
@@ -645,4 +702,3 @@ function FloorOpsView({section,setSection,depts,workers,logs,kpis,filters,setFil
   </div>;
 }
 function KpiTable({title,rows}){return <Panel title={title} subtitle="Efficiency = completed/target · rework & rejection = % of completed.">{rows?.length?rows.map(r=><div key={r.key} className="flex items-center justify-between gap-2 rounded-xl border p-3 text-sm"><b className="truncate">{r.key}</b><span className="shrink-0 text-xs font-bold text-slate-500">{r.entries} entr{r.entries===1?"y":"ies"} · Eff {r.efficiency_pct!=null?`${r.efficiency_pct}%`:"—"} · Rej {r.rejection_pct!=null?`${r.rejection_pct}%`:"—"}</span></div>):<Empty>No data.</Empty>}</Panel>}
-

@@ -153,6 +153,53 @@ function TabGuide({ activeStep }) {
   const steps = TAB_GUIDES[activeStep] || [];
   return <details open className="mb-4 overflow-hidden rounded-2xl border border-indigo-200 bg-white/90 shadow-sm"><summary className="cursor-pointer bg-indigo-50 px-5 py-3 text-sm font-black text-indigo-950">How to use this tab · What comes next</summary><div className="grid gap-3 p-4 md:grid-cols-3">{steps.map((step, index) => <div key={step} className="flex gap-2 rounded-xl bg-slate-50 p-3 text-xs leading-5 text-slate-600"><b className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-indigo-600 text-white">{index + 1}</b><span>{step}</span></div>)}</div></details>;
 }
+
+// Per-button reference. "techpack" and "hybrid" have their own panel inside
+// TechPackLibrary.jsx / HybridProduction.jsx since those are self-contained
+// components; everything else lives here.
+const BUTTON_GUIDES = {
+  overview: [
+    ["Step cards (1–6)", "Jump straight to that numbered step.", "Use as a shortcut instead of the sidebar.", ""],
+    ["Job Work Orders link (in Ready-to-issue material)", "Jumps to Standalone Job Work.", "Use once you know which order to issue material against.", ""],
+  ],
+  bom: [
+    ["+ Style BOM & fabric plan", "Calculates required fabric/trim metres from garment consumption × planned quantity × wastage.", "Use once per style before buying fabric for it.", "The \"To purchase\" figure is calculated, not typed — enter per-garment consumption, not a guessed total."],
+    ["Link it", "Attaches a suggested Tech Pack (matched by style name) to this plan.", "Use when the suggestion shown is actually the right design.", ""],
+    ["Start production job", "Opens Create Job Work Order pre-filled from this plan's quantity and style.", "Use once the plan is ready to become real work.", "Doesn't issue material by itself — the order still starts as a Draft."],
+    ["Create Fabric PO", "Opens a Fabric PO draft pre-filled with this plan's material lines.", "Use once you know the supplier and rate.", "Disabled once a PO already exists for this plan — shown as \"Fabric PO created\" instead."],
+  ],
+  fabric: [
+    ["+ Buy fabric cart", "Opens the fabric purchase-order builder.", "Use to raise a supplier PO for pooled fabric demand.", "This still follows PO → GRC → GRN like any other purchase — nothing here skips receiving."],
+  ],
+  orders: [
+    ["+ New job work order", "Creates a job sent to an external cutting/stitching/embroidery partner.", "Use for one-off external processing of retailer-owned material.", "Not for purchased goods — those stay on PO/GRC/GRN. This is only for material you already own that's leaving the premises for processing."],
+    ["Issue material", "Records material as physically leaving central inventory for this order.", "Use only once the material has actually left — this reduces available stock immediately.", "Don't issue before the material physically leaves; RMS can't reverse this by itself."],
+    ["Receive work", "Reconciles what came back: used, returned, leftover, waste.", "Use when the job worker returns goods.", ""],
+    ["Run QC", "Records accepted/rejected/rework quantities on what came back, before it becomes sellable stock.", "Use before treating returned goods as finished stock.", "Only accepted quantity becomes real stock — rejected/rework stays out until resolved."],
+  ],
+  vendors: [
+    ["+ Invite vendor", "Sends an onboarding invite to a new job worker or fabric supplier.", "Use for a new partner not yet in RMS.", "A walk-in vendor can also just be typed directly on a job order — you don't have to invite everyone up front."],
+  ],
+  "po-list": [
+    ["+ Create fabric PO", "Same as Fabric Buying's cart — opens the PO builder.", "Use from whichever tab is more convenient.", "This list is view-only otherwise; edit/approve/GRN still happen in the standard Inventory/GRN screens, not here."],
+  ],
+  "design-collab": [
+    ["Send to Design", "Raises a technical query against a design, visible to Design & Pattern.", "Use for a clarification on an unclear released instruction.", "Never alter a live batch instruction informally because of an unanswered query — wait for the reply or use Change Control."],
+    ["Mark feasible", "Records Production's feasibility sign-off for a design.", "Use once you've actually checked it can be produced as specified.", "This is one of the gates Production Handoff may require before Design can release — don't mark it before checking."],
+    ["Accept change / Reject", "Decides on a Design-raised change request, with a note.", "Use once you've assessed the material/cost/delivery impact shown.", "Accepting requires a new controlled version before work continues — the old instruction stays valid until then."],
+    ["Refresh", "Reloads the query feed.", "Use to see new queries/responses.", ""],
+  ],
+  workstation: [
+    ["Batch to display", "Selects which active batch's instructions show on screen.", "Only incomplete batches are listed.", ""],
+    ["Open full screen", "Puts the display in full-screen mode for a floor TV/monitor.", "Use once a batch is selected.", ""],
+    ["Copy link", "Copies a secure, no-login link to this display for a floor LED/TV.", "Use to set up a permanent floor screen.", "Anyone with the link can view it — treat it like a floor fixture, not something to share outside the shop floor."],
+  ],
+};
+function ButtonGuide({ activeStep }) {
+  const rows = BUTTON_GUIDES[activeStep];
+  if (!rows) return null;
+  return <details className="mb-4 overflow-hidden rounded-2xl border border-slate-200 bg-white"><summary className="cursor-pointer list-none px-5 py-3 text-xs font-bold uppercase tracking-wide text-slate-500 hover:bg-slate-50">What each button does</summary><div className="divide-y divide-slate-100 border-t border-slate-100">{rows.map(([name, what, use, avoid]) => <div key={name} className="grid gap-2 p-4 sm:grid-cols-[200px_1fr] sm:gap-4"><p className="text-sm font-black text-slate-900">{name}</p><div className="space-y-1 text-sm leading-6 text-slate-600"><p>{what}</p><p><span className="font-bold text-emerald-700">Use when:</span> {use}</p>{avoid && <p><span className="font-bold text-rose-700">Don't:</span> {avoid}</p>}</div></div>)}</div></details>;
+}
 function StepSidebar({ activeStep, setActiveStep, counts }) {
   return (
     <aside className="hidden lg:flex lg:w-64 lg:shrink-0 lg:flex-col lg:gap-2">
@@ -429,6 +476,7 @@ export default function ProductionJobWork() {
 
           <div className="min-w-0 flex-1">
             <TabGuide activeStep={activeStep} />
+            <ButtonGuide activeStep={activeStep} />
             {activeStep === "overview" && (
               <OverviewPanel dashboard={dashboard} plans={plans} techPacks={techPacks} orders={orders} stock={stock} materialSummary={materialSummary} setActiveStep={setActiveStep} />
             )}

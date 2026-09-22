@@ -211,6 +211,14 @@ customer_crm_profiles_collection = db["customer_crm_profiles"]
 customer_crm_followups_collection = db["customer_crm_followups"]
 customer_crm_feedback_collection  = db["customer_crm_feedback"]
 
+# Lucky Draw — a Customer CRM sub-feature for festival slip contests (Puja,
+# Diwali, anniversary sale, etc). Deliberately its own collections, never
+# merged into sales/profiles, so a contest slip is never mistaken for a real
+# purchase record or a CRM profile edit.
+lucky_draw_campaigns_collection = db["lucky_draw_campaigns"]
+lucky_draw_entries_collection = db["lucky_draw_entries"]
+lucky_draw_results_collection = db["lucky_draw_results"]
+
 async def ensure_procurement_indexes():
     """Create the indexes required by catalogue/RFQ hot paths and idempotency."""
     await purchaseorders_collection.create_index([("tenant_id", 1), ("orderNo", 1)], name="po_tenant_number")
@@ -319,6 +327,18 @@ async def ensure_procurement_indexes():
     await customer_crm_profiles_collection.create_index([("tenant_id", 1), ("email", 1)], name="crm_profile_tenant_email")
     await customer_crm_followups_collection.create_index([("tenant_id", 1), ("status", 1), ("due_date", 1)], name="crm_followups_status_due")
     await customer_crm_feedback_collection.create_index([("tenant_id", 1), ("created_at", -1)], name="crm_feedback_tenant_created")
+    await lucky_draw_campaigns_collection.create_index([("tenant_id", 1), ("status", 1), ("created_at", -1)], name="lucky_draw_campaign_tenant_status")
+    await lucky_draw_entries_collection.create_index([("tenant_id", 1), ("campaign_id", 1), ("created_at", -1)], name="lucky_draw_entry_campaign_created")
+    await lucky_draw_entries_collection.create_index([("tenant_id", 1), ("store_id", 1), ("campaign_id", 1), ("bill_no", 1)], unique=True, name="lucky_draw_entry_bill_unique")
+    # Only one *active* (non-redone) result per campaign+store scope; a redo
+    # marks the old one superseded rather than deleting it, so the audit
+    # trail of who drew what, and why it was redone, is never lost.
+    await lucky_draw_results_collection.create_index(
+        [("tenant_id", 1), ("campaign_id", 1), ("store_id", 1)],
+        unique=True, partialFilterExpression={"superseded": False},
+        name="lucky_draw_result_active_unique",
+    )
+    await lucky_draw_results_collection.create_index([("tenant_id", 1), ("winners.entry_id", 1)], name="lucky_draw_result_winner_lookup")
     await error_logs_collection.create_index([("created_at", -1)], name="error_logs_created")
     await error_logs_collection.create_index([("resolved", 1), ("created_at", -1)], name="error_logs_resolved_created")
     await error_logs_collection.create_index([("source", 1), ("created_at", -1)], name="error_logs_source_created")

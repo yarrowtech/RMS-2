@@ -97,6 +97,89 @@ const FA_UI_STYLES = `
   @media (max-width: 900px) { .fa-workspace .fa-sidebar { width: 76px; } .fa-workspace .fa-brand-copy, .fa-workspace .fa-nav-label, .fa-workspace .fa-sidebar-note { display: none; } .fa-workspace .fa-nav-item { justify-content: center; padding-left: 0; padding-right: 0; } .fa-workspace .fa-nav-item svg { margin-right: 0; } }
 `;
 
+// What each button on a section actually does, when to use it, and when not
+// to. Keyed by the sidebar section id; "import" covers all of Data Import's
+// sub-tabs since they share one screen.
+const BUTTON_GUIDES_FA = {
+  dashboard: [
+    ["Alert banner", "Jumps to Low Stock Alerts when items are projected to run low.", "Click it to see which items and why.", "It's a shortcut, not a live count — the number comes from the last daily automation run."],
+    ["Hierarchy filters", "Narrows the \"top 5\" table to one Division/Section/Department/Design/Vendor.", "Use to check a specific area instead of the whole tenant.", "Doesn't change the alert count above it — that's always tenant-wide."],
+  ],
+  demand: [
+    ["Lookback selector", "Chooses how many days of sales history the forecast is built from (30–365).", "Use a longer window for slow-moving items, shorter for fast-moving ones.", ""],
+    ["Refresh", "Reloads the forecast for the current lookback.", "Use after a new sale or stock change to see it reflected.", "Nothing here auto-refreshes live — it's computed on load/refresh, not pushed."],
+    ["Hierarchy filters + search", "Narrows the table to a Division/Section/Department/Design/Vendor or free-text match.", "Use to review one area at a time.", "Display-only — never changes the underlying forecast, only what's shown."],
+    ["Clear filters", "Resets search and every filter dropdown.", "Use to get back to the full list.", ""],
+  ],
+  vendors: [
+    ["Search (non-Raphaaa)", "Looks up approved vendors selling a matching product/category.", "Type a product name or category first, then search.", "Only vendors with an Approved relationship to you appear — this isn't a general vendor directory."],
+    ["Result filters (non-Raphaaa)", "Narrows the search results by vendor or catalogue category.", "Use after searching.", "Changes nothing about the ranking score."],
+    ["Comparison / Periods (Raphaaa)", "Chooses which completed years or seasons the ranking is built from.", "Use at least 2 periods for a fair comparison.", ""],
+    ["Recalculate (Raphaaa)", "Re-runs the ranking for the chosen periods.", "Use after changing Comparison/Periods.", ""],
+    ["Ranking measure (Raphaaa)", "Switches what vendors are sorted by (net sales, units, discount, purchase qty/amount).", "Use to answer a different question, e.g. \"who costs us the most in discounts.\"", "There's no single blended score — changing this genuinely changes the order, it isn't cosmetic."],
+    ["Product filters (Raphaaa)", "Narrows the vendor ranking to one hierarchy group.", "Use to rank vendors within just one department, for example.", ""],
+  ],
+  purchase: [
+    ["Build plan (non-Raphaaa)", "Builds a budget-constrained purchase list for the entered ₹ budget and lookback.", "Enter a budget greater than 0 first.", "Doesn't create a PO — it's a recommendation for Procurement to act on."],
+    ["Comparison / Periods (Raphaaa)", "Chooses which completed years or winter seasons the plan compares.", "Use at least 2 periods.", ""],
+    ["Recalculate (Raphaaa)", "Re-runs the whole purchase plan for the chosen periods.", "Use after changing Comparison/Periods.", ""],
+    ["Purchase-plan filters", "Narrows every card, chart, table and CSV export below to one hierarchy/vendor/promotion/confidence group.", "Use before exporting, so the CSV matches what you're reviewing.", "This is the one screen where filters DO change the export — unlike most other filters in this department, which are display-only."],
+    ["Promotion filters (Raphaaa)", "Narrows the Promotion evidence table by promotion name/type.", "Use to check one campaign's real numbers.", ""],
+    ["Export filtered CSV", "Downloads exactly the rows currently visible after your filters.", "Use once you've filtered to what you actually want to hand to Procurement.", "Change filters first — this doesn't export everything, only what's on screen."],
+    ["Export CSV (Ageing — Raphaaa)", "Downloads the old-stock clear-out list separately from the purchase plan.", "Use to send a discount/clearance list to Merchandising.", "This stock is never included in the main purchase quantity — it's reported, not subtracted from what to buy."],
+  ],
+  alerts: [
+    ["Refresh", "Reloads the saved daily alert calculation.", "Use to confirm you're seeing today's run.", "There is no \"acknowledge\" or \"resolve\" button — an alert simply disappears once stock is replenished or the item is no longer projected to run out within 14 days."],
+    ["Alert filters", "Narrows the list by location, severity, or (Raphaaa) hierarchy/vendor.", "Use to focus on one store or one severity.", ""],
+  ],
+  "design-performance": [
+    ["Years shown", "Chooses how many financial years of sales history are displayed per design.", "Use more years for a slow-selling classic, fewer for a fast-changing style.", ""],
+    ["Good seller = top %", "Sets what fraction of each department's designs (by quantity) count as \"good sellers\".", "Lower it if too many marginal designs are being marked good; raise it if too few are.", ""],
+    ["Unless it fell more than %", "A good seller is disqualified if its latest year fell by more than this against the year before.", "Lower it to be stricter about declining designs.", ""],
+    ["Recalculate", "Re-runs the whole view with the current settings.", "Use after changing any of the three selectors above.", ""],
+    ["Design filters", "Narrows the table (and the CSV export) to one hierarchy/vendor/action group.", "Use before exporting.", ""],
+    ["Export filtered CSV", "Downloads exactly the filtered rows shown.", "Use to hand a stitch/buy/clear list to Production or Procurement.", ""],
+  ],
+  "store-value": [
+    ["Refresh", "Reloads recorded on-hand quantity and stock value for every location.", "Use after a stock import or a known stock change.", "Same figures as HQ Admin's Store-wise Inventory — this doesn't compute anything independently."],
+  ],
+  import: [
+    ["Template (Sales / Stock / Unstitched tabs)", "Downloads a blank CSV with the exact expected column headers.", "Use before your first import, or if a column keeps failing to match.", "Keep the header row unchanged — that's what RMS matches against."],
+    ["Choose a file", "Selects and validates a file, showing a preview. Nothing is written yet.", "Use to check the preview and error rows before committing anything.", ""],
+    ["Fabric Consume is… (Unstitched tab)", "Tells RMS whether the number in that column is the total for the row's PCS, or the amount for one piece.", "Match it to how your sheet is actually laid out.", "Getting this backwards silently multiplies or divides your fabric totals by the PCS count."],
+    ["Commit", "Actually writes the previewed rows into RMS.", "Use only after reviewing the preview summary and error rows.", "Sales/stock/unstitched each commit is reversible from History, but always review first — don't commit just to \"see what happens\"."],
+    ["Cancel", "Discards the current file/preview without writing anything.", "Use if the preview doesn't look right.", ""],
+    ["Apply (Product cleanup)", "Rewrites imported product names/hierarchy using the Sales file's own category columns.", "Use once, after importing sales, to clean up code-only names.", "Never changes stock, barcodes or prices — only display fields."],
+    ["Roll back (History)", "Reverts a committed import to its exact previous values.", "Use if an import was wrong.", "Only reverts rows this batch still owns — if something else has since overwritten a row, that row is left alone rather than guessed at."],
+    ["Delete (History)", "Removes a history log entry.", "Use only after rolling back — it's disabled until then.", "This never touches stock/sales data, only the audit log line."],
+    ["Download CSV (History)", "Exports the whole import history log.", "Use for an audit trail outside RMS.", ""],
+  ],
+};
+
+function SectionButtonGuide({ id }) {
+  const rows = BUTTON_GUIDES_FA[id];
+  if (!rows) return null;
+  return (
+    <details className="mb-5 overflow-hidden rounded-2xl border border-slate-200 bg-white">
+      <summary className="flex cursor-pointer list-none items-center gap-2 px-5 py-3 text-xs font-bold uppercase tracking-wide text-slate-500 hover:bg-slate-50">
+        <FileSpreadsheet size={13} /> What each button does
+      </summary>
+      <div className="divide-y divide-slate-100 border-t border-slate-100">
+        {rows.map(([name, what, use, avoid]) => (
+          <div key={name} className="grid gap-2 p-4 sm:grid-cols-[200px_1fr] sm:gap-4">
+            <p className="text-sm font-black text-slate-900">{name}</p>
+            <div className="space-y-1 text-sm leading-6 text-slate-600">
+              <p>{what}</p>
+              <p><span className="font-bold text-emerald-700">Use when:</span> {use}</p>
+              {avoid && <p><span className="font-bold text-rose-700">Don't:</span> {avoid}</p>}
+            </div>
+          </div>
+        ))}
+      </div>
+    </details>
+  );
+}
+
 function ErrorBanner({ message }) {
   if (!message) return null;
   return <div className="mb-4 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-600">⚠ {message}</div>;
@@ -2216,7 +2299,7 @@ export default function ForecastAnalytics() {
             <p className="mt-0.5 text-sm text-slate-500">Demand forecasting, vendor ranking and budget-constrained purchase planning from your real sales and order history.</p>
           </div>
         </header>
-        <div className="mx-auto w-full max-w-[1540px] p-5 sm:p-7 lg:p-9">{renderContent()}</div>
+        <div className="mx-auto w-full max-w-[1540px] p-5 sm:p-7 lg:p-9"><SectionButtonGuide id={activeSection} />{renderContent()}</div>
       </main>
     </div>
   );

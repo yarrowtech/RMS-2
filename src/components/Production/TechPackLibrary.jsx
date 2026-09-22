@@ -722,6 +722,24 @@ export default function TechPackLibrary({ plans = [], themes = [], onSelectForOr
     } catch (err) { setError(err.message); }
   };
 
+  const releasePack = async (pack) => {
+    const reason = window.prompt(
+      `Release ${pack.tech_pack_no} (${pack.design_no}) straight to Production?\n\n`
+      + "This is for a design with no Design Project to route through Production Handoff's normal sign-off "
+      + "(e.g. it was already produced/sold in an earlier season). If a Design Project for this design DOES "
+      + "exist, cancel and release it from Production Handoff instead so that approval is recorded properly.\n\n"
+      + "Enter a reason to continue:"
+    );
+    if (reason == null) return;
+    if (!reason.trim()) { window.alert("A reason is required to release directly."); return; }
+    setError("");
+    try {
+      const result = await api(`/tech-packs/${pack.id}/quick-release`, { method: "POST", body: JSON.stringify({ reason: reason.trim() }) });
+      await load();
+      window.alert(result.message || "Tech pack released to Production.");
+    } catch (err) { setError(err.message); }
+  };
+
   return <section className="mb-6 overflow-hidden rounded-3xl border border-violet-100 bg-white shadow-xl shadow-violet-100/40">
     <div className="flex flex-col justify-between gap-3 border-b border-violet-100 bg-gradient-to-r from-violet-50 via-white to-cyan-50 px-6 py-5 sm:flex-row sm:items-center">
       <div><p className="text-xs font-black uppercase tracking-[0.16em] text-violet-600">Before creating job work</p><h2 className="mt-1 text-xl font-black text-slate-900">Tech Pack Library</h2><p className="mt-1 text-sm text-slate-500">Sketches, measurements, construction, trims, artwork and colourways - one controlled design reference.</p></div>
@@ -737,6 +755,18 @@ export default function TechPackLibrary({ plans = [], themes = [], onSelectForOr
       </ol>
     </div>
 
+    <details className="mx-6 mt-3 mb-1 overflow-hidden rounded-xl border border-slate-200 bg-white">
+      <summary className="cursor-pointer list-none px-4 py-2.5 text-xs font-black uppercase tracking-wide text-slate-500 hover:bg-slate-50">What each button does</summary>
+      <div className="divide-y divide-slate-100 border-t border-slate-100 text-xs leading-5 text-slate-600">
+        <div className="grid gap-1.5 p-3.5 sm:grid-cols-[140px_1fr]"><b className="text-slate-800">View</b><p>Read-only preview. Safe anytime.</p></div>
+        <div className="grid gap-1.5 p-3.5 sm:grid-cols-[140px_1fr]"><b className="text-slate-800">Edit</b><p>Changes any field while still Draft. Disabled once Released, so a spec Production is already building against can't quietly change.</p></div>
+        <div className="grid gap-1.5 p-3.5 sm:grid-cols-[140px_1fr]"><b className="text-slate-800">Delete</b><p>Removes an unused Draft only. Blocked once a job order references it, and never available once Released.</p></div>
+        <div className="grid gap-1.5 p-3.5 sm:grid-cols-[140px_1fr]"><b className="text-slate-800">Release</b><p>Releases a Draft straight to Production, skipping Production Handoff's approval screen. Use only for a design with no Design Project to route it through (e.g. it already sold in an earlier season). If a Design Project exists for this design, it's blocked — release it from Production Handoff instead so real sign-off is recorded. Always requires a written reason.</p></div>
+        <div className="grid gap-1.5 p-3.5 sm:grid-cols-[140px_1fr]"><b className="text-slate-800">Download PDF</b><p>Exports the pack for sharing outside RMS. Safe anytime.</p></div>
+        <div className="grid gap-1.5 p-3.5 sm:grid-cols-[140px_1fr]"><b className="text-slate-800">Use in job order</b><p>Jumps to Production Handoff with this pack pre-selected. Doesn't release anything by itself.</p></div>
+      </div>
+    </details>
+
     {error && <p className="m-5 rounded-xl bg-rose-50 p-3 text-sm font-bold text-rose-700">{error}</p>}
     {loading ? <p className="p-8 text-center text-sm text-slate-400">Loading tech packs...</p> : packs.length ? <div className="divide-y divide-slate-100">
       {packs.map((pack) => {
@@ -747,6 +777,7 @@ export default function TechPackLibrary({ plans = [], themes = [], onSelectForOr
             <button type="button" onClick={() => setViewPack(pack)} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50">View</button>
             <button type="button" disabled={!draft} title={draft ? "Edit this draft" : "Released packs are locked; create a revision instead"} onClick={() => setEditingPack(pack)} className="rounded-xl border border-cyan-200 bg-cyan-50 px-3 py-2 text-xs font-bold text-cyan-700 hover:bg-cyan-100 disabled:cursor-not-allowed disabled:opacity-40">Edit</button>
             <button type="button" disabled={!draft} title={draft ? "Delete this unused draft" : "Released packs are retained for production history"} onClick={() => removePack(pack)} className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-bold text-rose-700 hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-40">Delete</button>
+            {draft && <button type="button" title="Release directly, for a design with no Design Project to route through Production Handoff" onClick={() => releasePack(pack)} className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-bold text-emerald-700 hover:bg-emerald-100">Release</button>}
             <button type="button" onClick={() => downloadTechPackPdf(pack, plans)} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50">Download PDF</button>
             <button type="button" onClick={() => onSelectForOrder?.(pack)} className="rounded-xl border border-violet-200 bg-violet-50 px-3 py-2 text-xs font-bold text-violet-700 hover:bg-violet-100">Use in job order</button>
           </div>

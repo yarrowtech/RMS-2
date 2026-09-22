@@ -62,7 +62,16 @@ DEFAULT_SETTINGS = {
     "sample_types": ["Proto sample", "Development sample", "Fit sample", "Size-set sample", "Print / embroidery sample", "Wash sample", "Pre-production sample", "Production sample"],
     "default_base_size": "M",
     "default_size_run": "S, M, L, XL",
-    "default_wastage_pct": 5,
+    # These are approval limits, never automatic wastage. Designers enter
+    # every allowance manually on the Tech Pack; crossing the relevant limit
+    # sends the pack to HQ for an exception decision.
+    "allowance_limits": {
+        "PATTERN": {"value": 7, "unit": "inches"},
+        "LAYERING": {"value": 7, "unit": "inches_per_lay"},
+        "CUTTING": {"value": 5, "unit": "percent"},
+        "STITCHING": {"value": 2, "unit": "percent"},
+        "FINISHING": {"value": 2, "unit": "percent"},
+    },
     # Production-handoff gates. A shop with a full design team keeps all three
     # ON; a solo / production-led shop turns off the ceremony it doesn't run.
     # `release_project` skips a check when its gate is off. Default ON = the
@@ -298,7 +307,10 @@ def _merge_settings(stored: dict) -> dict:
     merged = dict(DEFAULT_SETTINGS)
     for key in DEFAULT_SETTINGS:
         value = (stored or {}).get(key)
-        if isinstance(DEFAULT_SETTINGS[key], list):
+        if isinstance(DEFAULT_SETTINGS[key], dict):
+            if isinstance(value, dict):
+                merged[key] = {**DEFAULT_SETTINGS[key], **value}
+        elif isinstance(DEFAULT_SETTINGS[key], list):
             if isinstance(value, list) and value:
                 merged[key] = value
         elif isinstance(DEFAULT_SETTINGS[key], bool):
@@ -319,12 +331,20 @@ async def save_settings(payload: dict, ctx: dict = Depends(require_design)):
         items = [clean(x, 60) for x in raw] if isinstance(raw, list) else []
         items = [x for x in items if x][:60]
         return items or fallback
+    raw_limits = payload.get("allowance_limits") if isinstance(payload.get("allowance_limits"), dict) else {}
+    allowance_limits = {}
+    for process, fallback in DEFAULT_SETTINGS["allowance_limits"].items():
+        supplied = raw_limits.get(process) if isinstance(raw_limits.get(process), dict) else {}
+        allowance_limits[process] = {
+            "value": min(1000.0, number(supplied.get("value"), fallback["value"])),
+            "unit": clean(supplied.get("unit"), 40) or fallback["unit"],
+        }
     doc = {
         "departments": string_list(payload.get("departments"), DEFAULT_SETTINGS["departments"]),
         "sample_types": string_list(payload.get("sample_types"), DEFAULT_SETTINGS["sample_types"]),
         "default_base_size": clean(payload.get("default_base_size"), 16) or DEFAULT_SETTINGS["default_base_size"],
         "default_size_run": clean(payload.get("default_size_run"), 160) or DEFAULT_SETTINGS["default_size_run"],
-        "default_wastage_pct": min(100.0, number(payload.get("default_wastage_pct"), DEFAULT_SETTINGS["default_wastage_pct"])),
+        "allowance_limits": allowance_limits,
         **{key: payload.get(key, True) is not False for key in _GATE_KEYS},
         "tenant_id": ctx["tenant_id"],
         "updated_at": datetime.utcnow(),

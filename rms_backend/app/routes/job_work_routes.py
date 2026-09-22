@@ -15,6 +15,7 @@ from bson import ObjectId
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 
 from ..db import (
+    design_projects_collection,
     fabric_themes_collection,
     inventory_collection,
     job_work_orders_collection,
@@ -1638,6 +1639,41 @@ async def delete_tech_pack(tech_pack_id: str, ctx: dict = Depends(_require_desig
         raise HTTPException(status_code=409, detail=f"This Tech Pack is used by job order {in_use.get('order_no', '')} and cannot be deleted.")
     await tech_packs_collection.delete_one({"_id": pack["_id"], "tenant_id": ctx["tenant_id"]})
     return {"message": f"Draft tech pack {pack.get('tech_pack_no', '')} deleted."}
+
+
+@router.post("/tech-packs/{tech_pack_id}/quick-release")
+async def quick_release_tech_pack(tech_pack_id: str, payload: dict, ctx: dict = Depends(_require_design_or_job_work)):
+    """Release a Draft tech pack straight to Production, for one that has no
+    matching Design Project to route it through Production Handoff's approval
+    gates (e.g. it was created directly here rather than via a design project,
+    or the design was already produced/sold before this system was in use).
+    A tech pack that DOES have a matching Design Project must still go through
+    Handoff, so its sample/design-head/feasibility sign-off is recorded there
+    rather than skipped by this shortcut."""
+    if not ObjectId.is_valid(tech_pack_id):
+        raise HTTPException(status_code=400, detail="Invalid tech pack.")
+    pack = await tech_packs_collection.find_one({"_id": ObjectId(tech_pack_id), "tenant_id": ctx["tenant_id"]})
+    if not pack:
+        raise HTTPException(status_code=404, detail="Tech pack not found.")
+    if str(pack.get("status") or "Draft").strip().upper() != "DRAFT":
+        raise HTTPException(status_code=409, detail="This tech pack is already released.")
+    design_no = str(pack.get("design_no") or "").strip()
+    if design_no and await design_projects_collection.find_one({"tenant_id": ctx["tenant_id"], "design_no": design_no}, {"_id": 1}):
+        raise HTTPException(status_code=400, detail="A design project already exists for this design — release it from Production Handoff instead so its sign-off is recorded there.")
+    reason = str(payload.get("reason") or "").strip()[:500]
+    if not reason:
+        raise HTTPException(status_code=400, detail="Enter a reason for releasing this tech pack directly.")
+    now = datetime.utcnow()
+    await tech_packs_collection.update_one(
+        {"_id": pack["_id"], "tenant_id": ctx["tenant_id"]},
+        {"$set": {
+            "status": "Released to Production", "approved_by": ctx.get("admin_name"), "approved_at": now,
+            "released_forced": True, "released_force_reason": reason, "released_via": "quick_release",
+            "updated_at": now,
+        }},
+    )
+    return {"message": f"Tech pack {pack.get('tech_pack_no', '')} released to Production."}
+
 
 @router.post("/tech-packs/{tech_pack_id}/comments", status_code=201)
 async def add_tech_pack_comment(tech_pack_id: str, payload: dict, ctx: dict = Depends(_require_design_or_job_work)):
