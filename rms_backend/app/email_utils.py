@@ -1069,9 +1069,13 @@ async def send_coupon_email(
     are one-time/no-login views with nothing to come back to otherwise."""
     safe_name = escape(customer_name or "there")
     safe_code = escape(code or "")
+    linked_url = _with_code_param(website_link, code) if website_link else ""
+    image_tag = f'<img src="{escape(coupon_image_url)}" alt="Coupon" style="max-width:100%;border-radius:12px;display:block;" />' if coupon_image_url else ""
+    # Clickable when there's somewhere for it to go — same link the "Visit
+    # website" button below points to, so the image itself doubles as a CTA.
     image_block = (
-        f'<img src="{escape(coupon_image_url)}" alt="Coupon" style="max-width:100%;border-radius:12px;margin-bottom:18px;display:block;" />'
-        if coupon_image_url else ""
+        (f'<a href="{escape(linked_url)}" target="_blank" rel="noopener" style="display:block;margin-bottom:18px;">{image_tag}</a>' if linked_url else f'<div style="margin-bottom:18px;">{image_tag}</div>')
+        if image_tag else ""
     )
     bill_line = f" on bills over Rs. {float(min_bill_amount):,.0f}" if min_bill_amount else ""
     expiry_line = (
@@ -1079,7 +1083,7 @@ async def send_coupon_email(
         if expiry_date else ""
     )
     store_phrase = f" from {escape(store_name)}" if store_name else ""
-    link_button = _btn(_with_code_param(website_link, code), "Visit website", WARNING) if website_link else ""
+    link_button = _btn(linked_url, "Visit website", WARNING) if linked_url else ""
     body = f"""
       <h2 style="color:#222;margin-bottom:8px;">Hi {safe_name},</h2>
       <p style="font-size:15px;color:#444;">Here's your coupon{store_phrase} — show this at the counter to redeem it.</p>
@@ -1108,6 +1112,7 @@ async def send_coupon_redeemed_email(
     min_bill_amount: float = 0,
     store_name: str = "",
     website_link: str = "",
+    coupon_image_url: str = "",
 ) -> bool:
     """Sent automatically the moment staff mark a coupon redeemed at the
     counter (see coupon_routes.py's redeem_coupon) — only when the coupon
@@ -1119,10 +1124,17 @@ async def send_coupon_redeemed_email(
     safe_code = escape(code or "")
     bill_line = f" on bills over Rs. {float(min_bill_amount):,.0f}" if min_bill_amount else ""
     store_phrase = f" at {escape(store_name)}" if store_name else ""
-    link_button = _btn(_with_code_param(website_link, code), "Visit website", SUCCESS) if website_link else ""
+    linked_url = _with_code_param(website_link, code) if website_link else ""
+    image_tag = f'<img src="{escape(coupon_image_url)}" alt="Coupon" style="max-width:100%;border-radius:12px;display:block;" />' if coupon_image_url else ""
+    image_block = (
+        (f'<a href="{escape(linked_url)}" target="_blank" rel="noopener" style="display:block;margin-bottom:18px;">{image_tag}</a>' if linked_url else f'<div style="margin-bottom:18px;">{image_tag}</div>')
+        if image_tag else ""
+    )
+    link_button = _btn(linked_url, "Visit website", SUCCESS) if linked_url else ""
     body = f"""
       <h2 style="color:#222;margin-bottom:8px;">Hi {safe_name},</h2>
       <p style="font-size:15px;color:#444;">You just redeemed your coupon{store_phrase} — here's your confirmation.</p>
+      {image_block}
       <div style="margin:20px 0;padding:20px;border:2px solid #bbf7d0;background:#f0fdf4;border-radius:12px;text-align:center;">
         <p style="margin:0;color:#166534;font-size:12px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;">Redeemed</p>
         <p style="margin:8px 0 0;color:#052e16;font-size:26px;font-weight:800;letter-spacing:.08em;">{safe_code}</p>

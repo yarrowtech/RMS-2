@@ -62,7 +62,15 @@ export default function CouponPublicView() {
       {loadError && <p className="max-w-sm text-center font-semibold text-rose-600">{loadError}</p>}
       {coupon && (
         <div className="w-full max-w-sm overflow-hidden rounded-2xl bg-white shadow-xl">
-          {coupon.coupon_image_url && <img src={coupon.coupon_image_url} alt="Coupon" className="h-48 w-full object-cover" />}
+          {coupon.coupon_image_url && (
+            websiteLinkWithCode ? (
+              <a href={websiteLinkWithCode} target="_blank" rel="noopener noreferrer">
+                <img src={coupon.coupon_image_url} alt="Coupon" className="h-48 w-full object-cover" />
+              </a>
+            ) : (
+              <img src={coupon.coupon_image_url} alt="Coupon" className="h-48 w-full object-cover" />
+            )
+          )}
           <div className="p-6 text-center">
             <Ticket className="mx-auto mb-2 text-indigo-600" size={28} />
             {coupon.customer_name && <p className="text-xs font-semibold text-slate-500">Issued to {coupon.customer_name}</p>}

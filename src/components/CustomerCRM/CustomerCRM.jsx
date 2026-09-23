@@ -51,25 +51,46 @@ const styles = `
   .crm-input:focus { border-color: #6366f1; box-shadow: 0 0 0 3px rgba(99,102,241,.12); }
   .crm-label { display:block; font-size:11px; font-weight:800; letter-spacing:.06em; text-transform:uppercase; color:#64748b; margin-bottom:6px; }
   @media (max-width: 900px) { .crm-layout { flex-direction: column; } .crm-sidebar { width: 100%; min-height: auto; } .crm-main { padding: 14px; } }
-  #ld-print-slip, #ld-print-qr { display: none; }
-  @page { size: 120mm 72mm; margin: 0; }
+  /* Off-screen (not display:none) so its real rendered height at the true
+     80mm print width can always be measured via a ref — "auto" in the
+     @page rule below is not reliable across browsers/printer drivers (a
+     real POS-80C driver ended up reporting a full-length page instead of
+     sizing to content), so doPrint() measures this and injects an exact
+     page height right before printing instead of trusting "auto". */
+  #ld-print-slip { position: fixed; top: 0; left: -9999px; width: 80mm; }
+  #ld-print-qr { display: none; }
+  @page { size: 80mm auto; margin: 0; }
   @media print {
     body * { visibility: hidden; }
 
-    /* Print-slip job — unchanged, still the default page size (a receipt
-       for the draw box), only shown when the slip modal set this class. */
-    body.printing-ld-slip { width: 120mm; height: 72mm; margin: 0 !important; padding: 0 !important; background: #fff !important; }
+    /* The rest of the dashboard (every table/list on the page) is only
+       visibility:hidden above, which still occupies its full normal-flow
+       height — often many times an actual screen's height. Pagination is
+       computed from that total document height, not from what's actually
+       visible, so without this the browser sliced it into a dozen-plus
+       mostly-blank 80mm pages for a one-field-card print job. Collapsing
+       #root's box removes that phantom height; position:fixed below (not
+       absolute) is what then keeps the actual print target pinned to the
+       page regardless of #root being collapsed around it. */
+    body.printing-ld-slip #root, body.printing-ld-qr #root { max-height: 0 !important; overflow: hidden !important; }
+
+    /* Print-slip job — sized for an 80mm POS thermal roll: fixed width,
+       height grows with content (no wasted paper feeding past the end of
+       the slip, the way a fixed-height page would). */
+    body.printing-ld-slip { width: 80mm; margin: 0 !important; padding: 0 !important; background: #fff !important; }
     body.printing-ld-slip #ld-print-slip, body.printing-ld-slip #ld-print-slip * { visibility: visible; }
-    body.printing-ld-slip #ld-print-slip { display: flex; position: absolute; inset: 0; width: 120mm; height: 72mm; box-sizing: border-box; align-items: stretch; padding: 0; background: #fff; }
-    body.printing-ld-slip #ld-print-slip .ld-slip-card { width: 100% !important; height: 100% !important; min-height: 0 !important; box-sizing: border-box; border: 0 !important; border-radius: 0 !important; padding: 0 !important; box-shadow: none !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-    body.printing-ld-slip #ld-print-slip .ld-template-image { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-    body.printing-ld-slip #ld-print-slip .ld-template-value { font-size: 7.5pt !important; line-height: 1 !important; background: #fff4c9 !important; color: #172554 !important; }
+    body.printing-ld-slip #ld-print-slip { display: block; position: fixed; top: 0; left: 0; width: 80mm; box-sizing: border-box; padding: 0; background: #fff; }
+    /* Deliberately NOT touching padding/font-size here — they need to stay
+       identical to how the off-screen measurement clone renders (see
+       doPrint), or the injected @page height (computed from that clone)
+       would no longer match what actually prints. */
+    body.printing-ld-slip #ld-print-slip .ld-slip-card { border-radius: 0 !important; box-shadow: none !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 
     /* Print-QR job — a full-page counter poster, one store at a time. Its
-       own body class so it never fights the slip's fixed 120x72mm @page. */
+       own body class so it never fights the slip's fixed 80mm @page. */
     body.printing-ld-qr { width: auto; height: auto; margin: 0 !important; padding: 0 !important; background: #fff !important; }
     body.printing-ld-qr #ld-print-qr, body.printing-ld-qr #ld-print-qr * { visibility: visible; }
-    body.printing-ld-qr #ld-print-qr { display: flex; position: absolute; inset: 0; width: 100%; box-sizing: border-box; background: #fff; }
+    body.printing-ld-qr #ld-print-qr { display: flex; position: fixed; inset: 0; width: 100%; box-sizing: border-box; background: #fff; }
   }
 `;
 
@@ -220,6 +241,7 @@ function CampaignModal({ initial, onClose, onSave }) {
     min_bill_amount: initial?.min_bill_amount ?? "",
     notes: initial?.notes || "",
     entry_reward_pct: initial?.entry_reward_pct || "",
+    website_link: initial?.website_link || "",
   }));
   const [saveError, setSaveError] = useState("");
   const [saving, setSaving] = useState(false);
@@ -250,6 +272,11 @@ function CampaignModal({ initial, onClose, onSave }) {
             <label className="crm-label">Instant thank-you coupon (optional)</label>
             <input type="number" min="0" max="100" className="crm-input" value={form.entry_reward_pct} onChange={(e) => set("entry_reward_pct", e.target.value)} placeholder="e.g. 10 for 10% off" />
             <p className="mt-1 text-xs text-slate-400">Leave blank for none. If set, every QR self-entry gets its own coupon at this % automatically, shown right on their Thank You screen — separate from actually winning the draw.{isEdit ? " Changing this only affects entries submitted from now on." : ""}</p>
+          </div>
+          <div>
+            <label className="crm-label">Coupon website link (optional)</label>
+            <input type="url" className="crm-input" value={form.website_link} onChange={(e) => set("website_link", e.target.value)} placeholder="https://yourstore.com/offer" />
+            <p className="mt-1 text-xs text-slate-400">Every auto-issued coupon from this campaign gets a "Start exploring" button and a clickable coupon image pointing here — shown on the Thank You screen and in the coupon email.</p>
           </div>
           <div><label className="crm-label">Notes</label><textarea className="crm-input min-h-20" value={form.notes} onChange={(e) => set("notes", e.target.value)} placeholder="Prize details, rules for staff at the counter..." /></div>
           {saveError && <p className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs font-bold text-rose-700">{saveError}</p>}
@@ -313,10 +340,35 @@ function DrawModal({ campaign, isHq, defaultRedo, onClose, onSave }) {
 }
 
 function PrintSlipModal({ entry, onClose, onPrinted }) {
+  const printRef = useRef(null);
+  const [suggestedMm, setSuggestedMm] = useState(null);
+
+  // "auto" in the @page rule isn't reliable across browsers/printer
+  // drivers — a real POS-80C driver only offers fixed paper-size presets
+  // (e.g. 80 x 297mm) instead of a true continuous/auto-length mode, so
+  // Chrome uses that preset and ignores whatever height our page asks for.
+  // That's a Windows driver setting, not something a webpage can override —
+  // so alongside still requesting the exact height (works once the driver
+  // is set to continuous/auto-cut), this shows staff the number to type in
+  // by hand if their print dialog only offers a "Custom" size field.
+  const measureHeightMm = () => {
+    const heightPx = printRef.current?.getBoundingClientRect().height || 0;
+    return (heightPx * 25.4) / 96 + 2; // +2mm safety margin
+  };
+
+  useEffect(() => {
+    setSuggestedMm(Math.ceil(measureHeightMm()));
+  }, []);
+
   const doPrint = () => {
+    const heightMm = measureHeightMm();
+    const pageStyle = document.createElement("style");
+    pageStyle.textContent = `@page { size: 80mm ${heightMm.toFixed(1)}mm; margin: 0; }`;
+    document.head.appendChild(pageStyle);
     document.body.classList.add("printing-ld-slip");
     window.print();
     document.body.classList.remove("printing-ld-slip");
+    pageStyle.remove();
     onPrinted(entry.id);
   };
   return (
@@ -324,47 +376,54 @@ function PrintSlipModal({ entry, onClose, onPrinted }) {
       <div className="flex max-h-[94dvh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
         <ModalHeader eyebrow="Lucky Draw" title="Print slip" onClose={onClose} />
         <div className="overflow-y-auto p-6">
-          <p className="mb-4 text-sm text-slate-500">Uses the approved Citi Mart template as a compact 120 x 72 mm landscape slip. Print at Actual size / 100%, then place it in the draw box.</p>
+          <p className="mb-4 text-sm text-slate-500">A simple, clean slip sized for an 80mm POS thermal printer — no wasted paper, the roll cuts right after the last field. Print at Actual size / 100%, then place it in the draw box.</p>
           <SlipCard entry={entry} />
+          {suggestedMm && (
+            <p className="mt-4 rounded-xl border border-indigo-200 bg-indigo-50 p-3 text-xs font-semibold text-indigo-800">
+              If the print dialog asks you to pick a paper size and only offers fixed presets (not an auto/continuous option), choose "Custom" and enter <span className="font-bold">80mm &times; {suggestedMm}mm</span>.
+            </p>
+          )}
         </div>
         <ModalFooter onClose={onClose} onSave={doPrint} saveLabel="Print & mark done" />
       </div>
-      <div id="ld-print-slip" className="p-8"><SlipCard entry={entry} /></div>
+      <div id="ld-print-slip" ref={printRef}><SlipCard entry={entry} /></div>
     </div>
   );
 }
 
 function SlipCard({ entry }) {
-  // One element per field, sized to fit its own text (inline-block, no
-  // fixed width) \u2014 the highlight only ever covers exactly as much of the
-  // dotted line as the value actually needs, so a short value like "Nandu"
-  // doesn't leave a big pale rectangle stretching past it. An empty field
-  // renders nothing at all, leaving the printed dots untouched.
-  // Uppercased for print only (never touches the stored value) — at this
-  // small bold size, a lowercase "g" reads as a "q" and other lowercase
-  // letters have similar mix-ups, so caps avoids that ambiguity entirely.
-  // Email is the one exception: it should read exactly as the customer
-  // typed it, so instead of uppercasing it, it gets a font (Verdana) whose
-  // lowercase "g" isn't ambiguous with "q" in the first place.
-  const field = (className, maxWidthClass, text, preserveCase = false) => text ? (
-    <span
-      className={"ld-template-value absolute inline-block truncate whitespace-nowrap rounded-[1px] bg-[#fff4c9] px-0.5 text-[13px] font-extrabold leading-none text-[#172554] " + (preserveCase ? "" : "font-sans uppercase ") + maxWidthClass + " " + className}
-      style={preserveCase ? { fontFamily: "Verdana, Geneva, sans-serif" } : undefined}
-    >{text}</span>
-  ) : null;
+  // Narrow single-column receipt layout, sized for an 80mm POS thermal
+  // roll (paper-saving — no wasted width, and height grows with content
+  // instead of a fixed card size). Label sits above its value rather than
+  // beside it, so a long value (an email, a full address) wraps onto its
+  // own line instead of getting truncated in a narrow column. Email is
+  // kept in Verdana instead of uppercase, same reasoning as before: a
+  // lowercase "g" at small bold sizes can misread as "q" in most fonts,
+  // but not in Verdana, and an email should read exactly as typed anyway.
+  const row = (label, value, preserveCase = false) => (
+    <div className="ld-slip-row border-b border-dashed border-red-800/20 py-1.5 last:border-b-0">
+      <p className="text-[10px] font-bold uppercase tracking-wide text-red-800/70">{label}</p>
+      <p
+        className={"ld-slip-value break-words text-sm font-extrabold text-slate-900 " + (preserveCase ? "" : "uppercase")}
+        style={preserveCase ? { fontFamily: "Verdana, Geneva, sans-serif" } : undefined}
+      >
+        {value || "--"}
+      </p>
+    </div>
+  );
   return (
-    <div className="ld-slip-card relative aspect-[5/3] min-h-[360px] overflow-hidden rounded-2xl bg-[#fff2bd] shadow-inner" style={{ fontFamily: "Georgia, 'Times New Roman', serif" }}>
-      <img src="/lucky-draw-slip-template.png" alt="Citi Mart lucky draw slip template" className="ld-template-image absolute inset-0 h-full w-full object-fill" />
-      {/* 6 evenly-spaced lines matching the template: Name, Address, Contact
-          No, Email Id, Profession, Bill No \u2014 Email Id is a real printed line
-          on this template now, not squeezed into leftover whitespace. */}
-      <div className="absolute inset-0" aria-label="Lucky draw entry details">
-        {field("left-[22%] top-[27.8%]", "max-w-[41%]", entry.customer_name)}
-        {field("left-[22%] top-[38.2%]", "max-w-[41%]", entry.address)}
-        {field("left-[22%] top-[48.6%]", "max-w-[41%]", entry.contact_no)}
-        {field("left-[22%] top-[59%]", "max-w-[41%]", entry.email, true)}
-        {field("left-[22%] top-[69.1%]", "max-w-[41%]", entry.profession)}
-        {field("left-[22%] top-[76.3%]", "max-w-[41%]", entry.bill_no)}
+    <div className="ld-slip-card mx-auto w-full max-w-[300px] overflow-hidden rounded-2xl border-2 border-red-800/70 bg-[#fffdf6] p-4 shadow-inner" style={{ fontFamily: "Georgia, 'Times New Roman', serif" }}>
+      <div className="flex flex-col items-center">
+        <img src="/citimart-logo.png" alt="Citi Mart" className="h-10 w-auto object-contain" />
+        <p className="mt-2 text-center text-[10px] font-bold uppercase tracking-[0.15em] text-red-800">Festival Lucky Draw Entry Slip</p>
+      </div>
+      <div className="mt-3 border-t border-red-800/20 pt-2">
+        {row("Name", entry.customer_name)}
+        {row("Address", entry.address)}
+        {row("Contact No", entry.contact_no)}
+        {row("Email Id", entry.email, true)}
+        {row("Profession", entry.profession)}
+        {row("Bill No", entry.bill_no)}
       </div>
     </div>
   );
@@ -1052,7 +1111,12 @@ export default function CustomerCRM() {
                       {isQr && needsPrint && <button onClick={() => setPrintSlip(e)} className="rounded-lg bg-amber-500 px-3 py-1.5 text-xs font-bold text-white hover:bg-amber-600">Needs printing</button>}
                       {isQr && !needsPrint && <span className="text-xs font-bold text-emerald-600">Printed</span>}
                     </td>
-                    <td className="px-5 py-3"><button onClick={() => removeEntry(e.id)} className="rounded-lg border border-rose-200 px-3 py-1.5 text-xs font-bold text-rose-600 hover:bg-rose-50">Remove</button></td>
+                    <td className="px-5 py-3">
+                      <div className="flex flex-wrap items-center gap-2">
+                        {isQr && <button onClick={() => setPrintSlip(e)} title="Print it again if the last print got stuck or misfired" className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-bold text-slate-600 hover:bg-slate-50">Reprint</button>}
+                        <button onClick={() => removeEntry(e.id)} className="rounded-lg border border-rose-200 px-3 py-1.5 text-xs font-bold text-rose-600 hover:bg-rose-50">Remove</button>
+                      </div>
+                    </td>
                   </tr>
                   );
                 })}

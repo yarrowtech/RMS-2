@@ -294,6 +294,7 @@ async def redeem_coupon(coupon_id: str, ctx: Dict[str, Any] = Depends(get_tenant
             min_bill_amount=coupon.get("min_bill_amount") or 0,
             store_name=ctx.get("store_name") or "",
             website_link=coupon.get("website_link") or "",
+            coupon_image_url=coupon.get("coupon_image_url") or "",
         )
     return {"message": "Coupon marked redeemed."}
 

@@ -40,6 +40,11 @@ class CampaignPayload(BaseModel):
     # shown right on the Thank You screen — a small "thanks for entering"
     # perk, separate from actually winning the draw.
     entry_reward_pct: float = 0
+    # Optional — carried onto every auto-issued coupon for this campaign,
+    # same as an individual coupon's own website_link (coupon_routes.py):
+    # shown as a "Start exploring" button and a clickable coupon image, both
+    # on the Thank You screen and in the coupon emails.
+    website_link: str = ""
 
 
 class EntryPayload(BaseModel):
@@ -162,6 +167,7 @@ async def create_campaign(payload: CampaignPayload, ctx: Dict[str, Any] = Depend
         "notes": clean(payload.notes),
         "entry_reward_pct": max(0.0, min(100.0, float(payload.entry_reward_pct or 0))),
         "coupon_image_url": "",
+        "website_link": clean(payload.website_link),
         "status": "ACTIVE",
         "created_by": ctx.get("admin_id"),
         "created_by_name": ctx.get("admin_name"),
@@ -195,6 +201,7 @@ async def update_campaign(campaign_id: str, payload: CampaignPayload, ctx: Dict[
         "min_bill_amount": max(0.0, float(payload.min_bill_amount or 0)),
         "notes": clean(payload.notes),
         "entry_reward_pct": max(0.0, min(100.0, float(payload.entry_reward_pct or 0))),
+        "website_link": clean(payload.website_link),
         "updated_at": now_utc(),
     }})
     return serialize_doc(await lucky_draw_campaigns_collection.find_one({"_id": campaign["_id"]}))

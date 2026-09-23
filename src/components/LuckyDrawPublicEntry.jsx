@@ -103,16 +103,45 @@ export default function LuckyDrawPublicEntry() {
   // shows up here if the campaign has an entry_reward_pct set (HQ decides
   // that per campaign; most won't have one, and that's fine, this section
   // just renders nothing then).
+  // The website link needs the coupon's own code riding along in the URL
+  // (?code=...) so whatever site it points at can show the same code —
+  // otherwise clicking through lands on a page with no idea which coupon
+  // the customer holds. Same pattern used on the standalone coupon link
+  // page (CouponPublicView.jsx) and in the coupon emails.
+  const couponWebsiteLink = (() => {
+    const link = result?.coupon?.website_link;
+    if (!link) return "";
+    try {
+      const url = new URL(link);
+      url.searchParams.set("code", result.coupon.code);
+      return url.toString();
+    } catch {
+      const separator = link.includes("?") ? "&" : "?";
+      return `${link}${separator}code=${encodeURIComponent(result.coupon.code)}`;
+    }
+  })();
+
   const resultExtras = () => (
     <>
       {result?.coupon && (
         <div className="w-full max-w-xs rounded-2xl border-2 border-amber-300 bg-amber-50 px-5 py-3 text-red-950">
           {result.coupon.coupon_image_url && (
-            <img src={result.coupon.coupon_image_url} alt="Your coupon" className="mb-2 w-full rounded-xl object-cover" />
+            couponWebsiteLink ? (
+              <a href={couponWebsiteLink} target="_blank" rel="noopener noreferrer">
+                <img src={result.coupon.coupon_image_url} alt="Your coupon" className="mb-2 w-full rounded-xl object-cover" />
+              </a>
+            ) : (
+              <img src={result.coupon.coupon_image_url} alt="Your coupon" className="mb-2 w-full rounded-xl object-cover" />
+            )
           )}
           <p className="text-[10px] font-bold uppercase tracking-wide text-red-700">Your coupon code</p>
           <p className="text-2xl font-bold tracking-widest">{result.coupon.code}</p>
           <p className="text-sm font-semibold">{result.coupon.discount_pct}% off{result.coupon.min_bill_amount > 0 ? ` on bills over ₹${result.coupon.min_bill_amount}` : ""}</p>
+          {couponWebsiteLink && (
+            <a href={couponWebsiteLink} target="_blank" rel="noopener noreferrer" className="mt-2 block w-full rounded-full bg-emerald-600 px-4 py-2 text-center text-xs font-bold text-white hover:bg-emerald-700">
+              Start exploring
+            </a>
+          )}
           {result.coupon.email ? (
             <button type="button" onClick={redeemNow} disabled={redeemState === "sending" || redeemState === "sent"} className="mt-2 w-full rounded-full bg-red-800 px-4 py-2 text-xs font-bold text-white disabled:opacity-60">
               {redeemState === "sending" ? "Emailing..." : redeemState === "sent" ? "Sent! Check your inbox ✓" : "Redeem now"}
