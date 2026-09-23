@@ -21,6 +21,8 @@ export default function LuckyDrawPublicEntry() {
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState("");
   const [result, setResult] = useState(null);
+  const [redeemState, setRedeemState] = useState("idle"); // idle | sending | sent | error
+  const [newsletterState, setNewsletterState] = useState("idle"); // idle | sending | done
 
   useEffect(() => {
     let cancelled = false;
@@ -59,6 +61,38 @@ export default function LuckyDrawPublicEntry() {
     }
   };
 
+  // "Redeem now" doesn't redeem anything itself (staff still do that in
+  // person at the counter) — it emails a copy of the coupon (image + code)
+  // to the address the customer already typed in, so they still have it
+  // even after this one-time Thank You page is gone.
+  const redeemNow = async () => {
+    if (!result?.coupon?.id) return;
+    setRedeemState("sending");
+    try {
+      const response = await fetch(API_BASE_URL + "/api/customer-crm/coupons/public/" + result.coupon.id + "/email", { method: "POST" });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.detail || "Could not email the coupon.");
+      setRedeemState(data.sent ? "sent" : "error");
+    } catch {
+      setRedeemState("error");
+    }
+  };
+
+  const signUpForNewsletter = async () => {
+    setNewsletterState("sending");
+    try {
+      const response = await fetch(API_BASE_URL + "/api/customer-crm/lucky-draw/public/" + token + "/newsletter", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ customer_name: form.customer_name, contact_no: form.contact_no, email: form.email }),
+      });
+      if (!response.ok) throw new Error();
+      setNewsletterState("done");
+    } catch {
+      setNewsletterState("idle");
+    }
+  };
+
   const overlayMessage = (text, error = false) => (
     <div className={"absolute inset-[18%] grid place-items-center p-6 text-center " + (error ? "text-red-800" : "text-red-950")}>
       <div className="rounded-2xl border-2 border-amber-400 bg-amber-50/95 p-5 font-bold shadow-xl">{text}</div>
@@ -73,12 +107,29 @@ export default function LuckyDrawPublicEntry() {
     <>
       {result?.coupon && (
         <div className="w-full max-w-xs rounded-2xl border-2 border-amber-300 bg-amber-50 px-5 py-3 text-red-950">
-          <p className="text-[10px] font-bold uppercase tracking-wide text-red-700">Your coupon — redeem now at the counter</p>
+          {result.coupon.coupon_image_url && (
+            <img src={result.coupon.coupon_image_url} alt="Your coupon" className="mb-2 w-full rounded-xl object-cover" />
+          )}
+          <p className="text-[10px] font-bold uppercase tracking-wide text-red-700">Your coupon code</p>
           <p className="text-2xl font-bold tracking-widest">{result.coupon.code}</p>
           <p className="text-sm font-semibold">{result.coupon.discount_pct}% off{result.coupon.min_bill_amount > 0 ? ` on bills over ₹${result.coupon.min_bill_amount}` : ""}</p>
+          {result.coupon.email ? (
+            <button type="button" onClick={redeemNow} disabled={redeemState === "sending" || redeemState === "sent"} className="mt-2 w-full rounded-full bg-red-800 px-4 py-2 text-xs font-bold text-white disabled:opacity-60">
+              {redeemState === "sending" ? "Emailing..." : redeemState === "sent" ? "Sent! Check your inbox ✓" : "Redeem now"}
+            </button>
+          ) : (
+            <p className="mt-2 text-[11px] font-semibold text-red-700">Show this code at the counter to redeem.</p>
+          )}
+          {redeemState === "error" && <p className="mt-1 text-[11px] font-semibold text-rose-700">Could not send the email — the code above still works at the counter.</p>}
         </div>
       )}
-      {form.newsletter_opt_in && <p className="text-xs font-semibold text-amber-200">✓ You're signed up for offers and festival updates.</p>}
+      {(form.newsletter_opt_in || newsletterState === "done") ? (
+        <p className="text-xs font-semibold text-amber-200">✓ You're signed up for offers and festival updates.</p>
+      ) : (
+        <button type="button" onClick={signUpForNewsletter} disabled={newsletterState === "sending"} className="rounded-full border border-amber-200/60 px-4 py-1.5 text-xs font-bold text-amber-100 hover:bg-amber-200/10 disabled:opacity-60">
+          {newsletterState === "sending" ? "Signing up..." : "Sign up for offers & festival updates"}
+        </button>
+      )}
     </>
   );
 

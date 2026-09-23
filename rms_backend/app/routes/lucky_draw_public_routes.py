@@ -43,6 +43,12 @@ class PublicEntryPayload(BaseModel):
     newsletter_opt_in: bool = False
 
 
+class NewsletterSignupPayload(BaseModel):
+    customer_name: str
+    contact_no: str
+    email: str = ""
+
+
 async def _resolve_store(token: str) -> dict:
     if not ObjectId.is_valid(token):
         raise HTTPException(status_code=404, detail="This QR code isn't recognized. Please ask at the counter.")
@@ -57,6 +63,40 @@ async def _active_campaign(tenant_id: str) -> Optional[dict]:
         {"tenant_id": tenant_id, "status": "ACTIVE"},
         sort=[("created_at", -1)],
     )
+
+
+async def _upsert_newsletter_profile(tenant_id: str, store_id: str, store_name: str, customer_name: str, contact_no: str, email: str) -> None:
+    """Shared by the entry form's own opt-in checkbox AND the "sign up for
+    offers" button shown afterward on the Thank You page for anyone who
+    skipped it the first time — same profile write either way."""
+    if not contact_no:
+        return
+    now = now_utc()
+    existing_profile = await customer_crm_profiles_collection.find_one({
+        "tenant_id": tenant_id, "store_id": store_id, "mobile": contact_no,
+    })
+    if existing_profile:
+        await customer_crm_profiles_collection.update_one(
+            {"_id": existing_profile["_id"]},
+            {"$set": {
+                "consent_whatsapp": True, "consent_sms": True, "consent_email": bool(email),
+                "email": email or existing_profile.get("email", ""),
+                "updated_at": now,
+            }},
+        )
+    else:
+        key = customer_key(customer_name, contact_no)
+        await customer_crm_profiles_collection.insert_one({
+            "tenant_id": tenant_id, "store_id": store_id,
+            "name": customer_name, "mobile": contact_no, "email": email,
+            "city": "", "birthday": "", "anniversary": "", "segment": "New",
+            "tags": ["lucky-draw"], "preferred_channel": "WhatsApp",
+            "consent_whatsapp": True, "consent_sms": True, "consent_email": bool(email),
+            "notes": f"Signed up via Lucky Draw QR at {store_name}." if store_name else "Signed up via Lucky Draw QR.",
+            "created_by": None, "created_by_name": "Customer (QR self-entry)",
+            "created_at": now, "updated_at": now,
+            "_source_key": key,
+        })
 
 
 @router.get("/{token}")
@@ -123,38 +163,15 @@ async def public_create_entry(token: str, payload: PublicEntryPayload):
     result = await lucky_draw_entries_collection.insert_one(entry_doc)
 
     if payload.newsletter_opt_in and contact_no:
-        key = customer_key(customer_name, contact_no)
-        existing_profile = await customer_crm_profiles_collection.find_one({
-            "tenant_id": tenant_id, "store_id": store_id, "mobile": contact_no,
-        })
-        if existing_profile:
-            await customer_crm_profiles_collection.update_one(
-                {"_id": existing_profile["_id"]},
-                {"$set": {
-                    "consent_whatsapp": True, "consent_sms": True, "consent_email": bool(clean(payload.email)),
-                    "email": clean(payload.email) or existing_profile.get("email", ""),
-                    "updated_at": now,
-                }},
-            )
-        else:
-            await customer_crm_profiles_collection.insert_one({
-                "tenant_id": tenant_id, "store_id": store_id,
-                "name": customer_name, "mobile": contact_no, "email": clean(payload.email),
-                "city": "", "birthday": "", "anniversary": "", "segment": "New",
-                "tags": ["lucky-draw"], "preferred_channel": "WhatsApp",
-                "consent_whatsapp": True, "consent_sms": True, "consent_email": bool(clean(payload.email)),
-                "notes": f"Signed up via Lucky Draw QR at {store_name}." if store_name else "Signed up via Lucky Draw QR.",
-                "created_by": None, "created_by_name": "Customer (QR self-entry)",
-                "created_at": now, "updated_at": now,
-                "_source_key": key,
-            })
+        await _upsert_newsletter_profile(tenant_id, store_id, store_name, customer_name, contact_no, clean(payload.email))
 
     coupon = None
     reward_pct = float(campaign.get("entry_reward_pct") or 0)
     if reward_pct > 0:
         coupon = await issue_coupon(
             tenant_id=tenant_id, discount_pct=reward_pct,
-            customer_name=customer_name, contact_no=contact_no,
+            customer_name=customer_name, contact_no=contact_no, email=clean(payload.email),
+            coupon_image_url=campaign.get("coupon_image_url") or "",
             notes=f"Auto-issued for entering {campaign.get('campaign_name')} at {store_name}." if store_name else f"Auto-issued for entering {campaign.get('campaign_name')}.",
             created_by_name="Lucky Draw (auto-issued)",
         )
@@ -164,3 +181,19 @@ async def public_create_entry(token: str, payload: PublicEntryPayload):
         "entry_id": str(result.inserted_id),
         "coupon": coupon,
     }
+
+
+@router.post("/{token}/newsletter")
+async def public_newsletter_signup(token: str, payload: NewsletterSignupPayload):
+    """Lets someone who skipped the opt-in checkbox on the entry form sign up
+    afterward, right from the Thank You screen."""
+    store = await _resolve_store(token)
+    customer_name = clean(payload.customer_name)
+    contact_no = clean(payload.contact_no)
+    if not contact_no:
+        raise HTTPException(status_code=400, detail="A contact number is needed to sign up.")
+    await _upsert_newsletter_profile(
+        store["tenant_id"], str(store["_id"]), store.get("name") or store.get("store_name") or "",
+        customer_name, contact_no, clean(payload.email),
+    )
+    return {"message": "You're signed up for offers and festival updates."}

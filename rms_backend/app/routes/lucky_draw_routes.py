@@ -13,13 +13,18 @@ never a department-level admin) can create or close a campaign.
 import random
 from typing import Any, Dict, Optional
 
+import cloudinary
+import cloudinary.uploader
 from bson import ObjectId
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from pydantic import BaseModel
 
+from ..config import settings
 from ..db import lucky_draw_campaigns_collection, lucky_draw_entries_collection, lucky_draw_results_collection
 from .customer_crm_routes import clean, now_utc, require_crm_tab, scoped_query, serialize_doc
 from .deps import get_tenant
+
+cloudinary.config(cloud_name=settings.cloudinary_cloud_name, api_key=settings.cloudinary_api_key, api_secret=settings.cloudinary_api_secret, secure=True)
 
 router = APIRouter(prefix="/api/customer-crm/lucky-draw", tags=["Lucky Draw"])
 
@@ -156,6 +161,7 @@ async def create_campaign(payload: CampaignPayload, ctx: Dict[str, Any] = Depend
         "min_bill_amount": max(0.0, float(payload.min_bill_amount or 0)),
         "notes": clean(payload.notes),
         "entry_reward_pct": max(0.0, min(100.0, float(payload.entry_reward_pct or 0))),
+        "coupon_image_url": "",
         "status": "ACTIVE",
         "created_by": ctx.get("admin_id"),
         "created_by_name": ctx.get("admin_name"),
@@ -165,6 +171,31 @@ async def create_campaign(payload: CampaignPayload, ctx: Dict[str, Any] = Depend
     result = await lucky_draw_campaigns_collection.insert_one(doc)
     saved = await lucky_draw_campaigns_collection.find_one({"_id": result.inserted_id})
     return serialize_doc(saved)
+
+
+@router.post("/campaigns/{campaign_id}/coupon-image")
+async def upload_campaign_coupon_image(campaign_id: str, file: UploadFile = File(...), ctx: Dict[str, Any] = Depends(get_tenant)):
+    """HQ attaches one coupon graphic per campaign — shown on the public
+    Thank You page (and in any future coupon email) for every coupon
+    auto-issued under this campaign's entry_reward_pct."""
+    ctx = require_hq(require_crm_tab(ctx, "luckydraw"))
+    if not ObjectId.is_valid(campaign_id):
+        raise HTTPException(status_code=400, detail="Invalid campaign ID.")
+    campaign = await lucky_draw_campaigns_collection.find_one({"_id": ObjectId(campaign_id), "tenant_id": ctx["tenant_id"]})
+    if not campaign:
+        raise HTTPException(status_code=404, detail="Campaign not found.")
+    raw = await file.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail="The selected file is empty.")
+    if len(raw) > 15 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Image must be under 15 MB.")
+    try:
+        result = cloudinary.uploader.upload(raw, folder=f"rms/lucky-draw-coupons/{ctx['tenant_id']}", resource_type="image")
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Could not upload image: {exc}")
+    url = result.get("secure_url") or result.get("url")
+    await lucky_draw_campaigns_collection.update_one({"_id": campaign["_id"]}, {"$set": {"coupon_image_url": url, "updated_at": now_utc()}})
+    return {"message": "Coupon image saved.", "coupon_image_url": url}
 
 
 @router.patch("/campaigns/{campaign_id}/status")

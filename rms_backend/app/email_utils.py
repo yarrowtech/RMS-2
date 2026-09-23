@@ -96,6 +96,24 @@ def _divider() -> str:
 def _note(text: str) -> str:
     return f'<p style="font-size:12px;color:#999;text-align:center;">{text}</p>'
 
+
+def _with_code_param(link: str, code: str) -> str:
+    """HQ's website link has no way to know which coupon a customer holds
+    unless the code rides along in the URL — append ?code=... (the same
+    ?code=FIRST20 pattern most "apply a coupon" landing pages use) so the
+    destination site can pick it up, instead of showing an unrelated code."""
+    if not link:
+        return ""
+    try:
+        from urllib.parse import urlencode, urlparse, parse_qsl, urlunparse
+        parts = urlparse(link)
+        query = dict(parse_qsl(parts.query))
+        query["code"] = code
+        return urlunparse(parts._replace(query=urlencode(query)))
+    except Exception:
+        separator = "&" if "?" in link else "?"
+        return f"{link}{separator}code={code}"
+
 async def _log_email_failure(subject: str, recipients: List[str], reason: str) -> None:
     """Persist every send failure so production has something queryable —
     print() output is easy to lose once nobody is watching stdout."""
@@ -1030,6 +1048,93 @@ async def send_purchase_order_created_email(
         subject=f"New purchase order {safe_po} from {safe_retailer}",
         recipients=[email],
         html=_wrap(PRIMARY, "New Purchase Order", body, "RMS Procurement"),
+    )
+
+
+async def send_coupon_email(
+    email: EmailStr,
+    customer_name: str,
+    code: str,
+    discount_pct: float,
+    min_bill_amount: float = 0,
+    expiry_date: str = "",
+    coupon_image_url: str = "",
+    store_name: str = "",
+    website_link: str = "",
+) -> bool:
+    """Sent when a customer taps "Redeem now" on the Lucky Draw Thank You
+    page, or "Email me this coupon" on a coupon's public link page (see
+    coupon_routes.py's public email endpoint) — gives them a copy of their
+    coupon they can pull up at the counter later, since both of those pages
+    are one-time/no-login views with nothing to come back to otherwise."""
+    safe_name = escape(customer_name or "there")
+    safe_code = escape(code or "")
+    image_block = (
+        f'<img src="{escape(coupon_image_url)}" alt="Coupon" style="max-width:100%;border-radius:12px;margin-bottom:18px;display:block;" />'
+        if coupon_image_url else ""
+    )
+    bill_line = f" on bills over Rs. {float(min_bill_amount):,.0f}" if min_bill_amount else ""
+    expiry_line = (
+        f'<p style="font-size:13px;color:#92400e;margin:8px 0 0;">Valid until {escape(expiry_date)}</p>'
+        if expiry_date else ""
+    )
+    store_phrase = f" from {escape(store_name)}" if store_name else ""
+    link_button = _btn(_with_code_param(website_link, code), "Visit website", WARNING) if website_link else ""
+    body = f"""
+      <h2 style="color:#222;margin-bottom:8px;">Hi {safe_name},</h2>
+      <p style="font-size:15px;color:#444;">Here's your coupon{store_phrase} — show this at the counter to redeem it.</p>
+      {image_block}
+      <div style="margin:20px 0;padding:20px;border:2px dashed #f59e0b;background:#fffbeb;border-radius:12px;text-align:center;">
+        <p style="margin:0;color:#92400e;font-size:12px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;">Your coupon code</p>
+        <p style="margin:8px 0 0;color:#78350f;font-size:26px;font-weight:800;letter-spacing:.08em;">{safe_code}</p>
+        <p style="margin:8px 0 0;color:#92400e;font-size:14px;font-weight:700;">{float(discount_pct):g}% off{bill_line}</p>
+        {expiry_line}
+      </div>
+      {link_button}
+      {_note("Show this email or read out the code at the counter to redeem it — a staff member marks it redeemed there. This email is just your copy.")}
+    """
+    return await _send(
+        subject=f"Your coupon code: {code}",
+        recipients=[email],
+        html=_wrap(WARNING, "Your Coupon", body, "RMS Customer CRM"),
+    )
+
+
+async def send_coupon_redeemed_email(
+    email: EmailStr,
+    customer_name: str,
+    code: str,
+    discount_pct: float,
+    min_bill_amount: float = 0,
+    store_name: str = "",
+    website_link: str = "",
+) -> bool:
+    """Sent automatically the moment staff mark a coupon redeemed at the
+    counter (see coupon_routes.py's redeem_coupon) — only when the coupon
+    has an email on file; no email on file simply means no confirmation
+    goes out, redemption itself still works either way. Distinct from
+    send_coupon_email (which hands over a still-usable coupon) since this
+    one confirms the coupon has now been used."""
+    safe_name = escape(customer_name or "there")
+    safe_code = escape(code or "")
+    bill_line = f" on bills over Rs. {float(min_bill_amount):,.0f}" if min_bill_amount else ""
+    store_phrase = f" at {escape(store_name)}" if store_name else ""
+    link_button = _btn(_with_code_param(website_link, code), "Visit website", SUCCESS) if website_link else ""
+    body = f"""
+      <h2 style="color:#222;margin-bottom:8px;">Hi {safe_name},</h2>
+      <p style="font-size:15px;color:#444;">You just redeemed your coupon{store_phrase} — here's your confirmation.</p>
+      <div style="margin:20px 0;padding:20px;border:2px solid #bbf7d0;background:#f0fdf4;border-radius:12px;text-align:center;">
+        <p style="margin:0;color:#166534;font-size:12px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;">Redeemed</p>
+        <p style="margin:8px 0 0;color:#052e16;font-size:26px;font-weight:800;letter-spacing:.08em;">{safe_code}</p>
+        <p style="margin:8px 0 0;color:#166534;font-size:14px;font-weight:700;">{float(discount_pct):g}% off{bill_line}</p>
+      </div>
+      {link_button}
+      {_note("This code has now been used and can't be redeemed again.")}
+    """
+    return await _send(
+        subject=f"Coupon redeemed: {code}",
+        recipients=[email],
+        html=_wrap(SUCCESS, "Coupon Redeemed", body, "RMS Customer CRM"),
     )
 
 

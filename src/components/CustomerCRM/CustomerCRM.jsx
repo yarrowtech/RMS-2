@@ -214,10 +214,10 @@ function CampaignModal({ onClose, onSave }) {
   const [form, setForm] = useState({ campaign_name: "", starts_on: "", ends_on: "", min_bill_amount: "", notes: "", entry_reward_pct: "" });
   const set = (key, value) => setForm((f) => ({ ...f, [key]: value }));
   return (
-    <div className="fixed inset-0 z-[1000] grid place-items-center bg-slate-950/50 p-4 backdrop-blur-sm">
-      <div className="w-full max-w-lg overflow-hidden rounded-2xl bg-white shadow-2xl">
+    <div className="fixed inset-0 z-[1000] grid place-items-center overflow-y-auto bg-slate-950/50 p-4 backdrop-blur-sm">
+      <div className="flex max-h-[94dvh] w-full max-w-lg flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
         <ModalHeader eyebrow="Lucky Draw" title="New campaign" onClose={onClose} />
-        <div className="grid gap-4 p-6">
+        <div className="grid gap-4 overflow-y-auto p-6">
           <div><label className="crm-label">Campaign name</label><input className="crm-input" value={form.campaign_name} onChange={(e) => set("campaign_name", e.target.value)} placeholder="e.g. Durga Puja 2026 Lucky Draw" /></div>
           <div className="grid grid-cols-2 gap-4">
             <div><label className="crm-label">Starts on</label><input type="date" className="crm-input" value={form.starts_on} onChange={(e) => set("starts_on", e.target.value)} /></div>
@@ -241,10 +241,10 @@ function LuckyDrawEntryModal({ campaigns, defaultCampaignId, onClose, onSave }) 
   const [form, setForm] = useState({ campaign_id: defaultCampaignId || (campaigns[0]?.id || ""), customer_name: "", email: "", address: "", contact_no: "", profession: "", bill_no: "" });
   const set = (key, value) => setForm((f) => ({ ...f, [key]: value }));
   return (
-    <div className="fixed inset-0 z-[1000] grid place-items-center bg-slate-950/50 p-4 backdrop-blur-sm">
-      <div className="w-full max-w-2xl overflow-hidden rounded-2xl bg-white shadow-2xl">
+    <div className="fixed inset-0 z-[1000] grid place-items-center overflow-y-auto bg-slate-950/50 p-4 backdrop-blur-sm">
+      <div className="flex max-h-[94dvh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
         <ModalHeader eyebrow="Lucky Draw" title="Add slip entry" onClose={onClose} />
-        <div className="grid gap-4 p-6 md:grid-cols-2">
+        <div className="grid gap-4 overflow-y-auto p-6 md:grid-cols-2">
           <div className="md:col-span-2">
             <label className="crm-label">Campaign</label>
             <select className="crm-input" value={form.campaign_id} onChange={(e) => set("campaign_id", e.target.value)}>
@@ -268,10 +268,10 @@ function DrawModal({ campaign, isHq, defaultRedo, onClose, onSave }) {
   const [form, setForm] = useState({ store_id: "", winner_count: 1, reason: "", redo: Boolean(defaultRedo) });
   const set = (key, value) => setForm((f) => ({ ...f, [key]: value }));
   return (
-    <div className="fixed inset-0 z-[1000] grid place-items-center bg-slate-950/50 p-4 backdrop-blur-sm">
-      <div className="w-full max-w-lg overflow-hidden rounded-2xl bg-white shadow-2xl">
+    <div className="fixed inset-0 z-[1000] grid place-items-center overflow-y-auto bg-slate-950/50 p-4 backdrop-blur-sm">
+      <div className="flex max-h-[94dvh] w-full max-w-lg flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
         <ModalHeader eyebrow="Lucky Draw" title={`Run draw — ${campaign?.campaign_name || ""}`} onClose={onClose} />
-        <div className="grid gap-4 p-6">
+        <div className="grid gap-4 overflow-y-auto p-6">
           {isHq && (
             <div>
               <label className="crm-label">Store scope</label>
@@ -341,16 +341,39 @@ function SlipCard({ entry }) {
   );
 }
 
-function CouponModal({ onClose, onSave }) {
-  const [form, setForm] = useState({ discount_pct: "", min_bill_amount: "", expiry_date: "", customer_name: "", contact_no: "", notes: "" });
+function CouponModal({ initial, onClose, onSave }) {
+  const isEdit = Boolean(initial?.id);
+  const [form, setForm] = useState(() => ({
+    id: initial?.id || "",
+    discount_pct: initial?.discount_pct ?? "",
+    min_bill_amount: initial?.min_bill_amount ?? "",
+    expiry_date: initial?.expiry_date || "",
+    customer_name: initial?.customer_name || "",
+    contact_no: initial?.contact_no || "",
+    email: initial?.email || "",
+    notes: initial?.notes || "",
+    website_link: initial?.website_link || "",
+    image: null,
+  }));
+  const [formError, setFormError] = useState("");
   const set = (key, value) => setForm((f) => ({ ...f, [key]: value }));
+  const handleSave = () => {
+    const pct = Number(form.discount_pct || 0);
+    if (!form.discount_pct || pct <= 0 || pct > 100) {
+      setFormError("Enter a discount percentage between 1 and 100.");
+      return;
+    }
+    setFormError("");
+    onSave(form);
+  };
   return (
-    <div className="fixed inset-0 z-[1000] grid place-items-center bg-slate-950/50 p-4 backdrop-blur-sm">
-      <div className="w-full max-w-lg overflow-hidden rounded-2xl bg-white shadow-2xl">
-        <ModalHeader eyebrow="Customer CRM" title="New coupon" onClose={onClose} />
-        <div className="grid gap-4 p-6">
+    <div className="fixed inset-0 z-[1000] grid place-items-center overflow-y-auto bg-slate-950/50 p-4 backdrop-blur-sm">
+      <div className="flex max-h-[94dvh] w-full max-w-lg flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+        <ModalHeader eyebrow="Customer CRM" title={isEdit ? `Edit coupon — ${initial.code}` : "New coupon"} onClose={onClose} />
+        <div className="grid gap-4 overflow-y-auto p-6">
+          {isEdit && <p className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs font-semibold text-slate-600">The code itself (<span className="font-bold text-slate-900">{initial.code}</span>) can't be changed once issued — everything else here can.</p>}
           <div className="grid grid-cols-2 gap-4">
-            <div><label className="crm-label">Discount %</label><input type="number" min="1" max="100" className="crm-input" value={form.discount_pct} onChange={(e) => set("discount_pct", e.target.value)} placeholder="e.g. 10" /></div>
+            <div><label className="crm-label">Discount % *</label><input type="number" min="1" max="100" className="crm-input" value={form.discount_pct} onChange={(e) => set("discount_pct", e.target.value)} placeholder="e.g. 10" /></div>
             <div><label className="crm-label">Minimum bill amount</label><input type="number" min="0" className="crm-input" value={form.min_bill_amount} onChange={(e) => set("min_bill_amount", e.target.value)} placeholder="e.g. 500" /></div>
           </div>
           <div><label className="crm-label">Expiry date (optional)</label><input type="date" className="crm-input" value={form.expiry_date} onChange={(e) => set("expiry_date", e.target.value)} /></div>
@@ -358,10 +381,23 @@ function CouponModal({ onClose, onSave }) {
             <div><label className="crm-label">Customer name (optional)</label><input className="crm-input" value={form.customer_name} onChange={(e) => set("customer_name", e.target.value)} placeholder="Leave blank for a general code" /></div>
             <div><label className="crm-label">Contact no. (optional)</label><input className="crm-input" value={form.contact_no} onChange={(e) => set("contact_no", e.target.value)} placeholder="If issued to one customer" /></div>
           </div>
+          <div><label className="crm-label">Email (optional)</label><input type="email" className="crm-input" value={form.email} onChange={(e) => set("email", e.target.value)} placeholder="Needed only if they'll use Redeem now to email it to themselves" /></div>
+          <div>
+            <label className="crm-label">Website link (optional)</label>
+            <input type="url" className="crm-input" value={form.website_link} onChange={(e) => set("website_link", e.target.value)} placeholder="https://yourstore.com/offer" />
+            <p className="mt-1 text-xs text-slate-400">Shown as a button on the coupon's link page and in coupon emails — send them to your site, a booking page, anything.</p>
+          </div>
+          <div>
+            <label className="crm-label">Coupon image (optional)</label>
+            {initial?.coupon_image_url && !form.image && <img src={initial.coupon_image_url} alt="Current coupon" className="mb-2 h-16 w-16 rounded-lg border border-slate-200 object-cover" />}
+            <input type="file" accept="image/*" className="crm-input" onChange={(e) => set("image", e.target.files?.[0] || null)} />
+            {form.image ? <p className="mt-1 text-xs text-slate-500">{form.image.name}</p> : initial?.coupon_image_url && <p className="mt-1 text-xs text-slate-400">Pick a new file to replace the current image.</p>}
+          </div>
           <div><label className="crm-label">Notes</label><textarea className="crm-input min-h-20" value={form.notes} onChange={(e) => set("notes", e.target.value)} placeholder="Why this was issued..." /></div>
           <p className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs font-semibold text-amber-800">There's no automatic checkout integration yet — staff look this code up at the counter, apply the discount by hand, then mark it redeemed here.</p>
+          {formError && <p className="text-xs font-bold text-rose-600">{formError}</p>}
         </div>
-        <ModalFooter onClose={onClose} onSave={() => onSave(form)} saveLabel="Create coupon" />
+        <ModalFooter onClose={onClose} onSave={handleSave} saveLabel={isEdit ? "Save changes" : "Create coupon"} />
       </div>
     </div>
   );
@@ -507,6 +543,24 @@ export default function CustomerCRM() {
     } catch (e) { setError(e.message || "Unable to create campaign."); }
   };
 
+  const uploadCouponImage = async (campaignId, file) => {
+    // Raw fetch, not crmFetch — a multipart body needs the browser to set
+    // its own boundary-bearing Content-Type; crmFetch always forces
+    // application/json, which would corrupt the upload.
+    const body = new FormData();
+    body.append("file", file);
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/customer-crm/lucky-draw/campaigns/${campaignId}/coupon-image`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token()}` },
+        body,
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.detail || "Unable to upload coupon image.");
+      loadLuckyDraw();
+    } catch (e) { setError(e.message || "Unable to upload coupon image."); }
+  };
+
   const toggleCampaignStatus = async (id, status) => {
     try {
       await crmFetch(`/api/customer-crm/lucky-draw/campaigns/${id}/status`, { method: "PATCH", body: JSON.stringify({ status }) });
@@ -561,14 +615,31 @@ export default function CustomerCRM() {
     } catch (e) { setError(e.message || "Unable to mark this entry as printed."); }
   };
 
-  const createCoupon = async (form) => {
+  const saveCoupon = async (form) => {
     try {
-      await crmFetch("/api/customer-crm/coupons", {
-        method: "POST",
-        body: JSON.stringify({ ...form, discount_pct: Number(form.discount_pct || 0), min_bill_amount: Number(form.min_bill_amount || 0) }),
-      });
+      const { image, id, ...payload } = form;
+      const body = JSON.stringify({ ...payload, discount_pct: Number(form.discount_pct || 0), min_bill_amount: Number(form.min_bill_amount || 0) });
+      const saved = id
+        ? await crmFetch(`/api/customer-crm/coupons/${id}`, { method: "PATCH", body })
+        : await crmFetch("/api/customer-crm/coupons", { method: "POST", body });
+      const couponId = saved?.id || id;
+      if (image && couponId) {
+        // Raw fetch, not crmFetch — a multipart body needs the browser's own
+        // boundary-bearing Content-Type, which crmFetch would override.
+        const imageBody = new FormData();
+        imageBody.append("file", image);
+        const response = await fetch(`${API_BASE_URL}/api/customer-crm/coupons/${couponId}/image`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token()}` },
+          body: imageBody,
+        });
+        if (!response.ok) {
+          const data = await response.json().catch(() => ({}));
+          setError(data.detail || "Coupon saved, but the image could not be uploaded.");
+        }
+      }
       setCouponModal(null); loadCoupons();
-    } catch (e) { setError(e.message || "Unable to create coupon."); }
+    } catch (e) { setError(e.message || "Unable to save coupon."); }
   };
 
   const toggleCouponStatus = async (id, status) => {
@@ -848,6 +919,15 @@ export default function CustomerCRM() {
                 <p className="text-xs text-slate-500">{c.starts_on || "No start date"} - {c.ends_on || "No end date"}</p>
                 {c.min_bill_amount > 0 && <p className="mt-2 text-xs font-semibold text-amber-700">Min. bill: {money(c.min_bill_amount)} (staff reminder only, not auto-checked)</p>}
                 {c.entry_reward_pct > 0 && <p className="mt-1 text-xs font-semibold text-indigo-700"><Ticket size={12} className="mr-1 inline"/>{c.entry_reward_pct}% instant coupon on every QR entry</p>}
+                {c.entry_reward_pct > 0 && isHq && (
+                  <div className="mt-2 flex items-center gap-2">
+                    {c.coupon_image_url && <img src={c.coupon_image_url} alt="Coupon" className="h-10 w-10 rounded-lg border border-slate-200 object-cover" />}
+                    <label className="cursor-pointer rounded-lg border border-slate-200 px-2.5 py-1.5 text-[11px] font-bold text-slate-600 hover:bg-slate-50">
+                      {c.coupon_image_url ? "Change coupon image" : "Upload coupon image"}
+                      <input type="file" accept="image/*" className="hidden" onChange={(e) => { const file = e.target.files?.[0]; if (file) uploadCouponImage(c.id, file); e.target.value = ""; }} />
+                    </label>
+                  </div>
+                )}
                 {c.notes && <p className="mt-2 text-xs text-slate-500">{c.notes}</p>}
                 <div className="mt-3 flex gap-2">
                   <button onClick={() => setLdCampaignFilter(ldCampaignFilter === c.id ? "" : c.id)} className="flex-1 rounded-lg bg-slate-900 px-3 py-2 text-xs font-bold text-white hover:bg-slate-800">{ldCampaignFilter === c.id ? "Clear filter" : "View entries"}</button>
@@ -958,17 +1038,25 @@ export default function CustomerCRM() {
           <div className="overflow-x-auto">
             <table className="w-full min-w-[820px] text-left text-sm">
               <thead className="bg-slate-50 text-xs font-bold uppercase text-slate-500">
-                <tr><th className="px-5 py-3">Code</th><th className="px-5 py-3">Discount</th><th className="px-5 py-3">Min. bill</th><th className="px-5 py-3">Issued to</th><th className="px-5 py-3">Status</th><th className="px-5 py-3"></th></tr>
+                <tr><th className="px-5 py-3">Image</th><th className="px-5 py-3">Code</th><th className="px-5 py-3">Discount</th><th className="px-5 py-3">Min. bill</th><th className="px-5 py-3">Issued to</th><th className="px-5 py-3">Status</th><th className="px-5 py-3"></th></tr>
               </thead>
               <tbody>
                 {coupons.map((c) => (
                   <tr key={c.id} className="border-t border-slate-100">
+                    <td className="px-5 py-3">{c.coupon_image_url ? <img src={c.coupon_image_url} alt="Coupon" className="h-10 w-10 rounded-lg border border-slate-200 object-cover" /> : <span className="text-xs text-slate-400">-</span>}</td>
                     <td className="px-5 py-3 font-bold text-slate-900">{c.code}</td>
                     <td className="px-5 py-3 text-slate-700">{c.discount_pct}%</td>
                     <td className="px-5 py-3 text-slate-700">{c.min_bill_amount > 0 ? money(c.min_bill_amount) : "-"}</td>
                     <td className="px-5 py-3 text-slate-700">{c.customer_name || c.contact_no ? `${c.customer_name || ""} ${c.contact_no || ""}`.trim() : "Anyone (general code)"}</td>
                     <td className="px-5 py-3"><span className={`rounded-full px-3 py-1 text-[11px] font-bold uppercase ${c.status === "ACTIVE" ? "bg-emerald-100 text-emerald-700" : c.status === "REDEEMED" ? "bg-slate-200 text-slate-600" : "bg-rose-100 text-rose-700"}`}>{c.status}</span></td>
-                    <td className="px-5 py-3">{isHq && c.status === "ACTIVE" && <button onClick={() => toggleCouponStatus(c.id, "DISABLED")} className="text-xs font-bold text-rose-600 underline hover:text-rose-800">Disable</button>}{isHq && c.status === "DISABLED" && <button onClick={() => toggleCouponStatus(c.id, "ACTIVE")} className="text-xs font-bold text-slate-500 underline hover:text-slate-700">Reactivate</button>}</td>
+                    <td className="px-5 py-3">
+                      <div className="flex flex-wrap items-center gap-3">
+                        <button onClick={() => { navigator.clipboard?.writeText(`${window.location.origin}/coupon/${c.id}`); }} className="text-xs font-bold text-indigo-600 underline hover:text-indigo-800">Copy link</button>
+                        {isHq && c.status !== "REDEEMED" && <button onClick={() => setCouponModal(c)} className="text-xs font-bold text-slate-500 underline hover:text-slate-700">Edit</button>}
+                        {isHq && c.status === "ACTIVE" && <button onClick={() => toggleCouponStatus(c.id, "DISABLED")} className="text-xs font-bold text-rose-600 underline hover:text-rose-800">Disable</button>}
+                        {isHq && c.status === "DISABLED" && <button onClick={() => toggleCouponStatus(c.id, "ACTIVE")} className="text-xs font-bold text-slate-500 underline hover:text-slate-700">Reactivate</button>}
+                      </div>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -1036,7 +1124,7 @@ export default function CustomerCRM() {
       {entryModal && <LuckyDrawEntryModal campaigns={luckyDraw.campaigns || []} defaultCampaignId={ldCampaignFilter} onClose={() => setEntryModal(null)} onSave={saveEntry} />}
       {drawModal && <DrawModal campaign={drawModal.campaign} isHq={data.scope?.scope === "hq"} defaultRedo={drawModal.defaultRedo} onClose={() => setDrawModal(null)} onSave={runDraw} />}
       {printSlip && <PrintSlipModal entry={printSlip} onClose={() => setPrintSlip(null)} onPrinted={markPrinted} />}
-      {couponModal && <CouponModal onClose={() => setCouponModal(null)} onSave={createCoupon} />}
+      {couponModal && <CouponModal initial={couponModal.id ? couponModal : null} onClose={() => setCouponModal(null)} onSave={saveCoupon} />}
     </div>
   );
 }
