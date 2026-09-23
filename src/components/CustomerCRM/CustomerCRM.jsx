@@ -173,11 +173,11 @@ function ModalHeader({ eyebrow, title, onClose }) {
   );
 }
 
-function ModalFooter({ onClose, onSave, saveLabel }) {
+function ModalFooter({ onClose, onSave, saveLabel, disabled }) {
   return (
     <div className="flex justify-end gap-3 border-t border-slate-100 px-6 py-4">
       <button onClick={onClose} className="rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-bold text-slate-600 hover:bg-slate-50">Cancel</button>
-      <button onClick={onSave} className="rounded-xl bg-indigo-600 px-5 py-2.5 text-sm font-bold text-white hover:bg-indigo-700">{saveLabel}</button>
+      <button onClick={onSave} disabled={disabled} className="rounded-xl bg-indigo-600 px-5 py-2.5 text-sm font-bold text-white hover:bg-indigo-700 disabled:opacity-60">{saveLabel}</button>
     </div>
   );
 }
@@ -221,7 +221,20 @@ function CampaignModal({ initial, onClose, onSave }) {
     notes: initial?.notes || "",
     entry_reward_pct: initial?.entry_reward_pct || "",
   }));
+  const [saveError, setSaveError] = useState("");
+  const [saving, setSaving] = useState(false);
   const set = (key, value) => setForm((f) => ({ ...f, [key]: value }));
+  const handleSave = async () => {
+    setSaving(true);
+    setSaveError("");
+    try {
+      await onSave(form);
+    } catch (e) {
+      setSaveError(e.message || "Unable to save campaign.");
+    } finally {
+      setSaving(false);
+    }
+  };
   return (
     <div className="fixed inset-0 z-[1000] grid place-items-center overflow-y-auto bg-slate-950/50 p-4 backdrop-blur-sm">
       <div className="flex max-h-[94dvh] w-full max-w-lg flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
@@ -239,8 +252,9 @@ function CampaignModal({ initial, onClose, onSave }) {
             <p className="mt-1 text-xs text-slate-400">Leave blank for none. If set, every QR self-entry gets its own coupon at this % automatically, shown right on their Thank You screen — separate from actually winning the draw.{isEdit ? " Changing this only affects entries submitted from now on." : ""}</p>
           </div>
           <div><label className="crm-label">Notes</label><textarea className="crm-input min-h-20" value={form.notes} onChange={(e) => set("notes", e.target.value)} placeholder="Prize details, rules for staff at the counter..." /></div>
+          {saveError && <p className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs font-bold text-rose-700">{saveError}</p>}
         </div>
-        <ModalFooter onClose={onClose} onSave={() => onSave(form)} saveLabel={isEdit ? "Save changes" : "Create campaign"} />
+        <ModalFooter onClose={onClose} onSave={handleSave} disabled={saving} saveLabel={saving ? "Saving..." : isEdit ? "Save changes" : "Create campaign"} />
       </div>
     </div>
   );
@@ -356,7 +370,7 @@ function SlipCard({ entry }) {
   );
 }
 
-function CouponModal({ initial, onClose, onSave }) {
+function CouponModal({ initial, campaigns, onClose, onSave }) {
   const isEdit = Boolean(initial?.id);
   const [form, setForm] = useState(() => ({
     id: initial?.id || "",
@@ -368,18 +382,27 @@ function CouponModal({ initial, onClose, onSave }) {
     email: initial?.email || "",
     notes: initial?.notes || "",
     website_link: initial?.website_link || "",
+    campaign_id: initial?.campaign_id || "",
     image: null,
   }));
   const [formError, setFormError] = useState("");
+  const [saving, setSaving] = useState(false);
   const set = (key, value) => setForm((f) => ({ ...f, [key]: value }));
-  const handleSave = () => {
+  const handleSave = async () => {
     const pct = Number(form.discount_pct || 0);
     if (!form.discount_pct || pct <= 0 || pct > 100) {
       setFormError("Enter a discount percentage between 1 and 100.");
       return;
     }
     setFormError("");
-    onSave(form);
+    setSaving(true);
+    try {
+      await onSave(form);
+    } catch (e) {
+      setFormError(e.message || "Unable to save coupon.");
+    } finally {
+      setSaving(false);
+    }
   };
   return (
     <div className="fixed inset-0 z-[1000] grid place-items-center overflow-y-auto bg-slate-950/50 p-4 backdrop-blur-sm">
@@ -398,6 +421,14 @@ function CouponModal({ initial, onClose, onSave }) {
           </div>
           <div><label className="crm-label">Email (optional)</label><input type="email" className="crm-input" value={form.email} onChange={(e) => set("email", e.target.value)} placeholder="Needed only if they'll use Redeem now to email it to themselves" /></div>
           <div>
+            <label className="crm-label">Link to campaign (optional)</label>
+            <select className="crm-input" value={form.campaign_id} onChange={(e) => set("campaign_id", e.target.value)}>
+              <option value="">Not linked to a campaign</option>
+              {(campaigns || []).map((c) => <option key={c.id} value={c.id}>{c.campaign_name}</option>)}
+            </select>
+            <p className="mt-1 text-xs text-slate-400">Purely for reporting — lets you see which coupons came from which festival campaign. Doesn't change redemption.</p>
+          </div>
+          <div>
             <label className="crm-label">Website link (optional)</label>
             <input type="url" className="crm-input" value={form.website_link} onChange={(e) => set("website_link", e.target.value)} placeholder="https://yourstore.com/offer" />
             <p className="mt-1 text-xs text-slate-400">Shown as a button on the coupon's link page and in coupon emails — send them to your site, a booking page, anything.</p>
@@ -412,7 +443,7 @@ function CouponModal({ initial, onClose, onSave }) {
           <p className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs font-semibold text-amber-800">There's no automatic checkout integration yet — staff look this code up at the counter, apply the discount by hand, then mark it redeemed here.</p>
           {formError && <p className="text-xs font-bold text-rose-600">{formError}</p>}
         </div>
-        <ModalFooter onClose={onClose} onSave={handleSave} saveLabel={isEdit ? "Save changes" : "Create coupon"} />
+        <ModalFooter onClose={onClose} onSave={handleSave} disabled={saving} saveLabel={saving ? "Saving..." : isEdit ? "Save changes" : "Create coupon"} />
       </div>
     </div>
   );
@@ -440,6 +471,7 @@ export default function CustomerCRM() {
   const [hqStores, setHqStores] = useState([]);
   const [hqQrStoreId, setHqQrStoreId] = useState("");
   const [coupons, setCoupons] = useState([]);
+  const [couponCampaignFilter, setCouponCampaignFilter] = useState("");
   const [couponModal, setCouponModal] = useState(null);
   const [couponLookupCode, setCouponLookupCode] = useState("");
   const [couponLookupResult, setCouponLookupResult] = useState(null);
@@ -501,6 +533,19 @@ export default function CustomerCRM() {
 
   useEffect(() => { if (active === "coupons") loadCoupons(); }, [active, loadCoupons]);
 
+  // Coupons can optionally link to a Lucky Draw campaign — the campaign
+  // list is normally only fetched when that tab is open, so fetch it here
+  // too (silently; if this admin doesn't have Lucky Draw access the "link
+  // to campaign" dropdown just stays empty, which is fine).
+  const loadCampaignsForCouponLink = useCallback(async () => {
+    try {
+      const campaigns = await crmFetch("/api/customer-crm/lucky-draw/campaigns");
+      setLuckyDraw((ld) => ({ ...ld, campaigns }));
+    } catch { /* non-critical for the Coupons tab */ }
+  }, []);
+
+  useEffect(() => { if (active === "coupons") loadCampaignsForCouponLink(); }, [active, loadCampaignsForCouponLink]);
+
   const customers = useMemo(() => {
     const q = query.trim().toLowerCase();
     return (data.customers || []).filter((c) => !q || [c.name, c.mobile, c.email, c.segment, ...(c.tags || [])].some((x) => String(x || "").toLowerCase().includes(q)));
@@ -549,16 +594,17 @@ export default function CustomerCRM() {
   };
 
   const saveCampaign = async (form) => {
-    try {
-      const { id, ...payload } = form;
-      const body = JSON.stringify({ ...payload, min_bill_amount: Number(form.min_bill_amount || 0), entry_reward_pct: Number(form.entry_reward_pct || 0) });
-      if (id) {
-        await crmFetch(`/api/customer-crm/lucky-draw/campaigns/${id}`, { method: "PATCH", body });
-      } else {
-        await crmFetch("/api/customer-crm/lucky-draw/campaigns", { method: "POST", body });
-      }
-      setCampaignModal(null); loadLuckyDraw();
-    } catch (e) { setError(e.message || "Unable to save campaign."); }
+    // No try/catch here — a failure needs to reach CampaignModal's own
+    // handleSave so it shows up inline in the (still-open) modal, instead
+    // of a global banner that a fixed-position modal covers up completely.
+    const { id, ...payload } = form;
+    const body = JSON.stringify({ ...payload, min_bill_amount: Number(form.min_bill_amount || 0), entry_reward_pct: Number(form.entry_reward_pct || 0) });
+    if (id) {
+      await crmFetch(`/api/customer-crm/lucky-draw/campaigns/${id}`, { method: "PATCH", body });
+    } else {
+      await crmFetch("/api/customer-crm/lucky-draw/campaigns", { method: "POST", body });
+    }
+    setCampaignModal(null); loadLuckyDraw();
   };
 
   const uploadCouponImage = async (campaignId, file) => {
@@ -634,30 +680,34 @@ export default function CustomerCRM() {
   };
 
   const saveCoupon = async (form) => {
-    try {
-      const { image, id, ...payload } = form;
-      const body = JSON.stringify({ ...payload, discount_pct: Number(form.discount_pct || 0), min_bill_amount: Number(form.min_bill_amount || 0) });
-      const saved = id
-        ? await crmFetch(`/api/customer-crm/coupons/${id}`, { method: "PATCH", body })
-        : await crmFetch("/api/customer-crm/coupons", { method: "POST", body });
-      const couponId = saved?.id || id;
-      if (image && couponId) {
-        // Raw fetch, not crmFetch — a multipart body needs the browser's own
-        // boundary-bearing Content-Type, which crmFetch would override.
-        const imageBody = new FormData();
-        imageBody.append("file", image);
-        const response = await fetch(`${API_BASE_URL}/api/customer-crm/coupons/${couponId}/image`, {
-          method: "POST",
-          headers: { Authorization: `Bearer ${token()}` },
-          body: imageBody,
-        });
-        if (!response.ok) {
-          const data = await response.json().catch(() => ({}));
-          setError(data.detail || "Coupon saved, but the image could not be uploaded.");
-        }
+    // No outer try/catch on the create/update call itself — a failure there
+    // needs to reach CouponModal's own handleSave so it shows up inline in
+    // the (still-open) modal, instead of a global banner a fixed-position
+    // modal covers up completely. The image-upload step below is different:
+    // by that point the coupon itself is already saved, so that failure is
+    // reported via the global banner and the modal still closes normally.
+    const { image, id, ...payload } = form;
+    const body = JSON.stringify({ ...payload, discount_pct: Number(form.discount_pct || 0), min_bill_amount: Number(form.min_bill_amount || 0) });
+    const saved = id
+      ? await crmFetch(`/api/customer-crm/coupons/${id}`, { method: "PATCH", body })
+      : await crmFetch("/api/customer-crm/coupons", { method: "POST", body });
+    const couponId = saved?.id || id;
+    if (image && couponId) {
+      // Raw fetch, not crmFetch — a multipart body needs the browser's own
+      // boundary-bearing Content-Type, which crmFetch would override.
+      const imageBody = new FormData();
+      imageBody.append("file", image);
+      const response = await fetch(`${API_BASE_URL}/api/customer-crm/coupons/${couponId}/image`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token()}` },
+        body: imageBody,
+      });
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        setError(data.detail || "Coupon saved, but the image could not be uploaded.");
       }
-      setCouponModal(null); loadCoupons();
-    } catch (e) { setError(e.message || "Unable to save coupon."); }
+    }
+    setCouponModal(null); loadCoupons();
   };
 
   const toggleCouponStatus = async (id, status) => {
@@ -1046,26 +1096,39 @@ export default function CustomerCRM() {
 
   const renderCoupons = () => {
     const isHq = data.scope?.scope === "hq";
+    const filteredCoupons = couponCampaignFilter
+      ? coupons.filter((c) => (couponCampaignFilter === "__none__" ? !c.campaign_id : c.campaign_id === couponCampaignFilter))
+      : coupons;
     return (
       <div className="space-y-5">
         <div className="crm-card overflow-hidden">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 p-5">
             <div><h2 className="text-lg font-bold text-slate-900">Coupons</h2><p className="text-sm text-slate-500">Percentage-off codes. There's no automatic checkout step yet — staff apply the discount by hand, then mark it redeemed here.</p></div>
-            {isHq && <button onClick={() => setCouponModal({})} className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-bold text-white hover:bg-indigo-700"><Plus size={16} className="inline"/> New coupon</button>}
+            <div className="flex flex-wrap items-center gap-3">
+              {(luckyDraw.campaigns || []).length > 0 && (
+                <select className="crm-input" value={couponCampaignFilter} onChange={(e) => setCouponCampaignFilter(e.target.value)}>
+                  <option value="">All campaigns</option>
+                  <option value="__none__">Not linked to a campaign</option>
+                  {luckyDraw.campaigns.map((c) => <option key={c.id} value={c.id}>{c.campaign_name}</option>)}
+                </select>
+              )}
+              {isHq && <button onClick={() => setCouponModal({})} className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-bold text-white hover:bg-indigo-700"><Plus size={16} className="inline"/> New coupon</button>}
+            </div>
           </div>
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[820px] text-left text-sm">
+            <table className="w-full min-w-[940px] text-left text-sm">
               <thead className="bg-slate-50 text-xs font-bold uppercase text-slate-500">
-                <tr><th className="px-5 py-3">Image</th><th className="px-5 py-3">Code</th><th className="px-5 py-3">Discount</th><th className="px-5 py-3">Min. bill</th><th className="px-5 py-3">Issued to</th><th className="px-5 py-3">Status</th><th className="px-5 py-3"></th></tr>
+                <tr><th className="px-5 py-3">Image</th><th className="px-5 py-3">Code</th><th className="px-5 py-3">Discount</th><th className="px-5 py-3">Min. bill</th><th className="px-5 py-3">Issued to</th><th className="px-5 py-3">Campaign</th><th className="px-5 py-3">Status</th><th className="px-5 py-3"></th></tr>
               </thead>
               <tbody>
-                {coupons.map((c) => (
+                {filteredCoupons.map((c) => (
                   <tr key={c.id} className="border-t border-slate-100">
                     <td className="px-5 py-3">{c.coupon_image_url ? <img src={c.coupon_image_url} alt="Coupon" className="h-10 w-10 rounded-lg border border-slate-200 object-cover" /> : <span className="text-xs text-slate-400">-</span>}</td>
                     <td className="px-5 py-3 font-bold text-slate-900">{c.code}</td>
                     <td className="px-5 py-3 text-slate-700">{c.discount_pct}%</td>
                     <td className="px-5 py-3 text-slate-700">{c.min_bill_amount > 0 ? money(c.min_bill_amount) : "-"}</td>
                     <td className="px-5 py-3 text-slate-700">{c.customer_name || c.contact_no ? `${c.customer_name || ""} ${c.contact_no || ""}`.trim() : "Anyone (general code)"}</td>
+                    <td className="px-5 py-3 text-slate-700">{c.campaign_name || <span className="text-slate-400">-</span>}</td>
                     <td className="px-5 py-3"><span className={`rounded-full px-3 py-1 text-[11px] font-bold uppercase ${c.status === "ACTIVE" ? "bg-emerald-100 text-emerald-700" : c.status === "REDEEMED" ? "bg-slate-200 text-slate-600" : "bg-rose-100 text-rose-700"}`}>{c.status}</span></td>
                     <td className="px-5 py-3">
                       <div className="flex flex-wrap items-center gap-3">
@@ -1079,7 +1142,7 @@ export default function CustomerCRM() {
                 ))}
               </tbody>
             </table>
-            {!coupons.length && <p className="p-8 text-center text-sm font-semibold text-slate-500">No coupons yet.</p>}
+            {!filteredCoupons.length && <p className="p-8 text-center text-sm font-semibold text-slate-500">{coupons.length ? "No coupons match this filter." : "No coupons yet."}</p>}
           </div>
         </div>
 
@@ -1142,7 +1205,7 @@ export default function CustomerCRM() {
       {entryModal && <LuckyDrawEntryModal campaigns={luckyDraw.campaigns || []} defaultCampaignId={ldCampaignFilter} onClose={() => setEntryModal(null)} onSave={saveEntry} />}
       {drawModal && <DrawModal campaign={drawModal.campaign} isHq={data.scope?.scope === "hq"} defaultRedo={drawModal.defaultRedo} onClose={() => setDrawModal(null)} onSave={runDraw} />}
       {printSlip && <PrintSlipModal entry={printSlip} onClose={() => setPrintSlip(null)} onPrinted={markPrinted} />}
-      {couponModal && <CouponModal initial={couponModal.id ? couponModal : null} onClose={() => setCouponModal(null)} onSave={saveCoupon} />}
+      {couponModal && <CouponModal initial={couponModal.id ? couponModal : null} campaigns={luckyDraw.campaigns} onClose={() => setCouponModal(null)} onSave={saveCoupon} />}
     </div>
   );
 }

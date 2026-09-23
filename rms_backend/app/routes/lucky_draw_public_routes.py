@@ -174,6 +174,7 @@ async def public_create_entry(token: str, payload: PublicEntryPayload):
             coupon_image_url=campaign.get("coupon_image_url") or "",
             notes=f"Auto-issued for entering {campaign.get('campaign_name')} at {store_name}." if store_name else f"Auto-issued for entering {campaign.get('campaign_name')}.",
             created_by_name="Lucky Draw (auto-issued)",
+            campaign_id=campaign_id, campaign_name=campaign.get("campaign_name") or "",
         )
 
     return {

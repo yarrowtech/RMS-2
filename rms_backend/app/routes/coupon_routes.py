@@ -24,7 +24,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, 
 from pydantic import BaseModel
 
 from ..config import settings
-from ..db import coupons_collection
+from ..db import coupons_collection, lucky_draw_campaigns_collection
 from ..email_utils import send_coupon_email, send_coupon_redeemed_email
 from .customer_crm_routes import clean, require_crm_tab
 from .deps import get_tenant
@@ -64,6 +64,11 @@ class CouponPayload(BaseModel):
     # want the customer to click through to from the coupon itself (shown as
     # a button on the public coupon page and included in coupon emails).
     website_link: str = ""
+    # Optional — ties a manually-issued coupon to a Lucky Draw campaign for
+    # reporting ("how many coupons came from the Puja campaign"). Purely
+    # informational: it changes nothing about how the coupon is redeemed,
+    # emailed, or edited.
+    campaign_id: str = ""
 
 
 def require_hq(ctx: Dict[str, Any]) -> Dict[str, Any]:
@@ -74,6 +79,22 @@ def require_hq(ctx: Dict[str, Any]) -> Dict[str, Any]:
 
 def _generate_code() -> str:
     return "SAVE-" + uuid.uuid4().hex[:6].upper()
+
+
+async def _resolve_campaign_name(tenant_id: str, campaign_id: str) -> str:
+    """Validates a manually-picked campaign_id belongs to this tenant and
+    returns its name to denormalize onto the coupon (so listing coupons
+    never needs a join back to Lucky Draw). Empty campaign_id is valid —
+    it just means "not linked to a campaign"."""
+    campaign_id = clean(campaign_id)
+    if not campaign_id:
+        return ""
+    if not ObjectId.is_valid(campaign_id):
+        raise HTTPException(status_code=400, detail="Invalid campaign ID.")
+    campaign = await lucky_draw_campaigns_collection.find_one({"_id": ObjectId(campaign_id), "tenant_id": tenant_id})
+    if not campaign:
+        raise HTTPException(status_code=404, detail="Campaign not found.")
+    return campaign.get("campaign_name") or ""
 
 
 @router.get("")
@@ -87,13 +108,16 @@ async def issue_coupon(
     tenant_id: str, discount_pct: float, min_bill_amount: float = 0, expiry_date: str = "",
     customer_name: str = "", contact_no: str = "", email: str = "", notes: str = "",
     created_by: Optional[str] = None, created_by_name: str = "", coupon_image_url: str = "",
-    website_link: str = "",
+    website_link: str = "", campaign_id: str = "", campaign_name: str = "",
 ) -> dict:
     """Shared by HQ's manual "New coupon" and the Lucky Draw auto-issued
     thank-you coupon — one place that actually writes a coupon document.
     email/coupon_image_url are what let the public "Redeem now" button on
     the Lucky Draw Thank You page later email this exact coupon back to the
-    customer (see public_email_coupon below)."""
+    customer (see public_email_coupon below). campaign_id/campaign_name are
+    purely for reporting — the caller is trusted to resolve/validate them
+    (the Lucky Draw auto-issue path already has the campaign in hand;
+    create_coupon below validates and resolves it for a manual coupon)."""
     now = now_utc()
     for _ in range(5):
         code = _generate_code()
@@ -112,6 +136,8 @@ async def issue_coupon(
         "email": clean(email),
         "coupon_image_url": clean(coupon_image_url),
         "website_link": clean(website_link),
+        "campaign_id": clean(campaign_id),
+        "campaign_name": clean(campaign_name),
         "notes": clean(notes),
         "status": "ACTIVE",
         "redeemed_at": None,
@@ -136,10 +162,12 @@ async def create_coupon(payload: CouponPayload, ctx: Dict[str, Any] = Depends(ge
     pct = float(payload.discount_pct or 0)
     if pct <= 0 or pct > 100:
         raise HTTPException(status_code=400, detail="Discount must be a percentage between 1 and 100.")
+    campaign_name = await _resolve_campaign_name(ctx["tenant_id"], payload.campaign_id)
     return await issue_coupon(
         ctx["tenant_id"], pct, payload.min_bill_amount, payload.expiry_date,
         payload.customer_name, payload.contact_no, payload.email, payload.notes,
         ctx.get("admin_id"), ctx.get("admin_name"), website_link=payload.website_link,
+        campaign_id=payload.campaign_id, campaign_name=campaign_name,
     )
 
 
@@ -160,6 +188,7 @@ async def update_coupon(coupon_id: str, payload: CouponPayload, ctx: Dict[str, A
     pct = float(payload.discount_pct or 0)
     if pct <= 0 or pct > 100:
         raise HTTPException(status_code=400, detail="Discount must be a percentage between 1 and 100.")
+    campaign_name = await _resolve_campaign_name(ctx["tenant_id"], payload.campaign_id)
     await coupons_collection.update_one({"_id": coupon["_id"]}, {"$set": {
         "discount_pct": round(pct, 2),
         "min_bill_amount": max(0.0, float(payload.min_bill_amount or 0)),
@@ -169,6 +198,8 @@ async def update_coupon(coupon_id: str, payload: CouponPayload, ctx: Dict[str, A
         "email": clean(payload.email),
         "notes": clean(payload.notes),
         "website_link": clean(payload.website_link),
+        "campaign_id": clean(payload.campaign_id),
+        "campaign_name": campaign_name,
         "updated_at": now_utc(),
     }})
     return serialize(await coupons_collection.find_one({"_id": coupon["_id"]}))
