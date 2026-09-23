@@ -210,13 +210,22 @@ function CustomerModal({ initial, onClose, onSave }) {
   );
 }
 
-function CampaignModal({ onClose, onSave }) {
-  const [form, setForm] = useState({ campaign_name: "", starts_on: "", ends_on: "", min_bill_amount: "", notes: "", entry_reward_pct: "" });
+function CampaignModal({ initial, onClose, onSave }) {
+  const isEdit = Boolean(initial?.id);
+  const [form, setForm] = useState(() => ({
+    id: initial?.id || "",
+    campaign_name: initial?.campaign_name || "",
+    starts_on: initial?.starts_on || "",
+    ends_on: initial?.ends_on || "",
+    min_bill_amount: initial?.min_bill_amount ?? "",
+    notes: initial?.notes || "",
+    entry_reward_pct: initial?.entry_reward_pct || "",
+  }));
   const set = (key, value) => setForm((f) => ({ ...f, [key]: value }));
   return (
     <div className="fixed inset-0 z-[1000] grid place-items-center overflow-y-auto bg-slate-950/50 p-4 backdrop-blur-sm">
       <div className="flex max-h-[94dvh] w-full max-w-lg flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
-        <ModalHeader eyebrow="Lucky Draw" title="New campaign" onClose={onClose} />
+        <ModalHeader eyebrow="Lucky Draw" title={isEdit ? "Edit campaign" : "New campaign"} onClose={onClose} />
         <div className="grid gap-4 overflow-y-auto p-6">
           <div><label className="crm-label">Campaign name</label><input className="crm-input" value={form.campaign_name} onChange={(e) => set("campaign_name", e.target.value)} placeholder="e.g. Durga Puja 2026 Lucky Draw" /></div>
           <div className="grid grid-cols-2 gap-4">
@@ -227,11 +236,11 @@ function CampaignModal({ onClose, onSave }) {
           <div>
             <label className="crm-label">Instant thank-you coupon (optional)</label>
             <input type="number" min="0" max="100" className="crm-input" value={form.entry_reward_pct} onChange={(e) => set("entry_reward_pct", e.target.value)} placeholder="e.g. 10 for 10% off" />
-            <p className="mt-1 text-xs text-slate-400">Leave blank for none. If set, every QR self-entry gets its own coupon at this % automatically, shown right on their Thank You screen — separate from actually winning the draw.</p>
+            <p className="mt-1 text-xs text-slate-400">Leave blank for none. If set, every QR self-entry gets its own coupon at this % automatically, shown right on their Thank You screen — separate from actually winning the draw.{isEdit ? " Changing this only affects entries submitted from now on." : ""}</p>
           </div>
           <div><label className="crm-label">Notes</label><textarea className="crm-input min-h-20" value={form.notes} onChange={(e) => set("notes", e.target.value)} placeholder="Prize details, rules for staff at the counter..." /></div>
         </div>
-        <ModalFooter onClose={onClose} onSave={() => onSave(form)} saveLabel="Create campaign" />
+        <ModalFooter onClose={onClose} onSave={() => onSave(form)} saveLabel={isEdit ? "Save changes" : "Create campaign"} />
       </div>
     </div>
   );
@@ -320,8 +329,14 @@ function SlipCard({ entry }) {
   // Uppercased for print only (never touches the stored value) — at this
   // small bold size, a lowercase "g" reads as a "q" and other lowercase
   // letters have similar mix-ups, so caps avoids that ambiguity entirely.
-  const field = (className, maxWidthClass, text) => text ? (
-    <span className={"ld-template-value absolute inline-block truncate whitespace-nowrap rounded-[1px] bg-[#fff4c9] px-0.5 font-sans text-[13px] font-extrabold uppercase leading-none text-[#172554] " + maxWidthClass + " " + className}>{text}</span>
+  // Email is the one exception: it should read exactly as the customer
+  // typed it, so instead of uppercasing it, it gets a font (Verdana) whose
+  // lowercase "g" isn't ambiguous with "q" in the first place.
+  const field = (className, maxWidthClass, text, preserveCase = false) => text ? (
+    <span
+      className={"ld-template-value absolute inline-block truncate whitespace-nowrap rounded-[1px] bg-[#fff4c9] px-0.5 text-[13px] font-extrabold leading-none text-[#172554] " + (preserveCase ? "" : "font-sans uppercase ") + maxWidthClass + " " + className}
+      style={preserveCase ? { fontFamily: "Verdana, Geneva, sans-serif" } : undefined}
+    >{text}</span>
   ) : null;
   return (
     <div className="ld-slip-card relative aspect-[5/3] min-h-[360px] overflow-hidden rounded-2xl bg-[#fff2bd] shadow-inner" style={{ fontFamily: "Georgia, 'Times New Roman', serif" }}>
@@ -333,7 +348,7 @@ function SlipCard({ entry }) {
         {field("left-[22%] top-[27.8%]", "max-w-[41%]", entry.customer_name)}
         {field("left-[22%] top-[38.2%]", "max-w-[41%]", entry.address)}
         {field("left-[22%] top-[48.6%]", "max-w-[41%]", entry.contact_no)}
-        {field("left-[22%] top-[59%]", "max-w-[41%]", entry.email)}
+        {field("left-[22%] top-[59%]", "max-w-[41%]", entry.email, true)}
         {field("left-[22%] top-[69.1%]", "max-w-[41%]", entry.profession)}
         {field("left-[22%] top-[76.3%]", "max-w-[41%]", entry.bill_no)}
       </div>
@@ -533,14 +548,17 @@ export default function CustomerCRM() {
     load();
   };
 
-  const createCampaign = async (form) => {
+  const saveCampaign = async (form) => {
     try {
-      await crmFetch("/api/customer-crm/lucky-draw/campaigns", {
-        method: "POST",
-        body: JSON.stringify({ ...form, min_bill_amount: Number(form.min_bill_amount || 0), entry_reward_pct: Number(form.entry_reward_pct || 0) }),
-      });
+      const { id, ...payload } = form;
+      const body = JSON.stringify({ ...payload, min_bill_amount: Number(form.min_bill_amount || 0), entry_reward_pct: Number(form.entry_reward_pct || 0) });
+      if (id) {
+        await crmFetch(`/api/customer-crm/lucky-draw/campaigns/${id}`, { method: "PATCH", body });
+      } else {
+        await crmFetch("/api/customer-crm/lucky-draw/campaigns", { method: "POST", body });
+      }
       setCampaignModal(null); loadLuckyDraw();
-    } catch (e) { setError(e.message || "Unable to create campaign."); }
+    } catch (e) { setError(e.message || "Unable to save campaign."); }
   };
 
   const uploadCouponImage = async (campaignId, file) => {
@@ -913,7 +931,7 @@ export default function CustomerCRM() {
               <div key={c.id} className={`rounded-xl border p-5 ${c.status === "ACTIVE" ? "border-indigo-200 bg-indigo-50/40" : "border-slate-200 bg-slate-50"}`}>
                 <div className="flex items-center justify-between">
                   <span className={`rounded-full px-3 py-1 text-[11px] font-bold uppercase tracking-wide ${c.status === "ACTIVE" ? "bg-emerald-100 text-emerald-700" : "bg-slate-200 text-slate-600"}`}>{c.status}</span>
-                  {isHq && <div className="flex items-center gap-3"><button onClick={() => toggleCampaignStatus(c.id, c.status === "ACTIVE" ? "CLOSED" : "ACTIVE")} className="text-xs font-bold text-slate-500 underline hover:text-slate-700">{c.status === "ACTIVE" ? "Close" : "Reopen"}</button><button onClick={() => removeCampaign(c)} title="Remove campaign" className="inline-flex items-center gap-1 text-xs font-bold text-rose-600 hover:text-rose-800"><Trash2 size={13}/>Remove</button></div>}
+                  {isHq && <div className="flex items-center gap-3"><button onClick={() => setCampaignModal(c)} className="text-xs font-bold text-indigo-600 underline hover:text-indigo-800">Edit</button><button onClick={() => toggleCampaignStatus(c.id, c.status === "ACTIVE" ? "CLOSED" : "ACTIVE")} className="text-xs font-bold text-slate-500 underline hover:text-slate-700">{c.status === "ACTIVE" ? "Close" : "Reopen"}</button><button onClick={() => removeCampaign(c)} title="Remove campaign" className="inline-flex items-center gap-1 text-xs font-bold text-rose-600 hover:text-rose-800"><Trash2 size={13}/>Remove</button></div>}
                 </div>
                 <p className="mt-3 text-base font-bold text-slate-900">{c.campaign_name}</p>
                 <p className="text-xs text-slate-500">{c.starts_on || "No start date"} - {c.ends_on || "No end date"}</p>
@@ -1120,7 +1138,7 @@ export default function CustomerCRM() {
         </main>
       </div>
       {customerModal && <CustomerModal initial={customerModal.id ? customerModal : null} onClose={() => setCustomerModal(null)} onSave={saveCustomer} />}
-      {campaignModal && <CampaignModal onClose={() => setCampaignModal(null)} onSave={createCampaign} />}
+      {campaignModal && <CampaignModal initial={campaignModal.id ? campaignModal : null} onClose={() => setCampaignModal(null)} onSave={saveCampaign} />}
       {entryModal && <LuckyDrawEntryModal campaigns={luckyDraw.campaigns || []} defaultCampaignId={ldCampaignFilter} onClose={() => setEntryModal(null)} onSave={saveEntry} />}
       {drawModal && <DrawModal campaign={drawModal.campaign} isHq={data.scope?.scope === "hq"} defaultRedo={drawModal.defaultRedo} onClose={() => setDrawModal(null)} onSave={runDraw} />}
       {printSlip && <PrintSlipModal entry={printSlip} onClose={() => setPrintSlip(null)} onPrinted={markPrinted} />}

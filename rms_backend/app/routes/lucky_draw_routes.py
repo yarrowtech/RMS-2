@@ -173,6 +173,33 @@ async def create_campaign(payload: CampaignPayload, ctx: Dict[str, Any] = Depend
     return serialize_doc(saved)
 
 
+@router.patch("/campaigns/{campaign_id}")
+async def update_campaign(campaign_id: str, payload: CampaignPayload, ctx: Dict[str, Any] = Depends(get_tenant)):
+    """Lets HQ go back and change a campaign after creating it — most
+    importantly, add or change the entry_reward_pct on a campaign that's
+    already ACTIVE and collecting entries, since there was previously no
+    way to do that once it was created."""
+    ctx = require_hq(require_crm_tab(ctx, "luckydraw"))
+    if not ObjectId.is_valid(campaign_id):
+        raise HTTPException(status_code=400, detail="Invalid campaign ID.")
+    campaign = await lucky_draw_campaigns_collection.find_one({"_id": ObjectId(campaign_id), "tenant_id": ctx["tenant_id"], "status": {"$ne": "REMOVED"}})
+    if not campaign:
+        raise HTTPException(status_code=404, detail="Campaign not found.")
+    name = clean(payload.campaign_name)
+    if not name:
+        raise HTTPException(status_code=400, detail="Campaign name is required.")
+    await lucky_draw_campaigns_collection.update_one({"_id": campaign["_id"]}, {"$set": {
+        "campaign_name": name,
+        "starts_on": clean(payload.starts_on),
+        "ends_on": clean(payload.ends_on),
+        "min_bill_amount": max(0.0, float(payload.min_bill_amount or 0)),
+        "notes": clean(payload.notes),
+        "entry_reward_pct": max(0.0, min(100.0, float(payload.entry_reward_pct or 0))),
+        "updated_at": now_utc(),
+    }})
+    return serialize_doc(await lucky_draw_campaigns_collection.find_one({"_id": campaign["_id"]}))
+
+
 @router.post("/campaigns/{campaign_id}/coupon-image")
 async def upload_campaign_coupon_image(campaign_id: str, file: UploadFile = File(...), ctx: Dict[str, Any] = Depends(get_tenant)):
     """HQ attaches one coupon graphic per campaign — shown on the public
