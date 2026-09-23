@@ -31,14 +31,18 @@ export default function CouponPublicView() {
   // customer holds unless we tell it. Appending ?code=... (matching the
   // ?code=FIRST20 pattern most "apply a coupon" landing pages already use)
   // is what makes the destination site show the SAME code, instead of
-  // whatever it displays by default.
+  // whatever it displays by default. BUT if HQ's link already has its own
+  // ?code=... (e.g. a real third-party partner site where only their own
+  // fixed code, like FIRST20, actually works), that's deliberate and must
+  // not be overwritten with our made-up per-customer code.
   const websiteLinkWithCode = (() => {
     if (!coupon?.website_link) return "";
     try {
       const url = new URL(coupon.website_link);
-      url.searchParams.set("code", coupon.code);
+      if (!url.searchParams.has("code")) url.searchParams.set("code", coupon.code);
       return url.toString();
     } catch {
+      if (coupon.website_link.includes("code=")) return coupon.website_link;
       const separator = coupon.website_link.includes("?") ? "&" : "?";
       return `${coupon.website_link}${separator}code=${encodeURIComponent(coupon.code)}`;
     }

@@ -101,16 +101,25 @@ def _with_code_param(link: str, code: str) -> str:
     """HQ's website link has no way to know which coupon a customer holds
     unless the code rides along in the URL — append ?code=... (the same
     ?code=FIRST20 pattern most "apply a coupon" landing pages use) so the
-    destination site can pick it up, instead of showing an unrelated code."""
+    destination site can pick it up, instead of showing an unrelated code.
+
+    If the link HQ typed in already has its own ?code=... (e.g. a real
+    third-party partner site where only their own fixed code, like
+    FIRST20, actually works — our made-up per-customer code means nothing
+    to a site we don't control), that's deliberate and must not be
+    overwritten. Only a link with no code param of its own gets ours."""
     if not link:
         return ""
     try:
         from urllib.parse import urlencode, urlparse, parse_qsl, urlunparse
         parts = urlparse(link)
         query = dict(parse_qsl(parts.query))
-        query["code"] = code
+        if "code" not in query:
+            query["code"] = code
         return urlunparse(parts._replace(query=urlencode(query)))
     except Exception:
+        if "code=" in link:
+            return link
         separator = "&" if "?" in link else "?"
         return f"{link}{separator}code={code}"
 

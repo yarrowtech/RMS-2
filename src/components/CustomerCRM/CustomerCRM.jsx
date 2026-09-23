@@ -52,14 +52,15 @@ const styles = `
   .crm-label { display:block; font-size:11px; font-weight:800; letter-spacing:.06em; text-transform:uppercase; color:#64748b; margin-bottom:6px; }
   @media (max-width: 900px) { .crm-layout { flex-direction: column; } .crm-sidebar { width: 100%; min-height: auto; } .crm-main { padding: 14px; } }
   /* Off-screen (not display:none) so its real rendered height at the true
-     80mm print width can always be measured via a ref — "auto" in the
-     @page rule below is not reliable across browsers/printer drivers (a
-     real POS-80C driver ended up reporting a full-length page instead of
-     sizing to content), so doPrint() measures this and injects an exact
-     page height right before printing instead of trusting "auto". */
-  #ld-print-slip { position: fixed; top: 0; left: -9999px; width: 80mm; }
+     62mm print width can always be measured via a ref — this is genuine
+     receipt-style printing: paper feeds only as far as the content needs,
+     then cuts, so the page height must match content exactly every time
+     rather than being a fixed size (a fixed size either wastes paper below
+     short content or cuts off long content). doPrint() measures this and
+     injects an exact page height right before each print. */
+  #ld-print-slip { position: fixed; top: 0; left: -9999px; width: 62mm; }
   #ld-print-qr { display: none; }
-  @page { size: 80mm auto; margin: 0; }
+  @page { size: 62mm auto; margin: 0; }
   @media print {
     body * { visibility: hidden; }
 
@@ -68,18 +69,17 @@ const styles = `
        height — often many times an actual screen's height. Pagination is
        computed from that total document height, not from what's actually
        visible, so without this the browser sliced it into a dozen-plus
-       mostly-blank 80mm pages for a one-field-card print job. Collapsing
+       mostly-blank pages for a one-field-card print job. Collapsing
        #root's box removes that phantom height; position:fixed below (not
        absolute) is what then keeps the actual print target pinned to the
        page regardless of #root being collapsed around it. */
     body.printing-ld-slip #root, body.printing-ld-qr #root { max-height: 0 !important; overflow: hidden !important; }
 
-    /* Print-slip job — sized for an 80mm POS thermal roll: fixed width,
-       height grows with content (no wasted paper feeding past the end of
-       the slip, the way a fixed-height page would). */
-    body.printing-ld-slip { width: 80mm; margin: 0 !important; padding: 0 !important; background: #fff !important; }
+    /* Print-slip job — a narrow receipt-style strip, height set per-job by
+       doPrint() to exactly match this entry's content (Name + Contact No). */
+    body.printing-ld-slip { width: 62mm; margin: 0 !important; padding: 0 !important; background: #fff !important; }
     body.printing-ld-slip #ld-print-slip, body.printing-ld-slip #ld-print-slip * { visibility: visible; }
-    body.printing-ld-slip #ld-print-slip { display: block; position: fixed; top: 0; left: 0; width: 80mm; box-sizing: border-box; padding: 0; background: #fff; }
+    body.printing-ld-slip #ld-print-slip { display: block; position: fixed; top: 0; left: 0; width: 62mm; box-sizing: border-box; padding: 0; background: #fff; }
     /* Deliberately NOT touching padding/font-size here — they need to stay
        identical to how the off-screen measurement clone renders (see
        doPrint), or the injected @page height (computed from that clone)
@@ -87,7 +87,7 @@ const styles = `
     body.printing-ld-slip #ld-print-slip .ld-slip-card { border-radius: 0 !important; box-shadow: none !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 
     /* Print-QR job — a full-page counter poster, one store at a time. Its
-       own body class so it never fights the slip's fixed 80mm @page. */
+       own body class so it never fights the slip's own @page. */
     body.printing-ld-qr { width: auto; height: auto; margin: 0 !important; padding: 0 !important; background: #fff !important; }
     body.printing-ld-qr #ld-print-qr, body.printing-ld-qr #ld-print-qr * { visibility: visible; }
     body.printing-ld-qr #ld-print-qr { display: flex; position: fixed; inset: 0; width: 100%; box-sizing: border-box; background: #fff; }
@@ -343,14 +343,12 @@ function PrintSlipModal({ entry, onClose, onPrinted }) {
   const printRef = useRef(null);
   const [suggestedMm, setSuggestedMm] = useState(null);
 
-  // "auto" in the @page rule isn't reliable across browsers/printer
-  // drivers — a real POS-80C driver only offers fixed paper-size presets
-  // (e.g. 80 x 297mm) instead of a true continuous/auto-length mode, so
-  // Chrome uses that preset and ignores whatever height our page asks for.
-  // That's a Windows driver setting, not something a webpage can override —
-  // so alongside still requesting the exact height (works once the driver
-  // is set to continuous/auto-cut), this shows staff the number to type in
-  // by hand if their print dialog only offers a "Custom" size field.
+  // Genuine receipt-style printing: paper feeds only as far as this
+  // entry's actual content needs (Name + Contact No, so usually quite
+  // short), then the printer cuts — not a fixed pre-sized "sheet". A
+  // fixed size either wastes paper below short content or clips long
+  // content, so the page height is measured from the real off-screen
+  // clone (styled identically to what prints) and set exactly, per print.
   const measureHeightMm = () => {
     const heightPx = printRef.current?.getBoundingClientRect().height || 0;
     return (heightPx * 25.4) / 96 + 2; // +2mm safety margin
@@ -363,7 +361,7 @@ function PrintSlipModal({ entry, onClose, onPrinted }) {
   const doPrint = () => {
     const heightMm = measureHeightMm();
     const pageStyle = document.createElement("style");
-    pageStyle.textContent = `@page { size: 80mm ${heightMm.toFixed(1)}mm; margin: 0; }`;
+    pageStyle.textContent = `@page { size: 62mm ${heightMm.toFixed(1)}mm; margin: 0; }`;
     document.head.appendChild(pageStyle);
     document.body.classList.add("printing-ld-slip");
     window.print();
@@ -376,11 +374,11 @@ function PrintSlipModal({ entry, onClose, onPrinted }) {
       <div className="flex max-h-[94dvh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
         <ModalHeader eyebrow="Lucky Draw" title="Print slip" onClose={onClose} />
         <div className="overflow-y-auto p-6">
-          <p className="mb-4 text-sm text-slate-500">A simple, clean slip sized for an 80mm POS thermal printer — no wasted paper, the roll cuts right after the last field. Print at Actual size / 100%, then place it in the draw box.</p>
+          <p className="mb-4 text-sm text-slate-500">A narrow receipt-style slip — prints only as far as this entry's content, then cuts. Print at Actual size / 100%, then place it in the draw box.</p>
           <SlipCard entry={entry} />
           {suggestedMm && (
             <p className="mt-4 rounded-xl border border-indigo-200 bg-indigo-50 p-3 text-xs font-semibold text-indigo-800">
-              If the print dialog asks you to pick a paper size and only offers fixed presets (not an auto/continuous option), choose "Custom" and enter <span className="font-bold">80mm &times; {suggestedMm}mm</span>.
+              For this to auto-size instead of using a fixed page, your printer needs to be set to continuous/roll paper mode (not a fixed cut-sheet size) in its Windows printer properties. Until then, if the print dialog only offers fixed presets, choose "Custom" and enter <span className="font-bold">6.2cm &times; {(suggestedMm / 10).toFixed(1)}cm</span>.
             </p>
           )}
         </div>
@@ -401,10 +399,10 @@ function SlipCard({ entry }) {
   // lowercase "g" at small bold sizes can misread as "q" in most fonts,
   // but not in Verdana, and an email should read exactly as typed anyway.
   const row = (label, value, preserveCase = false) => (
-    <div className="ld-slip-row border-b border-dashed border-red-800/20 py-1.5 last:border-b-0">
-      <p className="text-[10px] font-bold uppercase tracking-wide text-red-800/70">{label}</p>
+    <div className="ld-slip-row border-b border-dashed border-black/30 py-1.5 last:border-b-0">
+      <p className="text-[11px] font-extrabold uppercase tracking-wide text-black">{label}</p>
       <p
-        className={"ld-slip-value break-words text-sm font-extrabold text-slate-900 " + (preserveCase ? "" : "uppercase")}
+        className={"ld-slip-value break-words text-[17px] font-extrabold leading-tight text-black " + (preserveCase ? "" : "uppercase")}
         style={preserveCase ? { fontFamily: "Verdana, Geneva, sans-serif" } : undefined}
       >
         {value || "--"}
@@ -412,18 +410,18 @@ function SlipCard({ entry }) {
     </div>
   );
   return (
-    <div className="ld-slip-card mx-auto w-full max-w-[300px] overflow-hidden rounded-2xl border-2 border-red-800/70 bg-[#fffdf6] p-4 shadow-inner" style={{ fontFamily: "Georgia, 'Times New Roman', serif" }}>
+    <div className="ld-slip-card mx-auto w-full max-w-[235px] overflow-hidden rounded-2xl border-2 border-black bg-white p-4 shadow-inner" style={{ fontFamily: "Arial, Helvetica, sans-serif" }}>
       <div className="flex flex-col items-center">
-        <img src="/citimart-logo.png" alt="Citi Mart" className="h-10 w-auto object-contain" />
-        <p className="mt-2 text-center text-[10px] font-bold uppercase tracking-[0.15em] text-red-800">Festival Lucky Draw Entry Slip</p>
+        <img src="/citimart-logo.png" alt="Citi Mart" className="h-10 w-auto object-contain grayscale contrast-200" />
+        <p className="mt-2 text-center text-[11px] font-extrabold uppercase tracking-[0.12em] text-black">Festival Lucky Draw Entry Slip</p>
       </div>
-      <div className="mt-3 border-t border-red-800/20 pt-2">
+      {/* Only Name and Contact No print — everything else (address, email,
+          profession, bill no) is already saved in the system against this
+          entry and viewable from the Slip entries table, so there's no
+          need to spend paper/ink repeating it on the physical slip. */}
+      <div className="mt-3 border-t-2 border-black pt-2">
         {row("Name", entry.customer_name)}
-        {row("Address", entry.address)}
         {row("Contact No", entry.contact_no)}
-        {row("Email Id", entry.email, true)}
-        {row("Profession", entry.profession)}
-        {row("Bill No", entry.bill_no)}
       </div>
     </div>
   );
@@ -532,9 +530,6 @@ export default function CustomerCRM() {
   const [coupons, setCoupons] = useState([]);
   const [couponCampaignFilter, setCouponCampaignFilter] = useState("");
   const [couponModal, setCouponModal] = useState(null);
-  const [couponLookupCode, setCouponLookupCode] = useState("");
-  const [couponLookupResult, setCouponLookupResult] = useState(null);
-  const [couponLookupBusy, setCouponLookupBusy] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true); setError("");
@@ -769,28 +764,19 @@ export default function CustomerCRM() {
     setCouponModal(null); loadCoupons();
   };
 
-  const toggleCouponStatus = async (id, status) => {
+  const deleteCoupon = async (coupon) => {
+    if (!window.confirm("Delete coupon " + coupon.code + "? Its customer link and code will stop working immediately. This cannot be undone.")) return;
     try {
-      await crmFetch(`/api/customer-crm/coupons/${id}/status`, { method: "PATCH", body: JSON.stringify({ status }) });
+      await crmFetch("/api/customer-crm/coupons/" + coupon.id, { method: "DELETE" });
       loadCoupons();
-    } catch (e) { setError(e.message || "Unable to update coupon."); }
-  };
-
-  const checkCouponCode = async () => {
-    if (!couponLookupCode.trim()) return;
-    setCouponLookupBusy(true);
-    try {
-      const res = await crmFetch(`/api/customer-crm/coupons/lookup?code=${encodeURIComponent(couponLookupCode.trim())}`);
-      setCouponLookupResult(res);
-    } catch (e) { setError(e.message || "Unable to check this code."); }
-    finally { setCouponLookupBusy(false); }
+    } catch (e) { setError(e.message || "Unable to delete coupon."); }
   };
 
   const redeemCoupon = async (id) => {
     if (!window.confirm("Confirm the discount has already been applied on the bill? This marks the coupon used and it cannot be reused.")) return;
     try {
       await crmFetch(`/api/customer-crm/coupons/${id}/redeem`, { method: "POST" });
-      setCouponLookupResult(null); setCouponLookupCode(""); loadCoupons();
+      loadCoupons();
     } catch (e) { setError(e.message || "Unable to redeem this coupon."); }
   };
 
@@ -1204,9 +1190,10 @@ export default function CustomerCRM() {
                     <td className="px-5 py-3">
                       <div className="flex flex-wrap items-center gap-3">
                         <button onClick={() => { navigator.clipboard?.writeText(`${window.location.origin}/coupon/${c.id}`); }} className="text-xs font-bold text-indigo-600 underline hover:text-indigo-800">Copy link</button>
+                        {c.status === "ACTIVE" && <button onClick={() => redeemCoupon(c.id)} className="text-xs font-bold text-emerald-600 underline hover:text-emerald-800">Redeem</button>}
                         {isHq && c.status !== "REDEEMED" && <button onClick={() => setCouponModal(c)} className="text-xs font-bold text-slate-500 underline hover:text-slate-700">Edit</button>}
-                        {isHq && c.status === "ACTIVE" && <button onClick={() => toggleCouponStatus(c.id, "DISABLED")} className="text-xs font-bold text-rose-600 underline hover:text-rose-800">Disable</button>}
-                        {isHq && c.status === "DISABLED" && <button onClick={() => toggleCouponStatus(c.id, "ACTIVE")} className="text-xs font-bold text-slate-500 underline hover:text-slate-700">Reactivate</button>}
+                        {isHq && c.status !== "REDEEMED" && <button onClick={() => deleteCoupon(c)} className="text-xs font-bold text-rose-600 underline hover:text-rose-800">Delete</button>}
+                        {isHq && c.status === "REDEEMED" && <span className="text-xs font-semibold text-slate-400">Kept for audit</span>}
                       </div>
                     </td>
                   </tr>
@@ -1217,7 +1204,7 @@ export default function CustomerCRM() {
           </div>
         </div>
 
-        <div className="crm-card p-5">
+        {/* Counter code lookup removed: coupon redemption is performed directly from the active coupon row.
           <h2 className="text-base font-bold text-slate-900"><Ticket size={16} className="mr-1 inline text-indigo-600"/> Check a code at the counter</h2>
           <p className="mb-3 text-sm text-slate-500">Look up a code the customer gives you, apply the discount on the bill yourself, then mark it redeemed here.</p>
           <div className="flex gap-2">
@@ -1237,7 +1224,7 @@ export default function CustomerCRM() {
               )}
             </div>
           ) : <p className="mt-4 text-sm text-slate-500">No coupon found with that code.</p>)}
-        </div>
+        */}
       </div>
     );
   };

@@ -8,7 +8,7 @@ Scope decided with the user up front, so this stays intentionally small:
     pattern already built for Lucky Draw), see it's valid, type the
     discount into the bill by hand, then mark it redeemed here. No POS
     integration is attempted; that would be a separate, bigger project.
-  - HQ Admin only creates/disables coupons. Any CRM-permitted staff (store
+  - HQ Admin only creates/deletes unused coupons. Any CRM-permitted staff (store
     or HQ) can look one up and mark it redeemed, tenant-wide — a coupon
     isn't locked to the store that issued it, since the customer may well
     redeem it at a different branch.
@@ -247,6 +247,26 @@ async def set_coupon_status(coupon_id: str, payload: dict, ctx: Dict[str, Any] =
         raise HTTPException(status_code=409, detail="This coupon has already been redeemed.")
     await coupons_collection.update_one({"_id": coupon["_id"]}, {"$set": {"status": new_status, "updated_at": now_utc()}})
     return {"message": f"Coupon marked {new_status.title()}."}
+
+
+@router.delete("/{coupon_id}")
+async def delete_coupon(coupon_id: str, ctx: Dict[str, Any] = Depends(get_tenant)):
+    """Remove an unused coupon created in error.
+
+    Deleting invalidates its public link and its code immediately. A redeemed
+    coupon is a financial/audit record, so it is deliberately retained rather
+    than allowing history to be erased.
+    """
+    ctx = require_hq(require_crm_tab(ctx, "coupons"))
+    if not ObjectId.is_valid(coupon_id):
+        raise HTTPException(status_code=400, detail="Invalid coupon ID.")
+    coupon = await coupons_collection.find_one({"_id": ObjectId(coupon_id), "tenant_id": ctx["tenant_id"]})
+    if not coupon:
+        raise HTTPException(status_code=404, detail="Coupon not found.")
+    if coupon.get("status") == "REDEEMED":
+        raise HTTPException(status_code=409, detail="A redeemed coupon is kept as an audit record and cannot be deleted.")
+    await coupons_collection.delete_one({"_id": coupon["_id"]})
+    return {"message": "Coupon deleted. Its code and public link are no longer valid."}
 
 
 @router.get("/lookup")

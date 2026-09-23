@@ -15,6 +15,7 @@ printing" queue (Stage 3 of this feature — the physical slip still gets
 printed by a staff member and dropped in the box, since a customer's own
 phone can't drive the counter's printer).
 """
+import re
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
@@ -138,6 +139,19 @@ async def public_create_entry(token: str, payload: PublicEntryPayload):
     dupe_query = {"tenant_id": tenant_id, "store_id": store_id, "campaign_id": campaign_id, "bill_no": bill_no}
     if await lucky_draw_entries_collection.find_one(dupe_query, {"_id": 1}):
         raise HTTPException(status_code=409, detail=f"Bill No. {bill_no} has already been entered for this contest.")
+
+    # One entry per email per campaign — chain-wide, not just this store, so
+    # a customer can't get extra draw chances (or extra auto-issued coupons)
+    # by re-entering with a different bill at another branch. Case-insensitive
+    # so "Riya@x.com" and "riya@x.com" count as the same person.
+    email = clean(payload.email)
+    if email:
+        email_dupe_query = {
+            "tenant_id": tenant_id, "campaign_id": campaign_id,
+            "email": {"$regex": f"^{re.escape(email)}$", "$options": "i"},
+        }
+        if await lucky_draw_entries_collection.find_one(email_dupe_query, {"_id": 1}):
+            raise HTTPException(status_code=409, detail="This email has already entered this contest.")
 
     now = now_utc()
     contact_no = clean(payload.contact_no)

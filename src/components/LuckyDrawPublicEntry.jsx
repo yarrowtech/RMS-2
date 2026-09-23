@@ -115,15 +115,20 @@ export default function LuckyDrawPublicEntry() {
   // (?code=...) so whatever site it points at can show the same code —
   // otherwise clicking through lands on a page with no idea which coupon
   // the customer holds. Same pattern used on the standalone coupon link
-  // page (CouponPublicView.jsx) and in the coupon emails.
+  // page (CouponPublicView.jsx) and in the coupon emails. BUT if HQ's link
+  // already has its own ?code=... (e.g. a real third-party partner site
+  // where only their own fixed code, like FIRST20, actually works — our
+  // made-up per-customer code means nothing to a site we don't control),
+  // that's deliberate and must not be overwritten.
   const couponWebsiteLink = (() => {
     const link = result?.coupon?.website_link;
     if (!link) return "";
     try {
       const url = new URL(link);
-      url.searchParams.set("code", result.coupon.code);
+      if (!url.searchParams.has("code")) url.searchParams.set("code", result.coupon.code);
       return url.toString();
     } catch {
+      if (link.includes("code=")) return link;
       const separator = link.includes("?") ? "&" : "?";
       return `${link}${separator}code=${encodeURIComponent(result.coupon.code)}`;
     }
