@@ -1182,7 +1182,7 @@ export default function CustomerCRM() {
           <div className="overflow-x-auto">
             <table className="w-full min-w-[940px] text-left text-sm">
               <thead className="bg-slate-50 text-xs font-bold uppercase text-slate-500">
-                <tr><th className="px-5 py-3">Image</th><th className="px-5 py-3">Code</th><th className="px-5 py-3">Discount</th><th className="px-5 py-3">Min. bill</th><th className="px-5 py-3">Issued to</th><th className="px-5 py-3">Campaign</th><th className="px-5 py-3">Status</th><th className="px-5 py-3"></th></tr>
+                <tr><th className="px-5 py-3">Image</th><th className="px-5 py-3">Code</th><th className="px-5 py-3">Discount</th><th className="px-5 py-3">Min. bill</th><th className="px-5 py-3">Issued to</th><th className="px-5 py-3">Campaign</th><th className="px-5 py-3">Website</th><th className="px-5 py-3">Status</th><th className="px-5 py-3"></th></tr>
               </thead>
               <tbody>
                 {filteredCoupons.map((c) => (
@@ -1193,6 +1193,13 @@ export default function CustomerCRM() {
                     <td className="px-5 py-3 text-slate-700">{c.min_bill_amount > 0 ? money(c.min_bill_amount) : "-"}</td>
                     <td className="px-5 py-3 text-slate-700">{c.customer_name || c.contact_no ? `${c.customer_name || ""} ${c.contact_no || ""}`.trim() : "Anyone (general code)"}</td>
                     <td className="px-5 py-3 text-slate-700">{c.campaign_name || <span className="text-slate-400">-</span>}</td>
+                    <td className="px-5 py-3 text-slate-700">
+                      {c.website_link ? (
+                        c.website_click_count > 0
+                          ? <span className="font-semibold text-emerald-700">Visited &times;{c.website_click_count}</span>
+                          : <span className="text-slate-400">Not visited yet</span>
+                      ) : <span className="text-slate-300">-</span>}
+                    </td>
                     <td className="px-5 py-3"><span className={`rounded-full px-3 py-1 text-[11px] font-bold uppercase ${c.status === "ACTIVE" ? "bg-emerald-100 text-emerald-700" : c.status === "REDEEMED" ? "bg-slate-200 text-slate-600" : "bg-rose-100 text-rose-700"}`}>{c.status}</span></td>
                     <td className="px-5 py-3">
                       <div className="flex flex-wrap items-center gap-3">

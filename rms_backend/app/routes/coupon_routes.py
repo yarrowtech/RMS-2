@@ -147,6 +147,8 @@ async def issue_coupon(
         "redeemed_store_name": None,
         "email_sent_at": None,
         "email_sent_count": 0,
+        "website_clicked_at": None,
+        "website_click_count": 0,
         "created_by": created_by,
         "created_by_name": created_by_name,
         "created_at": now,
@@ -365,3 +367,25 @@ async def public_email_coupon(coupon_id: str):
         "message": "Coupon emailed! Check your inbox." if ok else "Could not send the email right now — you can still redeem using the code shown here.",
         "sent": ok,
     }
+
+
+@router.post("/public/{coupon_id}/click")
+async def public_log_website_click(coupon_id: str):
+    """Fired when a customer taps the coupon image / "Start exploring"
+    button and gets sent to HQ's website_link — a website-linked coupon
+    like a travel-partner voucher has nothing for in-store staff to look
+    up or redeem, so this is the record that a specific, already-known
+    customer (name/phone/email came from however the coupon was issued)
+    actually followed through to the site. Doesn't touch the coupon's
+    ACTIVE/REDEEMED status — that stays a separate fact, since some
+    coupons are both a website link and still redeemable in-store."""
+    if not ObjectId.is_valid(coupon_id):
+        raise HTTPException(status_code=400, detail="Invalid coupon.")
+    coupon = await coupons_collection.find_one({"_id": ObjectId(coupon_id)})
+    if not coupon:
+        raise HTTPException(status_code=404, detail="Coupon not found.")
+    await coupons_collection.update_one(
+        {"_id": coupon["_id"]},
+        {"$set": {"website_clicked_at": now_utc()}, "$inc": {"website_click_count": 1}},
+    )
+    return {"message": "Click logged."}

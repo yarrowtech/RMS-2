@@ -44,6 +44,14 @@ export default function CouponPublicView() {
     }
   })();
 
+  // Fire-and-forget — logs that this specific customer (name/phone/email
+  // already on the coupon from however it was issued) tapped through to
+  // the website, without blocking or delaying the target="_blank" nav.
+  const logWebsiteClick = () => {
+    if (!coupon) return;
+    fetch(`${API_BASE_URL}/api/customer-crm/coupons/public/${couponId}/click`, { method: "POST" }).catch(() => {});
+  };
+
   const emailMe = async () => {
     setEmailState("sending");
     try {
@@ -64,7 +72,7 @@ export default function CouponPublicView() {
         <div className="w-full max-w-sm overflow-hidden rounded-2xl bg-white shadow-xl">
           {coupon.coupon_image_url && (
             websiteLinkWithCode ? (
-              <a href={websiteLinkWithCode} target="_blank" rel="noopener noreferrer">
+              <a href={websiteLinkWithCode} target="_blank" rel="noopener noreferrer" onClick={logWebsiteClick}>
                 <img src={coupon.coupon_image_url} alt="Coupon" className="h-48 w-full object-cover" />
               </a>
             ) : (
@@ -90,6 +98,7 @@ export default function CouponPublicView() {
                     href={websiteLinkWithCode}
                     target="_blank"
                     rel="noopener noreferrer"
+                    onClick={logWebsiteClick}
                     className="mt-3 block w-full rounded-full bg-emerald-500 px-4 py-2.5 text-sm font-bold text-white hover:bg-emerald-600"
                   >
                     Start exploring

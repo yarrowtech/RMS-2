@@ -121,13 +121,21 @@ export default function LuckyDrawPublicEntry() {
     }
   })();
 
+  // Fire-and-forget — logs that this specific customer (already known from
+  // their entry) actually tapped through, without blocking or delaying the
+  // target="_blank" navigation itself.
+  const logWebsiteClick = () => {
+    if (!result?.coupon?.id) return;
+    fetch(API_BASE_URL + "/api/customer-crm/coupons/public/" + result.coupon.id + "/click", { method: "POST" }).catch(() => {});
+  };
+
   const resultExtras = () => (
     <>
       {result?.coupon && (
         <div className="w-full max-w-xs rounded-2xl border-2 border-amber-300 bg-amber-50 px-5 py-3 text-red-950">
           {result.coupon.coupon_image_url && (
             couponWebsiteLink ? (
-              <a href={couponWebsiteLink} target="_blank" rel="noopener noreferrer">
+              <a href={couponWebsiteLink} target="_blank" rel="noopener noreferrer" onClick={logWebsiteClick}>
                 <img src={result.coupon.coupon_image_url} alt="Your coupon" className="mb-2 w-full rounded-xl object-cover" />
               </a>
             ) : (
@@ -138,7 +146,7 @@ export default function LuckyDrawPublicEntry() {
           <p className="text-2xl font-bold tracking-widest">{result.coupon.code}</p>
           <p className="text-sm font-semibold">{result.coupon.discount_pct}% off{result.coupon.min_bill_amount > 0 ? ` on bills over ₹${result.coupon.min_bill_amount}` : ""}</p>
           {couponWebsiteLink && (
-            <a href={couponWebsiteLink} target="_blank" rel="noopener noreferrer" className="mt-2 block w-full rounded-full bg-emerald-600 px-4 py-2 text-center text-xs font-bold text-white hover:bg-emerald-700">
+            <a href={couponWebsiteLink} target="_blank" rel="noopener noreferrer" onClick={logWebsiteClick} className="mt-2 block w-full rounded-full bg-emerald-600 px-4 py-2 text-center text-xs font-bold text-white hover:bg-emerald-700">
               Start exploring
             </a>
           )}
