@@ -67,6 +67,14 @@ export default function LuckyDrawPublicEntry() {
   // even after this one-time Thank You page is gone.
   const redeemNow = async () => {
     if (!result?.coupon?.id) return;
+    // Opening the website has to happen synchronously, in direct response
+    // to the click — doing it after the awaited fetch below would run
+    // outside the click's call stack and get blocked as a popup by most
+    // browsers. Email sending still proceeds either way.
+    if (couponWebsiteLink) {
+      window.open(couponWebsiteLink, "_blank", "noopener,noreferrer");
+      logWebsiteClick();
+    }
     setRedeemState("sending");
     try {
       const response = await fetch(API_BASE_URL + "/api/customer-crm/coupons/public/" + result.coupon.id + "/email", { method: "POST" });
@@ -200,7 +208,7 @@ export default function LuckyDrawPublicEntry() {
               submitted, none of the (now stale/empty-looking) form artwork
               should still show through behind the confirmation. */}
           {result && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 bg-gradient-to-b from-red-900 via-red-800 to-red-950 p-10 text-center">
+            <div className="absolute inset-0 flex flex-col items-center gap-4 overflow-y-auto bg-gradient-to-b from-red-900 via-red-800 to-red-950 p-10 text-center">
               <div className="grid h-20 w-20 place-items-center rounded-full border-4 border-amber-300 bg-red-950/60"><PartyPopper className="text-amber-200" size={40} /></div>
               <h2 className="text-3xl font-bold text-amber-100">Thank you!</h2>
               <p className="max-w-md text-base text-amber-50/90">{result.message}</p>
@@ -237,7 +245,7 @@ export default function LuckyDrawPublicEntry() {
             </form>
           )}
           {result && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-gradient-to-b from-red-900 via-red-800 to-red-950 p-8 text-center">
+            <div className="absolute inset-0 flex flex-col items-center gap-3 overflow-y-auto bg-gradient-to-b from-red-900 via-red-800 to-red-950 p-8 text-center">
               <div className="grid h-16 w-16 place-items-center rounded-full border-4 border-amber-300 bg-red-950/60"><PartyPopper className="text-amber-200" size={32} /></div>
               <h2 className="text-2xl font-bold text-amber-100">Thank you!</h2>
               <p className="max-w-xs text-sm text-amber-50/90">{result.message}</p>
