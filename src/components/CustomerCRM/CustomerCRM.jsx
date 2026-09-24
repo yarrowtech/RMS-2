@@ -58,9 +58,9 @@ const styles = `
      rather than being a fixed size (a fixed size either wastes paper below
      short content or cuts off long content). doPrint() measures this and
      injects an exact page height right before each print. */
-  #ld-print-slip { position: fixed; top: 0; left: -9999px; width: 62mm; }
+  #ld-print-slip { position: fixed; top: 0; left: -9999px; width: 75mm; }
   #ld-print-qr { display: none; }
-  @page { size: 62mm auto; margin: 0; }
+  @page { size: 75mm 40mm; margin: 0; }
   @media print {
     body * { visibility: hidden; }
 
@@ -77,9 +77,9 @@ const styles = `
 
     /* Print-slip job — a narrow receipt-style strip, height set per-job by
        doPrint() to exactly match this entry's content (Name + Contact No). */
-    body.printing-ld-slip { width: 62mm; margin: 0 !important; padding: 0 !important; background: #fff !important; }
+    body.printing-ld-slip { width: 75mm; margin: 0 !important; padding: 0 !important; background: #fff !important; }
     body.printing-ld-slip #ld-print-slip, body.printing-ld-slip #ld-print-slip * { visibility: visible; }
-    body.printing-ld-slip #ld-print-slip { display: block; position: fixed; top: 0; left: 0; width: 62mm; box-sizing: border-box; padding: 0; background: #fff; }
+    body.printing-ld-slip #ld-print-slip { display: block; position: fixed; top: 0; left: 0; width: 75mm; box-sizing: border-box; padding: 0; background: #fff; }
     /* Deliberately NOT touching padding/font-size here — they need to stay
        identical to how the off-screen measurement clone renders (see
        doPrint), or the injected @page height (computed from that clone)
@@ -341,7 +341,6 @@ function DrawModal({ campaign, isHq, defaultRedo, onClose, onSave }) {
 
 function PrintSlipModal({ entry, onClose, onPrinted }) {
   const printRef = useRef(null);
-  const [suggestedMm, setSuggestedMm] = useState(null);
 
   // Genuine receipt-style printing: paper feeds only as far as this
   // entry's actual content needs (Name + Contact No, so usually quite
@@ -349,19 +348,9 @@ function PrintSlipModal({ entry, onClose, onPrinted }) {
   // fixed size either wastes paper below short content or clips long
   // content, so the page height is measured from the real off-screen
   // clone (styled identically to what prints) and set exactly, per print.
-  const measureHeightMm = () => {
-    const heightPx = printRef.current?.getBoundingClientRect().height || 0;
-    return (heightPx * 25.4) / 96 + 2; // +2mm safety margin
-  };
-
-  useEffect(() => {
-    setSuggestedMm(Math.ceil(measureHeightMm()));
-  }, []);
-
   const doPrint = () => {
-    const heightMm = measureHeightMm();
     const pageStyle = document.createElement("style");
-    pageStyle.textContent = `@page { size: 62mm ${heightMm.toFixed(1)}mm; margin: 0; }`;
+    pageStyle.textContent = "@page { size: 75mm 40mm; margin: 0; }";
     document.head.appendChild(pageStyle);
     document.body.classList.add("printing-ld-slip");
     window.print();
@@ -374,13 +363,8 @@ function PrintSlipModal({ entry, onClose, onPrinted }) {
       <div className="flex max-h-[94dvh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
         <ModalHeader eyebrow="Lucky Draw" title="Print slip" onClose={onClose} />
         <div className="overflow-y-auto p-6">
-          <p className="mb-4 text-sm text-slate-500">A narrow receipt-style slip — prints only as far as this entry's content, then cuts. Print at Actual size / 100%, then place it in the draw box.</p>
+          <p className="mb-4 text-sm text-slate-500">Slip size is 7.5cm × 4cm. Print at Actual size / 100%, then place it in the draw box.</p>
           <SlipCard entry={entry} />
-          {suggestedMm && (
-            <p className="mt-4 rounded-xl border border-indigo-200 bg-indigo-50 p-3 text-xs font-semibold text-indigo-800">
-              For this to auto-size instead of using a fixed page, your printer needs to be set to continuous/roll paper mode (not a fixed cut-sheet size) in its Windows printer properties. Until then, if the print dialog only offers fixed presets, choose "Custom" and enter <span className="font-bold">6.2cm &times; {(suggestedMm / 10).toFixed(1)}cm</span>.
-            </p>
-          )}
         </div>
         <ModalFooter onClose={onClose} onSave={doPrint} saveLabel="Print & mark done" />
       </div>
@@ -390,39 +374,15 @@ function PrintSlipModal({ entry, onClose, onPrinted }) {
 }
 
 function SlipCard({ entry }) {
-  // Narrow single-column receipt layout, sized for an 80mm POS thermal
-  // roll (paper-saving — no wasted width, and height grows with content
-  // instead of a fixed card size). Label sits above its value rather than
-  // beside it, so a long value (an email, a full address) wraps onto its
-  // own line instead of getting truncated in a narrow column. Email is
-  // kept in Verdana instead of uppercase, same reasoning as before: a
-  // lowercase "g" at small bold sizes can misread as "q" in most fonts,
-  // but not in Verdana, and an email should read exactly as typed anyway.
-  const row = (label, value, preserveCase = false) => (
-    <div className="ld-slip-row border-b border-dashed border-black/30 py-1.5 last:border-b-0">
-      <p className="text-[11px] font-extrabold uppercase tracking-wide text-black">{label}</p>
-      <p
-        className={"ld-slip-value break-words text-[17px] font-extrabold leading-tight text-black " + (preserveCase ? "" : "uppercase")}
-        style={preserveCase ? { fontFamily: "Verdana, Geneva, sans-serif" } : undefined}
-      >
-        {value || "--"}
-      </p>
-    </div>
-  );
+  // Plain 7.5cm x 4cm slip: name, contact no and print date/time only.
+  const when = new Date().toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
   return (
-    <div className="ld-slip-card mx-auto w-full max-w-[235px] overflow-hidden rounded-2xl border-2 border-black bg-white p-4 shadow-inner" style={{ fontFamily: "Arial, Helvetica, sans-serif" }}>
-      <div className="flex flex-col items-center">
-        <img src="/citimart-logo.png" alt="Citi Mart" className="h-10 w-auto object-contain grayscale contrast-200" />
-        <p className="mt-2 text-center text-[11px] font-extrabold uppercase tracking-[0.12em] text-black">Festival Lucky Draw Entry Slip</p>
-      </div>
-      {/* Only Name and Contact No print — everything else (address, email,
-          profession, bill no) is already saved in the system against this
-          entry and viewable from the Slip entries table, so there's no
-          need to spend paper/ink repeating it on the physical slip. */}
-      <div className="mt-3 border-t-2 border-black pt-2">
-        {row("Name", entry.customer_name)}
-        {row("Contact No", entry.contact_no)}
-      </div>
+    <div className="ld-slip-card bg-white text-black" style={{ width: "75mm", height: "40mm", boxSizing: "border-box", padding: "4mm", fontFamily: "Arial, Helvetica, sans-serif", overflow: "hidden" }}>
+      <p style={{ fontSize: "10px", fontWeight: 700 }}>NAME</p>
+      <p style={{ fontSize: "18px", fontWeight: 800, lineHeight: 1.15, textTransform: "uppercase", wordBreak: "break-word" }}>{entry.customer_name || "--"}</p>
+      <p style={{ fontSize: "10px", fontWeight: 700, marginTop: "3mm" }}>CONTACT NO</p>
+      <p style={{ fontSize: "18px", fontWeight: 800, lineHeight: 1.15 }}>{entry.contact_no || "--"}</p>
+      <p style={{ fontSize: "10px", marginTop: "3mm" }}>{when}</p>
     </div>
   );
 }

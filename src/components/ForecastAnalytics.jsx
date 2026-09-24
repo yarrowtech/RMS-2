@@ -5,7 +5,7 @@ import {
   LineChart, TrendingUp, TrendingDown, Minus, Building2, Wallet, LogOut,
   Search, RefreshCw, AlertTriangle, ShoppingCart, BarChart3,
   UploadCloud, FileSpreadsheet, CheckCircle2, XCircle, Undo2, History, Download, Trash2,
-  Warehouse, Scissors,
+  Warehouse, Scissors, Layers,
 } from "lucide-react";
 import {
   Bar, BarChart as RechartsBarChart, CartesianGrid, Legend,
@@ -139,6 +139,15 @@ const BUTTON_GUIDES_FA = {
     ["Recalculate", "Re-runs the whole view with the current settings.", "Use after changing any of the three selectors above.", ""],
     ["Design filters", "Narrows the table (and the CSV export) to one hierarchy/vendor/action group.", "Use before exporting.", ""],
     ["Export filtered CSV", "Downloads exactly the filtered rows shown.", "Use to hand a stitch/buy/clear list to Production or Procurement.", ""],
+  ],
+  "design-themes": [
+    ["Years shown / Good seller / Unless it fell", "Same three settings as Design Performance - they decide which designs count as good sellers and how much is needed.", "Change them here only if you also want the same numbers in Design Performance to match.", ""],
+    ["Recalculate", "Re-runs the theme roll-up with the current settings.", "Use after changing any of the three selectors.", ""],
+    ["Theme row (click)", "Shows that theme's designs in the table below.", "Use to see which designs in a theme need stitching, buying, clearing or a tech pack release.", "Click the same row again, or 'All themes', to see every design."],
+    ["Theme source", "A design's theme comes from its tech pack's saved theme tag, or its Collection text if no tag is saved (WINTER24 and WINTER 2024 are treated as one).", "Use 'Save tag' on a theme, or 'Change theme' on a design, so the theme no longer depends on Collection wording.", "Designs with no tech pack land in 'No theme' and can't be tagged. Nothing is guessed."],
+    ["Save tag", "Stores the theme name on the tech pack(s) of the designs that only had it from Collection text.", "Use once a theme looks right, so it stays put if the Collection text is edited.", "Tech packs already linked to a Design & Pattern theme are left alone."],
+    ["Change theme", "Moves one design to another theme (or a new one you type). Leave it blank and save to clear the tag.", "Use when a design sits under the wrong theme.", "Only designs that have a tech pack can be changed."],
+    ["New design", "Creates a design project (status: Idea) in Design & Pattern with this theme filled in.", "Use when a theme needs more designs.", "Needs Design & Pattern access. Nothing is created until you click 'Create design project'."],
   ],
   "store-value": [
     ["Refresh", "Reloads recorded on-hand quantity and stock value for every location.", "Use after a stock import or a known stock change.", "Same figures as HQ Admin's Store-wise Inventory — this doesn't compute anything independently."],
@@ -1416,6 +1425,240 @@ function DesignPerformanceView() {
   );
 }
 
+const THEME_ACTION_STYLE = {
+  ...DESIGN_ACTION_STYLE,
+  design_only: { label: "In design", cls: "bg-sky-50 text-sky-700 border-sky-200" },
+};
+
+const THEME_SOURCE_LABEL = {
+  tagged: { text: "Saved tag", cls: "bg-emerald-50 text-emerald-700 border-emerald-200" },
+  collection: { text: "From Collection text", cls: "bg-amber-50 text-amber-700 border-amber-200" },
+  design_pattern: { text: "Design & Pattern theme", cls: "bg-violet-50 text-violet-700 border-violet-200" },
+};
+
+function DesignThemesView() {
+  const [historyYears, setHistoryYears] = useState(2);
+  const [goodTopPct, setGoodTopPct] = useState(30);
+  const [maxDeclinePct, setMaxDeclinePct] = useState(50);
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [notice, setNotice] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [openTheme, setOpenTheme] = useState("");
+  const [editKey, setEditKey] = useState("");
+  const [editValue, setEditValue] = useState("");
+  const [brief, setBrief] = useState(null);
+
+  const load = useCallback(async () => {
+    setLoading(true); setError(null);
+    try {
+      const params = new URLSearchParams({ history_years: historyYears, good_top_pct: goodTopPct, max_decline_pct: maxDeclinePct });
+      setData(await faFetch(`/api/forecast-analytics/design-themes/raphaaa?${params}`));
+    } catch (e) { setError(e.message); } finally { setLoading(false); }
+  }, [historyYears, goodTopPct, maxDeclinePct]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const themes = data?.themes || [];
+  const themeNames = themes.map((t) => t.theme).filter((name) => name !== "No theme");
+  const summary = data?.summary || {};
+  const visibleRows = React.useMemo(
+    () => (data?.rows || []).filter((row) => !openTheme || row.theme === openTheme),
+    [data, openTheme],
+  );
+
+  const tagDesigns = async (designNos, themeName) => {
+    setBusy(true); setError(null); setNotice("");
+    try {
+      const result = await faFetch("/api/forecast-analytics/design-themes/raphaaa/tag", {
+        method: "POST", body: JSON.stringify({ design_nos: designNos, theme_name: themeName }),
+      });
+      const extras = [];
+      if (result.designs_without_tech_pack) extras.push(`${result.designs_without_tech_pack} design(s) have no tech pack, so they were not tagged`);
+      if (result.skipped_design_pattern_linked?.length) extras.push(`${result.skipped_design_pattern_linked.length} tech pack(s) belong to a Design & Pattern theme and were left as they are`);
+      setNotice([result.message, ...extras].join(". ") + ".");
+      setEditKey(""); setEditValue("");
+      await load();
+    } catch (e) { setError(e.message); } finally { setBusy(false); }
+  };
+
+  const createBrief = async (event) => {
+    event.preventDefault();
+    setBusy(true); setError(null); setNotice("");
+    try {
+      const result = await faFetch("/api/design-pattern/projects", {
+        method: "POST",
+        body: JSON.stringify({
+          style_name: brief.style_name,
+          theme: brief.theme === "No theme" ? "" : brief.theme,
+          planned_quantity: Number(brief.planned_quantity) || 0,
+          description: brief.description,
+        }),
+      });
+      setNotice(`${result.message} Find it under Design & Pattern → Design Projects.`);
+      setBrief(null);
+    } catch (e) { setError(e.message); } finally { setBusy(false); }
+  };
+
+  return (
+    <div className="space-y-5">
+      <ErrorBanner message={error} />
+      {notice && <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-800">{notice}</div>}
+      <div className="fa-panel p-5">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="max-w-3xl">
+            <h4 className="text-base font-black text-slate-900">Theme planning — themes, designs and what to make next</h4>
+            <p className="mt-1 text-sm text-slate-600">Every Design No. grouped by its theme, with sales, stitched and unstitched stock, and its tech pack — so you can see which themes need stitching, buying, clearing, or a tech pack released to Production.</p>
+            <p className="mt-2 rounded-lg bg-indigo-50 px-3 py-2 text-xs font-bold text-indigo-800">A design's theme comes from its tech pack (a saved theme tag, or its Collection text). Designs with no tech pack are under "No theme" — nothing is guessed. Same good-seller rules as Design Performance.</p>
+          </div>
+          <div className="flex flex-wrap items-end gap-2">
+            <label className="text-xs font-bold text-slate-600">Years shown
+              <select value={historyYears} onChange={(e) => setHistoryYears(Number(e.target.value))} className="mt-1 block rounded-lg border px-2.5 py-2 text-sm">
+                {[1, 2, 3, 4, 5].map((value) => <option key={value} value={value}>{value}</option>)}
+              </select>
+            </label>
+            <label className="text-xs font-bold text-slate-600">Good seller = top
+              <select value={goodTopPct} onChange={(e) => setGoodTopPct(Number(e.target.value))} className="mt-1 block rounded-lg border px-2.5 py-2 text-sm">
+                {[10, 20, 30, 40, 50, 100].map((value) => <option key={value} value={value}>{value}%</option>)}
+              </select>
+            </label>
+            <label className="text-xs font-bold text-slate-600">Unless it fell more than
+              <select value={maxDeclinePct} onChange={(e) => setMaxDeclinePct(Number(e.target.value))} className="mt-1 block rounded-lg border px-2.5 py-2 text-sm">
+                {[20, 30, 50, 75, 100].map((value) => <option key={value} value={value}>{value}%</option>)}
+              </select>
+            </label>
+            <button onClick={load} disabled={loading} className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-bold text-white disabled:opacity-60"><RefreshCw size={14} />{loading ? "Calculating…" : "Recalculate"}</button>
+          </div>
+        </div>
+      </div>
+
+      {brief && (
+        <form onSubmit={createBrief} className="fa-panel space-y-3 border-2 border-indigo-200 p-5">
+          <div>
+            <h4 className="text-sm font-black text-slate-900">New design for “{brief.theme}”</h4>
+            <p className="mt-1 text-xs text-slate-500">Creates a design project (status: Idea) in Design &amp; Pattern with this theme filled in. The Design No. is generated for you. Needs Design &amp; Pattern access.</p>
+          </div>
+          <div className="grid gap-3 md:grid-cols-3">
+            <label className="text-xs font-bold text-slate-600 md:col-span-2">Style name *
+              <input required value={brief.style_name} onChange={(e) => setBrief({ ...brief, style_name: e.target.value })} placeholder="e.g. Cable-knit cardigan" className="mt-1 block w-full rounded-lg border px-3 py-2 text-sm" />
+            </label>
+            <label className="text-xs font-bold text-slate-600">Planned quantity
+              <input type="number" min="0" value={brief.planned_quantity} onChange={(e) => setBrief({ ...brief, planned_quantity: e.target.value })} className="mt-1 block w-full rounded-lg border px-3 py-2 text-sm" />
+            </label>
+          </div>
+          <label className="block text-xs font-bold text-slate-600">Notes for the designer
+            <textarea value={brief.description} onChange={(e) => setBrief({ ...brief, description: e.target.value })} rows={2} placeholder="What's missing in this theme? Which colours, fabrics or price point?" className="mt-1 block w-full rounded-lg border px-3 py-2 text-sm" />
+          </label>
+          <div className="flex gap-2">
+            <button type="submit" disabled={busy} className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-bold text-white disabled:opacity-60">{busy ? "Creating…" : "Create design project"}</button>
+            <button type="button" onClick={() => setBrief(null)} className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-bold text-slate-600">Cancel</button>
+          </div>
+        </form>
+      )}
+
+      {data && <>
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <StatTile label="Themes" value={summary.themes?.toLocaleString("en-IN")} />
+          <StatTile label="Designs without a theme" value={summary.designs_without_theme?.toLocaleString("en-IN")} tone="amber" />
+          <StatTile label="In design, not stocked yet" value={summary.in_design_only?.toLocaleString("en-IN")} />
+          <StatTile label="Pieces to stitch / buy" value={`${(summary.stitch_pcs || 0).toLocaleString("en-IN")} / ${(summary.buy_qty || 0).toLocaleString("en-IN")}`} tone="emerald" />
+        </div>
+
+        <div className="fa-panel overflow-hidden">
+          <div className="border-b border-slate-100 px-5 py-4"><h4 className="text-sm font-black text-slate-900">Themes</h4><p className="mt-1 text-xs text-slate-500">Click a theme to see its designs below. Themes needing the most action are first. “Save tag” stores the theme on those tech packs so it no longer depends on Collection wording.</p></div>
+          <div className="max-h-[420px] overflow-auto">
+            <table className="min-w-[1250px] w-full text-xs">
+              <thead className="sticky top-0 z-10"><tr>
+                {["Theme", "Designs", "Good sellers", "In design only", "Sold (latest year)", "Stitched", "Unstitched", "Stitch", "Buy / make", "Tech packs (rel / not / none)", "Next step", ""].map((h, i) => <th key={`${h}-${i}`} className="whitespace-nowrap px-3 py-3 text-left font-black uppercase">{h}</th>)}
+              </tr></thead>
+              <tbody className="divide-y divide-slate-100">
+                {!themes.length ? <tr><td colSpan={12} className="px-4 py-10 text-center text-slate-400">{loading ? "Calculating…" : "No designs found."}</td></tr> : themes.map((t) => (
+                  <tr key={t.theme} onClick={() => setOpenTheme(openTheme === t.theme ? "" : t.theme)} className={`cursor-pointer ${openTheme === t.theme ? "bg-indigo-50" : "hover:bg-slate-50"}`}>
+                    <td className="px-3 py-3 font-black text-slate-900">{t.theme}</td>
+                    <td className="px-3 py-3">{t.designs}</td>
+                    <td className="px-3 py-3">{t.good_designs}</td>
+                    <td className="px-3 py-3">{t.design_only || "—"}</td>
+                    <td className="px-3 py-3">{Number(t.latest_qty).toLocaleString("en-IN")}</td>
+                    <td className="px-3 py-3">{Number(t.stitched_total).toLocaleString("en-IN")}</td>
+                    <td className="px-3 py-3">{Number(t.unstitched_pcs).toLocaleString("en-IN")}</td>
+                    <td className="px-3 py-3 font-bold text-teal-700">{t.stitch_qty || "—"}</td>
+                    <td className="px-3 py-3 font-bold text-indigo-700">{t.buy_qty || "—"}</td>
+                    <td className="px-3 py-3">{t.tech_pack_counts?.Released} / {t.tech_pack_counts?.["Not released"]} / {t.tech_pack_counts?.Missing}</td>
+                    <td className="px-3 py-3"><ul className="max-w-[320px] space-y-0.5 text-[11px] leading-4 text-slate-600">{(t.next_steps || []).map((step) => <li key={step}>{step}</li>)}</ul></td>
+                    <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
+                      <div className="flex flex-col items-start gap-1.5">
+                        {t.theme !== "No theme" && t.untagged_designs?.length > 0 && (
+                          <button type="button" disabled={busy} onClick={() => tagDesigns(t.untagged_designs, t.theme)} className="whitespace-nowrap rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-1.5 text-[11px] font-bold text-amber-800 disabled:opacity-60">Save tag ({t.untagged_designs.length})</button>
+                        )}
+                        <button type="button" onClick={() => setBrief({ theme: t.theme, style_name: "", planned_quantity: "", description: "" })} className="whitespace-nowrap rounded-lg border border-indigo-200 bg-indigo-50 px-2.5 py-1.5 text-[11px] font-bold text-indigo-700">New design</button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div className="fa-panel overflow-hidden">
+          <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-100 px-5 py-4">
+            <div><h4 className="text-sm font-black text-slate-900">{openTheme ? `Designs in ${openTheme}` : "All designs"}</h4><p className="mt-1 text-xs text-slate-500">{visibleRows.length.toLocaleString("en-IN")} design(s). "In design" means it has a tech pack but no sales or stock under that Design No. yet. Only designs with a tech pack can be given a theme.</p></div>
+            {openTheme && <button type="button" onClick={() => setOpenTheme("")} className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-bold text-slate-600">All themes</button>}
+          </div>
+          <div className="max-h-[520px] overflow-auto">
+            <table className="min-w-[1100px] w-full text-xs">
+              <thead className="sticky top-0 z-10"><tr>
+                {["Design", "Theme", "Sold (latest year)", "Trend", "Stitched (fresh / aged)", "Unstitched", "Need", "Tech pack", "Action"].map((h) => <th key={h} className="whitespace-nowrap px-3 py-3 text-left font-black uppercase">{h}</th>)}
+              </tr></thead>
+              <tbody className="divide-y divide-slate-100">
+                {!visibleRows.length ? <tr><td colSpan={9} className="px-4 py-10 text-center text-slate-400">No designs in this theme.</td></tr> : visibleRows.map((row) => {
+                  const style = THEME_ACTION_STYLE[row.action] || THEME_ACTION_STYLE.none;
+                  const source = THEME_SOURCE_LABEL[row.theme_source];
+                  const canEdit = Boolean(row.tech_pack_no) && row.theme_source !== "design_pattern";
+                  return (
+                    <tr key={row.design_key}>
+                      <td className="px-3 py-3"><p className="max-w-[220px] font-bold text-slate-900">{row.design_no}{row.name ? ` · ${row.name}` : ""}</p><p className="mt-0.5 text-[10px] text-slate-500">{[row.division, row.section, row.department].filter(Boolean).join(" / ")}</p></td>
+                      <td className="px-3 py-3">
+                        {editKey === row.design_key ? (
+                          <div className="flex min-w-[190px] flex-col gap-1.5">
+                            <select value={themeNames.includes(editValue) ? editValue : ""} onChange={(e) => setEditValue(e.target.value)} className="rounded-lg border px-2 py-1.5 text-xs">
+                              <option value="">Pick an existing theme…</option>
+                              {themeNames.map((name) => <option key={name} value={name}>{name}</option>)}
+                            </select>
+                            <input value={editValue} onChange={(e) => setEditValue(e.target.value)} placeholder="…or type a new theme" className="rounded-lg border px-2 py-1.5 text-xs" />
+                            <div className="flex gap-1.5">
+                              <button type="button" disabled={busy} onClick={() => tagDesigns([row.design_no], editValue)} className="rounded-lg bg-indigo-600 px-2.5 py-1.5 text-[11px] font-bold text-white disabled:opacity-60">{editValue.trim() ? "Save" : "Clear tag"}</button>
+                              <button type="button" onClick={() => { setEditKey(""); setEditValue(""); }} className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-[11px] font-bold text-slate-600">Cancel</button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div>
+                            <p className="font-semibold text-slate-800">{row.theme}</p>
+                            {source && <span className={`mt-1 inline-block rounded-full border px-2 py-0.5 text-[10px] font-bold ${source.cls}`}>{source.text}</span>}
+                            {canEdit && <button type="button" onClick={() => { setEditKey(row.design_key); setEditValue(row.theme === "No theme" ? "" : row.theme); }} className="mt-1 block text-[11px] font-bold text-indigo-600 underline">Change theme</button>}
+                          </div>
+                        )}
+                      </td>
+                      <td className="px-3 py-3">{Number(row.latest_qty || 0).toLocaleString("en-IN")}</td>
+                      <td className="px-3 py-3">{row.in_design_only ? "—" : row.trend}{row.growth_pct != null && !row.in_design_only && <span className="ml-1 text-[10px] text-slate-400">{row.growth_pct > 0 ? "+" : ""}{row.growth_pct}%</span>}</td>
+                      <td className="px-3 py-3">{row.stitched_fresh} / {row.stitched_aged}</td>
+                      <td className="px-3 py-3 font-bold">{row.unstitched_pcs}</td>
+                      <td className="px-3 py-3 font-bold text-indigo-700">{row.need_qty}</td>
+                      <td className="px-3 py-3"><span className={`rounded-full border px-2 py-1 text-[10px] font-black ${TECH_PACK_STYLE[row.tech_pack_label] || TECH_PACK_STYLE.Missing}`}>{row.tech_pack_label || "Missing"}</span>{row.tech_pack_no && <span className="mt-1 block font-mono text-[10px] text-slate-500">{row.tech_pack_no}{row.tech_pack_version ? ` · ${row.tech_pack_version}` : ""}</span>}</td>
+                      <td className="px-3 py-3"><span className={`rounded-full border px-2 py-1 text-[10px] font-black ${style.cls}`}>{style.label}</span><p className="mt-1 max-w-[260px] text-[10px] leading-4 text-slate-500">{row.reason}</p>{row.tech_pack_hint && <p className="mt-1 max-w-[260px] text-[10px] font-semibold leading-4 text-indigo-600">{row.tech_pack_hint}</p>}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </>}
+    </div>
+  );
+}
+
 function PurchasePlanView({ raphaaaMode = false }) {
   return raphaaaMode ? <RaphaaaPurchasePlanView /> : <GenericPurchasePlanView />;
 }
@@ -2228,6 +2471,7 @@ export default function ForecastAnalytics() {
     ? [
         ...MENU,
         ...(productEnrichmentEnabled ? [{ id: "design-performance", label: "Design Performance", icon: Scissors }] : []),
+        ...(productEnrichmentEnabled ? [{ id: "design-themes", label: "Theme Planning", icon: Layers }] : []),
         { id: "store-value", label: "Store Stock Value", icon: Warehouse },
         { id: "import", label: "Data Import", icon: UploadCloud },
       ]
@@ -2242,6 +2486,7 @@ export default function ForecastAnalytics() {
       case "purchase": return <PurchasePlanView raphaaaMode={productEnrichmentEnabled} />;
       case "alerts": return <AlertsView raphaaaMode={productEnrichmentEnabled} />;
       case "design-performance": return productEnrichmentEnabled ? <DesignPerformanceView /> : <DashboardView onNavigate={setActiveSection} raphaaaMode={productEnrichmentEnabled} />;
+      case "design-themes": return productEnrichmentEnabled ? <DesignThemesView /> : <DashboardView onNavigate={setActiveSection} raphaaaMode={productEnrichmentEnabled} />;
       case "store-value": return dataHubEnabled ? <StoreStockValueView /> : <DashboardView onNavigate={setActiveSection} raphaaaMode={productEnrichmentEnabled} />;
       case "import": return dataHubEnabled ? <DataImportView enrichmentEnabled={productEnrichmentEnabled} unstitchedEnabled={unstitchedImportEnabled} /> : <DashboardView onNavigate={setActiveSection} raphaaaMode={productEnrichmentEnabled} />;
       default: return <DashboardView onNavigate={setActiveSection} raphaaaMode={productEnrichmentEnabled} />;

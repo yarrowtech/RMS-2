@@ -15,6 +15,7 @@ method is more useful for "why did the system suggest this" than a black
 box would be at this stage.
 """
 import math
+import re
 from collections import defaultdict
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Literal, Optional
@@ -1139,6 +1140,240 @@ async def get_raphaaa_design_performance(
     if not is_raphaaa_tenant(ctx["tenant_id"]):
         raise HTTPException(status_code=404, detail="Design Performance is available only for the Raphaaa tenant.")
     return await _compute_design_performance(ctx["tenant_id"], history_years, good_top_pct, max_decline_pct)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# THEME PLANNING (Raphaaa) — Design Performance grouped by theme
+# ═══════════════════════════════════════════════════════════════════════════
+
+_NO_THEME = "No theme"
+_THEME_RE = re.compile(r"^\s*([A-Za-z]+)[\s\-_/]*((?:19|20)?\d{2})?\s*$")
+
+
+def _normalise_theme(theme_name: Any, collection: Any) -> str:
+    """A tech pack's theme_name wins. Otherwise its free-text `collection` is
+    tidied so "WINTER24", "WINTER 2024" and "WINTER2024" become one theme
+    ("Winter 2024"). A bare "WINTER" with no year stays "Winter" — the year
+    is never guessed."""
+    name = " ".join(str(theme_name or "").split())
+    if name:
+        return name
+    raw = " ".join(str(collection or "").split())
+    if not raw:
+        return _NO_THEME
+    match = _THEME_RE.match(raw)
+    if not match:
+        return raw.title()
+    season, year = (match.group(1).upper() if len(match.group(1)) <= 3 else match.group(1).title()), match.group(2)
+    if not year:
+        return season
+    if len(year) == 2:
+        year = f"20{year}"
+    return f"{season} {year}"
+
+
+async def _compute_design_themes(
+    tenant_id: str, history_years: int, good_top_pct: float, max_decline_pct: float,
+) -> dict:
+    perf = await _compute_design_performance(tenant_id, history_years, good_top_pct, max_decline_pct)
+
+    # Theme comes from the design's tech pack(s). Tech packs are not filtered
+    # by status here — a Draft design still belongs to its theme.
+    theme_by_key: Dict[str, str] = {}
+    source_by_key: Dict[str, str] = {}
+    pack_rows: Dict[str, dict] = {}
+    pack_docs: List[dict] = []
+    async for pack in tech_packs_collection.find(
+        {"tenant_id": tenant_id},
+        {"design_no": 1, "style_name": 1, "tech_pack_no": 1, "version": 1, "status": 1,
+         "updated_at": 1, "created_at": 1, "collection": 1, "theme_name": 1, "theme_id": 1},
+    ):
+        key = _design_key(pack.get("design_no"))
+        if not key:
+            continue
+        pack_docs.append(pack)
+        theme = _normalise_theme(pack.get("theme_name"), pack.get("collection"))
+        if str(pack.get("theme_id") or "").strip():
+            source = "design_pattern"   # linked to an approved Design & Pattern theme
+        elif str(pack.get("theme_name") or "").strip():
+            source = "tagged"
+        elif theme != _NO_THEME:
+            source = "collection"       # only derived from the Collection text
+        else:
+            source = "none"
+        rank = {"design_pattern": 3, "tagged": 2, "collection": 1, "none": 0}
+        if theme != _NO_THEME or key not in theme_by_key:
+            theme_by_key[key] = theme
+        if rank[source] >= rank.get(source_by_key.get(key, "none"), 0):
+            source_by_key[key] = source
+        pack_rows.setdefault(key, pack)
+    best_packs = best_tech_packs(pack_docs)
+
+    rows: List[dict] = []
+    seen: set = set()
+    for row in perf["rows"]:
+        seen.add(row["design_key"])
+        rows.append({**row, "theme": theme_by_key.get(row["design_key"], _NO_THEME), "in_design_only": False,
+                     "theme_source": source_by_key.get(row["design_key"], "none")})
+
+    # Designs that exist as a tech pack but have no sales or stock yet —
+    # not produced (or stocked under a different design no.). Shown, never
+    # guessed into a product.
+    for key, pack in pack_rows.items():
+        if key in seen:
+            continue
+        rows.append({
+            "design_key": key, "design_no": str(pack.get("design_no") or "").strip(),
+            "name": str(pack.get("style_name") or "").strip(),
+            "division": "", "section": "", "department": "", "vendor_name": "",
+            "years": {}, "total_qty": 0.0, "total_net": 0.0, "latest_qty": 0.0, "previous_qty": 0.0,
+            "trend": "Flat", "growth_pct": None,
+            "stitched_fresh": 0.0, "stitched_aged": 0.0, "stitched_total": 0.0, "unstitched_pcs": 0.0,
+            "need_qty": 0, "stitch_qty": 0, "buy_qty": 0, "is_good": False,
+            "action": "design_only", "action_label": "In design",
+            "reason": "Has a tech pack but no sales or stock under this design no. yet.",
+            "tech_pack_no": (best_packs.get(key) or {}).get("tech_pack_no", ""),
+            "tech_pack_version": (best_packs.get(key) or {}).get("version", ""),
+            "tech_pack_status": (best_packs.get(key) or {}).get("status", ""),
+            "tech_pack_label": tech_pack_label((best_packs.get(key) or {}).get("state")),
+            "tech_pack_hint": "", "theme": theme_by_key.get(key, _NO_THEME), "in_design_only": True,
+            "theme_source": source_by_key.get(key, "none"),
+        })
+
+    groups: Dict[str, dict] = {}
+    for row in rows:
+        group = groups.setdefault(row["theme"], {
+            "theme": row["theme"], "designs": 0, "good_designs": 0, "design_only": 0,
+            "total_qty": 0.0, "latest_qty": 0.0, "stitched_total": 0.0, "unstitched_pcs": 0.0,
+            "need_qty": 0, "stitch_qty": 0, "buy_qty": 0, "clear_designs": 0,
+            "tech_pack_counts": {"Released": 0, "Not released": 0, "Missing": 0},
+            "untagged_designs": [],
+        })
+        if row.get("theme_source") == "collection":
+            group["untagged_designs"].append(row["design_no"])
+        group["designs"] += 1
+        group["good_designs"] += 1 if row.get("is_good") else 0
+        group["design_only"] += 1 if row["in_design_only"] else 0
+        group["total_qty"] += row["total_qty"]
+        group["latest_qty"] += row["latest_qty"]
+        group["stitched_total"] += row["stitched_total"]
+        group["unstitched_pcs"] += row["unstitched_pcs"]
+        group["need_qty"] += row["need_qty"] if row.get("is_good") else 0
+        group["stitch_qty"] += row["stitch_qty"]
+        group["buy_qty"] += row["buy_qty"]
+        group["clear_designs"] += 1 if row["action"] == "clear" else 0
+        label = row.get("tech_pack_label") or "Missing"
+        group["tech_pack_counts"][label if label in group["tech_pack_counts"] else "Missing"] += 1
+
+    themes: List[dict] = []
+    for group in groups.values():
+        next_steps: List[str] = []
+        if group["stitch_qty"] > 0:
+            next_steps.append(f"Stitch {group['stitch_qty']} unstitched pcs")
+        if group["buy_qty"] > 0:
+            next_steps.append(f"Buy/make {group['buy_qty']} pcs")
+        if group["design_only"] > 0:
+            unreleased = group["design_only"]
+            next_steps.append(f"{unreleased} design(s) still in tech pack stage — release the tech pack to start production")
+        if group["clear_designs"] > 0:
+            next_steps.append(f"Clear out {group['clear_designs']} slow design(s)")
+        if not next_steps:
+            next_steps.append("No action needed right now")
+        themes.append({
+            **group,
+            "total_qty": round(group["total_qty"], 2), "latest_qty": round(group["latest_qty"], 2),
+            "stitched_total": round(group["stitched_total"], 2), "unstitched_pcs": round(group["unstitched_pcs"], 2),
+            "next_steps": next_steps,
+        })
+    # Themes needing the most action first; "No theme" always last.
+    themes.sort(key=lambda t: (t["theme"] == _NO_THEME, -(t["stitch_qty"] + t["buy_qty"]), -t["total_qty"], t["theme"]))
+    rows.sort(key=lambda r: (_DESIGN_ACTION_ORDER.get(r["action"], 7), -r["total_qty"]))
+
+    return {
+        "status": "success", "tenant_id": tenant_id, "generated_at": datetime.utcnow(),
+        "years": perf["years"], "current_year": perf["current_year"], "policy": perf["policy"],
+        "summary": {
+            "themes": sum(1 for t in themes if t["theme"] != _NO_THEME),
+            "designs": len(rows),
+            "designs_without_theme": sum(1 for r in rows if r["theme"] == _NO_THEME),
+            "in_design_only": sum(1 for r in rows if r["in_design_only"]),
+            "stitch_pcs": sum(t["stitch_qty"] for t in themes),
+            "buy_qty": sum(t["buy_qty"] for t in themes),
+        },
+        "themes": themes,
+        "rows": rows,
+    }
+
+
+@router.get("/design-themes/raphaaa")
+async def get_raphaaa_design_themes(
+    history_years: int = Query(2, ge=1, le=5),
+    good_top_pct: float = Query(30, ge=1, le=100),
+    max_decline_pct: float = Query(50, ge=0, le=100),
+    ctx: TenantCtx = Depends(_require_forecast_context),
+):
+    if not is_raphaaa_tenant(ctx["tenant_id"]):
+        raise HTTPException(status_code=404, detail="Theme Planning is available only for the Raphaaa tenant.")
+    return await _compute_design_themes(ctx["tenant_id"], history_years, good_top_pct, max_decline_pct)
+
+
+class DesignThemeTagRequest(BaseModel):
+    design_nos: List[str] = Field(..., min_length=1, max_length=500)
+    # Empty string clears the tag (theme then falls back to the Collection text).
+    theme_name: str = Field("", max_length=120)
+
+
+@router.post("/design-themes/raphaaa/tag")
+async def tag_raphaaa_design_theme(
+    payload: DesignThemeTagRequest,
+    ctx: TenantCtx = Depends(_require_forecast_context),
+):
+    """Saves a plain theme_name onto the tech pack(s) of the given design numbers,
+    so a design's theme no longer depends on free-text Collection wording.
+
+    Deliberately NOT a Design & Pattern theme: those need a creative brief and an
+    approval step. A tech pack already linked to an approved Design & Pattern theme
+    (theme_id) is left alone and reported back, since changing its name here would
+    put it out of step with that theme. Designs with no tech pack can't be tagged."""
+    tenant_id = ctx["tenant_id"]
+    if not is_raphaaa_tenant(tenant_id):
+        raise HTTPException(status_code=404, detail="Theme Planning is available only for the Raphaaa tenant.")
+    theme_name = " ".join(payload.theme_name.split())
+    wanted = {_design_key(value) for value in payload.design_nos if _design_key(value)}
+    if not wanted:
+        raise HTTPException(status_code=400, detail="Choose at least one design.")
+
+    tag_ids: List[Any] = []
+    matched_designs: set = set()
+    skipped_linked: List[str] = []
+    async for pack in tech_packs_collection.find(
+        {"tenant_id": tenant_id}, {"design_no": 1, "theme_id": 1},
+    ):
+        key = _design_key(pack.get("design_no"))
+        if key not in wanted:
+            continue
+        matched_designs.add(key)
+        if str(pack.get("theme_id") or "").strip():
+            skipped_linked.append(str(pack.get("design_no") or ""))
+            continue
+        tag_ids.append(pack["_id"])
+    if not matched_designs:
+        raise HTTPException(status_code=404, detail="None of these designs has a tech pack, so there is nothing to tag. Create a tech pack in Design & Pattern first.")
+
+    tagged = 0
+    if tag_ids:
+        now = datetime.utcnow()
+        result = await tech_packs_collection.update_many(
+            {"_id": {"$in": tag_ids}, "tenant_id": tenant_id},
+            {"$set": {"theme_name": theme_name, "theme_tagged_at": now, "theme_tagged_by": ctx.get("admin_id")}},
+        )
+        tagged = result.modified_count
+    return {
+        "status": "success", "tagged_tech_packs": tagged,
+        "designs_without_tech_pack": len(wanted) - len(matched_designs),
+        "skipped_design_pattern_linked": skipped_linked,
+        "message": (f'Saved theme "{theme_name}" on {tagged} tech pack(s).' if theme_name else f"Cleared the theme tag on {tagged} tech pack(s)."),
+    }
 
 
 # ═══════════════════════════════════════════════════════════════════════════
