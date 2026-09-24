@@ -190,6 +190,8 @@ export default function LuckyDrawPublicEntry() {
       <div className="relative hidden min-h-screen items-center justify-center overflow-hidden bg-[radial-gradient(circle_at_50%_0%,#a31623_0%,#70000a_46%,#350005_100%)] p-6 md:flex">
         <div className="relative w-full max-w-[980px] overflow-hidden shadow-2xl" style={{ aspectRatio: "1319 / 1193" }}>
           <img src="/lucky-draw-qr-form-template.png" alt="Festival Lucky Draw" className="absolute inset-0 h-full w-full" />
+          <div aria-hidden="true" className="absolute left-[4.5%] top-[3.5%] h-[10.6%] w-[24%] bg-[#6e010a]" />
+          <img src="/citimart-real-logo.jpeg" alt="Citi Mart" className="absolute left-[5.3%] top-[4.6%] w-[20%]" />
           {!status && !loadError && overlayMessage("Loading lucky draw...")}
           {loadError && overlayMessage(loadError, true)}
           {status && !status.campaign_active && overlayMessage("No contest is running for this store right now.")}
@@ -230,6 +232,8 @@ export default function LuckyDrawPublicEntry() {
       <div className="relative flex min-h-screen items-start justify-center overflow-hidden bg-[#570006] p-0 md:hidden">
         <div className="relative w-full max-w-[560px] overflow-hidden" style={{ aspectRatio: "941 / 1672" }}>
           <img src="/lucky-draw-mobile-template.png" alt="Festival Lucky Draw" className="absolute inset-0 h-full w-full" />
+          <div aria-hidden="true" className="absolute left-[32.3%] top-[2.6%] h-[8.9%] w-[35.4%] bg-[#6e010a]" />
+          <img src="/citimart-real-logo.jpeg" alt="Citi Mart" className="absolute left-[36.3%] top-[3.6%] w-[27%]" />
           {!status && !loadError && overlayMessage("Loading lucky draw...")}
           {loadError && overlayMessage(loadError, true)}
           {status && !status.campaign_active && overlayMessage("No contest is running for this store right now.")}
