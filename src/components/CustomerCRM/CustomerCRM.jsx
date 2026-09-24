@@ -58,9 +58,9 @@ const styles = `
      rather than being a fixed size (a fixed size either wastes paper below
      short content or cuts off long content). doPrint() measures this and
      injects an exact page height right before each print. */
-  #ld-print-slip { position: fixed; top: 0; left: -9999px; width: 75mm; }
+  #ld-print-slip { position: fixed; top: 0; left: -9999px; width: 70mm; }
   #ld-print-qr { display: none; }
-  @page { size: 75mm 40mm; margin: 0; }
+  @page { size: 70mm 71mm; margin: 0; }
   @media print {
     body * { visibility: hidden; }
 
@@ -77,9 +77,9 @@ const styles = `
 
     /* Print-slip job — a narrow receipt-style strip, height set per-job by
        doPrint() to exactly match this entry's content (Name + Contact No). */
-    body.printing-ld-slip { width: 75mm; margin: 0 !important; padding: 0 !important; background: #fff !important; }
+    html:has(body.printing-ld-slip), body.printing-ld-slip { height: 71mm !important; overflow: hidden !important; } body.printing-ld-slip { width: 70mm; margin: 0 !important; padding: 0 !important; background: #fff !important; }
     body.printing-ld-slip #ld-print-slip, body.printing-ld-slip #ld-print-slip * { visibility: visible; }
-    body.printing-ld-slip #ld-print-slip { display: block; position: fixed; top: 0; left: 0; width: 75mm; box-sizing: border-box; padding: 0; background: #fff; }
+    body.printing-ld-slip #ld-print-slip { display: block; position: fixed; top: 0; left: 0; width: 70mm; box-sizing: border-box; padding: 0; background: #fff; }
     /* Deliberately NOT touching padding/font-size here — they need to stay
        identical to how the off-screen measurement clone renders (see
        doPrint), or the injected @page height (computed from that clone)
@@ -350,7 +350,7 @@ function PrintSlipModal({ entry, onClose, onPrinted }) {
   // clone (styled identically to what prints) and set exactly, per print.
   const doPrint = () => {
     const pageStyle = document.createElement("style");
-    pageStyle.textContent = "@page { size: 75mm 40mm; margin: 0; }";
+    pageStyle.textContent = "@page { size: 70mm 71mm; margin: 0; }";
     document.head.appendChild(pageStyle);
     document.body.classList.add("printing-ld-slip");
     window.print();
@@ -363,7 +363,7 @@ function PrintSlipModal({ entry, onClose, onPrinted }) {
       <div className="flex max-h-[94dvh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
         <ModalHeader eyebrow="Lucky Draw" title="Print slip" onClose={onClose} />
         <div className="overflow-y-auto p-6">
-          <p className="mb-4 text-sm text-slate-500">Slip size is 7.5cm × 4cm. Print at Actual size / 100%, then place it in the draw box.</p>
+          <p className="mb-4 text-sm text-slate-500">Slip size is 7cm × 4cm. Print at Actual size / 100%, then place it in the draw box.</p>
           <SlipCard entry={entry} />
         </div>
         <ModalFooter onClose={onClose} onSave={doPrint} saveLabel="Print & mark done" />
@@ -374,15 +374,15 @@ function PrintSlipModal({ entry, onClose, onPrinted }) {
 }
 
 function SlipCard({ entry }) {
-  // Plain 7.5cm x 4cm slip: name, contact no and print date/time only.
+  // Plain 7cm x 4cm slip: name, contact no and print date/time only.
   const when = new Date().toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
   return (
-    <div className="ld-slip-card bg-white text-black" style={{ width: "75mm", height: "40mm", boxSizing: "border-box", padding: "3mm", fontFamily: "Arial, Helvetica, sans-serif", overflow: "hidden" }}>
-      <p style={{ fontSize: "9px", fontWeight: 700, letterSpacing: "0.05em" }}>NAME</p>
-      <p style={{ fontSize: "16px", fontWeight: 800, lineHeight: 1.1, textTransform: "uppercase", wordBreak: "break-word" }}>{entry.customer_name || "--"}</p>
-      <p style={{ fontSize: "9px", fontWeight: 700, letterSpacing: "0.05em", marginTop: "2mm" }}>CONTACT NO</p>
-      <p style={{ fontSize: "16px", fontWeight: 800, lineHeight: 1.1 }}>{entry.contact_no || "--"}</p>
-      <p style={{ fontSize: "8px", marginTop: "2mm" }}>{when}</p>
+    <div className="ld-slip-card bg-white text-black" style={{ width: "70mm", height: "39mm", boxSizing: "border-box", padding: "3mm", fontFamily: "Arial, Helvetica, sans-serif", overflow: "hidden" }}>
+      <p style={{ fontSize: "14px", fontWeight: 700, letterSpacing: "0.05em" }}>NAME</p>
+      <p style={{ fontSize: "20px", fontWeight: 800, lineHeight: 1.1, textTransform: "uppercase", wordBreak: "break-word" }}>{entry.customer_name || "--"}</p>
+      <p style={{ fontSize: "14px", fontWeight: 700, letterSpacing: "0.05em", marginTop: "2mm" }}>CONTACT NO</p>
+      <p style={{ fontSize: "20px", fontWeight: 800, lineHeight: 1.1 }}>{entry.contact_no || "--"}</p>
+      <p style={{ fontSize: "11px", marginTop: "2mm" }}>{when}</p>
     </div>
   );
 }
