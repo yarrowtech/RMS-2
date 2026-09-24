@@ -378,10 +378,10 @@ function SlipCard({ entry }) {
   const when = new Date().toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
   return (
     <div className="ld-slip-card bg-white text-black" style={{ width: "75mm", height: "40mm", boxSizing: "border-box", padding: "3mm", fontFamily: "Arial, Helvetica, sans-serif", overflow: "hidden" }}>
-      <p style={{ fontSize: "8px", fontWeight: 700, letterSpacing: "0.05em" }}>NAME</p>
-      <p style={{ fontSize: "13px", fontWeight: 800, lineHeight: 1.1, textTransform: "uppercase", wordBreak: "break-word" }}>{entry.customer_name || "--"}</p>
-      <p style={{ fontSize: "8px", fontWeight: 700, letterSpacing: "0.05em", marginTop: "2mm" }}>CONTACT NO</p>
-      <p style={{ fontSize: "13px", fontWeight: 800, lineHeight: 1.1 }}>{entry.contact_no || "--"}</p>
+      <p style={{ fontSize: "9px", fontWeight: 700, letterSpacing: "0.05em" }}>NAME</p>
+      <p style={{ fontSize: "16px", fontWeight: 800, lineHeight: 1.1, textTransform: "uppercase", wordBreak: "break-word" }}>{entry.customer_name || "--"}</p>
+      <p style={{ fontSize: "9px", fontWeight: 700, letterSpacing: "0.05em", marginTop: "2mm" }}>CONTACT NO</p>
+      <p style={{ fontSize: "16px", fontWeight: 800, lineHeight: 1.1 }}>{entry.contact_no || "--"}</p>
       <p style={{ fontSize: "8px", marginTop: "2mm" }}>{when}</p>
     </div>
   );
