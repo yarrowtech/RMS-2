@@ -1220,3 +1220,37 @@ async def send_job_work_order_email(
         recipients=[email],
         html=_wrap(PRIMARY, "New Job Work Order", body, "RMS Production"),
     )
+
+
+async def send_newsletter_email(
+    email: EmailStr,
+    customer_name: str,
+    subject: str,
+    message: str,
+    unsubscribe_url: str,
+    image_url: str = "",
+    link: str = "",
+    link_label: str = "",
+) -> bool:
+    """One announcement to one subscriber (Customer CRM -> Newsletter). Sent
+    per recipient so each email carries that person's own unsubscribe link."""
+    safe_name = escape(customer_name or "there")
+    paragraphs = "".join(
+        f'<p style="font-size:15px;color:#444;line-height:1.6;margin:0 0 12px;">{escape(p)}</p>'
+        for p in (message or "").split("\n") if p.strip()
+    )
+    image_tag = f'<img src="{escape(image_url)}" alt="" style="max-width:100%;border-radius:12px;display:block;" />' if image_url else ""
+    image_block = (
+        (f'<a href="{escape(link)}" target="_blank" rel="noopener" style="display:block;margin-bottom:18px;">{image_tag}</a>' if link else f'<div style="margin-bottom:18px;">{image_tag}</div>')
+        if image_tag else ""
+    )
+    button = _btn(escape(link), escape(link_label or "Learn more"), WARNING) if link else ""
+    body = f"""
+      <h2 style="color:#222;margin-bottom:8px;">Hi {safe_name},</h2>
+      {image_block}
+      {paragraphs}
+      {button}
+      <p style="font-size:12px;color:#999;margin-top:24px;">You are receiving this because you signed up for offers and updates.
+        <a href="{escape(unsubscribe_url)}" style="color:#999;">Unsubscribe</a></p>
+    """
+    return await _send(subject, [email], _wrap(WARNING, escape(subject), body))

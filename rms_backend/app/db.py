@@ -224,6 +224,9 @@ lucky_draw_results_collection = db["lucky_draw_results"]
 # lives in Customer CRM because that's where customer-facing offers live.
 coupons_collection = db["customer_crm_coupons"]
 
+# Customer CRM newsletter: one row per announcement HQ sends to opted-in customers.
+newsletter_sends_collection = db["customer_crm_newsletter_sends"]
+
 async def ensure_procurement_indexes():
     """Create the indexes required by catalogue/RFQ hot paths and idempotency."""
     await purchaseorders_collection.create_index([("tenant_id", 1), ("orderNo", 1)], name="po_tenant_number")

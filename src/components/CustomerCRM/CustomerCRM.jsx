@@ -7,6 +7,7 @@ import {
   FileSpreadsheet,
   Gift,
   HeartHandshake,
+  Mail,
   Phone,
   Plus,
   Printer,
@@ -24,6 +25,7 @@ import {
 } from "lucide-react";
 import { API_BASE_URL } from "../../config/api.js";
 import { logoutOrReturnToDepartmentSelector } from "../../utils/authRedirect.js";
+import NewsletterTab from "./NewsletterTab.jsx";
 
 function token() {
   return localStorage.getItem("admin_token") || localStorage.getItem("access_token") || localStorage.getItem("token") || "";
@@ -101,6 +103,7 @@ const tabs = [
   { key: "segments", label: "Segments", icon: Tags },
   { key: "luckydraw", label: "Lucky Draw", icon: Gift },
   { key: "coupons", label: "Coupons", icon: Ticket },
+  { key: "newsletter", label: "Newsletter", icon: Mail },
 ];
 
 const emptyCustomer = {
@@ -1215,7 +1218,7 @@ export default function CustomerCRM() {
             <Stat label="Pending follow-ups" value={loading ? "..." : data.stats.pending_followups || 0} helper="Callbacks and reminders" icon={BellRing} color="bg-violet-50 text-violet-600" />
           </section>
           <section className="mt-5 rounded-xl border border-indigo-100 bg-indigo-50/60 p-4 text-sm text-indigo-900"><Sparkles size={16} className="mr-2 inline"/><b>Workflow:</b> cashier captures customer mobile during billing to CRM profile/history to marketing segments to WhatsApp/SMS/email follow-up to customer feedback history.</section>
-          <section className="mt-5">{active === "customers" && renderCustomers()}{active === "followups" && renderFollowups()}{active === "feedback" && renderFeedback()}{active === "segments" && renderSegments()}{active === "luckydraw" && renderLuckyDraw()}{active === "coupons" && renderCoupons()}</section>
+          <section className="mt-5">{active === "customers" && renderCustomers()}{active === "followups" && renderFollowups()}{active === "feedback" && renderFeedback()}{active === "segments" && renderSegments()}{active === "luckydraw" && renderLuckyDraw()}{active === "coupons" && renderCoupons()}{active === "newsletter" && <NewsletterTab isHq={data.scope?.scope === "hq"} />}</section>
         </main>
       </div>
       {customerModal && <CustomerModal initial={customerModal.id ? customerModal : null} onClose={() => setCustomerModal(null)} onSave={saveCustomer} />}
