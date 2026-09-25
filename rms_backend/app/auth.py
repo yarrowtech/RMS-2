@@ -24,8 +24,8 @@ def create_token(data: Dict[str, Any], expires_delta: timedelta):
 # ACCESS TOKEN
 # ================================
 
-def create_access_token(admin_id: str, department: str, role: str = "ADMIN", extra: dict = None):
-    expire = timedelta(minutes=int(settings.access_token_expire_minutes))
+def create_access_token(admin_id: str, department: str, role: str = "ADMIN", extra: dict = None, expires_minutes: int = None):
+    expire = timedelta(minutes=int(expires_minutes or settings.access_token_expire_minutes))
     payload = {
         "sub": str(admin_id),
         "role": role,

@@ -191,6 +191,30 @@ async def set_password(req: SetPasswordRequest):
     }
 
 
+# Lucky Draw / Coupons counter accounts stay signed in for a whole shift
+# instead of the normal 60 minutes; the page itself signs them out after
+# COUNTER_IDLE_MINUTES of no activity. Applies ONLY to store-side admins whose
+# Customer CRM access is limited to those two tabs — nobody else changes.
+COUNTER_SESSION_MINUTES = 12 * 60
+COUNTER_IDLE_MINUTES = 120
+_CRM_TAB_PERMS = {"crm_customers", "crm_followups", "crm_feedback", "crm_segments", "crm_lucky_draw", "crm_coupons"}
+_COUNTER_TAB_PERMS = {"crm_lucky_draw", "crm_coupons"}
+
+
+def _is_counter_account(admin: dict, scope: str) -> bool:
+    if scope == "hq":
+        return False
+    permissions = set(admin.get("permissions") or [])
+    granted = permissions & _CRM_TAB_PERMS
+    if not granted or not granted <= _COUNTER_TAB_PERMS:
+        return False
+    # Strictly counter-only: no department or permission beyond Customer CRM.
+    departments = set(admin.get("managedDepartments") or []) | ({admin["department"]} if admin.get("department") else set())
+    if not departments <= {"Customer CRM"}:
+        return False
+    return permissions <= (_CRM_TAB_PERMS | {"customer_crm", "crm"})
+
+
 # ─── 2. Admin Login ───────────────────────────────────────────────────────────
 
 class LoginRequest(BaseModel):
@@ -219,6 +243,8 @@ async def login(req: LoginRequest):
             detail="Admin has no tenant assigned. Contact your Super Admin."
         )
 
+    counter = _is_counter_account(admin, store["scope"])
+
     # ── JWT now carries store context ─────────────────────────────────────────
     token = create_access_token(
         str(admin["_id"]),
@@ -230,7 +256,8 @@ async def login(req: LoginRequest):
             "store_name": store["store_name"],
             "store_type": store["store_type"],
             "scope":      store["scope"],
-        }
+        },
+        expires_minutes=max(COUNTER_SESSION_MINUTES, int(settings.access_token_expire_minutes)) if counter else None,
     )
 
     managed: List[str] = admin.get("managedDepartments", [admin["department"]] if admin.get("department") else [])
@@ -253,6 +280,7 @@ async def login(req: LoginRequest):
         "department":   admin.get("department"),
         "account_type": admin.get("account_type", "department_retailer"),
         "name":         admin.get("name", ""),
+        **({"idle_timeout_minutes": COUNTER_IDLE_MINUTES} if counter else {}),
         **store,          # ← store_id, store_name, store_type, scope
         **redirect_info,
     }

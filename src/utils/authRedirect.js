@@ -56,6 +56,15 @@ export function handleAuthRedirect(responseData, navigate) {
   localStorage.setItem("admin_store_type", responseData.store_type || "");
   localStorage.setItem("admin_account_type", responseData.account_type || "department_retailer");
 
+  // Only Lucky Draw / Coupons counter accounts get an idle limit (minutes).
+  if (responseData.idle_timeout_minutes) {
+    localStorage.setItem("session_idle_minutes", String(responseData.idle_timeout_minutes));
+    localStorage.setItem("session_last_active", String(Date.now()));
+  } else {
+    localStorage.removeItem("session_idle_minutes");
+    localStorage.removeItem("session_last_active");
+  }
+
   // Keep legacy inventory screens in sync with the CURRENT login. Older
   // components still read `store_id`/`store_name`; leaving those values from
   // a previously logged-in retailer can make a newly logged-in store owner
@@ -209,7 +218,7 @@ export function clearAuthData() {
     "admin_active_department", "admin_scope", "admin_tenant_id",
     "admin_store_id", "admin_store_name", "admin_store_type", "admin_account_type",
     "store_id", "store_name", "store_type", "scope",
-    "user", "authUser",
+    "user", "authUser", "session_idle_minutes", "session_last_active",
   ].forEach((key) => localStorage.removeItem(key));
 }
 

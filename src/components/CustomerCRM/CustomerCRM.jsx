@@ -24,7 +24,7 @@ import {
   X,
 } from "lucide-react";
 import { API_BASE_URL } from "../../config/api.js";
-import { logoutOrReturnToDepartmentSelector } from "../../utils/authRedirect.js";
+import { clearAuthData, logoutOrReturnToDepartmentSelector } from "../../utils/authRedirect.js";
 import NewsletterTab from "./NewsletterTab.jsx";
 
 function token() {
@@ -502,6 +502,31 @@ export default function CustomerCRM() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  // Counter accounts (Lucky Draw / Coupons only) stay signed in all shift but
+  // are signed out after the idle limit set at login. Activity is kept in
+  // localStorage so reopening a stale tab after the limit also signs out.
+  useEffect(() => {
+    const limitMs = Number(localStorage.getItem("session_idle_minutes") || 0) * 60000;
+    if (!limitMs) return undefined;
+    const last = () => Number(localStorage.getItem("session_last_active") || Date.now());
+    const check = () => {
+      if (Date.now() - last() > limitMs) {
+        clearAuthData();
+        window.location.replace("/admin/login");
+      }
+    };
+    let lastWrite = 0;
+    const touch = () => {
+      const now = Date.now();
+      if (now - lastWrite > 15000) { lastWrite = now; localStorage.setItem("session_last_active", String(now)); }
+    };
+    check();
+    const events = ["mousemove", "keydown", "click", "touchstart", "scroll"];
+    events.forEach((name) => window.addEventListener(name, touch, { passive: true }));
+    const timer = setInterval(check, 30000);
+    return () => { events.forEach((name) => window.removeEventListener(name, touch)); clearInterval(timer); };
+  }, []);
 
   // null = every tab (HQ, or a store admin nobody has narrowed down yet);
   // otherwise the exact list of tab keys this admin was granted.
