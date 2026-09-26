@@ -115,6 +115,8 @@ barcode_label_settings_collection = db["barcode_label_settings"]
 # bills.  Those collections remain the operational source of truth; this
 # collection stores the accounting vouchers that reference them.
 finance_vouchers_collection = db["finance_vouchers"]
+# Money paid to a vendor on account, not yet set against a bill (Finance -> Vendor ledger).
+vendor_advances_collection = db["vendor_advances"]
 
 # Production / job-work operational records. These are intentionally separate
 # from purchase orders and GRNs: materials sent to a cutter/stitcher remain
@@ -262,6 +264,7 @@ async def ensure_procurement_indexes():
     await vendor_b2b_stock_ledger_collection.create_index([("vendor_id", 1), ("created_at", -1)], name="vendor_b2b_stock_ledger_vendor_created")
     await finance_vouchers_collection.create_index([("tenant_id", 1), ("store_id", 1), ("created_at", -1)], name="finance_voucher_scope_created")
     await finance_vouchers_collection.create_index([("tenant_id", 1), ("voucher_type", 1), ("voucher_date", -1)], name="finance_voucher_type_date")
+    await vendor_advances_collection.create_index([("tenant_id", 1), ("vendor_name", 1), ("date", -1)], name="vendor_advance_tenant_vendor_date")
     await job_work_orders_collection.create_index([("tenant_id", 1), ("status", 1), ("created_at", -1)], name="job_work_tenant_status_created")
     await job_work_orders_collection.create_index([("tenant_id", 1), ("job_worker_name", 1), ("status", 1)], name="job_work_tenant_worker_status")
     await job_work_orders_collection.create_index([("assigned_vendor_id", 1), ("status", 1), ("created_at", -1)], name="job_work_vendor_status_created")

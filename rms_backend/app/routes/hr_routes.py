@@ -233,6 +233,7 @@ class FloorStaffCreate(BaseModel):
     name:      str
     phone:     Optional[str] = ""
     role:      Optional[str] = ""   # free text, e.g. "Sales Associate" — not an access department
+    store_department: Optional[str] = ""
     division:  Optional[str] = ""
     section:   Optional[str] = ""
     floor:     Optional[str] = ""
