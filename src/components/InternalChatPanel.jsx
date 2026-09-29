@@ -288,17 +288,17 @@ export default function InternalChatPanel() {
     <button
       key={c.conversation_key}
       onClick={() => openConversation(c)}
-      className={`block w-full border-b border-slate-100 px-2.5 py-2.5 text-left hover:bg-white ${selected?.conversation_key === c.conversation_key ? "bg-white shadow-[inset_3px_0_0_0_#7c3aed]" : ""}`}
+      className={`block w-full border-b border-white/10 px-3 py-2.5 text-left transition hover:bg-white/10 ${selected?.conversation_key === c.conversation_key ? "bg-white/15 shadow-[inset_3px_0_0_0_#2dd4bf]" : ""}`}
     >
       <div className="flex items-center justify-between gap-1">
-        <p className="truncate text-[11px] font-black text-slate-800">{c.label}</p>
+        <p className="truncate text-[11px] font-black text-white">{c.label}</p>
         <span className="flex items-center gap-1">
-          {c.muted && <VolumeX size={11} className="text-slate-400" />}
-          {c.archived && <Archive size={11} className="text-amber-500" />}
+          {c.muted && <VolumeX size={11} className="text-slate-300" />}
+          {c.archived && <Archive size={11} className="text-amber-300" />}
           {c.unread_count > 0 && <span className="shrink-0 rounded-full bg-rose-500 px-1.5 text-[9px] font-black text-white">{c.unread_count}</span>}
         </span>
       </div>
-      <p className="mt-0.5 truncate text-[10px] text-slate-400">{c.last_message || (c.type === "department" ? "Start this department conversation" : "No messages yet")}</p>
+      <p className="mt-0.5 truncate text-[10px] text-indigo-100/75">{c.last_message || (c.type === "department" ? "Start this department conversation" : "No messages yet")}</p>
     </button>
   );
 
@@ -308,31 +308,31 @@ export default function InternalChatPanel() {
           style={maximized ? undefined : { position: "fixed", top: coords.top, right: coords.right }}
           className={
             maximized
-              ? "fixed inset-4 z-[3000] flex overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl sm:inset-8"
-              : "z-[3000] flex h-[440px] w-[560px] max-w-[92vw] overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl"
+              ? "fixed inset-4 z-[3000] flex overflow-hidden rounded-2xl border border-indigo-200 bg-white shadow-[0_30px_90px_rgba(49,46,129,0.35)] sm:inset-8"
+              : "z-[3000] flex h-[440px] w-[560px] max-w-[92vw] overflow-hidden rounded-2xl border border-indigo-200 bg-white shadow-[0_24px_70px_rgba(49,46,129,0.30)]"
           }
         >
           {/* Conversation list */}
-          <div className={`flex shrink-0 flex-col border-r border-slate-100 bg-slate-50 ${maximized ? "w-[280px]" : "w-[220px]"}`}>
-            <div className="flex items-center justify-between border-b border-slate-100 p-2.5">
-              <p className="text-[11px] font-black uppercase tracking-wide text-slate-500">
+          <div className={`flex shrink-0 flex-col border-r border-indigo-800 bg-gradient-to-b from-indigo-950 via-indigo-900 to-violet-900 ${maximized ? "w-[280px]" : "w-[220px]"}`}>
+            <div className="flex items-center justify-between border-b border-white/15 bg-white/5 p-2.5">
+              <p className="text-[11px] font-black uppercase tracking-[0.16em] text-indigo-100">
                 {maximized ? "Communication" : "Chats"}
               </p>
-              <button onClick={loadPeople} title="Start a private chat" className="flex items-center gap-1 rounded-lg px-1.5 py-1.5 text-[10px] font-black text-violet-600 hover:bg-violet-100"><Users size={14} /> New</button>
+              <button onClick={loadPeople} title="Start a private chat" className="flex items-center gap-1 rounded-lg bg-teal-400/15 px-2 py-1.5 text-[10px] font-black text-teal-200 transition hover:bg-teal-400/25"><Users size={14} /> New</button>
             </div>
             <div className="flex-1 overflow-y-auto">
-              <div className="flex items-center gap-1 border-b border-slate-200 bg-slate-100/80 px-2.5 py-2 text-[9px] font-black uppercase tracking-wide text-slate-500"><Hash size={11} /> Department channels</div>
+              <div className="flex items-center gap-1 border-b border-white/10 bg-cyan-400/10 px-3 py-2 text-[9px] font-black uppercase tracking-[0.14em] text-cyan-200"><Hash size={11} /> Department channels</div>
               {departmentConversations.map(conversationRow)}
-              {!departmentConversations.length && <p className="px-3 py-3 text-[10px] text-slate-400">No department channel is assigned to you.</p>}
-              <div className="flex items-center gap-1 border-y border-slate-200 bg-slate-100/80 px-2.5 py-2 text-[9px] font-black uppercase tracking-wide text-slate-500"><Users size={11} /> Direct messages</div>
+              {!departmentConversations.length && <p className="px-3 py-3 text-[10px] text-indigo-200">No department channel is assigned to you.</p>}
+              <div className="flex items-center gap-1 border-y border-white/10 bg-fuchsia-400/10 px-3 py-2 text-[9px] font-black uppercase tracking-[0.14em] text-fuchsia-200"><Users size={11} /> Direct messages</div>
               {directConversations.map(conversationRow)}
-              {!directConversations.length && <button onClick={loadPeople} className="w-full px-3 py-3 text-left text-[10px] font-bold text-violet-600 hover:bg-white">Start a private chat</button>}
+              {!directConversations.length && <button onClick={loadPeople} className="w-full px-3 py-3 text-left text-[10px] font-bold text-teal-200 hover:bg-white/10">Start a private chat</button>}
             </div>
           </div>
 
           {/* Thread / people picker */}
-          <div className="flex flex-1 flex-col">
-            <div className="flex items-center justify-between border-b border-slate-100 p-2.5">
+          <div className="flex flex-1 flex-col bg-gradient-to-br from-white via-indigo-50/50 to-cyan-50/40">
+            <div className="flex items-center justify-between border-b border-indigo-100 bg-white/85 p-2.5 backdrop-blur">
               <div className="min-w-0">
                 <p className="truncate text-xs font-black text-slate-900">
                   {pickingPerson ? "Start a new message" : selected ? selected.label : "Select a conversation"}
@@ -347,10 +347,10 @@ export default function InternalChatPanel() {
                     {selected.type === "department" && selected.can_archive && <button onClick={toggleArchive} disabled={changingConversation} title={selected.archived ? "Reopen department channel" : "Archive department channel"} className={selected.archived ? "p-1 text-emerald-600" : "p-1 text-slate-400 hover:text-amber-600"}><Archive size={14} /></button>}
                   </>
                 )}
-                <button onClick={() => setMaximized((v) => !v)} title={maximized ? "Minimize" : "Full screen"} className="p-1 text-slate-400 hover:text-slate-600">
+                <button onClick={() => setMaximized((v) => !v)} title={maximized ? "Minimize" : "Full screen"} className="rounded-lg p-1.5 text-indigo-400 transition hover:bg-indigo-50 hover:text-indigo-700">
                   {maximized ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
                 </button>
-                <button onClick={() => setOpen(false)} className="p-1 text-slate-400 hover:text-slate-600"><X size={16} /></button>
+                <button onClick={() => setOpen(false)} className="rounded-lg p-1.5 text-slate-400 transition hover:bg-rose-50 hover:text-rose-600"><X size={16} /></button>
               </div>
             </div>
 
@@ -368,14 +368,14 @@ export default function InternalChatPanel() {
               <>
                 <div ref={scrollRef} className="flex-1 space-y-2 overflow-y-auto p-3">
                   {messages.map((m) => (
-                    <div key={m.id} className={`rounded-xl border border-slate-200 bg-slate-50 p-2 ${maximized ? "max-w-[60%]" : "max-w-[85%]"}`}>
+                    <div key={m.id} className={`rounded-2xl border p-2.5 shadow-sm ${m.is_sender ? "ml-auto border-violet-500 bg-gradient-to-br from-violet-600 to-indigo-600 text-white" : "border-indigo-100 bg-white text-slate-700"} ${maximized ? "max-w-[60%]" : "max-w-[85%]"}`}>
                       <div className="flex items-center justify-between gap-2">
-                        <p className="text-[10px] font-black text-slate-500">{m.sender_name}</p>
+                        <p className={`text-[10px] font-black ${m.is_sender ? "text-violet-100" : "text-indigo-500"}`}>{m.sender_name}</p>
                         {m.is_sender && !m.removed && m.created_at && Date.now() - new Date(m.created_at).getTime() <= 5 * 60 * 1000 && (
-                          <button onClick={() => unsendMessage(m)} title="Remove for everyone (within 5 minutes)" className="text-slate-400 hover:text-rose-600"><Trash2 size={12} /></button>
+                          <button onClick={() => unsendMessage(m)} title="Remove for everyone (within 5 minutes)" className="text-violet-200 transition hover:text-white"><Trash2 size={12} /></button>
                         )}
                       </div>
-                      {m.removed ? <p className="text-xs italic text-slate-400">Message removed by sender</p> : m.message && <p className="text-xs text-slate-700">{m.message}</p>}
+                      {m.removed ? <p className="text-xs italic text-slate-400">Message removed by sender</p> : m.message && <p className={`text-xs ${m.is_sender ? "text-white" : "text-slate-700"}`}>{m.message}</p>}
                       {!m.removed && (m.attachments || []).map((a, i) => (
                         a.resource_type === "image" ? (
                           <a key={i} href={a.url} target="_blank" rel="noreferrer" className="mt-1 block">
@@ -387,12 +387,12 @@ export default function InternalChatPanel() {
                           </a>
                         )
                       ))}
-                      <p className="mt-0.5 text-[9px] text-slate-400">{m.created_at ? new Date(m.created_at).toLocaleString() : ""}</p>
+                      <p className={`mt-1 text-[9px] ${m.is_sender ? "text-violet-200" : "text-slate-400"}`}>{m.created_at ? new Date(m.created_at).toLocaleString() : ""}</p>
                     </div>
                   ))}
                   {!messages.length && !loading && <p className="p-6 text-center text-xs text-slate-400">No messages yet — say hello.</p>}
                 </div>
-                <div className="relative border-t border-slate-100 p-2.5">
+                <div className="relative border-t border-indigo-100 bg-white/90 p-2.5 backdrop-blur">
                   {selected.archived ? (
                     <p className="rounded-lg bg-amber-50 px-3 py-2 text-center text-[11px] font-bold text-amber-700">This department channel is archived. Only HQ can reopen it.</p>
                   ) : <>
@@ -422,7 +422,7 @@ export default function InternalChatPanel() {
                   )}
                   <div className="flex gap-2">
                     <input ref={fileRef} type="file" multiple className="hidden" onChange={(e) => { uploadFiles(e.target.files); e.target.value = ""; }} />
-                    <button onClick={() => fileRef.current?.click()} disabled={uploading} title="Attach a file" className="rounded-xl border border-slate-200 px-2.5 py-2 text-slate-500 hover:bg-slate-50 disabled:opacity-40">
+                    <button onClick={() => fileRef.current?.click()} disabled={uploading} title="Attach a file" className="rounded-xl border border-cyan-200 bg-cyan-50 px-2.5 py-2 text-cyan-700 transition hover:bg-cyan-100 disabled:opacity-40">
                       <Paperclip size={14} className={uploading ? "animate-pulse" : ""} />
                     </button>
                     <input
@@ -431,9 +431,9 @@ export default function InternalChatPanel() {
                       onChange={onDraftChange}
                       onKeyDown={(e) => { if (e.key === "Enter" && !mentionSuggestions.length) { e.preventDefault(); send(); } }}
                       placeholder="Type a message... (@ to mention)"
-                      className="flex-1 rounded-xl border border-slate-200 px-3 py-2 text-xs outline-none focus:border-violet-400"
+                      className="flex-1 rounded-xl border border-indigo-200 bg-white px-3 py-2 text-xs text-slate-700 outline-none transition placeholder:text-slate-400 focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
                     />
-                    <button onClick={send} disabled={sending || (!draft.trim() && !pendingAttachments.length)} className="rounded-xl bg-violet-600 px-3 py-2 text-white disabled:opacity-40">
+                    <button onClick={send} disabled={sending || (!draft.trim() && !pendingAttachments.length)} className="rounded-xl bg-gradient-to-r from-violet-600 to-fuchsia-600 px-3 py-2 text-white shadow-md shadow-violet-200 transition hover:from-violet-700 hover:to-fuchsia-700 disabled:opacity-40">
                       <Send size={14} />
                     </button>
                   </div>
@@ -455,7 +455,7 @@ export default function InternalChatPanel() {
         ref={buttonRef}
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="relative rounded-xl border border-slate-200 bg-white p-2.5 text-slate-600 shadow-sm hover:bg-slate-50"
+        className="relative rounded-xl border border-indigo-200 bg-gradient-to-br from-indigo-50 to-violet-100 p-2.5 text-indigo-700 shadow-sm transition hover:from-indigo-100 hover:to-violet-200"
         aria-label="Chat"
         title="Chat"
       >

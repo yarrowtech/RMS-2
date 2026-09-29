@@ -182,6 +182,40 @@ function exportDate(value) {
   return date && !Number.isNaN(date.getTime()) ? date.toLocaleString("en-IN") : "";
 }
 
+// Resolves the Lucky Draw date filter (day/week/month/custom presets) to a
+// concrete [from, to) window in local time, so "today" / "this week" match
+// what the person actually sees on their own clock, not UTC.
+function resolveDateRange(mode, customFrom, customTo) {
+  if (mode === "all") return null;
+  const startOfDay = (d) => { const x = new Date(d); x.setHours(0, 0, 0, 0); return x; };
+  const now = new Date();
+  if (mode === "today") {
+    const from = startOfDay(now);
+    const to = new Date(from); to.setDate(to.getDate() + 1);
+    return { from, to };
+  }
+  if (mode === "week") {
+    const from = startOfDay(now);
+    const dayIdx = (from.getDay() + 6) % 7; // Monday = start of week
+    from.setDate(from.getDate() - dayIdx);
+    const to = new Date(from); to.setDate(to.getDate() + 7);
+    return { from, to };
+  }
+  if (mode === "month") {
+    const from = new Date(now.getFullYear(), now.getMonth(), 1);
+    const to = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+    return { from, to };
+  }
+  if (mode === "custom") {
+    if (!customFrom && !customTo) return null;
+    const from = customFrom ? startOfDay(new Date(customFrom)) : null;
+    let to = null;
+    if (customTo) { to = startOfDay(new Date(customTo)); to.setDate(to.getDate() + 1); }
+    return { from, to };
+  }
+  return null;
+}
+
 function Stat({ label, value, helper, icon: Icon, color }) {
   return (
     <div className="crm-card p-5">
@@ -503,6 +537,13 @@ export default function CustomerCRM() {
   const [feedbackDraft, setFeedbackDraft] = useState(emptyFeedback);
   const [luckyDraw, setLuckyDraw] = useState({ campaigns: [], entries: [], results: [] });
   const [ldCampaignFilter, setLdCampaignFilter] = useState("");
+  // Slip-entry date filter — "all" plus quick day/week/month presets, or a
+  // custom from/to range. Filtering happens client-side against the already
+  // tenant/store-scoped entries the overview already loaded (same list the
+  // table and Excel export both read from), so this needs no new endpoint.
+  const [ldDateMode, setLdDateMode] = useState("all");
+  const [ldDateFrom, setLdDateFrom] = useState("");
+  const [ldDateTo, setLdDateTo] = useState("");
   const [campaignModal, setCampaignModal] = useState(null);
   const [entryModal, setEntryModal] = useState(null);
   const [drawModal, setDrawModal] = useState(null);
@@ -877,6 +918,8 @@ export default function CustomerCRM() {
           "Store": entry.store_name || data.scope?.store_name || "HQ",
           "Entered By": entry.entered_by_name || "",
           "Entry Date": exportDate(entry.created_at),
+          "Source": entry.source === "QR_SELF_ENTRY" ? "QR self-entry" : "Counter staff",
+          "Slip Printed At": exportDate(entry.printed_at),
           "WhatsApp Consent": consentLabel(whatsappConsent),
           "SMS Consent": consentLabel(smsConsent),
           "Email Consent": consentLabel(emailConsent),
@@ -911,10 +954,11 @@ export default function CustomerCRM() {
       const contactSheet = XLSX.utils.json_to_sheet(contactRows);
       contactSheet["!cols"] = [{wch:24},{wch:16},{wch:28},{wch:28},{wch:20},{wch:16},{wch:18},{wch:18},{wch:14},{wch:16},{wch:18},{wch:30},{wch:28},{wch:22},{wch:24},{wch:12},{wch:22}];
       const slipSheet = XLSX.utils.json_to_sheet(slipRows);
-      slipSheet["!cols"] = [{wch:24},{wch:16},{wch:28},{wch:28},{wch:20},{wch:16},{wch:26},{wch:22},{wch:20},{wch:22},{wch:18},{wch:14},{wch:16},{wch:18},{wch:30}];
+      slipSheet["!cols"] = [{wch:24},{wch:16},{wch:28},{wch:28},{wch:20},{wch:16},{wch:26},{wch:22},{wch:20},{wch:22},{wch:16},{wch:22},{wch:18},{wch:14},{wch:16},{wch:18},{wch:30}];
       const readMeSheet = XLSX.utils.aoa_to_sheet([
         ["RMS Customer Campaign Export"],
         ["Campaign filter", campaignLabel],
+        ["Date filter", { all: "All time", today: "Today", week: "This week", month: "This month", custom: `Custom (${ldDateFrom || "any"} to ${ldDateTo || "any"})` }[ldDateMode] || "All time"],
         ["Scope", data.scope?.scope === "hq" ? "Tenant - all stores" : data.scope?.store_name || "Current store"],
         ["Generated at", new Date().toLocaleString("en-IN")],
         ["Slip entries", entries.length],
@@ -969,7 +1013,17 @@ export default function CustomerCRM() {
     const isHq = data.scope?.scope === "hq";
     const myStoreId = data.scope?.store_id;
     const activeCampaigns = (luckyDraw.campaigns || []).filter((c) => c.status === "ACTIVE");
-    const filteredEntries = ldCampaignFilter ? (luckyDraw.entries || []).filter((e) => e.campaign_id === ldCampaignFilter) : (luckyDraw.entries || []);
+    const ldRange = resolveDateRange(ldDateMode, ldDateFrom, ldDateTo);
+    const filteredEntries = (luckyDraw.entries || []).filter((e) => {
+      if (ldCampaignFilter && e.campaign_id !== ldCampaignFilter) return false;
+      if (ldRange) {
+        const at = e.created_at ? new Date(e.created_at) : null;
+        if (!at || Number.isNaN(at.getTime())) return false;
+        if (ldRange.from && at < ldRange.from) return false;
+        if (ldRange.to && at >= ldRange.to) return false;
+      }
+      return true;
+    });
     const hasOwnDraw = (campaignId) => (luckyDraw.results || []).some((r) => r.campaign_id === campaignId && !r.superseded && (isHq ? true : r.store_id === myStoreId));
     const qrStoreId = isHq ? hqQrStoreId : myStoreId;
     const scanUrl = qrStoreId ? `${window.location.origin}/lucky-draw-scan/${qrStoreId}` : "";
@@ -1093,10 +1147,30 @@ export default function CustomerCRM() {
             <div><h2 className="text-lg font-bold text-slate-900">Slip entries{isHq ? " (all stores)" : ""}</h2><p className="text-sm text-slate-500">One row per customer slip entered at the counter.</p></div>
             <div className="flex flex-wrap gap-2"><button disabled={!filteredEntries.length || exportingEntries} onClick={() => exportLuckyDrawEntries(filteredEntries)} className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-bold text-emerald-700 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-40"><FileSpreadsheet size={16} className="mr-1 inline"/>{exportingEntries ? "Preparing..." : "Export Excel"}</button><button disabled={!activeCampaigns.length} onClick={() => setEntryModal({})} className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-bold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-40"><Plus size={16} className="inline"/> Add entry</button></div>
           </div>
+          <div className="flex flex-wrap items-center gap-2 border-b border-slate-100 px-5 py-3">
+            <span className="text-xs font-bold uppercase tracking-wide text-slate-400">Filter by</span>
+            {[["all", "All time"], ["today", "Today"], ["week", "This week"], ["month", "This month"], ["custom", "Custom range"]].map(([key, label]) => (
+              <button
+                key={key}
+                onClick={() => setLdDateMode(key)}
+                className={`rounded-lg px-3 py-1.5 text-xs font-bold ${ldDateMode === key ? "bg-indigo-600 text-white" : "border border-slate-200 text-slate-600 hover:bg-slate-50"}`}
+              >
+                {label}
+              </button>
+            ))}
+            {ldDateMode === "custom" && (
+              <div className="flex items-center gap-2">
+                <input type="date" value={ldDateFrom} onChange={(e) => setLdDateFrom(e.target.value)} className="crm-input !w-auto py-1.5 text-xs" />
+                <span className="text-xs text-slate-400">to</span>
+                <input type="date" value={ldDateTo} onChange={(e) => setLdDateTo(e.target.value)} className="crm-input !w-auto py-1.5 text-xs" />
+              </div>
+            )}
+            <span className="ml-auto text-xs font-semibold text-slate-400">{filteredEntries.length} entr{filteredEntries.length === 1 ? "y" : "ies"}</span>
+          </div>
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[900px] text-left text-sm">
+            <table className="w-full min-w-[1100px] text-left text-sm">
               <thead className="bg-slate-50 text-xs font-bold uppercase text-slate-500">
-                <tr><th className="px-5 py-3">Customer</th><th className="px-5 py-3">Contact</th><th className="px-5 py-3">Profession</th><th className="px-5 py-3">Bill no.</th><th className="px-5 py-3">Campaign</th>{isHq && <th className="px-5 py-3">Store</th>}<th className="px-5 py-3">Entered by</th><th className="px-5 py-3">Slip</th><th className="px-5 py-3"></th></tr>
+                <tr><th className="px-5 py-3">Customer</th><th className="px-5 py-3">Contact</th><th className="px-5 py-3">Profession</th><th className="px-5 py-3">Bill no.</th><th className="px-5 py-3">Campaign</th>{isHq && <th className="px-5 py-3">Store</th>}<th className="px-5 py-3">Entered by</th><th className="px-5 py-3">Entered at</th><th className="px-5 py-3">Slip</th><th className="px-5 py-3"></th></tr>
               </thead>
               <tbody>
                 {filteredEntries.map((e) => {
@@ -1111,10 +1185,16 @@ export default function CustomerCRM() {
                     <td className="px-5 py-3 text-slate-700">{e.campaign_name}</td>
                     {isHq && <td className="px-5 py-3 text-slate-700">{e.store_name || "HQ"}</td>}
                     <td className="px-5 py-3 text-xs text-slate-500">{e.entered_by_name || "-"}</td>
+                    <td className="px-5 py-3 text-xs text-slate-500">{exportDate(e.created_at) || "-"}</td>
                     <td className="px-5 py-3">
                       {!isQr && <span className="text-xs font-semibold text-slate-400">Counter slip</span>}
                       {isQr && needsPrint && <button onClick={() => setPrintSlip(e)} className="rounded-lg bg-amber-500 px-3 py-1.5 text-xs font-bold text-white hover:bg-amber-600">Needs printing</button>}
-                      {isQr && !needsPrint && <span className="text-xs font-bold text-emerald-600">Printed</span>}
+                      {isQr && !needsPrint && (
+                        <div>
+                          <span className="text-xs font-bold text-emerald-600">Printed</span>
+                          {e.printed_at && <p className="text-[10px] text-slate-400">{exportDate(e.printed_at)}</p>}
+                        </div>
+                      )}
                     </td>
                     <td className="px-5 py-3">
                       <div className="flex flex-wrap items-center gap-2">
