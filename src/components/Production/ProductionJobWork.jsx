@@ -7,6 +7,8 @@ import FabricThemesSection from "../Mbuyer/FabricThemes.jsx";
 import FabricRequirementSummary from "../Mbuyer/FabricRequirementSummary.jsx";
 import TechPackLibrary from "./TechPackLibrary.jsx";
 import { HybridProduction, WorkstationDisplay } from "./HybridProduction.jsx";
+import InternalNotificationBell from "../InternalNotificationBell.jsx";
+import InternalChatPanel from "../InternalChatPanel.jsx";
 
 const JOB_WORK_TYPES = ["Cutting", "Stitching", "Embroidery", "Printing", "Washing", "Finishing", "Packing", "Other"];
 const DESIGN_DEPARTMENTS = ["Men", "Women", "Kids Boys", "Kids Girls", "Infant", "Accessories", "Other"];
@@ -462,7 +464,7 @@ export default function ProductionJobWork() {
           <div className="pointer-events-none absolute -right-16 -top-20 h-72 w-72 rounded-full bg-fuchsia-400/25 blur-3xl" /><div className="pointer-events-none absolute bottom-0 left-1/3 h-40 w-96 rounded-full bg-cyan-400/10 blur-3xl" />
           <div className="relative flex flex-col justify-between gap-6 xl:flex-row xl:items-center">
             <div className="flex items-start gap-4"><div className="grid h-14 w-14 shrink-0 place-items-center rounded-2xl border border-white/20 bg-white/10 text-2xl shadow-lg shadow-black/20">✂</div><div><p className="text-xs font-bold uppercase tracking-[0.2em] text-cyan-200">Operations command centre</p><h1 className="mt-1 text-3xl font-black tracking-tight text-white">Production &amp; Job Work</h1><p className="mt-2 max-w-2xl text-sm leading-6 text-indigo-100">Plan materials, send work to approved partners, track every issue and bring finished goods back into central inventory.</p><div className="mt-4 flex flex-wrap gap-2"><span className="rounded-full border border-white/15 bg-white/10 px-3 py-1 text-xs font-bold text-white">Plan → Issue → Reconcile → Receive</span><span className="rounded-full border border-cyan-300/20 bg-cyan-300/10 px-3 py-1 text-xs font-bold text-cyan-100">Central inventory controlled</span></div></div></div>
-            <div className="flex flex-wrap gap-2 xl:justify-end"><button type="button" onClick={refresh} className="rounded-xl border border-white/20 bg-white/10 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-white/20">Refresh</button><button type="button" onClick={() => logoutOrReturnToDepartmentSelector()} className="rounded-xl border border-rose-300/25 bg-rose-400/10 px-4 py-2.5 text-sm font-bold text-rose-100 transition hover:bg-rose-400/20">Logout</button></div>
+            <div className="flex flex-wrap items-center gap-2 xl:justify-end"><InternalNotificationBell /><InternalChatPanel /><button type="button" onClick={refresh} className="rounded-xl border border-white/20 bg-white/10 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-white/20">Refresh</button><button type="button" onClick={() => logoutOrReturnToDepartmentSelector()} className="rounded-xl border border-rose-300/25 bg-rose-400/10 px-4 py-2.5 text-sm font-bold text-rose-100 transition hover:bg-rose-400/20">Logout</button></div>
           </div>
         </div>
         {notice && <div className="mb-5 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-800">✓ {notice}</div>}

@@ -896,6 +896,7 @@ import {
 } from "react-icons/fa";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
+import DocumentComments from "../DocumentComments.jsx";
 
 const API = APP_API_URL;
 const API_BASE = `${API}/stock-transfers`;
@@ -1023,6 +1024,7 @@ export default function StockTransfer() {
   const [shortfallModal, setShortfallModal] = useState(null);
   const [shortfallForm, setShortfallForm] = useState({ action: "return_to_stock", note: "" });
   const [resolvingId, setResolvingId] = useState(null);
+  const [notesFor, setNotesFor] = useState(null); // { id, refNo } of the transfer whose notes popup is open
 
   const [editId,   setEditId]   = useState(null);
   const [openOut,  setOpenOut]  = useState(false);
@@ -1475,6 +1477,7 @@ export default function StockTransfer() {
                         <td className="px-3 py-2.5">
                           <div className="flex gap-1.5">
                             <button onClick={() => printRecord(rec)} title="Print" className="h-7 px-2 rounded-lg bg-sky-50 text-sky-600 hover:bg-sky-100 border border-sky-200 text-xs font-bold transition"><FaFilePdf size={11}/></button>
+                            <button onClick={() => setNotesFor({ id: rec.id, refNo: rec.refNo })} className="h-7 px-2.5 rounded-lg bg-violet-50 text-violet-600 hover:bg-violet-100 border border-violet-200 text-xs font-bold transition">Notes</button>
                             {rec.type === "Out" && rec.status === "Dispatched" && (
                               <>
                                 <button onClick={() => handleEdit(rec)} className="h-7 px-2.5 rounded-lg bg-indigo-50 text-indigo-600 hover:bg-indigo-100 border border-indigo-200 text-xs font-bold transition flex items-center gap-1"><FaEdit size={10}/> Edit</button>
@@ -1776,6 +1779,20 @@ export default function StockTransfer() {
                   {resolvingId===shortfallModal.id ? "Saving…" : "Confirm resolution"}
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+      {notesFor && (
+        <div className="fixed inset-0 z-[999]">
+          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => setNotesFor(null)}/>
+          <div className="absolute inset-0 flex items-center justify-center p-4">
+            <div className="w-full max-w-md rounded-2xl bg-white p-5 shadow-xl">
+              <div className="mb-2 flex items-center justify-between">
+                <h2 className="text-sm font-bold text-slate-900">Notes — {notesFor.refNo}</h2>
+                <button onClick={() => setNotesFor(null)} className="text-slate-400 hover:text-slate-600"><FaTimes/></button>
+              </div>
+              <DocumentComments refType="stock_transfer" refId={notesFor.id} title="Internal notes on this transfer"/>
             </div>
           </div>
         </div>

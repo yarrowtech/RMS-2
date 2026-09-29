@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { API_BASE_URL } from "../../config/api.js";
 import { jsPDF } from "jspdf";
+import DocumentComments from "../DocumentComments.jsx";
 
 function headers(isFormData = false) {
   const token = localStorage.getItem("admin_token") || localStorage.getItem("access_token") || localStorage.getItem("token") || "";
@@ -675,6 +676,8 @@ function PackModal({ plans = [], themes = [], allowancePolicy = DEFAULT_ALLOWANC
         <Field label="Reference image links (one per line, optional)"><textarea rows="2" value={form.reference_images} onChange={(e) => update("reference_images", e.target.value)} placeholder="https://.../front.jpg" /></Field>
         <Field label="PDF / document links (one per line, optional)"><textarea rows="2" value={form.document_urls} onChange={(e) => update("document_urls", e.target.value)} placeholder="https://.../measurement-sheet.pdf" /></Field>
       </div>
+
+      {editing && <DocumentComments refType="tech_pack" refId={pack.id} title="Comments on this tech pack" />}
 
       <p className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs leading-5 text-amber-900"><b>Important:</b> use a new version (v2, v3) when the approved measurements or construction change. A job work order stores a snapshot so a worker never sees later changes by mistake.</p>
       <div className="flex justify-end gap-3"><button type="button" onClick={onClose} className="rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-bold text-slate-600">Cancel</button><button disabled={saving} className="rounded-xl bg-violet-600 px-5 py-2.5 text-sm font-bold text-white disabled:opacity-60">{saving ? "Saving..." : editing ? "Save changes" : "Save tech pack"}</button></div>

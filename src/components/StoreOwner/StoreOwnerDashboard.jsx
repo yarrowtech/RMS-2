@@ -6,6 +6,8 @@ import {
 import toast from "react-hot-toast";
 import { clearAuthData } from "../../utils/authRedirect.js";
 import { API_BASE_URL } from "../../config/api.js";
+import InternalNotificationBell from "../InternalNotificationBell.jsx";
+import InternalChatPanel from "../InternalChatPanel.jsx";
 
 // These two are commonly assumed to be linked when they're actually
 // independent — a manufacturer needs only Job Work (which has its own
@@ -345,6 +347,8 @@ export default function StoreOwnerDashboard() {
             </div>
           </div>
           <div className="flex items-center gap-3">
+            <InternalNotificationBell />
+            <InternalChatPanel />
             <nav className="flex items-center gap-2" aria-label="Store owner quick actions">
               <Link
                 to="/dashboard/store-owner/verification"

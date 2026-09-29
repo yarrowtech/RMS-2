@@ -2,6 +2,8 @@ import React, { Suspense, useMemo, useState } from "react";
 import { logoutOrReturnToDepartmentSelector } from "../../utils/authRedirect";
 import { FaBars } from "react-icons/fa";
 import { CircleHelp, Settings as SettingsIcon } from "lucide-react";
+import InternalNotificationBell from "../InternalNotificationBell.jsx";
+import InternalChatPanel from "../InternalChatPanel.jsx";
 import CashierSidebar from "./CashierSidebar";
 import CashierDashboard from "./CashierDashboard";
 import CashierPOS from "./CashierPOS";
@@ -132,6 +134,8 @@ export default function Cashier() {
           </div>
 
           <div className="flex items-center gap-2">
+          <InternalNotificationBell />
+          <InternalChatPanel />
           <button
             type="button"
             onClick={() => setActive("__support")}
@@ -205,24 +209,28 @@ export default function Cashier() {
               <p className="mt-0.5 text-xs font-semibold uppercase tracking-wider text-emerald-700">{pageTitle}</p>
             </div>
 
-            <button
-              type="button"
-              onClick={() => setActive("__support")}
-              className="grid h-9 w-9 place-items-center rounded-lg border border-slate-200 bg-slate-50 text-slate-600 transition hover:border-emerald-200 hover:bg-emerald-50 hover:text-emerald-700"
-              aria-label="Help and support"
-              title="Help & Support"
-            >
-              <CircleHelp size={18} className="text-slate-800" />
-            </button>
-            <button
-              type="button"
-              onClick={onSettingsClick}
-              className="grid h-9 w-9 place-items-center rounded-lg border border-slate-200 bg-slate-50 text-slate-600 transition hover:border-emerald-200 hover:bg-emerald-50 hover:text-emerald-700"
-              aria-label="Settings"
-              title="Settings"
-            >
-              <SettingsIcon size={18} className="text-slate-800" />
-            </button>
+            <div className="flex items-center gap-3">
+              <InternalNotificationBell />
+              <InternalChatPanel />
+              <button
+                type="button"
+                onClick={() => setActive("__support")}
+                className="grid h-9 w-9 place-items-center rounded-lg border border-slate-200 bg-slate-50 text-slate-600 transition hover:border-emerald-200 hover:bg-emerald-50 hover:text-emerald-700"
+                aria-label="Help and support"
+                title="Help & Support"
+              >
+                <CircleHelp size={18} className="text-slate-800" />
+              </button>
+              <button
+                type="button"
+                onClick={onSettingsClick}
+                className="grid h-9 w-9 place-items-center rounded-lg border border-slate-200 bg-slate-50 text-slate-600 transition hover:border-emerald-200 hover:bg-emerald-50 hover:text-emerald-700"
+                aria-label="Settings"
+                title="Settings"
+              >
+                <SettingsIcon size={18} className="text-slate-800" />
+              </button>
+            </div>
           </header>
 
           <div className="min-h-0 flex-1 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_12px_40px_rgba(15,23,42,0.06)]">

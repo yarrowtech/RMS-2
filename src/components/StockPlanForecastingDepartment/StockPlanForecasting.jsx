@@ -1,6 +1,8 @@
 import React, { Suspense, useEffect, useMemo, useState } from "react";
 import { logoutOrReturnToDepartmentSelector } from "../../utils/authRedirect";
 import { FaBars, FaCog } from "react-icons/fa";
+import InternalNotificationBell from "../InternalNotificationBell.jsx";
+import InternalChatPanel from "../InternalChatPanel.jsx";
 
 /* ================== EXISTING COMPONENTS ================== */
 import StockPlanForecastingSidebar from "./StockPlanForecastingSidebar";
@@ -199,13 +201,17 @@ export default function StockPlanForecasting() {
             </p>
           </div>
 
-          <button
-            onClick={handleOpenSettings}
-            className="p-2 rounded-xl border border-[#D6DEE8] bg-white shadow-sm active:scale-[0.98] transition"
-            aria-label="Open settings"
-          >
-            <FaCog size={16} />
-          </button>
+          <div className="flex items-center gap-2">
+            <InternalNotificationBell />
+            <InternalChatPanel />
+            <button
+              onClick={handleOpenSettings}
+              className="p-2 rounded-xl border border-[#D6DEE8] bg-white shadow-sm active:scale-[0.98] transition"
+              aria-label="Open settings"
+            >
+              <FaCog size={16} />
+            </button>
+          </div>
         </div>
       </div>
 
@@ -271,26 +277,30 @@ export default function StockPlanForecasting() {
                 </p>
               </div>
 
-              <button
-                type="button"
-                onClick={handleOpenSettings}
-                aria-label="Open settings"
-                className="
-                  shrink-0
-                  p-2.5
-                  rounded-xl
-                  border border-[#D6DEE8]
-                  bg-white
-                  text-slate-700
-                  shadow-sm
-                  hover:bg-slate-50
-                  hover:text-slate-900
-                  active:scale-[0.96]
-                  transition
-                "
-              >
-                <FaCog size={18} />
-              </button>
+              <div className="flex shrink-0 items-center gap-3">
+                <InternalNotificationBell />
+                <InternalChatPanel />
+                <button
+                  type="button"
+                  onClick={handleOpenSettings}
+                  aria-label="Open settings"
+                  className="
+                    shrink-0
+                    p-2.5
+                    rounded-xl
+                    border border-[#D6DEE8]
+                    bg-white
+                    text-slate-700
+                    shadow-sm
+                    hover:bg-slate-50
+                    hover:text-slate-900
+                    active:scale-[0.96]
+                    transition
+                  "
+                >
+                  <FaCog size={18} />
+                </button>
+              </div>
             </div>
           </header>
 

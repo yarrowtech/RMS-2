@@ -3,6 +3,7 @@ import { API_BASE_URL as APP_API_URL } from "../config/api.js";
 import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { createPortal } from "react-dom";
 import TaxProfileBanner from "./Merchandiser_Seller/TaxProfileBanner.jsx";
+import DocumentComments from "./DocumentComments.jsx";
 
 /* ═══════════════════════════════════════════════════════════════════
    API CONSTANTS
@@ -1646,6 +1647,7 @@ function InvoiceViewModal({ inv:initialInv, onClose, showToast, onRefresh }) {
     {id:"payment",  label:"💳 Payments"},
     {id:"queries",  label:`❓ Queries${queries.filter(q=>q.status==="Open").length>0?` (${queries.filter(q=>q.status==="Open").length})`:""}` },
     {id:"notify",   label:"🔔 Notify"},
+    {id:"notes",    label:"🗒️ Internal Notes"},
     {id:"timeline", label:"📜 Timeline"},
   ];
 
@@ -1875,6 +1877,11 @@ function InvoiceViewModal({ inv:initialInv, onClose, showToast, onRefresh }) {
         )}
 
         {/* ── TIMELINE ── */}
+        {/* ── INTERNAL NOTES ── */}
+        {tab==="notes"&&(
+          <DocumentComments refType="purchase_invoice" refId={inv.id} title="Internal notes (Finance ⇄ Merchandiser Buyer)"/>
+        )}
+
         {tab==="timeline"&&(
           <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:20}}>
             <div style={{fontSize:12,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:".6px",marginBottom:16}}>Notification &amp; Event Log</div>

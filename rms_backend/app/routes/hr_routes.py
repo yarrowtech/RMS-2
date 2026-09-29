@@ -27,6 +27,7 @@ from ..db import (
     hr_salary_records_collection,
     stores_collection,
 )
+from .internal_notification_routes import notify
 
 router = APIRouter(prefix="/api/hr", tags=["HR"])
 TenantCtx = Dict[str, Any]
@@ -515,6 +516,16 @@ async def review_leave(leave_id: str, payload: LeaveReview, ctx: TenantCtx = Dep
             "reviewed_at": datetime.utcnow(),
             "updated_at": datetime.utcnow(),
         }},
+    )
+    action_word = "approved" if payload.action == "approve" else "rejected"
+    await notify(
+        ctx["tenant_id"],
+        type="leave_decision",
+        title=f"Your leave request was {action_word}",
+        message=f"{leave.get('leave_type', 'Leave')} from {leave.get('start_date', '')} to {leave.get('end_date', '')} was {action_word}.",
+        target_admin_id=leave.get("admin_id"),
+        ref_type="leave", ref_id=str(leave["_id"]),
+        priority="normal",
     )
     return {"status": "success", "message": f"Leave request {payload.action}d."}
 

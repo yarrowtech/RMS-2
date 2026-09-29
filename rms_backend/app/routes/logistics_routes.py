@@ -13,13 +13,16 @@ exists elsewhere instead of introducing a parallel tracking system:
 No new source of truth, no e-way bill/GSTN integration — just a single
 place to see what's still moving.
 """
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Dict
 
 from fastapi import APIRouter, Depends, HTTPException
 
 from .deps import get_hq_tenant
-from ..db import purchaseorders_collection, stock_transfers_collection, tenants_collection
+from .internal_notification_routes import notify as notify_internal
+from ..db import (
+    internal_notifications_collection, purchaseorders_collection, stock_transfers_collection, tenants_collection,
+)
 
 router = APIRouter(prefix="/api/logistics", tags=["Logistics"])
 TenantCtx = Dict[str, Any]
@@ -60,12 +63,41 @@ async def _require_logistics(ctx: dict = Depends(get_hq_tenant)) -> dict:
     return ctx
 
 
+DELAYED_PO_NOTIFY_COOLDOWN_HOURS = 20  # this dashboard is opened often; don't re-notify every visit
+
+
+async def _notify_delayed_pos(tenant_id: str, overdue_pos: list, now: datetime) -> None:
+    """Tells Merchandiser Buyer, Inventory and HQ, inside the tenant, that a
+    purchase order has passed its expected delivery date without arriving.
+    Runs on-demand whenever this dashboard is read (same shared-data pull
+    cadence as the rest of this file) rather than a separate scheduled job.
+    Additive: only reads/writes internal_notifications_collection."""
+    if not overdue_pos:
+        return
+    cutoff = now - timedelta(hours=DELAYED_PO_NOTIFY_COOLDOWN_HOURS)
+    recent = await internal_notifications_collection.find_one({
+        "tenant_id": tenant_id, "type": "po_delayed", "created_at": {"$gte": cutoff},
+    })
+    if recent:
+        return
+    top = overdue_pos[:3]
+    names = ", ".join(f"{p['order_no']} ({p['vendor_name']})" for p in top)
+    title = f"{len(overdue_pos)} purchase order(s) are past their delivery date"
+    message = f"{names}{' and more' if len(overdue_pos) > 3 else ''}."
+    for department in ("Merchandiser Buyer", "Inventory", "HQ"):
+        await notify_internal(
+            tenant_id, type="po_delayed", title=title, message=message,
+            department=department, ref_type="purchase_order", priority="high",
+        )
+
+
 @router.get("/dashboard")
 async def logistics_dashboard(ctx: TenantCtx = Depends(_require_logistics)):
     tenant_id = ctx["tenant_id"]
     now = datetime.utcnow()
 
     inbound = []
+    overdue_pos = []
     cursor = purchaseorders_collection.find(
         {"tenant_id": tenant_id, "status": {"$in": INBOUND_STATUSES}},
         {
@@ -75,19 +107,32 @@ async def logistics_dashboard(ctx: TenantCtx = Depends(_require_logistics)):
     ).sort("orderDate", -1).limit(50)
     async for po in cursor:
         dispatch = (po.get("delivery") or {}).get("vendor") or {}
-        inbound.append({
+        expected = (po.get("expectedDeliveryDate") or "").strip()
+        is_late = False
+        if expected:
+            try:
+                is_late = datetime.strptime(expected, "%Y-%m-%d") < now
+            except ValueError:
+                is_late = False
+        row = {
             "order_no": po.get("orderNo", ""),
             "vendor_name": po.get("vendorName", ""),
             "status": po.get("status", ""),
             "order_type": po.get("orderType") or "Goods",
             "order_date": po.get("orderDate", ""),
-            "expected_delivery_date": po.get("expectedDeliveryDate", ""),
+            "expected_delivery_date": expected,
             "net_amount": _number(po.get("netAmount")),
             "vehicle_number": dispatch.get("vehicle_number", ""),
             "transporter_name": dispatch.get("transporter_name", ""),
             "tracking_number": dispatch.get("tracking_number", ""),
             "dispatched": bool(dispatch.get("vehicle_number") or dispatch.get("tracking_number")),
-        })
+            "is_late": is_late,
+        }
+        inbound.append(row)
+        if is_late:
+            overdue_pos.append(row)
+
+    await _notify_delayed_pos(tenant_id, overdue_pos, now)
 
     transfers = []
     overdue_transfers = 0
@@ -128,5 +173,6 @@ async def logistics_dashboard(ctx: TenantCtx = Depends(_require_logistics)):
             "inbound_awaiting_dispatch": sum(1 for row in inbound if not row["dispatched"]),
             "transfers_in_transit": len(transfers),
             "overdue_transfers": overdue_transfers,
+            "overdue_pos": len(overdue_pos),
         },
     }

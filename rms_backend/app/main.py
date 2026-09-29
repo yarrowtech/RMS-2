@@ -52,6 +52,11 @@ from .routes.lucky_draw_public_routes import router as lucky_draw_public_router
 from .routes.coupon_routes import router as coupon_router
 from .routes.newsletter_routes import router as newsletter_router
 from .routes.staff_task_routes import router as staff_task_router
+from .routes.internal_notification_routes import router as internal_notification_router
+from .routes.internal_document_comment_routes import router as internal_document_comment_router
+from .routes.internal_chat_routes import router as internal_chat_router
+from .routes.internal_escalation_routes import router as internal_escalation_router
+from .routes.internal_attachment_routes import router as internal_attachment_router
 from .routes.production_addon_routes import router as production_addon_router
 from .routes.logistics_addon_routes import router as logistics_addon_router
 from .routes.logistics_routes import router as logistics_router
@@ -168,6 +173,11 @@ app.include_router(lucky_draw_public_router)
 app.include_router(coupon_router)
 app.include_router(newsletter_router)
 app.include_router(staff_task_router)
+app.include_router(internal_notification_router)
+app.include_router(internal_document_comment_router)
+app.include_router(internal_chat_router)
+app.include_router(internal_escalation_router)
+app.include_router(internal_attachment_router)
 
 
 

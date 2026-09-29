@@ -11,6 +11,8 @@ import {
   Bar, BarChart as RechartsBarChart, CartesianGrid, Legend,
   ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
+import InternalNotificationBell from "./InternalNotificationBell.jsx";
+import InternalChatPanel from "./InternalChatPanel.jsx";
 
 function getAdminToken() {
   return (
@@ -2542,6 +2544,10 @@ export default function ForecastAnalytics() {
             </div>
             <h2 className="text-2xl font-bold tracking-tight text-slate-900">{activeLabel}</h2>
             <p className="mt-0.5 text-sm text-slate-500">Demand forecasting, vendor ranking and budget-constrained purchase planning from your real sales and order history.</p>
+          </div>
+          <div className="flex items-center gap-3">
+            <InternalNotificationBell />
+            <InternalChatPanel />
           </div>
         </header>
         <div className="mx-auto w-full max-w-[1540px] p-5 sm:p-7 lg:p-9"><SectionButtonGuide id={activeSection} />{renderContent()}</div>

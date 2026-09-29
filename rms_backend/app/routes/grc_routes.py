@@ -9,6 +9,7 @@ from bson import ObjectId
 from app.db import grc_collection, purchaseorders_collection, product_collection
 from app.product_identity import barcode_policy, identity_fields, is_valid_gtin
 from .deps import get_receiving_tenant
+from .internal_notification_routes import notify as notify_internal
 
 router = APIRouter(prefix="/grc", tags=["Goods Receipt Certificate"])
 
@@ -449,6 +450,18 @@ async def create_grc(grc: GRCModel, ctx: dict = Depends(get_receiving_tenant)):
 
     await grc_collection.insert_one(grc_dict)
     grc_dict["id"] = str(grc_dict.pop("_id"))
+
+    total_rejected = float(grc_dict.get("totalRejectedQty") or 0)
+    if total_rejected > 0.004:
+        vendor_name = grc_dict.get("vendorName", "a vendor")
+        title = f"Shortage/defect on GRC {grc_dict['grcNo']}"
+        message = f"{total_rejected:g} unit(s) rejected out of the goods received from {vendor_name}."
+        for department in ("Merchandiser Buyer", "Inventory"):
+            await notify_internal(
+                ctx["tenant_id"], type="grc_shortage", title=title, message=message,
+                department=department, ref_type="grc", ref_id=grc_dict["id"], priority="high",
+            )
+
     return {"message": "GRC created successfully", "grc": grc_dict}
 
 

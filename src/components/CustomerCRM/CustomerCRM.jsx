@@ -26,6 +26,8 @@ import {
 import { API_BASE_URL } from "../../config/api.js";
 import { clearAuthData, logoutOrReturnToDepartmentSelector } from "../../utils/authRedirect.js";
 import NewsletterTab from "./NewsletterTab.jsx";
+import InternalNotificationBell from "../InternalNotificationBell.jsx";
+import InternalChatPanel from "../InternalChatPanel.jsx";
 
 function token() {
   return localStorage.getItem("admin_token") || localStorage.getItem("access_token") || localStorage.getItem("token") || "";
@@ -79,7 +81,14 @@ const styles = `
 
     /* Print-slip job — a narrow receipt-style strip, height set per-job by
        doPrint() to exactly match this entry's content (Name + Contact No). */
-    html:has(body.printing-ld-slip), body.printing-ld-slip { height: 71mm !important; overflow: hidden !important; } body.printing-ld-slip { width: 70mm; margin: 0 !important; padding: 0 !important; background: #fff !important; }
+    /* html:has(...) is a progressive enhancement only — Firefox versions
+       before 121 don't support :has(), and an unsupported selector in a
+       plain comma-separated list invalidates the WHOLE rule (not just its
+       own branch), which silently dropped the body height override below
+       too. Kept as its own standalone rule so an unsupported browser only
+       loses this one, harmless, extra line — never the real fix. */
+    html:has(body.printing-ld-slip) { height: 71mm !important; overflow: hidden !important; }
+    body.printing-ld-slip { height: 71mm !important; overflow: hidden !important; width: 70mm; margin: 0 !important; padding: 0 !important; background: #fff !important; }
     body.printing-ld-slip #ld-print-slip, body.printing-ld-slip #ld-print-slip * { visibility: visible; }
     body.printing-ld-slip #ld-print-slip { display: block; position: fixed; top: 0; left: 0; width: 70mm; box-sizing: border-box; padding: 0; background: #fff; }
     /* Deliberately NOT touching padding/font-size here — they need to stay
@@ -356,7 +365,21 @@ function PrintSlipModal({ entry, onClose, onPrinted }) {
     pageStyle.textContent = "@page { size: 70mm 71mm; margin: 0; }";
     document.head.appendChild(pageStyle);
     document.body.classList.add("printing-ld-slip");
+    // Belt-and-braces height cap, set directly via JS instead of only through
+    // the CSS `html:has(body.printing-ld-slip)` rule above. On Firefox builds
+    // that don't support :has() (pre-121), that whole CSS rule is dropped —
+    // <html> then keeps its normal full-page height, the browser paginates
+    // the print job across that many 71mm pages, and because the slip is
+    // `position: fixed` it re-draws on EVERY one of those pages, which looks
+    // like the same slip printing many times in a row. Setting the height
+    // inline here works identically on every browser, :has() or not.
+    const prevHtmlHeight = document.documentElement.style.height;
+    const prevHtmlOverflow = document.documentElement.style.overflow;
+    document.documentElement.style.height = "71mm";
+    document.documentElement.style.overflow = "hidden";
     window.print();
+    document.documentElement.style.height = prevHtmlHeight;
+    document.documentElement.style.overflow = prevHtmlOverflow;
     document.body.classList.remove("printing-ld-slip");
     pageStyle.remove();
     onPrinted(entry.id);
@@ -551,6 +574,14 @@ export default function CustomerCRM() {
   }, []);
 
   useEffect(() => { if (active === "luckydraw") loadLuckyDraw(); }, [active, loadLuckyDraw]);
+  // Customers submit self-entries from their own phones (QR scan), independently
+  // of this admin screen, so poll while the tab is open instead of requiring a
+  // manual refresh to see new entries/coupons show up.
+  useEffect(() => {
+    if (active !== "luckydraw") return;
+    const id = setInterval(loadLuckyDraw, 15000);
+    return () => clearInterval(id);
+  }, [active, loadLuckyDraw]);
 
   const loadHqStores = useCallback(async () => {
     try {
@@ -1233,7 +1264,11 @@ export default function CustomerCRM() {
               <h1 className="mt-2 text-2xl font-bold text-slate-900">Know who buys, follow up at the right time.</h1>
               <p className="mt-1 max-w-2xl text-sm text-slate-500">POS bills feed purchase history. CRM adds consent, tags, reminders, service notes and campaign-ready customer segments.</p>
             </div>
-            <button onClick={load} className="whitespace-nowrap rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-indigo-700"><RefreshCw size={16} className="inline mr-1"/> Refresh</button>
+            <div className="flex items-center gap-3">
+              <InternalNotificationBell />
+              <InternalChatPanel />
+              <button onClick={load} className="whitespace-nowrap rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-indigo-700"><RefreshCw size={16} className="inline mr-1"/> Refresh</button>
+            </div>
           </section>
           {error && <div className="mt-4 rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm font-semibold text-rose-700">{error}</div>}
           <section className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-4">

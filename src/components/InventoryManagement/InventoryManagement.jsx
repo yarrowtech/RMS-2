@@ -3,6 +3,8 @@
 import React, { Suspense, useMemo, useState } from "react";
 import { logoutOrReturnToDepartmentSelector } from "../../utils/authRedirect";
 import { FaBars, FaCog, FaQuestionCircle } from "react-icons/fa";
+import InternalNotificationBell from "../InternalNotificationBell.jsx";
+import InternalChatPanel from "../InternalChatPanel.jsx";
 import InventoryManagementSidebar from "./InventoryManagementSidebar";
 import InventoryManagementCurrentStockList from "./InventoryManagementCurrentStockList";
 import InventoryManagementStockLedgerMovement from "./InventoryManagementStockLedgerMovement";
@@ -224,12 +226,16 @@ export default function InventoryManagement() {
             </h1>
             <p className="text-xs font-semibold text-emerald-700">{pageTitle}</p>
           </div>
-          <button
-            onClick={() => setActive("settings")}
-            className="rounded-xl border border-emerald-100 bg-emerald-50 p-2 text-emerald-700 shadow-sm transition hover:bg-emerald-100"
-          >
-            <FaCog size={16} className="text-slate-900" />
-          </button>
+          <div className="flex items-center gap-2">
+            <InternalNotificationBell />
+            <InternalChatPanel />
+            <button
+              onClick={() => setActive("settings")}
+              className="rounded-xl border border-emerald-100 bg-emerald-50 p-2 text-emerald-700 shadow-sm transition hover:bg-emerald-100"
+            >
+              <FaCog size={16} className="text-slate-900" />
+            </button>
+          </div>
         </div>
       </div>
 
@@ -306,6 +312,8 @@ export default function InventoryManagement() {
                 </div>
               </div>
               <div className="flex items-center gap-2">
+              <InternalNotificationBell />
+              <InternalChatPanel />
               <button
                 onClick={() => setActive("support")}
                 className="rounded-xl border border-emerald-100 bg-emerald-50 p-2.5 text-emerald-700 shadow-sm transition hover:border-emerald-200 hover:bg-emerald-100"

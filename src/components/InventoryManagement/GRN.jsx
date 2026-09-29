@@ -973,6 +973,7 @@ import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
 
 import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { createPortal } from "react-dom";
+import DocumentComments from "../DocumentComments.jsx";
 
 /* ─── API ──────────────────────────────────────────────────────── */
 const GRN_API = `${APP_API_URL}/grn`;
@@ -1083,6 +1084,7 @@ export default function GRNManager() {
   const [toast,        setToast]        = useState(null);
   const [modal,        setModal]        = useState(null);
   const [active,       setActive]       = useState(null);
+  const [notesFor,     setNotesFor]     = useState(null); // { id, grnNo } of the GRN whose notes popup is open
   const [cancelReason, setCancelReason] = useState("");
   const [search,       setSearch]       = useState("");
   const [filterStatus, setFilterStatus] = useState("All");
@@ -1355,6 +1357,7 @@ export default function GRNManager() {
                     <td style={{ padding: "12px 14px", textAlign: "right" }}>
                       <div style={{ display: "flex", gap: 5, justifyContent: "flex-end" }}>
                         <TblBtn color="#0891B2" onClick={() => { setActive(g); setModal("view"); }}>View</TblBtn>
+                        <TblBtn color="#7C3AED" onClick={() => setNotesFor({ id: g.id, grnNo: g.grnNo })}>Notes</TblBtn>
                         {g.status === "Draft" && <>
                           <TblBtn color="#3B82F6" onClick={() => { setActive(g); setModal("form"); }}>Edit</TblBtn>
                           <TblBtn color="#059669" onClick={() => handlePost(g)}>Post</TblBtn>
@@ -1419,6 +1422,14 @@ export default function GRNManager() {
             <button className="btn" onClick={handleDelete} style={{ padding: "9px 18px", background: "#DC2626", color: "#fff", fontSize: 13 }}>
               Delete
             </button>
+          </div>
+        </MiniModal>
+      )}
+      {notesFor && (
+        <MiniModal title={`Notes — GRN ${notesFor.grnNo}`} onClose={() => setNotesFor(null)}>
+          <DocumentComments refType="grn" refId={notesFor.id} title="Internal notes on this GRN" />
+          <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 12 }}>
+            <GhostBtn onClick={() => setNotesFor(null)}>Close</GhostBtn>
           </div>
         </MiniModal>
       )}

@@ -8,6 +8,8 @@ import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
 
 // import Sidebar from "./Sidedbar";
 import ProcurementNotificationCenter from "../ProcurementNotificationCenter.jsx";
+import InternalNotificationBell from "../InternalNotificationBell.jsx";
+import InternalChatPanel from "../InternalChatPanel.jsx";
 // import Dashboard from "./Dashboard";
 // import VendorList from "./VendorList";
 // import OrderDetails from "./OrderDetails";
@@ -463,11 +465,15 @@ export default function Mbuyer() {
             <h1 className="text-base font-semibold text-slate-900">{COMPANY_NAME} - Merchandiser Buyer</h1>
             <p className="text-xs font-semibold text-violet-600">{pageTitle}</p>
           </div>
-          <button type="button" onClick={onSettingsClick}
-            className="rounded-xl border border-violet-100 bg-violet-50 p-2 text-violet-700 shadow-sm transition hover:bg-violet-100"
-            aria-label="Settings">
-            <SettingsIcon size={18} className="text-slate-900" />
-          </button>
+          <div className="flex items-center gap-2">
+            <InternalNotificationBell />
+            <InternalChatPanel />
+            <button type="button" onClick={onSettingsClick}
+              className="rounded-xl border border-violet-100 bg-violet-50 p-2 text-violet-700 shadow-sm transition hover:bg-violet-100"
+              aria-label="Settings">
+              <SettingsIcon size={18} className="text-slate-900" />
+            </button>
+          </div>
         </div>
       </div>
 
@@ -516,7 +522,7 @@ export default function Mbuyer() {
               <h1 className="text-xl font-extrabold tracking-tight text-slate-900">Merchandiser Buyer Management Panel</h1>
               <p className="mt-0.5 text-xs font-bold uppercase tracking-[0.16em] text-violet-600">{pageTitle}</p>
             </div>
-            <div className="flex items-center gap-2"><ProcurementNotificationCenter mode="buyer" count={inquiryResponseCount} onCountChange={setInquiryResponseCount} onNavigate={()=>setActive("quick-order")}/><button type="button" onClick={onSettingsClick} className="rounded-xl border border-violet-100 bg-violet-50 p-2.5 text-violet-700 shadow-sm transition hover:border-violet-200 hover:bg-violet-100" aria-label="Settings"><SettingsIcon size={18} className="text-slate-800" /></button></div>
+            <div className="flex items-center gap-2"><ProcurementNotificationCenter mode="buyer" count={inquiryResponseCount} onCountChange={setInquiryResponseCount} onNavigate={()=>setActive("quick-order")}/><InternalNotificationBell /><InternalChatPanel /><button type="button" onClick={onSettingsClick} className="rounded-xl border border-violet-100 bg-violet-50 p-2.5 text-violet-700 shadow-sm transition hover:border-violet-200 hover:bg-violet-100" aria-label="Settings"><SettingsIcon size={18} className="text-slate-800" /></button></div>
           </header>
 
           <div className="flex-1 min-h-0 overflow-hidden rounded-2xl border border-violet-100 bg-white/70 shadow-[0_24px_70px_rgba(76,29,149,0.10)] backdrop-blur-xl">

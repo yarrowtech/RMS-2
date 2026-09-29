@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { API_BASE_URL } from "../../config/api.js";
 import { logoutOrReturnToDepartmentSelector } from "../../utils/authRedirect.js";
+import InternalNotificationBell from "../InternalNotificationBell.jsx";
+import InternalChatPanel from "../InternalChatPanel.jsx";
 
 // Logistics is an independent, opt-in add-on (logistics_addon_routes.py) —
 // not every retailer needs shipment/transfer tracking, so it's off by
@@ -99,7 +101,9 @@ export default function LogisticsDashboard() {
                 <p className="mt-2 max-w-2xl text-sm leading-6 text-cyan-100">What's still on the road — inbound purchase orders awaiting delivery, and stock transfers dispatched but not yet received.</p>
               </div>
             </div>
-            <div className="flex flex-wrap gap-2 xl:justify-end">
+            <div className="flex flex-wrap items-center gap-2 xl:justify-end">
+              <InternalNotificationBell />
+              <InternalChatPanel />
               <button type="button" onClick={refresh} disabled={loading} className="rounded-xl border border-white/20 bg-white/10 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-white/20 disabled:opacity-60">{loading ? "Loading…" : "Refresh"}</button>
               <button type="button" onClick={() => logoutOrReturnToDepartmentSelector()} className="rounded-xl border border-rose-300/25 bg-rose-400/10 px-4 py-2.5 text-sm font-bold text-rose-100 transition hover:bg-rose-400/20">Logout</button>
             </div>

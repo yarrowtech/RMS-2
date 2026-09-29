@@ -2,6 +2,7 @@ import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
 import React, { useEffect, useState, useMemo } from "react";
 import axios from "axios";
 import { buyerHeaders } from './buyerApi.js';
+import DocumentComments from "../DocumentComments.jsx";
 
 const API = `${APP_API_URL}/mbuyer/open-po-tracker`;
 
@@ -58,6 +59,7 @@ export default function OpenPOTracker() {
   const [urgencyF,setUrgencyF]= useState("");
   const [statusF, setStatusF] = useState("");
   const [search,  setSearch]  = useState("");
+  const [notesFor, setNotesFor] = useState(null); // { id, orderNo } of the PO whose notes popup is open
 
   const fetch = async () => {
     try {
@@ -123,16 +125,16 @@ export default function OpenPOTracker() {
           <table style={{ width:"100%", borderCollapse:"collapse", minWidth:900 }}>
             <thead>
               <tr style={{ background:"#F8FAFD" }}>
-                {["PO Number","Vendor","Status","Urgency","Due Date","Days Since Sent","Items","PO Value","Alert"].map(h=>(
+                {["PO Number","Vendor","Status","Urgency","Due Date","Days Since Sent","Items","PO Value","Alert","Notes"].map(h=>(
                   <th key={h} style={{ padding:"11px 14px", textAlign:"left", fontSize:11, fontWeight:700, color:"#7A8BA4", textTransform:"uppercase", letterSpacing:"0.07em", borderBottom:"1px solid #E4EAF3", whiteSpace:"nowrap" }}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={9} style={{ padding:48, textAlign:"center", color:"#94A3B8", fontSize:14 }}>Loading…</td></tr>
+                <tr><td colSpan={10} style={{ padding:48, textAlign:"center", color:"#94A3B8", fontSize:14 }}>Loading…</td></tr>
               ) : filtered.length === 0 ? (
-                <tr><td colSpan={9} style={{ padding:48, textAlign:"center", color:"#94A3B8", fontSize:14 }}>No open POs found</td></tr>
+                <tr><td colSpan={10} style={{ padding:48, textAlign:"center", color:"#94A3B8", fontSize:14 }}>No open POs found</td></tr>
               ) : filtered.map((po, i) => (
                 <tr key={po.id} style={{ background: i%2===0?"#fff":"#FAFBFD", borderBottom:"1px solid #F1F5F9" }}>
                   <td style={{ padding:"10px 14px", fontSize:13, fontWeight:700, color:"#0F1B2D", whiteSpace:"nowrap" }}>
@@ -174,6 +176,12 @@ export default function OpenPOTracker() {
                       </span>
                     )}
                   </td>
+                  <td style={{ padding:"10px 14px" }}>
+                    <button onClick={()=>setNotesFor({ id: po.id, orderNo: po.orderNo })}
+                      style={{ fontSize:11, fontWeight:700, color:"#7C3AED", background:"#F5F3FF", padding:"4px 10px", borderRadius:8, border:"1px solid #DDD6FE", cursor:"pointer" }}>
+                      🗒️ Notes
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -186,6 +194,18 @@ export default function OpenPOTracker() {
           </div>
         )}
       </div>
+
+      {notesFor && (
+        <div onClick={()=>setNotesFor(null)} style={{ position:"fixed", inset:0, zIndex:1000, background:"rgba(15,23,42,0.5)", display:"grid", placeItems:"center", padding:12 }}>
+          <div onClick={e=>e.stopPropagation()} style={{ width:"100%", maxWidth:480, background:"#fff", borderRadius:16, padding:16, boxShadow:"0 25px 60px rgba(0,0,0,0.3)" }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
+              <h3 style={{ margin:0, fontSize:14, fontWeight:800, color:"#0F1B2D" }}>Notes — PO {notesFor.orderNo}</h3>
+              <button onClick={()=>setNotesFor(null)} style={{ border:"none", background:"none", fontSize:18, cursor:"pointer", color:"#94A3B8" }}>×</button>
+            </div>
+            <DocumentComments refType="purchase_order" refId={notesFor.id} title="Internal notes on this PO"/>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

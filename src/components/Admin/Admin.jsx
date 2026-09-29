@@ -2,6 +2,8 @@
 
 // import React, { Suspense, useMemo, useState } from "react";
 import { logoutOrReturnToDepartmentSelector } from "../../utils/authRedirect";
+import InternalNotificationBell from "../InternalNotificationBell.jsx";
+import InternalChatPanel from "../InternalChatPanel.jsx";
 // import { FaBars } from "react-icons/fa";
 // import { CircleHelp, Settings as SettingsIcon } from "lucide-react";
 // import AdminSidebar from "./AdminSidebar";
@@ -689,6 +691,8 @@ export default function AdminModule() {
             <p className="text-xs text-slate-700">{pageTitle}</p>
           </div>
           <div className="flex items-center gap-2">
+            <InternalNotificationBell />
+            <InternalChatPanel />
             {isHQ && (
               <button
                 type="button"
@@ -774,6 +778,8 @@ export default function AdminModule() {
               <p className="mt-0.5 text-xs font-medium capitalize text-slate-500">{pageTitle}</p>
             </div>
             <div className="flex items-center gap-3">
+              <InternalNotificationBell />
+              <InternalChatPanel />
               {isHQ && (
                 <button
                   type="button"

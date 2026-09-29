@@ -198,6 +198,32 @@ usage_events_collection = db["usage_events"]
 # Buyer module's own purchasing-workflow to-do list, not a general one.
 staff_tasks_collection = db["staff_tasks"]
 
+# Internal RMS Communication Centre — tenant-scoped notifications raised when
+# something in one department needs another admin/department's attention
+# (e.g. a leave decision, a low-stock alert). Additive only: nothing else
+# reads or writes here yet besides internal_notification_routes.py and the
+# handful of one-line triggers added at existing action points.
+internal_notifications_collection = db["internal_notifications"]
+# A notification can be addressed to a whole department or every tenant
+# admin. Its read state therefore belongs to each recipient, not to the
+# shared notification row itself.
+internal_notification_reads_collection = db["internal_notification_reads"]
+
+# Comment threads attached to one specific business record (Tech Pack,
+# wastage exception, purchase invoice) — see internal_document_comment_routes.py.
+internal_document_comments_collection = db["internal_document_comments"]
+
+# Real chat — one-to-one DMs and one channel per (department, store) — see
+# internal_chat_routes.py. Separate from internal_notifications_collection
+# (system-raised alerts) and internal_document_comments_collection (threads
+# tied to one specific record).
+internal_chat_messages_collection = db["internal_chat_messages"]
+internal_chat_reads_collection = db["internal_chat_reads"]
+# Personal chat controls (hide/mute) and HQ-only department channel archival.
+# Messages are never removed by these settings.
+internal_chat_preferences_collection = db["internal_chat_preferences"]
+internal_chat_channel_settings_collection = db["internal_chat_channel_settings"]
+
 # Marketing department campaign planning and redemption impact tracking.
 marketing_campaigns_collection = db["marketing_campaigns"]
 marketing_offer_redemptions_collection = db["marketing_offer_redemptions"]

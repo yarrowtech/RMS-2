@@ -6,6 +6,8 @@ const API_BASE = `${APP_API_URL}/thirdparty`;
 
 import React, { useState,useEffect } from 'react';
 import { logoutOrReturnToDepartmentSelector } from "../utils/authRedirect";
+import InternalNotificationBell from "./InternalNotificationBell.jsx";
+import InternalChatPanel from "./InternalChatPanel.jsx";
 import { 
   Users, Camera, Palette, UserCheck, Edit3, Search, Filter, Plus,
   Star, Phone, Mail, MapPin, Calendar, DollarSign, Briefcase,
@@ -269,13 +271,17 @@ const handleAddBooking = async () => {
                 </p>
               </div>
             </div>
-            <button
-              onClick={() => setShowLogoutConfirm(true)}
-              className="bg-red-500/20 hover:bg-red-500/30 border-2 border-red-300 text-white px-6 py-3 rounded-xl font-bold flex items-center space-x-2 transition-all"
-            >
-              <LogOut className="w-5 h-5" />
-              <span>Logout</span>
-            </button>
+            <div className="flex items-center gap-3">
+              <InternalNotificationBell />
+              <InternalChatPanel />
+              <button
+                onClick={() => setShowLogoutConfirm(true)}
+                className="bg-red-500/20 hover:bg-red-500/30 border-2 border-red-300 text-white px-6 py-3 rounded-xl font-bold flex items-center space-x-2 transition-all"
+              >
+                <LogOut className="w-5 h-5" />
+                <span>Logout</span>
+              </button>
+            </div>
           </div>
         </div>
       </div>

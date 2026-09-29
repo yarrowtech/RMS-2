@@ -4,6 +4,9 @@ import { API_BASE_URL } from "../config/api.js";
 import { logoutOrReturnToDepartmentSelector, getAdminName, getAdminScope, getStoreName } from "../utils/authRedirect.js";
 import TechPackLibrary from "./Production/TechPackLibrary.jsx";
 import AdminSettings from "./Admin/AdminSettings.jsx";
+import InternalNotificationBell from "./InternalNotificationBell.jsx";
+import InternalChatPanel from "./InternalChatPanel.jsx";
+import DocumentComments from "./DocumentComments.jsx";
 
 const TABS = [
   ["dashboard", "Dashboard", LayoutDashboard], ["research", "Research & Mood Boards", Search], ["themes", "Collections & Themes", Palette], ["projects", "Design Projects", Palette], ["patterns", "Patterns", Ruler],
@@ -250,6 +253,7 @@ export default function DesignPattern(){
   const [customVocabInput,setCustomVocabInput]=useState({base_block:"",seam_types:"",closure_types:"",dart_pleat_tuck_details:"",hem_finishes:""});
   const [projectForm,setProjectForm]=useState(emptyProject), [patternForm,setPatternForm]=useState(emptyPattern), [sampleForm,setSampleForm]=useState(emptySample), [queryForm,setQueryForm]=useState(emptyQuery), [releaseForm,setReleaseForm]=useState({project_id:"",tech_pack_id:"",material_plan_id:""});
   const [researchForm,setResearchForm]=useState(emptyResearch), [themeForm,setThemeForm]=useState(emptyTheme), [artworkForm,setArtworkForm]=useState(emptyArtwork), [changeForm,setChangeForm]=useState(emptyChange);
+  const [viewChange,setViewChange]=useState(null);
   const [floorDepts,setFloorDepts]=useState(DEFAULT_FLOOR_DEPARTMENTS), [floorWorkers,setFloorWorkers]=useState([]), [floorLogs,setFloorLogs]=useState([]), [floorKpis,setFloorKpis]=useState(null);
   const [floorSection,setFloorSection]=useState("log"), [floorLoaded,setFloorLoaded]=useState(false);
   const [floorError,setFloorError]=useState("");
@@ -322,6 +326,8 @@ export default function DesignPattern(){
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-2">
+          <InternalNotificationBell />
+          <InternalChatPanel />
           <button onClick={load} className={BTN_GHOST}><RefreshCw className="h-4 w-4"/><span className="hidden sm:inline">Refresh</span></button>
           <button onClick={()=>{setError("");setActive("settings");}} title="Settings" aria-label="Settings" className={`inline-flex h-[38px] w-[38px] items-center justify-center rounded-xl border transition ${active==="settings"?"border-violet-300 bg-violet-100 text-violet-700":"border-slate-200 bg-white text-slate-600 hover:bg-slate-50"}`}><Settings className="h-4 w-4"/></button>
           <button onClick={()=>logoutOrReturnToDepartmentSelector()} className={`${BTN} border border-slate-200 bg-white text-slate-700 hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600`}><LogOut className="h-4 w-4"/><span className="hidden sm:inline">Log out</span></button>
@@ -451,7 +457,7 @@ export default function DesignPattern(){
             {key:"impact",label:"Impact",render:r=>[r.material_impact&&"Material",r.cost_impact&&"Cost",r.delivery_impact&&"Delivery"].filter(Boolean).join(" · ")||"—"},
             {key:"raised_by",label:"Raised by"},
             {key:"status",label:"Status",render:r=><Badge value={r.status}/>},
-          ]} rows={data.change_requests} empty="No formal change requests."/>
+          ]} rows={data.change_requests} empty="No formal change requests." onRow={r=>setViewChange(r)}/>
         </>}
         {active==="reports"&&<Reports data={data} projectName={projectName}/>}
       </>)}
@@ -472,6 +478,16 @@ export default function DesignPattern(){
     {modal==="research"&&<FormModal title={researchForm.id?"Update research reference":"Add research reference"} onClose={()=>setModal("")} onSubmit={e=>{e.preventDefault();saveEditable("research",researchForm.id,{...researchForm,tags:researchForm.tags.split(",").map(x=>x.trim()).filter(Boolean),reference_urls:researchForm.reference_urls.split("\n").filter(Boolean)},"Research reference saved.")}}><div className="grid gap-4 md:grid-cols-2">{["title","category","season","market_segment"].map(k=><Field key={k} label={pretty(k)}><input required={k==="title"} value={researchForm[k]} onChange={e=>setResearchForm({...researchForm,[k]:e.target.value})}/></Field>)}<Field label="Department"><select value={researchForm.department} onChange={e=>setResearchForm({...researchForm,department:e.target.value})}>{deptOptions.map(x=><option key={x}>{x}</option>)}</select></Field><Field label="Tags (comma separated)"><input value={researchForm.tags} onChange={e=>setResearchForm({...researchForm,tags:e.target.value})}/></Field><AttachmentEditor label="Attach mood-board images and research documents" accept="image/*,.pdf" value={researchForm.reference_urls} onChange={v=>setResearchForm({...researchForm,reference_urls:v})}/><Field label="Research findings" wide><textarea rows="4" value={researchForm.notes} onChange={e=>setResearchForm({...researchForm,notes:e.target.value})}/></Field></div></FormModal>}
     {modal==="artwork"&&<FormModal title={artworkForm.id?"Update artwork":"Add print or artwork"} onClose={()=>setModal("")} onSubmit={e=>{e.preventDefault();saveEditable("artworks",artworkForm.id,{...artworkForm,file_urls:artworkForm.file_urls.split("\n").filter(Boolean)},"Artwork saved.")}}><div className="grid gap-4 md:grid-cols-2"><ProjectSelect value={artworkForm.project_id} onChange={v=>setArtworkForm({...artworkForm,project_id:v})} projects={data.projects}/>{["name","kind","version","width","height","placement","technique","colours","status"].map(k=><Field key={k} label={pretty(k)}><input required={k==="name"} value={artworkForm[k]} onChange={e=>setArtworkForm({...artworkForm,[k]:e.target.value})}/></Field>)}<AttachmentEditor label="Attach artwork previews and source files" accept="image/*,.pdf,.ai,.psd,.cdr" value={artworkForm.file_urls} onChange={v=>setArtworkForm({...artworkForm,file_urls:v})}/><Field label="Instructions" wide><textarea rows="3" value={artworkForm.notes} onChange={e=>setArtworkForm({...artworkForm,notes:e.target.value})}/></Field></div></FormModal>}
     {modal==="change"&&<FormModal title="Create formal change request" onClose={()=>setModal("")} onSubmit={e=>{e.preventDefault();run("/change-requests",{...changeForm,before_urls:changeForm.before_urls.split("\n").filter(Boolean),after_urls:changeForm.after_urls.split("\n").filter(Boolean)})}}><div className="grid gap-4 md:grid-cols-2"><ProjectSelect value={changeForm.project_id} onChange={v=>setChangeForm({...changeForm,project_id:v})} projects={data.projects}/>{["reason","previous_spec","new_spec","material_impact","cost_impact","delivery_impact"].map(k=><Field key={k} label={pretty(k)} wide={["reason","previous_spec","new_spec"].includes(k)}><textarea required={["reason","previous_spec","new_spec"].includes(k)} rows="2" value={changeForm[k]} onChange={e=>setChangeForm({...changeForm,[k]:e.target.value})}/></Field>)}<AttachmentEditor label="Attach photos of the current specification" value={changeForm.before_urls} onChange={v=>setChangeForm({...changeForm,before_urls:v})}/><AttachmentEditor label="Attach marked-up or proposed revision images" value={changeForm.after_urls} onChange={v=>setChangeForm({...changeForm,after_urls:v})}/></div></FormModal>}
+    {viewChange&&<Modal title={`Change request ${viewChange.change_no||""}`} onClose={()=>setViewChange(null)}><div className="space-y-4 p-5 sm:p-6">
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div><p className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Design</p><p className="text-sm font-bold text-slate-800">{projectName(viewChange.project_id)}</p></div>
+        <div><p className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Status</p><Badge value={viewChange.status}/></div>
+        <div className="sm:col-span-2"><p className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Reason</p><p className="text-sm text-slate-700">{viewChange.reason||"—"}</p></div>
+        <div><p className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Previous spec</p><p className="text-sm text-slate-700">{viewChange.previous_spec||"—"}</p></div>
+        <div><p className="text-[11px] font-bold uppercase tracking-wide text-slate-400">New spec</p><p className="text-sm text-slate-700">{viewChange.new_spec||"—"}</p></div>
+      </div>
+      <DocumentComments refType="wastage_exception" refId={viewChange.id} title="Comments on this change request"/>
+    </div></Modal>}
     {modal==="floorlog"&&<FormModal title="Log a floor entry" onClose={()=>setModal("")} onSubmit={submitFloorLog}>
       <div className="mb-4 rounded-xl bg-violet-50 p-3 text-xs text-violet-900">Floor workers have no login — fill this in on their behalf. Pick a name from the directory, or type a walk-in's name below.</div>
       <div className="grid gap-4 md:grid-cols-2">

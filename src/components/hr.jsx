@@ -7,6 +7,8 @@ import {
 } from "lucide-react";
 import BulkStaffImportModal from "../utils/BulkStaffImportModal.jsx";
 import BulkFloorStaffImportModal from "../utils/BulkFloorStaffImportModal.jsx";
+import InternalNotificationBell from "./InternalNotificationBell.jsx";
+import InternalChatPanel from "./InternalChatPanel.jsx";
 
 function getAdminToken() {
   return (
@@ -1566,9 +1568,13 @@ export default function HR() {
             <h2 className="text-2xl font-bold tracking-tight text-slate-900">{activeLabel}</h2>
             <p className="mt-0.5 text-sm text-slate-500">{isStoreWorkspace ? `People operations for ${workspaceName}.` : "Manage people, attendance, leave and payroll across your organisation."}</p>
           </div>
-          <div className="hidden rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-right shadow-sm sm:block">
-            <p className="text-[10px] font-bold uppercase tracking-[.15em] text-slate-400">Access level</p>
-            <p className="mt-0.5 text-sm font-bold text-slate-700">{isStoreWorkspace ? "Store HR" : "HQ HR"}</p>
+          <div className="flex items-center gap-3">
+            <InternalNotificationBell />
+            <InternalChatPanel />
+            <div className="hidden rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-right shadow-sm sm:block">
+              <p className="text-[10px] font-bold uppercase tracking-[.15em] text-slate-400">Access level</p>
+              <p className="mt-0.5 text-sm font-bold text-slate-700">{isStoreWorkspace ? "Store HR" : "HQ HR"}</p>
+            </div>
           </div>
         </header>
         <div className="mx-auto w-full max-w-[1540px] p-5 sm:p-7 lg:p-9">{renderContent()}</div>

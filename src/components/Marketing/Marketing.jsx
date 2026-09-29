@@ -25,6 +25,8 @@ import {
 } from "lucide-react";
 import { API_BASE_URL } from "../../config/api.js";
 import { getAdminName, logoutOrReturnToDepartmentSelector } from "../../utils/authRedirect.js";
+import InternalNotificationBell from "../InternalNotificationBell.jsx";
+import InternalChatPanel from "../InternalChatPanel.jsx";
 
 function token() {
   return localStorage.getItem("admin_token") || localStorage.getItem("access_token") || localStorage.getItem("token") || "";
@@ -324,7 +326,9 @@ export default function Marketing() {
             <h1 className="text-xl font-black text-slate-900">Marketing</h1>
             <p className="mt-1 text-sm text-slate-500">Plan offers, run campaigns, and track sales impact tenant-wide.</p>
           </div>
-          <div className="flex gap-3">
+          <div className="flex items-center gap-3">
+            <InternalNotificationBell />
+            <InternalChatPanel />
             <button onClick={load} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-600 hover:bg-slate-50"><RefreshCw size={15} /> Refresh</button>
           </div>
         </header>

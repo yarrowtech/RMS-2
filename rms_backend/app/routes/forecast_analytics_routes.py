@@ -26,6 +26,7 @@ from pydantic import BaseModel, Field
 
 from .deps import get_hq_tenant
 from .procurement_notification_routes import notify_vendor
+from .internal_notification_routes import notify as notify_internal
 from ..config import settings
 from ..email_utils import send_demand_signal_email
 from ..error_log import log_error
@@ -57,6 +58,7 @@ from ..db import (
     stores_collection, store_stock_collection, tech_packs_collection, tenants_collection, unstitched_stock_collection,
     vendor_catalogue_collection, vendor_tenant_links_collection, vendors_collection,
     forecast_low_stock_alerts_collection, forecast_restock_drafts_collection,
+    internal_notifications_collection,
 )
 
 router = APIRouter(prefix="/api/forecast-analytics", tags=["Forecast & Analytics"])
@@ -1560,6 +1562,34 @@ async def _send_vendor_demand_signals(tenant_id: str, forecast_rows: List[dict],
     return sent
 
 
+LOW_STOCK_NOTIFY_COOLDOWN_HOURS = 20  # this job can run more than once a day; don't re-notify every run
+
+
+async def _notify_low_stock_internally(tenant_id: str, alerts: List[dict], now: datetime) -> None:
+    """Tells Merchandiser Buyer and Inventory, inside the tenant, that this
+    automation run found low-stock items — the internal mirror of the
+    vendor-facing demand signal above. Additive: only reads/writes
+    internal_notifications_collection, never blocks the alert computation."""
+    critical = [a for a in alerts if a.get("severity") == "critical"]
+    if not critical:
+        return
+    cutoff = now - timedelta(hours=LOW_STOCK_NOTIFY_COOLDOWN_HOURS)
+    recent = await internal_notifications_collection.find_one({
+        "tenant_id": tenant_id, "type": "low_stock", "created_at": {"$gte": cutoff},
+    })
+    if recent:
+        return
+    top = sorted(critical, key=lambda a: a["days_remaining"])[:3]
+    names = ", ".join(f"{a['name']} ({a['days_remaining']}d left)" for a in top)
+    title = f"{len(critical)} item(s) critically low on stock"
+    message = f"{names}{' and more' if len(critical) > 3 else ''}."
+    for department in ("Merchandiser Buyer", "Inventory"):
+        await notify_internal(
+            tenant_id, type="low_stock", title=title, message=message,
+            department=department, ref_type="forecast_low_stock_alert", priority="high",
+        )
+
+
 async def _run_forecast_automation_for_tenant(tenant_id: str) -> dict:
     now = datetime.utcnow()
 
@@ -1599,6 +1629,7 @@ async def _run_forecast_automation_for_tenant(tenant_id: str) -> dict:
     })
 
     demand_signals_sent = await _send_vendor_demand_signals(tenant_id, hq_forecast_rows, now)
+    await _notify_low_stock_internally(tenant_id, alerts, now)
 
     return {
         "tenant_id": tenant_id, "alerts": len(alerts), "restock_lines": len(restock_lines),
