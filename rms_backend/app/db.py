@@ -140,8 +140,16 @@ design_settings_collection = db["design_settings"]
 floor_workers_collection = db["floor_workers"]
 floor_ops_settings_collection = db["floor_ops_settings"]
 daily_production_logs_collection = db["daily_production_logs"]
+floor_log_deletions_collection = db["floor_log_deletions"]
 production_routes_collection = db["production_routes"]
 production_batches_collection = db["production_batches"]
+
+# Fabric Lot/Roll ledger (Fabric & Production module — additive, manufacturer
+# tenants only, gated the same way as the rest of Design & Pattern/Production).
+# One document per physical fabric roll/lot received; running balance fields
+# (issued/consumed/waste/returned) are updated as it's drawn down elsewhere in
+# the module, never recomputed by summing history on every read.
+fabric_lots_collection = db["fabric_lots"]
 
 # HR module. Employees are NOT duplicated here — admins_collection is the
 # single source of truth for who works at this tenant (name, department,
@@ -305,6 +313,9 @@ async def ensure_procurement_indexes():
     await design_research_collection.create_index([("tenant_id", 1), ("category", 1), ("created_at", -1)], name="design_research_tenant_category")
     await design_artworks_collection.create_index([("tenant_id", 1), ("project_id", 1), ("updated_at", -1)], name="design_artwork_project_updated")
     await design_change_requests_collection.create_index([("tenant_id", 1), ("status", 1), ("created_at", -1)], name="design_change_tenant_status")
+    await fabric_lots_collection.create_index([("tenant_id", 1), ("received_at", -1)], name="fabric_lot_tenant_received")
+    await fabric_lots_collection.create_index([("tenant_id", 1), ("design_no", 1)], name="fabric_lot_tenant_design")
+    await fabric_lots_collection.create_index([("tenant_id", 1), ("lot_no", 1), ("roll_no", 1)], name="fabric_lot_tenant_lot_roll")
     await onboarding_requests_collection.create_index([("status", 1), ("created_at", -1)], name="onboarding_status_created")
     await onboarding_requests_collection.create_index([("email", 1), ("account_type", 1), ("created_at", -1)], name="onboarding_email_type_created")
     await store_upgrade_requests_collection.create_index([("tenant_id", 1), ("status", 1), ("created_at", -1)], name="store_upgrade_tenant_status_created")

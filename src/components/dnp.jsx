@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { AlertCircle, BookOpen, CheckCircle2, ClipboardCheck, Factory, FileText, Gauge, Image as ImageIcon, LayoutDashboard, LayoutGrid, List, LogOut, Menu, MessageSquare, Palette, Plus, RefreshCw, Ruler, Search, Send, Settings, X } from "lucide-react";
+import { AlertCircle, BookOpen, CheckCircle2, ClipboardCheck, Factory, FileText, Gauge, Image as ImageIcon, LayoutDashboard, LayoutGrid, List, LogOut, Menu, MessageSquare, Package, Palette, Plus, RefreshCw, Ruler, Search, Send, Settings, TrendingUp, X } from "lucide-react";
 import { API_BASE_URL } from "../config/api.js";
 import { logoutOrReturnToDepartmentSelector, getAdminName, getAdminScope, getStoreName } from "../utils/authRedirect.js";
 import TechPackLibrary from "./Production/TechPackLibrary.jsx";
@@ -12,6 +12,7 @@ const TABS = [
   ["dashboard", "Dashboard", LayoutDashboard], ["research", "Research & Mood Boards", Search], ["themes", "Collections & Themes", Palette], ["projects", "Design Projects", Palette], ["patterns", "Patterns", Ruler],
   ["artwork", "Print & Artwork", FileText], ["samples", "Samples & Approval", ClipboardCheck], ["techpacks", "Tech Packs", BookOpen], ["handoff", "Production Handoff", Factory],
   ["floorops", "Daily Floor Log", Gauge],
+  ["fabric", "Fabric & Production", Package],
   ["queries", "Queries", MessageSquare], ["changes", "Change Control", AlertCircle], ["reports", "Reports", CheckCircle2],
 ];
 const GUIDES={
@@ -19,12 +20,20 @@ dashboard:["Review live counts and Production Readiness.","Open the tab connecte
 research:["Add season, market, department, tags and findings.","Attach source, image and document links.","Next: turn the approved direction into a Design Project."],
 themes:["Create the season/collection direction, palette, customer and mood board; keep it Draft while Design is deciding.","Link Design Projects while the theme is being developed, then Approve it when the creative direction is final.","Next: choose the approved theme in a Tech Pack. Production receives a locked snapshot and can source fabric without editing Design decisions."],
 projects:["Create one master project per style and keep its design number unchanged.","Set owner, priority, quantity, cost and launch date; update status as work progresses.","Next: add the first Pattern Version."],
-patterns:["Choose the project; record base size, sizes, width, consumption and wastage.","Enter grading as Point | Base | S:value,M:value and upload CAD/DXF/PDF files.","Use Create Revision for V2/V3. Next: develop artwork and sample."],
+patterns:["Choose the project; record base size, sizes, width, consumption and wastage.","Enter grading as Point | Base | S:value,M:value and upload CAD/DXF/PDF files.","Use the Pattern-piece register below to break the pattern into Front/Back/Collar/Sleeve etc. with front/back/side reference images — and check Reuse from library for an existing similar pattern before building a new one from scratch. Use Create Revision for V2/V3 of the SAME design, or Clone as variation to start a DIFFERENT design from this one."],
 artwork:["Link the print/embroidery to a project.","Record version, dimensions, placement, technique, colours and file links.","Next: validate it on a sample and include the approved version in the Tech Pack."],
 samples:["Choose project, pattern, sample type, assignee, materials, cost and due date.","On receipt, record fit/construction results and the decision.","Approved continues to Tech Pack; Revision/Resample returns to Pattern or Artwork."],
 techpacks:["Use the exact Design Project number.","Complete Sketch, Spec Sheet, Details, Artwork, Trims/Labels and Colourways; upload references.","Download/review the PDF. Use a new version for major changes. Next: Handoff."],
 handoff:["Confirm approved sample and matching Tech Pack.","Record Design Head approval; Production separately records feasibility.","Choose an existing BOM or auto-create one from pattern consumption, then Release to Production."],
-floorops:["Floor workers have no login — a supervisor logs each entry on their behalf; pick a name or type one for a walk-in.","Choose the department first; the form only shows the fields that department needs (set these up under Settings).","Switch to KPI Summary for efficiency, rework, rejection and on-time % by department, worker or style."],
+floorops:["Floor workers have no login — a supervisor logs each entry on their behalf; pick a name or type one for a walk-in.","Or generate the Kiosk link at the top of this tab and open it on a shared floor tablet/PC — a worker can then pick their own name, tap Start and End themselves, no login needed.","Choose the department first; the form only shows the fields that department needs (set these up under Settings).","For Cutting/Stitching-style departments, use the Size and Wastage breakdown rows instead of typing one total — the total is calculated for you.","Switch to KPI Summary for efficiency, rework, rejection and on-time % by department, worker or style.","A genuinely wrong entry (duplicate kiosk tap, wrong worker, test entry) can be removed with Delete — it asks for a reason every time, and automatically reverses any fabric it already posted to the Fabric Lot ledger."],
+fabric:[
+  "Step 1 — Receive: the moment fabric physically arrives, log it as a lot (name, colour, width, GSM, lot/roll no., vendor, quantity). This is entered once per roll.",
+  "Step 2 — Issue: when fabric is actually handed to Layering/Cutting for a design, click Issue on that lot. This is the moment it leaves the store balance.",
+  "Step 3 — Consume / Waste / Return: as the work happens, record what was really used (Consume), lost (Waste, with a category) and any genuine unused leftover (Return). The balance updates itself — nothing here is typed by hand.",
+  "Step 4 — Utilization: load a design (or leave blank for all) to see Received/Issued/Consumed/Waste/Balance and Utilization %/Wastage %, calculated automatically. Export Excel to share or archive it.",
+  "Step 5 — Reuse: before ordering fresh fabric for a new design, check Reuse matches on any lot with leftover balance — it may already cover the new design.",
+  "Step 6 — FY Planning: once a real season of data exists, load it for best/worst utilization designs, real time efficiency, and next-year fabric purchase suggestions from actual sales.",
+],
 queries:["Select the affected design, category and priority.","Describe one clear technical issue; Design and Production share the same feed.","Resolve with a written answer. Use Change Control if released instructions change."],
 changes:["Record reason, previous spec, new spec, and material/cost/delivery impact.","The system identifies affected open job orders.","Production accepts/rejects and acknowledges; accepted changes require a new controlled version."],
 reports:["Review release rate, sample cost and revisions.","Balance work using Designer Workload and Deadline Calendar.","Compare target, BOM material and sample cost with matched sales units."]
@@ -45,8 +54,12 @@ const BUTTON_GUIDES = {
     ["Pattern / Sample / Query buttons", "Jump straight to adding a pattern, sample or query already scoped to this project.", "Use instead of re-selecting the project by hand in those tabs.", ""],
   ],
   patterns: [
-    ["+ Add pattern", "Creates the first pattern/grading version for a project.", "Use once per project to start pattern work.", ""],
-    ["Revise", "Creates a NEW version (v2, v3…) rather than editing the old one.", "Use for any change to sizing, grading or consumption.", "There is no plain \"Edit\" for a saved pattern by design — this keeps historical grading intact for anything already cut against an earlier version. Don't try to work around it; always revise."],
+    ["+ Add pattern", "Creates the first pattern/grading version for a project.", "Use once per project to start pattern work.", "Check \"Reuse from library\" first — if a similar block already exists in the same family, Clone it instead of starting fresh."],
+    ["Pattern family", "Tags this pattern with a reusable base-silhouette name (e.g. \"Classic Shirt\", \"Straight Pant\") so every variation built on it — across ANY design number — can be found together later.", "Use the same family name every time it's genuinely the same base block with a construction difference (different collar, sleeve, closure).", "Leave blank for a one-off pattern with no real family — it still works exactly as before, just won't show up in the library."],
+    ["Reuse from library", "Browses every existing pattern tagged with a family, across ALL design numbers, with a preview image and what's different about each one.", "Use BEFORE starting a brand-new pattern, to check whether something close already exists.", "Shows nothing for families nobody has tagged yet — that's expected until patterns start being tagged."],
+    ["Clone as variation", "Creates a NEW pattern under a DIFFERENT design number, copying construction vocabulary, measurements, size ratio and pattern pieces (with their images) from the source.", "Use when the new design is genuinely a variation of an existing block (same shirt, different collar) — edit only what's actually changing afterwards.", "This is NOT the same as Revise — Revise makes v2/v3 of the SAME design; Clone starts a different design number entirely."],
+    ["Revise", "Creates a NEW version (v2, v3…) rather than editing the old one.", "Use for any change to sizing, grading or consumption on the SAME design.", "There is no plain \"Edit\" for a saved pattern by design — this keeps historical grading intact for anything already cut against an earlier version. Don't try to work around it; always revise."],
+    ["Pattern-piece register (below the table)", "Breaks a DRAFT pattern into its named construction pieces (Front, Back, Collar, Sleeve, Cuff, Pocket…) each with optional front/back/side reference images.", "Use to document exactly what each piece looks like, not just upload one flat CAD file for the whole pattern.", "Only available while the pattern is still DRAFT — create a revision first if you need to change pieces on an already-progressed pattern."],
   ],
   artwork: [
     ["+ Add artwork", "Creates a new print/embroidery/placement reference.", "Use for a new design.", ""],
@@ -79,6 +92,26 @@ const BUTTON_GUIDES = {
     ["Change request", "Records a spec change after release, with its material/cost/delivery impact.", "Use for a real change to something already released — RMS lists every open job order it affects.", ""],
     ["Accept / Reject", "Not done here — Production decides and acknowledges change requests from their own Production & Job Work screen.", "Check there for the decision.", "Don't look for an accept/reject button in this tab; it doesn't exist here by design, since Production is the one whose work is affected."],
   ],
+  floorops: [
+    ["Log entry", "Records one worker's output for one department on one day.", "Use once per worker per department per day — not once per piece.", "Don't log the same worker/day/department twice; edit isn't available by design, so a mistaken entry should be logged again with a note rather than guessed at."],
+    ["Add size (Size-wise quantity)", "Lets you type pieces per size (S, M, L…) instead of one lump completed-qty.", "Use for Cutting/Stitching-type departments so size-wise output is tracked — needed for the Fabric Utilization and FY Planning views to be accurate.", "Leave it empty and use the plain total field above if size doesn't matter for this entry — both are optional, not required."],
+    ["Add category (Wastage by category)", "Lets you tag wastage to one of the 10 real categories (marker, cutting, shade issue, recoverable, etc) instead of one lump number.", "Use whenever there's real fabric loss to record, picking the category that matches what actually happened.", "Don't pick a category at random to get past the field — an inaccurate category quietly corrupts the wastage-by-category rollup used elsewhere. Categories are scoped to the selected department on purpose; if the right one doesn't show, wrong department is likely selected."],
+    ["Upload Excel", "Bulk-imports a whole day's paper register in one spreadsheet.", "Use when the floor keeps a physical register and someone transcribes it at day's end.", "Size/wastage breakdown rows aren't part of the bulk template yet — use the on-screen form for those."],
+    ["Generate kiosk link / Rotate link", "Creates (or replaces) a no-login link a worker opens directly on a shared floor tablet/PC to log their own Start/End work.", "Generate once, print the link/QR near the workstation. Rotate only if it's lost or leaked.", "Rotating immediately breaks the OLD link/QR — anything printed with it will stop working, so only rotate when you actually mean to replace it."],
+    ["Delete (on a log row)", "Permanently removes one floor log entry and reverses any Consume/Waste it already posted to the Fabric Lot ledger, in the same step.", "Use ONLY for a genuine mistake — duplicate kiosk tap, wrong worker/department picked, a test entry. A reason is mandatory and kept forever in a separate audit trail even after the row is gone.", "Don't use this to \"correct\" a real entry with wrong numbers — delete it and log it again correctly instead, so the audit trail reflects what actually happened. Not available from the Kiosk or to any store-scoped admin — HQ Design & Pattern / Production & Job Work access only."],
+  ],
+  fabric: [
+    ["Receive lot", "Records a physical fabric roll the moment it arrives — name, colour, width, GSM, vendor, qty, QC status. This is entered ONCE per roll.", "Use every time fabric physically comes in, whether or not it's tied to a specific design yet.", "Don't re-receive the same roll to \"top up\" its quantity — that creates a duplicate lot with its own separate balance. Use Issue/Consume/Waste/Return on the existing lot instead."],
+    ["Swatch upload", "Attaches a photo of the fabric to its lot for visual reference.", "Use so anyone approving a cut plan can see the actual fabric.", "Optional — nothing else depends on it being uploaded."],
+    ["Issue", "Moves fabric OUT of the store balance to the floor for a design/batch. Reduces the lot's balance immediately.", "Use the moment fabric is actually handed to Layering/Cutting, not when it's merely planned.", "Don't issue more than the current balance shows — RMS blocks it; if you're short, receive more stock or check another lot first."],
+    ["Consume", "Records how much of the ISSUED fabric was actually used/cut. Doesn't touch the store balance (that already happened at Issue).", "Use after cutting/layering is done, from the real fabric_used figure.", "Can't exceed what's still unaccounted for from that lot's issue — consume + waste + return together can never be more than what was issued."],
+    ["Waste", "Records fabric lost during use, tagged to one of the 10 wastage categories (marker, cutting, shade issue, recoverable, etc).", "Use for every genuine loss, picking the category that actually matches what happened.", "Don't default to \"Production waste\" for everything — a wrong category here quietly ruins the utilization dashboard's real diagnostic value. \"Recoverable fabric\" specifically means it can still be reused elsewhere (see Reuse matches)."],
+    ["Return", "Sends unused issued fabric back to the store — adds back to the balance.", "Use when a cutting job finishes with genuine leftover, unused fabric.", "This is for fabric that's still good and unused — a fabric that was cut wrong is Waste, not a Return."],
+    ["Reuse matches", "Shows other designs already using the exact same fabric type+colour+width+GSM as this lot's leftover.", "Use before ordering fresh fabric for a new design — check if an existing leftover can cover it instead.", "This only ever SUGGESTS a match — it never moves fabric by itself. You still record the actual Issue against whichever lot you decide to use."],
+    ["Load utilization", "Shows Received/Issued/Consumed/Waste/Recoverable/Balance and Utilization %/Wastage % for one design (or every design if left blank).", "Use anytime to check how a design's fabric is actually performing, not just how much was planned.", "Utilization % is measured against ISSUED fabric, not received — fabric still sitting unused in the store correctly does NOT count against utilization yet."],
+    ["Export Excel (Utilization)", "Downloads the currently loaded utilization view as a workbook — Fabric Utilization sheet + Waste by Category sheet + a Read Me with the filter/date applied.", "Use after Load utilization, to share the numbers outside RMS or archive a season's figures.", "Exports exactly what's on screen — change the Design No. filter and click Load utilization again before exporting a different scope."],
+    ["Load FY planning", "Rolls up best/worst utilization designs, real time efficiency by worker/vendor, and next-year fabric suggestions from actual sales.", "Use once a real season of data exists — a handful of days won't produce meaningful rankings.", "The \"suggested fabric qty\" and size-ratio mismatch are guidance from real sell-through, not an order — always sense-check before committing a purchase."],
+  ],
 };
 function ButtonGuide({tab}){const rows=BUTTON_GUIDES[tab]||[];if(!rows.length)return null;return <details className="mb-5 overflow-hidden rounded-2xl border border-slate-200 bg-white"><summary className="flex cursor-pointer list-none items-center gap-2 px-5 py-3 text-xs font-bold uppercase tracking-wide text-slate-500 hover:bg-slate-50"><BookOpen className="h-3.5 w-3.5"/>What each button does</summary><div className="divide-y divide-slate-100 border-t border-slate-100">{rows.map(([name,what,use,avoid])=><div key={name} className="grid gap-2 p-4 sm:grid-cols-[160px_1fr] sm:gap-4"><p className="text-sm font-black text-slate-900">{name}</p><div className="space-y-1 text-sm leading-6 text-slate-600"><p>{what}</p><p><span className="font-bold text-emerald-700">Use when:</span> {use}</p>{avoid&&<p><span className="font-bold text-rose-700">Don't:</span> {avoid}</p>}</div></div>)}</div></details>}
 
@@ -93,6 +126,7 @@ const SUBTITLES = {
   techpacks: "The locked technical reference shared with Production.",
   handoff: "Approvals, feasibility and release to Production.",
   floorops: "Daily shop-floor entries and KPIs — Pattern, Layering, Cutting, Stitching, Embroidery and more.",
+  fabric: "Fabric lot ledger, utilization, reuse matching and next-year fabric planning.",
   queries: "Technical clarifications shared with Production.",
   changes: "Post-release specification changes and their impact.",
   reports: "Workload, deadlines, cost and sales performance.",
@@ -111,13 +145,28 @@ const DP_UI_STYLES = `
   .dp-workspace .dp-header { background: rgba(255,255,255,.9); border-bottom: 1px solid #e2e8f0; backdrop-filter: blur(12px); }
 `;
 const DEPARTMENTS = ["Men", "Women", "Kids Boys", "Kids Girls", "Infant", "Accessories", "Other"];
-const DEFAULT_SETTINGS = { departments: DEPARTMENTS, sample_types: ["Proto sample", "Development sample", "Fit sample", "Size-set sample", "Print / embroidery sample", "Wash sample", "Pre-production sample", "Production sample"], default_base_size: "M", default_size_run: "S, M, L, XL", allowance_limits:{PATTERN:{value:7,unit:"inches"},LAYERING:{value:7,unit:"inches_per_lay"},CUTTING:{value:5,unit:"percent"},STITCHING:{value:2,unit:"percent"},FINISHING:{value:2,unit:"percent"}}, require_sample_approval: true, require_design_head_approval: true, require_production_feasibility: true };
+// Mirrors DEFAULT_WASTAGE_CATEGORIES in design_pattern_routes.py — only the
+// factory default shown before a tenant's own settings load; a tenant can
+// rename/add/remove/re-scope these via the Settings screen below.
+const DEFAULT_WASTAGE_CATEGORIES = [
+  {code:"marker_waste",label:"Marker waste",is_recoverable:false,departments:["Cutting"]},
+  {code:"cutting_waste",label:"Cutting waste",is_recoverable:false,departments:["Cutting"]},
+  {code:"end_loss",label:"End loss",is_recoverable:false,departments:["Cutting"]},
+  {code:"spreading_loss",label:"Spreading loss",is_recoverable:false,departments:["Layering","Cutting"]},
+  {code:"fabric_defect",label:"Fabric defect",is_recoverable:false,departments:["Layering","Embroidery"]},
+  {code:"shade_issue",label:"Shade issue",is_recoverable:false,departments:["Layering"]},
+  {code:"production_waste",label:"Production waste",is_recoverable:false,departments:["Stitching","Embroidery","Pattern Making"]},
+  {code:"rejection",label:"Rejection",is_recoverable:false,departments:["Stitching","Embroidery","Finishing & Packing"]},
+  {code:"recoverable_fabric",label:"Recoverable fabric",is_recoverable:true,departments:["Cutting"]},
+  {code:"scrap",label:"Scrap",is_recoverable:false,departments:["Stitching","Finishing & Packing"]},
+];
+const DEFAULT_SETTINGS = { departments: DEPARTMENTS, sample_types: ["Proto sample", "Development sample", "Fit sample", "Size-set sample", "Print / embroidery sample", "Wash sample", "Pre-production sample", "Production sample"], default_base_size: "M", default_size_run: "S, M, L, XL", allowance_limits:{PATTERN:{value:7,unit:"inches"},LAYERING:{value:7,unit:"inches_per_lay"},CUTTING:{value:5,unit:"percent"},STITCHING:{value:2,unit:"percent"},FINISHING:{value:2,unit:"percent"}}, wastage_categories: DEFAULT_WASTAGE_CATEGORIES, require_sample_approval: true, require_design_head_approval: true, require_production_feasibility: true };
 const PROJECT_STATUSES = ["IDEA", "IN_DEVELOPMENT", "PATTERN_DEVELOPMENT", "SAMPLE_DEVELOPMENT", "REVISION_REQUIRED", "AWAITING_APPROVAL", "APPROVED_FOR_PRODUCTION", "ON_HOLD", "REJECTED", "ARCHIVED"];
 const SAMPLE_TYPES = ["Proto sample", "Development sample", "Fit sample", "Size-set sample", "Print / embroidery sample", "Wash sample", "Pre-production sample", "Production sample"];
 const DECISIONS = ["PENDING", "APPROVED", "APPROVED_WITH_COMMENTS", "REVISION_REQUIRED", "REJECTED", "RESAMPLE_REQUIRED"];
 const emptyProject = { design_no:"", style_name:"", department:"Women", category:"", theme_id:"", theme:"", collection:"", season:"", designer:"", target_customer:"", target_cost:"", planned_quantity:"", launch_date:"", priority:"MEDIUM", description:"", moodboard_urls:"", document_urls:"" };
 const emptyTheme = { id:"", theme_name:"", collection:"", season:"", department:"Women", target_customer:"", target_date:"", creative_direction:"", palette:"", moodboard_urls:"", document_urls:"" };
-const emptyPattern = { project_id:"", pattern_no:"", pattern_name:"", version:"v1", base_size:"M", sizes:"S, M, L, XL", fabric_width:"", consumption_per_unit:"", wastage_pct:"", marker_length:"", marker_efficiency:"", seam_allowance:"", shrinkage_allowance:"", measurement_rows:"", file_urls:"", notes:"", base_block:"", seam_types:[], closure_types:[], dart_pleat_tuck_details:[], hem_finishes:[] };
+const emptyPattern = { project_id:"", pattern_no:"", pattern_name:"", version:"v1", base_size:"M", sizes:"S, M, L, XL", fabric_width:"", consumption_per_unit:"", wastage_pct:"", marker_length:"", marker_efficiency:"", seam_allowance:"", shrinkage_allowance:"", measurement_rows:"", file_urls:"", notes:"", base_block:"", seam_types:[], closure_types:[], dart_pleat_tuck_details:[], hem_finishes:[], family_name:"", variation_notes:"" };
 // Fallback if /pattern-vocabulary hasn't loaded yet — kept in sync with
 // PATTERN_VOCABULARY in design_pattern_routes.py.
 const DEFAULT_PATTERN_VOCABULARY = {
@@ -149,6 +198,7 @@ const FLOOR_FIELD_META = {
   fabric_used_mtrs:{label:"Fabric used (mtrs)",type:"number"}, wastage_mtrs:{label:"Wastage (mtrs)",type:"number"},
   vendor_name:{label:"Vendor (fabric source)",type:"text"}, on_time:{label:"On time",type:"bool"}, remarks:{label:"Remarks",type:"text"},
 };
+const emptyFabricLot = () => ({ fabric_name:"", lot_no:"", roll_no:"", colour:"", width:"", gsm:"", vendor_name:"", unit:"MTR", rate:"", qc_status:"PENDING", qc_note:"", design_no:"", opening_qty:"", received_qty:"", notes:"" });
 const todayISO = () => new Date().toISOString().slice(0,10);
 const emptyFloorLog = () => ({ date:todayISO(), time:"", department:"", worker_id:"", worker_name:"", design_no:"", vendor_name:"", job_work_order_id:"", target_qty:"", completed_qty:"", rework_qty:"", rejected_qty:"", fabric_used_mtrs:"", wastage_mtrs:"", on_time:true, remarks:"" });
 const emptyFloorWorker = { name:"", phone:"", departments:[], notes:"" };
@@ -180,6 +230,49 @@ function PageHead({title,subtitle,count,children}){
     <div><div className="flex items-center gap-2"><h2 className="text-lg font-black tracking-tight text-slate-900">{title}</h2>{count!=null&&<span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-bold text-slate-500">{count}</span>}</div>{subtitle&&<p className="mt-0.5 text-sm text-slate-500">{subtitle}</p>}</div>
     {children&&<div className="flex flex-wrap items-center gap-2">{children}</div>}
   </div>;
+}
+
+function PatternPieceRegister({ patterns, projects=[], onChanged }) {
+  const [patternId, setPatternId] = useState("");
+  const emptyPieceForm = { piece_name:"", piece_code:"", callout_no:"", fabric_reference:"", cut_quantity:"", grainline:"", seam_allowance:"", grading_note:"", file_url:"", image_front:"", image_back:"", image_side:"", notes:"" };
+  const [form, setForm] = useState(emptyPieceForm);
+  const [error, setError] = useState("");
+  const [vocabulary, setVocabulary] = useState({ piece_name_suggestions:{}, default_piece_name_suggestions:[] });
+  useEffect(() => { api("/pattern-vocabulary").then(setVocabulary).catch(() => {}); }, []);
+  const selected = patterns.find((item) => item.id === patternId);
+  const project = selected && projects.find((p) => p.id === selected.project_id);
+  const suggestions = (project && vocabulary.piece_name_suggestions?.[project.category]) || vocabulary.default_piece_name_suggestions || [];
+  const update = (key, value) => setForm((current) => ({ ...current, [key]: value }));
+  const add = async (event) => {
+    event.preventDefault(); setError("");
+    if (!patternId) return setError("Select a draft pattern version first.");
+    try { await api(`/patterns/${patternId}/pieces`, { method:"POST", body:JSON.stringify(form) }); setForm(emptyPieceForm); await onChanged(); }
+    catch (err) { setError(err.message); }
+  };
+  const remove = async (pieceId) => {
+    if (!window.confirm("Remove this pattern piece?")) return;
+    try { await api(`/patterns/${patternId}/pieces/${pieceId}`, { method:"DELETE" }); await onChanged(); } catch (err) { setError(err.message); }
+  };
+  return <section className="mt-5 rounded-2xl border border-violet-100 bg-white p-5 shadow-sm">
+    <div className="mb-4"><p className="text-xs font-black uppercase tracking-[.16em] text-violet-600">Pattern construction</p><h3 className="mt-1 text-lg font-black text-slate-900">Pattern-piece register</h3><p className="mt-1 text-sm text-slate-500">Keep front body, back body, sleeve, collar, cuff, pocket and other cutting pieces in the Pattern version—not in the Tech Pack.</p></div>
+    <label className="block text-xs font-bold uppercase tracking-wide text-slate-500">Draft pattern version<select value={patternId} onChange={(event) => { setPatternId(event.target.value); setError(""); }} className="mt-1.5 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm font-medium text-slate-800"><option value="">Select a draft pattern</option>{patterns.filter((pattern) => String(pattern.status || "DRAFT").toUpperCase() === "DRAFT").map((pattern) => <option key={pattern.id} value={pattern.id}>{pattern.pattern_no} · {pattern.version} · {pattern.design_no}</option>)}</select></label>
+    {selected && <><form onSubmit={add} className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+      <datalist id="piece-name-suggestions">{suggestions.map((name) => <option key={name} value={name} />)}</datalist>
+      {[["piece_name","Piece name *","Front body"],["piece_code","Piece code","F-01"],["callout_no","Sketch callout","1"],["fabric_reference","Fabric reference","Main fabric"],["cut_quantity","Cut quantity","2"],["grainline","Grainline","Straight grain"],["seam_allowance","Seam allowance","1 cm"],["file_url","CAD / DXF / PDF link","https://..."]].map(([key,label,placeholder]) => <label key={key} className="text-[11px] font-bold uppercase tracking-wide text-slate-500">{label}<input required={key==="piece_name"} list={key==="piece_name"?"piece-name-suggestions":undefined} value={form[key]} onChange={(event) => update(key,event.target.value)} placeholder={placeholder} className="mt-1 w-full rounded-lg border border-slate-200 px-2.5 py-2 text-sm font-medium normal-case tracking-normal text-slate-700" /></label>)}
+      <label className="xl:col-span-2 text-[11px] font-bold uppercase tracking-wide text-slate-500">Grading / size note<input value={form.grading_note} onChange={(event) => update("grading_note",event.target.value)} placeholder="e.g. Grade sleeve length +1 cm each size" className="mt-1 w-full rounded-lg border border-slate-200 px-2.5 py-2 text-sm font-medium normal-case tracking-normal text-slate-700" /></label>
+      <label className="xl:col-span-2 text-[11px] font-bold uppercase tracking-wide text-slate-500">Piece / cutting notes<input value={form.notes} onChange={(event) => update("notes",event.target.value)} placeholder="Notches, cut-on-fold, fusing, directional print etc." className="mt-1 w-full rounded-lg border border-slate-200 px-2.5 py-2 text-sm font-medium normal-case tracking-normal text-slate-700" /></label>
+      <div className="xl:col-span-4 grid gap-3 rounded-xl border border-dashed border-violet-200 bg-violet-50/50 p-3 md:grid-cols-3">
+        <p className="md:col-span-3 text-[11px] font-black uppercase tracking-wide text-violet-600">Reference images for this piece (optional)</p>
+        {[["image_front","Front view"],["image_back","Back view"],["image_side","Side view"]].map(([key,label]) => <div key={key}>
+          <AssetUploader label={label} onUploaded={(urls) => update(key, urls[0] || form[key])} />
+          {form[key] && <a href={form[key]} target="_blank" rel="noreferrer" className="mt-1 block truncate text-[11px] font-semibold text-violet-700 underline">{label} uploaded — view</a>}
+        </div>)}
+      </div>
+      <div className="xl:col-span-4"><button className={BTN_PRIMARY}>+ Add pattern piece</button></div>
+    </form>
+    {error && <p className="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-sm font-bold text-rose-700">{error}</p>}
+    <div className="mt-5 overflow-x-auto rounded-xl border border-slate-200"><table className="min-w-[1000px] w-full text-xs"><thead className="bg-slate-50"><tr>{["Piece","Code","Callout","Fabric","Cut","Grainline","Seam allowance","File","Views",""].map((heading) => <th key={heading} className="px-3 py-2 text-left font-bold text-slate-500">{heading}</th>)}</tr></thead><tbody>{(selected.pattern_pieces || []).length ? selected.pattern_pieces.map((piece) => <tr key={piece.piece_id} className="border-t border-slate-100"><td className="px-3 py-2 font-bold">{piece.piece_name}</td><td className="px-3 py-2">{piece.piece_code || "—"}</td><td className="px-3 py-2">{piece.callout_no || "—"}</td><td className="px-3 py-2">{piece.fabric_reference || "—"}</td><td className="px-3 py-2">{piece.cut_quantity || "—"}</td><td className="px-3 py-2">{piece.grainline || "—"}</td><td className="px-3 py-2">{piece.seam_allowance || "—"}</td><td className="max-w-[160px] break-all px-3 py-2">{piece.file_url || "—"}</td><td className="px-3 py-2"><div className="flex gap-1">{[["image_front","F"],["image_back","B"],["image_side","S"]].map(([key,tag]) => piece[key] ? <a key={key} href={piece[key]} target="_blank" rel="noreferrer" title={key}><img src={piece[key]} alt={tag} className="h-8 w-8 rounded border object-cover"/></a> : null)}{!piece.image_front && !piece.image_back && !piece.image_side && "—"}</div></td><td className="px-3 py-2"><button type="button" onClick={() => remove(piece.piece_id)} className="font-bold text-rose-600">Remove</button></td></tr>) : <tr><td colSpan="10" className="px-3 py-8 text-center text-slate-400">No pieces recorded for this pattern version yet.</td></tr>}</tbody></table></div></>}
+  </section>;
 }
 function SearchInput({value,onChange,placeholder="Search…"}){
   return <label className="flex min-w-[220px] flex-1 items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 shadow-sm sm:flex-none sm:w-64">
@@ -259,18 +352,116 @@ export default function DesignPattern(){
   const [floorError,setFloorError]=useState("");
   const [floorFilters,setFloorFilters]=useState({date_from:"",date_to:"",department:"",worker_id:"",design_no:""});
   const [floorLogForm,setFloorLogForm]=useState(emptyFloorLog()), [floorWorkerForm,setFloorWorkerForm]=useState(emptyFloorWorker), [floorBulk,setFloorBulk]=useState(null);
+  // Size-wise cutting entry (Step 2) and wastage-by-category (Step 5): the
+  // worker only ever types Size->Qty and Category->Qty rows here; the total
+  // completed_qty/wastage_mtrs sent to the backend is derived from these,
+  // never a separate number kept in sync by hand.
+  const [floorSizeRows,setFloorSizeRows]=useState([]), [floorWasteRows,setFloorWasteRows]=useState([]), [floorWasteCatOptions,setFloorWasteCatOptions]=useState([]);
+  // Floor Log Kiosk — a worker's own no-login side of this same tab, opened
+  // from a shared link/QR (same pattern as Hybrid Production's Workstation
+  // Display). Generating/rotating the link is the only kiosk-related thing
+  // HQ does here; the kiosk itself is a separate public page.
+  const [kioskToken,setKioskToken]=useState(null), [kioskBusy,setKioskBusy]=useState(false), [kioskCopied,setKioskCopied]=useState(false);
   const [prompt,setPrompt]=useState(null), [projView,setProjView]=useState("table"), [sampleFilter,setSampleFilter]=useState("ALL"), [revisionForm,setRevisionForm]=useState(null);
+  // Pattern family/variation library (Part B/C) — browse existing patterns
+  // across ALL design numbers before starting a new one from scratch.
+  const [patternFamilies,setPatternFamilies]=useState([]), [libraryFamily,setLibraryFamily]=useState(""), [libraryRows,setLibraryRows]=useState([]), [libraryBusy,setLibraryBusy]=useState(false);
+  const [cloneForm,setCloneForm]=useState(null);
+  const loadFamilies=useCallback(()=>{api("/patterns/families").then(r=>setPatternFamilies(r.data||[])).catch(()=>{});},[]);
+  useEffect(()=>{loadFamilies();},[loadFamilies]);
+  const browseLibrary=async(family)=>{setLibraryFamily(family);setLibraryBusy(true);try{const r=await api(`/patterns/library?family=${encodeURIComponent(family)}`);setLibraryRows(r.data||[]);}catch(e){setError(e.message);}finally{setLibraryBusy(false);}};
   const load=useCallback(async()=>{ setLoading(true);setError("");try{const [workspace,insights]=await Promise.all([api("/workspace"),api("/insights")]);setData({...workspace,insights:insights.data||[]});api("/settings").then(r=>setSettings(r.data)).catch(()=>setSettings(DEFAULT_SETTINGS));api("/pattern-vocabulary").then(r=>setPatternVocabulary(r.data)).catch(()=>setPatternVocabulary(DEFAULT_PATTERN_VOCABULARY));}catch(e){setError(e.message);}finally{setLoading(false);}},[]);
   useEffect(()=>{load();},[load]);
   const run=async(path,payload,message)=>{try{const result=await api(path,{method:"POST",body:JSON.stringify(payload)});setNotice(result.message||message);setModal("");await load();}catch(e){setError(e.message);}};
   const saveEditable=async(collection,id,payload,message)=>{try{const result=id?await api(`/${collection}/${id}`,{method:"PATCH",body:JSON.stringify(payload)}):await api(`/${collection}`,{method:"POST",body:JSON.stringify(payload)});setNotice(result.message||message);setModal("");await load();}catch(e){setError(e.message);}};
-  const loadFloorOps=useCallback(async()=>{try{setFloorError("");const [depts,workers]=await Promise.all([api("/floor-departments"),api("/floor-workers")]);setFloorDepts(depts.data?.length?depts.data:DEFAULT_FLOOR_DEPARTMENTS);setFloorWorkers(workers.data||[]);}catch(e){setFloorError(e.message);}},[]);
+  const loadFloorOps=useCallback(async()=>{try{setFloorError("");const [depts,workers,kiosk]=await Promise.all([api("/floor-departments"),api("/floor-workers"),api("/floor-kiosk/link")]);setFloorDepts(depts.data?.length?depts.data:DEFAULT_FLOOR_DEPARTMENTS);setFloorWorkers(workers.data||[]);setKioskToken(kiosk.data?.kiosk_token||null);}catch(e){setFloorError(e.message);}},[]);
+  const generateKioskLink=async()=>{setKioskBusy(true);try{const r=await api("/floor-kiosk/link",{method:"POST"});setKioskToken(r.data.kiosk_token);setKioskCopied(false);}catch(e){setFloorError(e.message);}finally{setKioskBusy(false);}};
+  const kioskUrl=kioskToken?`${window.location.origin}/floor-log-kiosk/${kioskToken}`:"";
+  const copyKioskLink=async()=>{if(!kioskUrl)return;try{await navigator.clipboard.writeText(kioskUrl);setKioskCopied(true);setTimeout(()=>setKioskCopied(false),2500);}catch{/* clipboard may be unavailable — the link is still shown on screen to copy by hand */}};
   const loadFloorLogs=useCallback(async(filters)=>{try{setFloorError("");const q=new URLSearchParams(Object.entries(filters||{}).filter(([,v])=>v));const [logs,kpis]=await Promise.all([api(`/floor-logs?${q}`),api(`/floor-kpis?date_from=${filters?.date_from||""}&date_to=${filters?.date_to||""}`)]);setFloorLogs(logs.data||[]);setFloorKpis(kpis);}catch(e){setFloorError(e.message);}},[]);
   useEffect(()=>{if(active==="floorops"&&!floorLoaded){setFloorLoaded(true);loadFloorOps();loadFloorLogs(floorFilters);}},[active,floorLoaded,loadFloorOps,loadFloorLogs,floorFilters]);
   const applyFloorFilters=()=>loadFloorLogs(floorFilters);
+  const deleteFloorLog=async(row)=>{
+    const reason=window.prompt(`Delete the floor log entry for ${row.worker_name} (${row.department}, ${row.date})?\n\nThis also reverses any fabric it already posted to the Fabric Lot ledger. Enter a reason to continue:`);
+    if(reason===null) return;
+    if(!reason.trim()) return setFloorError("A reason is required to delete a floor log entry.");
+    try{const r=await api(`/floor-logs/${row.id}?reason=${encodeURIComponent(reason.trim())}`,{method:"DELETE"});setNotice(r.message||"Floor log entry deleted.");await loadFloorLogs(floorFilters);}
+    catch(e){setFloorError(e.message);}
+  };
+
+  // ── Fabric & Production (fabric lot ledger, utilization, reuse, FY planning) ──
+  const [fabricSection,setFabricSection]=useState("lots"), [fabricLoaded,setFabricLoaded]=useState(false), [fabricError,setFabricError]=useState("");
+  const [fabricLots,setFabricLots]=useState([]), [fabricLotForm,setFabricLotForm]=useState(emptyFabricLot());
+  const [fabricTxnTarget,setFabricTxnTarget]=useState(null), [fabricTxnForm,setFabricTxnForm]=useState({type:"ISSUE",qty:"",design_no:"",category:"",note:""});
+  const [fabricUtilFilter,setFabricUtilFilter]=useState(""), [fabricUtilData,setFabricUtilData]=useState(null);
+  const [fabricReuseTarget,setFabricReuseTarget]=useState(null), [fabricReuseData,setFabricReuseData]=useState(null);
+  const [fyDays,setFyDays]=useState(365), [fyData,setFyData]=useState(null), [fyLoading,setFyLoading]=useState(false);
+  const [exportingFabric,setExportingFabric]=useState(false);
+  const [fabricLotFile,setFabricLotFile]=useState(null);
+  const loadFabricLots=useCallback(async()=>{try{setFabricError("");const r=await api("/fabric-lots");setFabricLots(r.data||[]);}catch(e){setFabricError(e.message);}},[]);
+  useEffect(()=>{if(active==="fabric"&&!fabricLoaded){setFabricLoaded(true);loadFabricLots();}},[active,fabricLoaded,loadFabricLots]);
+  const uploadFabricSwatch=async(lotId,file)=>{if(!file)return;try{await apiUpload(`/fabric-lots/${lotId}/swatch`,file);setNotice("Swatch image saved.");await loadFabricLots();}catch(e2){setFabricError(e2.message);}};
+  // Swatch photo can be attached right here at receipt, or added/changed
+  // later from the lot's own row — both call the same /swatch upload, so
+  // "add it now" and "add it later" are just two doors into one action.
+  const submitFabricLot=async(e)=>{e.preventDefault();try{const payload={...fabricLotForm,rate:Number(fabricLotForm.rate)||0,opening_qty:Number(fabricLotForm.opening_qty)||0,received_qty:Number(fabricLotForm.received_qty)||0};const r=await api("/fabric-lots",{method:"POST",body:JSON.stringify(payload)});const newLotId=r.data?.id;setModal("");setFabricLotForm(emptyFabricLot());if(newLotId&&fabricLotFile){await uploadFabricSwatch(newLotId,fabricLotFile);setNotice((r.message||"Fabric lot recorded.")+" Swatch image saved.");}else{setNotice(r.message||"Fabric lot recorded.");await loadFabricLots();}setFabricLotFile(null);}catch(e2){setFabricError(e2.message);}};
+  const openFabricTxn=(lot,type)=>{setFabricTxnTarget(lot);setFabricTxnForm({type,qty:"",design_no:lot.design_no||"",category:"",note:""});setModal("fabrictxn");};
+  const submitFabricTxn=async(e)=>{e.preventDefault();if(!fabricTxnTarget)return;try{const payload={...fabricTxnForm,qty:Number(fabricTxnForm.qty)||0};const r=await api(`/fabric-lots/${fabricTxnTarget.id}/transactions`,{method:"POST",body:JSON.stringify(payload)});setNotice(r.message||"Transaction recorded.");setModal("");await loadFabricLots();}catch(e2){setFabricError(e2.message);}};
+  const loadFabricUtilization=async(designNo)=>{try{setFabricError("");const q=designNo?`?design_no=${encodeURIComponent(designNo)}`:"";const r=await api(`/fabric-utilization${q}`);setFabricUtilData(r.data);}catch(e2){setFabricError(e2.message);}};
+  const openFabricReuse=async(lot)=>{setFabricReuseTarget(lot);try{setFabricError("");const r=await api(`/fabric-lots/${lot.id}/reuse-matches`);setFabricReuseData(r.data);}catch(e2){setFabricError(e2.message);}};
+  const loadFyPlanning=async()=>{setFyLoading(true);try{setFabricError("");const r=await api(`/fy-planning?days=${fyDays}`);setFyData(r.data);}catch(e2){setFabricError(e2.message);}finally{setFyLoading(false);}};
+  const exportFabricUtilization=async()=>{
+    if(!fabricUtilData?.by_design?.length){setFabricError("Load utilization data first — nothing to export yet.");return;}
+    setExportingFabric(true);setFabricError("");
+    try{
+      const XLSX=await import("xlsx");
+      const summaryRows=fabricUtilData.by_design.map(r=>({
+        "Design No.":r.design_no,"Fabric lots":r.lot_count,
+        "Received":r.fabric_received,"Issued":r.fabric_issued,"Consumed":r.fabric_consumed,
+        "Waste":r.fabric_waste,"Recoverable":r.fabric_recoverable,"Returned":r.fabric_returned,
+        "Closing balance":r.closing_balance,
+        "Utilization %":r.utilization_pct??"",  "Wastage %":r.wastage_pct??"",
+      }));
+      const wasteRows=fabricUtilData.by_design.flatMap(r=>(r.waste_by_category||[]).map(w=>({
+        "Design No.":r.design_no,"Category":w.label||w.category,"Qty":w.qty,
+      })));
+      const workbook=XLSX.utils.book_new();
+      const summarySheet=XLSX.utils.json_to_sheet(summaryRows);
+      summarySheet["!cols"]=[{wch:16},{wch:12},{wch:12},{wch:10},{wch:12},{wch:10},{wch:14},{wch:12},{wch:16},{wch:14},{wch:12}];
+      XLSX.utils.book_append_sheet(workbook,summarySheet,"Fabric Utilization");
+      const wasteSheet=XLSX.utils.json_to_sheet(wasteRows.length?wasteRows:[{"Design No.":"","Category":"","Qty":""}]);
+      wasteSheet["!cols"]=[{wch:16},{wch:22},{wch:10}];
+      XLSX.utils.book_append_sheet(workbook,wasteSheet,"Waste by Category");
+      const overall=fabricUtilData.overall;
+      const readMeSheet=XLSX.utils.aoa_to_sheet([
+        ["RMS Fabric Utilization Overview"],
+        ["Design filter",fabricUtilFilter?fabricUtilFilter:"All designs"],
+        ["Generated at",new Date().toLocaleString("en-IN")],
+        ["Designs in this export",summaryRows.length],
+        [],
+        ...(overall?[["Overall — Received",overall.fabric_received],["Overall — Issued",overall.fabric_issued],["Overall — Consumed",overall.fabric_consumed],["Overall — Waste",overall.fabric_waste],["Overall — Utilization %",overall.utilization_pct??""],["Overall — Wastage %",overall.wastage_pct??""],[]]:[]),
+        ["Utilization %","Consumed ÷ Issued — measured against fabric actually issued to the floor, not received (unused stock still in the store correctly doesn't count against it yet)."],
+        ["Wastage %","Waste ÷ Issued, by the categories set under Settings → Wastage categories."],
+      ]);
+      readMeSheet["!cols"]=[{wch:26},{wch:90}];
+      XLSX.utils.book_append_sheet(workbook,readMeSheet,"Read Me");
+      XLSX.writeFile(workbook,`rms-fabric-utilization-${(fabricUtilFilter||"all-designs").replace(/[^a-z0-9]+/gi,"-")}-${todayISO()}.xlsx`,{compression:true});
+    }catch(e2){setFabricError(e2.message||"Unable to export the Excel file.");}
+    finally{setExportingFabric(false);}
+  };
   const currentFloorDept=floorDepts.find(d=>d.name===floorLogForm.department);
   const currentFloorFields=currentFloorDept?.fields||[];
-  const submitFloorLog=async(e)=>{e.preventDefault();try{await api("/floor-logs",{method:"POST",body:JSON.stringify(floorLogForm)});setNotice("Floor log entry saved.");setModal("");setFloorLogForm(emptyFloorLog());await loadFloorLogs(floorFilters);}catch(e2){setFloorError(e2.message);}};
+  const submitFloorLog=async(e)=>{e.preventDefault();try{
+    const size_breakdown=floorSizeRows.filter(r=>r.size&&Number(r.qty)>0).map(r=>({size:r.size,qty:Number(r.qty)}));
+    const wastage_breakdown=floorWasteRows.filter(r=>r.category&&Number(r.qty)>0).map(r=>({category:r.category,qty:Number(r.qty)}));
+    await api("/floor-logs",{method:"POST",body:JSON.stringify({...floorLogForm,size_breakdown,wastage_breakdown})});
+    setNotice("Floor log entry saved.");setModal("");setFloorLogForm(emptyFloorLog());setFloorSizeRows([]);setFloorWasteRows([]);await loadFloorLogs(floorFilters);
+  }catch(e2){setFloorError(e2.message);}};
+  const setFloorLogDepartment=async(deptName)=>{
+    setFloorLogForm(f=>({...f,department:deptName}));setFloorSizeRows([]);setFloorWasteRows([]);setFloorWasteCatOptions([]);
+    if(!deptName)return;
+    try{const r=await api(`/wastage-categories?department=${encodeURIComponent(deptName)}`);setFloorWasteCatOptions(r.data||[]);}catch{/* non-fatal — Waste breakdown just won't offer categories yet */}
+  };
   const submitFloorWorker=async(e)=>{e.preventDefault();try{const result=await api("/floor-workers",{method:"POST",body:JSON.stringify(floorWorkerForm)});setNotice(result.message||"Worker added.");setModal("");setFloorWorkerForm(emptyFloorWorker);await loadFloorOps();}catch(e2){setFloorError(e2.message);}};
   const toggleFloorWorker=async(w)=>{try{await api(`/floor-workers/${w.id}`,{method:"PATCH",body:JSON.stringify({active:!w.active})});await loadFloorOps();}catch(e2){setFloorError(e2.message);}};
   const openFloorBulk=async(fileToUpload)=>{if(!fileToUpload)return;try{setFloorError("");const preview=await apiUpload("/floor-logs/bulk/preview",fileToUpload);setFloorBulk({file:fileToUpload,preview});setModal("floorbulk");}catch(e2){setFloorError(e2.message);}};
@@ -400,17 +591,22 @@ export default function DesignPattern(){
           <div className="space-y-2">{items.map(p=><div key={p.id} className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm"><p className="text-sm font-bold text-slate-900">{p.design_no}</p><p className="truncate text-xs text-slate-500">{p.style_name}</p><div className="mt-2 flex items-center justify-between"><span className={CHIP}>{p.priority}</span><span className={`text-[11px] font-bold ${approvedSamples.has(p.id)?"text-emerald-600":"text-amber-600"}`}>{approvedSamples.has(p.id)?"Sample ✓":"Sample …"}</span></div></div>)}{!items.length&&<p className="py-3 text-center text-xs text-slate-300">—</p>}</div>
         </div>;})}</div>}
         </>}
-        {active==="patterns"&&<><PageHead title="Pattern Versions" subtitle="Controlled pattern, grading and consumption." count={data.patterns.length}><button onClick={()=>startPattern()} className={BTN_PRIMARY}><Plus className="h-4 w-4"/>Add pattern</button></PageHead>
+        {active==="patterns"&&<><PageHead title="Pattern Versions" subtitle="Controlled pattern, grading and consumption." count={data.patterns.length}>
+            <button onClick={()=>{setModal("library");browseLibrary(libraryFamily||patternFamilies[0]?.family_name||"");}} className={BTN_GHOST}>Reuse from library</button>
+            <button onClick={()=>startPattern()} className={BTN_PRIMARY}><Plus className="h-4 w-4"/>Add pattern</button>
+          </PageHead>
           <DataTable columns={[
             {key:"pattern_no",label:"Pattern no.",strong:true,nowrap:true},
             {key:"style",label:"Style",render:r=>projectName(r.project_id)},
             {key:"version",label:"Version"},{key:"base_size",label:"Base"},
             {key:"base_block",label:"Block",render:r=>r.base_block||"—"},
+            {key:"family",label:"Family",render:r=>r.family_name||"—"},
             {key:"graded",label:"Graded pts",align:"right",render:r=>r.measurement_rows?.length||0},
             {key:"consumption_per_unit",label:"Consumption",align:"right"},{key:"wastage_pct",label:"Manual cutting wastage %",align:"right",render:r=>r.wastage_pct||"—"},
             {key:"status",label:"Status",render:r=><Badge value={r.status}/>},
-            {key:"act",label:"",align:"right",render:r=><button onClick={()=>{setRevisionForm({id:r.id,version:`v${(Number(String(r.version).replace(/\D/g,""))||1)+1}`,reason:""});setModal("revision");}} className={`${BTN_SUBTLE} !px-2 !py-1 text-xs`}>Revise</button>},
+            {key:"act",label:"",align:"right",render:r=><div className="flex justify-end gap-1.5"><button onClick={()=>{setRevisionForm({id:r.id,version:`v${(Number(String(r.version).replace(/\D/g,""))||1)+1}`,reason:""});setModal("revision");}} className={`${BTN_SUBTLE} !px-2 !py-1 text-xs`}>Revise</button><button onClick={()=>{setCloneForm({source_id:r.id,source_label:`${r.pattern_no} · ${r.family_name||r.base_block||"—"}`,project_id:"",variation_notes:""});setModal("clone");}} className={`${BTN_SUBTLE} !px-2 !py-1 text-xs`}>Clone as variation</button></div>},
           ]} rows={data.patterns} empty="No pattern versions yet."/>
+          <PatternPieceRegister patterns={data.patterns} projects={data.projects} onChanged={load}/>
         </>}
         {active==="artwork"&&<><PageHead title="Print & Artwork Library" subtitle="Versioned print, embroidery and placement references." count={data.artworks.length}><button onClick={()=>{setArtworkForm(emptyArtwork);setModal("artwork");}} className={BTN_PRIMARY}><Plus className="h-4 w-4"/>Add artwork</button></PageHead>
           <MediaGrid items={data.artworks.map(a=>({id:a.id,image:(a.file_urls||[])[0],title:`${a.name} · ${a.version}`,subtitle:projectName(a.project_id),meta:[a.kind,a.placement,a.technique].filter(Boolean).join(" · "),badge:<Badge value={a.status}/>,actions:<button onClick={()=>{setArtworkForm({...emptyArtwork,...a,file_urls:(a.file_urls||[]).join("\n")});setModal("artwork");}} className={`${BTN_SUBTLE} !px-2 !py-1 text-xs`}>Edit</button>}))} empty="No print or artwork records yet."/>
@@ -437,7 +633,18 @@ export default function DesignPattern(){
             </div>;}},
           ]} rows={data.projects} empty="Create a design project first."/>
         </>}
-        {active==="floorops"&&<>{floorError&&<div className="mb-4 flex gap-2 rounded-2xl border border-rose-200 bg-rose-50 p-3 text-sm font-bold text-rose-800"><AlertCircle className="h-5 w-5 shrink-0"/><span>{floorError === "Not Found" ? "Daily Floor Log API is not available on the running backend. Restart or redeploy the backend, then refresh this tab." : floorError}</span></div>}<FloorOpsView section={floorSection} setSection={setFloorSection} depts={floorDepts} workers={floorWorkers} logs={floorLogs} kpis={floorKpis} filters={floorFilters} setFilters={setFloorFilters} onApplyFilters={applyFloorFilters} onAddLog={()=>{setFloorLogForm(emptyFloorLog());setModal("floorlog");}} onAddWorker={()=>{setFloorWorkerForm(emptyFloorWorker);setModal("floorworker");}} onToggleWorker={toggleFloorWorker} onUpload={openFloorBulk} onTemplate={()=>apiDownload("/floor-logs/template","daily-floor-log-template.csv").catch(e=>setFloorError(e.message))}/></>}
+        {active==="floorops"&&<>{floorError&&<div className="mb-4 flex gap-2 rounded-2xl border border-rose-200 bg-rose-50 p-3 text-sm font-bold text-rose-800"><AlertCircle className="h-5 w-5 shrink-0"/><span>{floorError === "Not Found" ? "Daily Floor Log API is not available on the running backend. Restart or redeploy the backend, then refresh this tab." : floorError}</span></div>}<FloorOpsView section={floorSection} setSection={setFloorSection} depts={floorDepts} workers={floorWorkers} logs={floorLogs} kpis={floorKpis} filters={floorFilters} setFilters={setFloorFilters} onApplyFilters={applyFloorFilters} onAddLog={()=>{setFloorLogForm(emptyFloorLog());setFloorSizeRows([]);setFloorWasteRows([]);setFloorWasteCatOptions([]);setModal("floorlog");}} onAddWorker={()=>{setFloorWorkerForm(emptyFloorWorker);setModal("floorworker");}} onToggleWorker={toggleFloorWorker} onUpload={openFloorBulk} onTemplate={()=>apiDownload("/floor-logs/template","daily-floor-log-template.csv").catch(e=>setFloorError(e.message))} onDeleteLog={deleteFloorLog}
+          kioskUrl={kioskUrl} kioskBusy={kioskBusy} kioskCopied={kioskCopied} onGenerateKiosk={generateKioskLink} onCopyKiosk={copyKioskLink}/></>}
+        {active==="fabric"&&<>{fabricError&&<div className="mb-4 flex gap-2 rounded-2xl border border-rose-200 bg-rose-50 p-3 text-sm font-bold text-rose-800"><AlertCircle className="h-5 w-5 shrink-0"/><span>{fabricError}</span></div>}<FabricProductionView
+          section={fabricSection} setSection={setFabricSection}
+          lots={fabricLots} onAddLot={()=>{setFabricLotForm(emptyFabricLot());setFabricLotFile(null);setModal("fabriclot");}}
+          onIssue={l=>openFabricTxn(l,"ISSUE")} onConsume={l=>openFabricTxn(l,"CONSUME")} onWaste={l=>openFabricTxn(l,"WASTE")} onReturn={l=>openFabricTxn(l,"RETURN")}
+          onUploadSwatch={uploadFabricSwatch} onReuse={openFabricReuse}
+          utilFilter={fabricUtilFilter} setUtilFilter={setFabricUtilFilter} utilData={fabricUtilData} onLoadUtil={loadFabricUtilization}
+          onExportUtil={exportFabricUtilization} exportingUtil={exportingFabric}
+          reuseTarget={fabricReuseTarget} reuseData={fabricReuseData}
+          fyDays={fyDays} setFyDays={setFyDays} fyData={fyData} fyLoading={fyLoading} onLoadFy={loadFyPlanning}
+        /></>}
         {active==="queries"&&<><PageHead title="Design & Production Queries" subtitle="Technical clarifications shared with Production." count={data.queries.length}><button onClick={()=>setModal("query")} className={BTN_PRIMARY}><Plus className="h-4 w-4"/>Raise query</button></PageHead>
           <DataTable columns={[
             {key:"query_no",label:"Query no.",strong:true,nowrap:true},
@@ -471,7 +678,13 @@ export default function DesignPattern(){
       <Field label="Colour palette (comma separated)" wide><input value={themeForm.palette} onChange={e=>setThemeForm({...themeForm,palette:e.target.value})} placeholder="#7C3AED, terracotta, ivory, forest green"/></Field><Field label="Creative direction / design rules" wide><textarea required rows="5" value={themeForm.creative_direction} onChange={e=>setThemeForm({...themeForm,creative_direction:e.target.value})} placeholder="Silhouette, fabric feel, print direction, trims, exclusions and what must stay consistent."/></Field>
       <AttachmentEditor label="Mood boards and visual references" value={themeForm.moodboard_urls} onChange={v=>setThemeForm({...themeForm,moodboard_urls:v})}/><AttachmentEditor label="Supporting PDFs and documents" accept="image/*,.pdf,.doc,.docx" value={themeForm.document_urls} onChange={v=>setThemeForm({...themeForm,document_urls:v})}/>
     </div></FormModal>}    {modal==="project"&&<FormModal title="Create design project" onClose={()=>setModal("")} onSubmit={e=>{e.preventDefault();run("/projects",{...projectForm,moodboard_urls:projectForm.moodboard_urls.split("\n").filter(Boolean),document_urls:projectForm.document_urls.split("\n").filter(Boolean)})}}><div className="grid gap-4 md:grid-cols-2"><Field label="Design no. (auto if blank)"><input value={projectForm.design_no} onChange={e=>setProjectForm({...projectForm,design_no:e.target.value})}/></Field><Field label="Style name *"><input required value={projectForm.style_name} onChange={e=>setProjectForm({...projectForm,style_name:e.target.value})}/></Field><Field label="Department"><select value={projectForm.department} onChange={e=>setProjectForm({...projectForm,department:e.target.value})}>{deptOptions.map(x=><option key={x}>{x}</option>)}</select></Field><Field label="Collection / theme (optional)"><select value={projectForm.theme_id} onChange={e=>{const theme=(data.themes||[]).find(item=>item.id===e.target.value);setProjectForm({...projectForm,theme_id:e.target.value,theme:theme?.theme_name||projectForm.theme,collection:theme?.collection||projectForm.collection,season:theme?.season||projectForm.season,department:theme?.department||projectForm.department,target_customer:theme?.target_customer||projectForm.target_customer});}}><option value="">No linked theme</option>{(data.themes||[]).map(theme=><option key={theme.id} value={theme.id}>{theme.theme_name} · {pretty(theme.design_status||"DRAFT")}</option>)}</select></Field><Field label="Theme text (manual / legacy)"><input value={projectForm.theme} onChange={e=>setProjectForm({...projectForm,theme:e.target.value})}/></Field>{["category","collection","season","designer","target_customer"].map(k=><Field key={k} label={pretty(k)}><input value={projectForm[k]} onChange={e=>setProjectForm({...projectForm,[k]:e.target.value})}/></Field>)}<Field label="Planned quantity"><input type="number" min="0" value={projectForm.planned_quantity} onChange={e=>setProjectForm({...projectForm,planned_quantity:e.target.value})}/></Field><Field label="Target cost"><input type="number" min="0" value={projectForm.target_cost} onChange={e=>setProjectForm({...projectForm,target_cost:e.target.value})}/></Field><Field label="Launch date"><input type="date" value={projectForm.launch_date} onChange={e=>setProjectForm({...projectForm,launch_date:e.target.value})}/></Field><Field label="Priority"><select value={projectForm.priority} onChange={e=>setProjectForm({...projectForm,priority:e.target.value})}><option>LOW</option><option>MEDIUM</option><option>HIGH</option><option>URGENT</option></select></Field><Field label="Design brief" wide><textarea rows="3" value={projectForm.description} onChange={e=>setProjectForm({...projectForm,description:e.target.value})}/></Field><AttachmentEditor label="Attach sketches, inspiration and mood-board images" value={projectForm.moodboard_urls} onChange={v=>setProjectForm({...projectForm,moodboard_urls:v})}/><AttachmentEditor label="Attach design documents" accept="image/*,.pdf,.doc,.docx" value={projectForm.document_urls} onChange={v=>setProjectForm({...projectForm,document_urls:v})}/></div></FormModal>}
-    {modal==="pattern"&&<FormModal title="Add pattern version" onClose={()=>setModal("")} onSubmit={e=>{e.preventDefault();run("/patterns",{...patternForm,sizes:patternForm.sizes.split(",").map(x=>x.trim()).filter(Boolean),measurement_rows:gradingRows(patternForm.measurement_rows),file_urls:patternForm.file_urls.split("\n").filter(Boolean)})}}><div className="grid gap-4 md:grid-cols-2"><ProjectSelect value={patternForm.project_id} onChange={v=>setPatternForm({...patternForm,project_id:v})} projects={data.projects}/>{["pattern_no","pattern_name","version","base_size","sizes","fabric_width","consumption_per_unit","wastage_pct","marker_length","marker_efficiency","seam_allowance","shrinkage_allowance"].map(k=><Field key={k} label={pretty(k)}><input required={["pattern_name","version"].includes(k)} type={["consumption_per_unit","wastage_pct","marker_efficiency"].includes(k)?"number":"text"} value={patternForm[k]} onChange={e=>setPatternForm({...patternForm,[k]:e.target.value})}/></Field>)}<Field label="Base block used"><div><select value={(patternVocabulary.base_block||[]).includes(patternForm.base_block)?patternForm.base_block:""} onChange={e=>setPatternForm({...patternForm,base_block:e.target.value})} className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs outline-none focus:border-violet-400"><option value="">Select block</option>{(patternVocabulary.base_block||[]).map(x=><option key={x}>{x}</option>)}</select><div className="mt-1.5 flex gap-1.5"><input value={customVocabInput.base_block} onChange={e=>setCustomVocabInput({...customVocabInput,base_block:e.target.value})} placeholder="Not in the list? Type a custom block" className="w-full rounded-lg border border-slate-200 px-2 py-1.5 text-xs outline-none focus:border-violet-400"/><button type="button" onClick={()=>{const v=customVocabInput.base_block.trim();if(v){setPatternForm({...patternForm,base_block:v});setCustomVocabInput({...customVocabInput,base_block:""});}}} className={`${BTN_SUBTLE} !px-2.5 !py-1 text-xs shrink-0`}>Use</button></div>{patternForm.base_block&&!(patternVocabulary.base_block||[]).includes(patternForm.base_block)&&<p className="mt-1 text-[11px] font-bold text-violet-600">Custom: {patternForm.base_block}</p>}</div></Field>{["seam_types","closure_types","dart_pleat_tuck_details","hem_finishes"].map(field=><Field key={field} label={pretty(field)} wide><div><div className="flex flex-wrap gap-2">{(patternVocabulary[field]||[]).map(opt=><label key={opt} className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-bold text-slate-700"><input type="checkbox" checked={patternForm[field].includes(opt)} onChange={e=>setPatternForm({...patternForm,[field]:e.target.checked?[...patternForm[field],opt]:patternForm[field].filter(x=>x!==opt)})}/>{opt}</label>)}{patternForm[field].filter(v=>!(patternVocabulary[field]||[]).includes(v)).map(v=><span key={v} className="flex items-center gap-1.5 rounded-lg border border-violet-200 bg-violet-50 px-2.5 py-1.5 text-xs font-bold text-violet-700">{v}<button type="button" onClick={()=>setPatternForm({...patternForm,[field]:patternForm[field].filter(x=>x!==v)})} className="text-violet-400 hover:text-violet-700">×</button></span>)}</div><div className="mt-1.5 flex gap-1.5"><input value={customVocabInput[field]} onChange={e=>setCustomVocabInput({...customVocabInput,[field]:e.target.value})} placeholder="Not in the list? Type your own and add it" className="w-full rounded-lg border border-slate-200 px-2 py-1.5 text-xs outline-none focus:border-violet-400"/><button type="button" onClick={()=>{const v=customVocabInput[field].trim();if(v&&!patternForm[field].includes(v)){setPatternForm({...patternForm,[field]:[...patternForm[field],v]});}setCustomVocabInput({...customVocabInput,[field]:""});}} className={`${BTN_SUBTLE} !px-2.5 !py-1 text-xs shrink-0`}>Add</button></div></div></Field>)}<Field label="Measurement grading (Point | Base | S:36,M:38...)" wide><textarea rows="4" value={patternForm.measurement_rows} onChange={e=>setPatternForm({...patternForm,measurement_rows:e.target.value})} placeholder={'Chest | 40 | S:36, M:38, L:40, XL:42\nLength | 28 | S:27, M:28, L:29, XL:30'}/></Field><AssetUploader label="Upload CAD / DXF / PDF files" onUploaded={urls=>setPatternForm({...patternForm,file_urls:[patternForm.file_urls,...urls].filter(Boolean).join("\n")})}/><Field label="Technical file links" wide><textarea rows="2" value={patternForm.file_urls} onChange={e=>setPatternForm({...patternForm,file_urls:e.target.value})}/></Field><Field label="Pattern / grading notes" wide><textarea rows="3" value={patternForm.notes} onChange={e=>setPatternForm({...patternForm,notes:e.target.value})}/></Field></div></FormModal>}
+    {modal==="pattern"&&<FormModal title="Add pattern version" onClose={()=>setModal("")} onSubmit={e=>{e.preventDefault();run("/patterns",{...patternForm,sizes:patternForm.sizes.split(",").map(x=>x.trim()).filter(Boolean),measurement_rows:gradingRows(patternForm.measurement_rows),file_urls:patternForm.file_urls.split("\n").filter(Boolean)}).then(loadFamilies)}}><div className="grid gap-4 md:grid-cols-2">
+      <div className="md:col-span-2 rounded-xl border border-violet-100 bg-violet-50 p-3 text-xs leading-5 text-violet-900"><b>Check for an existing pattern first:</b> use "Reuse from library" on the Pattern Versions screen to see if a similar block/style already exists before building a new one from scratch.</div>
+      <ProjectSelect value={patternForm.project_id} onChange={v=>setPatternForm({...patternForm,project_id:v})} projects={data.projects}/>
+      <Field label="Pattern family (e.g. Classic Shirt, Straight Pant)"><input list="pattern-family-suggestions" value={patternForm.family_name} onChange={e=>setPatternForm({...patternForm,family_name:e.target.value})} placeholder="Group this with other variations of the same base block"/></Field>
+      <datalist id="pattern-family-suggestions">{patternFamilies.map(f=><option key={f.family_name} value={f.family_name}/>)}</datalist>
+      <Field label="What's different in this variation" wide><input value={patternForm.variation_notes} onChange={e=>setPatternForm({...patternForm,variation_notes:e.target.value})} placeholder="e.g. Same base shirt, Mandarin collar instead of classic collar"/></Field>
+      {["pattern_no","pattern_name","version","base_size","sizes","fabric_width","consumption_per_unit","wastage_pct","marker_length","marker_efficiency","seam_allowance","shrinkage_allowance"].map(k=><Field key={k} label={pretty(k)}><input required={["pattern_name","version"].includes(k)} type={["consumption_per_unit","wastage_pct","marker_efficiency"].includes(k)?"number":"text"} value={patternForm[k]} onChange={e=>setPatternForm({...patternForm,[k]:e.target.value})}/></Field>)}<Field label="Base block used"><div><select value={(patternVocabulary.base_block||[]).includes(patternForm.base_block)?patternForm.base_block:""} onChange={e=>setPatternForm({...patternForm,base_block:e.target.value})} className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs outline-none focus:border-violet-400"><option value="">Select block</option>{(patternVocabulary.base_block||[]).map(x=><option key={x}>{x}</option>)}</select><div className="mt-1.5 flex gap-1.5"><input value={customVocabInput.base_block} onChange={e=>setCustomVocabInput({...customVocabInput,base_block:e.target.value})} placeholder="Not in the list? Type a custom block" className="w-full rounded-lg border border-slate-200 px-2 py-1.5 text-xs outline-none focus:border-violet-400"/><button type="button" onClick={()=>{const v=customVocabInput.base_block.trim();if(v){setPatternForm({...patternForm,base_block:v});setCustomVocabInput({...customVocabInput,base_block:""});}}} className={`${BTN_SUBTLE} !px-2.5 !py-1 text-xs shrink-0`}>Use</button></div>{patternForm.base_block&&!(patternVocabulary.base_block||[]).includes(patternForm.base_block)&&<p className="mt-1 text-[11px] font-bold text-violet-600">Custom: {patternForm.base_block}</p>}</div></Field>{["seam_types","closure_types","dart_pleat_tuck_details","hem_finishes"].map(field=><Field key={field} label={pretty(field)} wide><div><div className="flex flex-wrap gap-2">{(patternVocabulary[field]||[]).map(opt=><label key={opt} className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-bold text-slate-700"><input type="checkbox" checked={patternForm[field].includes(opt)} onChange={e=>setPatternForm({...patternForm,[field]:e.target.checked?[...patternForm[field],opt]:patternForm[field].filter(x=>x!==opt)})}/>{opt}</label>)}{patternForm[field].filter(v=>!(patternVocabulary[field]||[]).includes(v)).map(v=><span key={v} className="flex items-center gap-1.5 rounded-lg border border-violet-200 bg-violet-50 px-2.5 py-1.5 text-xs font-bold text-violet-700">{v}<button type="button" onClick={()=>setPatternForm({...patternForm,[field]:patternForm[field].filter(x=>x!==v)})} className="text-violet-400 hover:text-violet-700">×</button></span>)}</div><div className="mt-1.5 flex gap-1.5"><input value={customVocabInput[field]} onChange={e=>setCustomVocabInput({...customVocabInput,[field]:e.target.value})} placeholder="Not in the list? Type your own and add it" className="w-full rounded-lg border border-slate-200 px-2 py-1.5 text-xs outline-none focus:border-violet-400"/><button type="button" onClick={()=>{const v=customVocabInput[field].trim();if(v&&!patternForm[field].includes(v)){setPatternForm({...patternForm,[field]:[...patternForm[field],v]});}setCustomVocabInput({...customVocabInput,[field]:""});}} className={`${BTN_SUBTLE} !px-2.5 !py-1 text-xs shrink-0`}>Add</button></div></div></Field>)}<Field label="Measurement grading (Point | Base | S:36,M:38...)" wide><textarea rows="4" value={patternForm.measurement_rows} onChange={e=>setPatternForm({...patternForm,measurement_rows:e.target.value})} placeholder={'Chest | 40 | S:36, M:38, L:40, XL:42\nLength | 28 | S:27, M:28, L:29, XL:30'}/></Field><AssetUploader label="Upload CAD / DXF / PDF files" onUploaded={urls=>setPatternForm({...patternForm,file_urls:[patternForm.file_urls,...urls].filter(Boolean).join("\n")})}/><Field label="Technical file links" wide><textarea rows="2" value={patternForm.file_urls} onChange={e=>setPatternForm({...patternForm,file_urls:e.target.value})}/></Field><Field label="Pattern / grading notes" wide><textarea rows="3" value={patternForm.notes} onChange={e=>setPatternForm({...patternForm,notes:e.target.value})}/></Field></div></FormModal>}
     {modal==="sample"&&<FormModal title={sampleForm.id?"Update sample review":"Record sample request / review"} onClose={()=>setModal("")} onSubmit={e=>{e.preventDefault();saveEditable("samples",sampleForm.id,{...sampleForm,image_urls:sampleForm.image_urls.split("\n").filter(Boolean)},"Sample saved.")}}><div className="grid gap-4 md:grid-cols-2"><ProjectSelect value={sampleForm.project_id} onChange={v=>setSampleForm({...sampleForm,project_id:v})} projects={data.projects}/><Field label="Pattern version"><select value={sampleForm.pattern_id} onChange={e=>setSampleForm({...sampleForm,pattern_id:e.target.value})}><option value="">No pattern linked</option>{data.patterns.filter(p=>p.project_id===sampleForm.project_id).map(p=><option key={p.id} value={p.id}>{p.pattern_no} · {p.version}</option>)}</select></Field><Field label="Sample type"><select value={sampleForm.sample_type} onChange={e=>setSampleForm({...sampleForm,sample_type:e.target.value})}>{sampleTypeOptions.map(x=><option key={x}>{x}</option>)}</select></Field>{["quantity","required_date","received_date","assigned_to","estimated_cost","actual_cost"].map(k=><Field key={k} label={pretty(k)}><input type={k.includes("date")?"date":["quantity","estimated_cost","actual_cost"].includes(k)?"number":"text"} value={sampleForm[k]} onChange={e=>setSampleForm({...sampleForm,[k]:e.target.value})}/></Field>)}<Field label="Decision"><select value={sampleForm.decision} onChange={e=>setSampleForm({...sampleForm,decision:e.target.value})}>{DECISIONS.map(x=><option key={x}>{x}</option>)}</select></Field>{["materials","fit_result","construction_result"].map(k=><Field key={k} label={pretty(k)}><input value={sampleForm[k]} onChange={e=>setSampleForm({...sampleForm,[k]:e.target.value})}/></Field>)}<AttachmentEditor label="Attach front, back, side and fit-review photos" value={sampleForm.image_urls} onChange={v=>setSampleForm({...sampleForm,image_urls:v})}/><Field label="Review / correction notes" wide><textarea required rows="3" value={sampleForm.review_notes} onChange={e=>setSampleForm({...sampleForm,review_notes:e.target.value})}/></Field></div></FormModal>}
     {modal==="query"&&<FormModal title="Raise design query" onClose={()=>setModal("")} onSubmit={e=>{e.preventDefault();run("/queries",{...queryForm,attachment_urls:queryForm.attachment_urls.split("\n").filter(Boolean)})}}><div className="grid gap-4 md:grid-cols-2"><ProjectSelect value={queryForm.project_id} onChange={v=>setQueryForm({...queryForm,project_id:v})} projects={data.projects}/><Field label="Category"><select value={queryForm.category} onChange={e=>setQueryForm({...queryForm,category:e.target.value})}>{["Measurement clarification","Pattern file missing","Fabric specification","Artwork placement","Trim unavailable","Consumption concern","Construction feasibility","Other"].map(x=><option key={x}>{x}</option>)}</select></Field><Field label="Priority"><select value={queryForm.priority} onChange={e=>setQueryForm({...queryForm,priority:e.target.value})}><option>LOW</option><option>MEDIUM</option><option>HIGH</option><option>URGENT</option></select></Field><Field label="Question / issue" wide><textarea required rows="4" value={queryForm.description} onChange={e=>setQueryForm({...queryForm,description:e.target.value})}/></Field><AttachmentEditor label="Attach issue photos or screenshots" value={queryForm.attachment_urls} onChange={v=>setQueryForm({...queryForm,attachment_urls:v})}/></div></FormModal>}
     {modal==="release"&&<FormModal title={releaseForm.force?"Release without full sign-off":"Release approved design to Production"} onClose={()=>setModal("")} onSubmit={e=>{e.preventDefault();run(`/projects/${releaseForm.project_id}/release`,releaseForm)}}><div className="space-y-4">{releaseForm.force?<div className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900"><b>Override:</b> one or more handoff gates are not met. This still locks the Tech Pack for Production; the reason below is saved on the record.</div>:<div className="rounded-xl bg-emerald-50 p-3 text-sm text-emerald-900">This locks the selected Tech Pack as the Production reference. Active job orders retain their own snapshot.</div>}{releaseForm.force&&<Field label="Reason for releasing without sign-off *"><textarea required rows="2" value={releaseForm.force_reason||""} onChange={e=>setReleaseForm({...releaseForm,force_reason:e.target.value})} placeholder="e.g. simple restyle of an existing production style, urgent reorder"/></Field>}<Field label="Approved tech pack"><select required value={releaseForm.tech_pack_id} onChange={e=>setReleaseForm({...releaseForm,tech_pack_id:e.target.value})}>{data.tech_packs.filter(t=>t.design_no===data.projects.find(p=>p.id===releaseForm.project_id)?.design_no).map(t=><option key={t.id} value={t.id}>{t.tech_pack_no} · {t.version}</option>)}</select></Field><Field label="Style BOM / material plan"><select value={releaseForm.material_plan_id} onChange={e=>setReleaseForm({...releaseForm,material_plan_id:e.target.value,auto_create_bom:false})}><option value="">No existing BOM selected</option>{data.material_plans.map(p=><option key={p.id} value={p.id}>{p.plan_no} · {p.style_name}</option>)}</select></Field><label className="flex items-start gap-3 rounded-xl border p-3 text-sm"><input type="checkbox" checked={Boolean(releaseForm.auto_create_bom)} onChange={e=>setReleaseForm({...releaseForm,auto_create_bom:e.target.checked,material_plan_id:e.target.checked?"":releaseForm.material_plan_id})}/><span><b>Automatically create Style BOM</b><br/><span className="text-slate-500">Uses planned quantity and the latest pattern consumption/wastage.</span></span></label>{releaseForm.auto_create_bom&&<Field label="Main material name"><input value={releaseForm.material_name||""} onChange={e=>setReleaseForm({...releaseForm,material_name:e.target.value})} placeholder="Main fabric"/></Field>}</div></FormModal>}
@@ -493,7 +706,7 @@ export default function DesignPattern(){
       <div className="grid gap-4 md:grid-cols-2">
         <Field label="Date"><input type="date" required value={floorLogForm.date} onChange={e=>setFloorLogForm({...floorLogForm,date:e.target.value})}/></Field>
         <Field label="Time"><input type="time" value={floorLogForm.time} onChange={e=>setFloorLogForm({...floorLogForm,time:e.target.value})}/></Field>
-        <Field label="Department *"><select required value={floorLogForm.department} onChange={e=>setFloorLogForm({...floorLogForm,department:e.target.value})}><option value="">Select department</option>{floorDepts.map(d=><option key={d.name} value={d.name}>{d.name}</option>)}</select></Field>
+        <Field label="Department *"><select required value={floorLogForm.department} onChange={e=>setFloorLogDepartment(e.target.value)}><option value="">Select department</option>{floorDepts.map(d=><option key={d.name} value={d.name}>{d.name}</option>)}</select></Field>
         <Field label="Worker (from directory)"><select value={floorLogForm.worker_id} onChange={e=>{const w=floorWorkers.find(x=>x.id===e.target.value);setFloorLogForm({...floorLogForm,worker_id:e.target.value,worker_name:w?w.name:floorLogForm.worker_name});}}><option value="">— Not in directory, type below —</option>{floorWorkers.filter(w=>w.active!==false).map(w=><option key={w.id} value={w.id}>{w.name}</option>)}</select></Field>
         <Field label="Worker name *"><input required value={floorLogForm.worker_name} onChange={e=>setFloorLogForm({...floorLogForm,worker_name:e.target.value,worker_id:""})} placeholder="Full name"/></Field>
         <Field label="Style / Design no."><input list="dp-floor-design-list" value={floorLogForm.design_no} onChange={e=>setFloorLogForm({...floorLogForm,design_no:e.target.value})}/></Field>
@@ -502,12 +715,37 @@ export default function DesignPattern(){
         {currentFloorFields.map(key=>{
           const meta=FLOOR_FIELD_META[key]||{label:pretty(key),type:"text"};
           const label=currentFloorDept?.labels?.[key]||meta.label;
+          // completed_qty/wastage_mtrs are replaced by the Size and Wastage
+          // breakdown editors below once at least one row is in use — the
+          // worker enters Size->Qty / Category->Qty, never a second total
+          // that has to be kept in sync by hand.
+          if(key==="completed_qty"&&floorSizeRows.length) return null;
+          if(key==="wastage_mtrs"&&floorWasteRows.length) return null;
           if(key==="remarks") return <Field key={key} label={label} wide><textarea rows="2" value={floorLogForm.remarks} onChange={e=>setFloorLogForm({...floorLogForm,remarks:e.target.value})}/></Field>;
           if(key==="on_time") return <Field key={key} label={label}><select value={floorLogForm.on_time?"yes":"no"} onChange={e=>setFloorLogForm({...floorLogForm,on_time:e.target.value==="yes"})}><option value="yes">Yes</option><option value="no">No</option></select></Field>;
           if(meta.type==="number") return <Field key={key} label={label}><input type="number" min="0" step="0.01" value={floorLogForm[key]} onChange={e=>setFloorLogForm({...floorLogForm,[key]:e.target.value})}/></Field>;
           return <Field key={key} label={label}><input value={floorLogForm[key]} onChange={e=>setFloorLogForm({...floorLogForm,[key]:e.target.value})}/></Field>;
         })}
       </div>
+      {currentFloorFields.includes("completed_qty")&&<div className="mt-4 rounded-xl border border-slate-200 p-3">
+        <div className="mb-2 flex items-center justify-between"><p className="text-[11px] font-black uppercase tracking-wide text-slate-500">Size-wise quantity (optional — leave off to just use the total above)</p><button type="button" onClick={()=>setFloorSizeRows([...floorSizeRows,{size:"",qty:""}])} className={`${BTN_SUBTLE} !px-2 !py-1 text-xs`}><Plus className="h-3 w-3"/>Add size</button></div>
+        {floorSizeRows.map((row,i)=><div key={i} className="mb-2 flex items-center gap-2">
+          <input placeholder="Size (S, M, L…)" value={row.size} onChange={e=>setFloorSizeRows(floorSizeRows.map((r,idx)=>idx===i?{...r,size:e.target.value}:r))} className="w-32 rounded-lg border border-slate-200 px-2 py-1.5 text-sm"/>
+          <input type="number" min="0" placeholder="Qty" value={row.qty} onChange={e=>setFloorSizeRows(floorSizeRows.map((r,idx)=>idx===i?{...r,qty:e.target.value}:r))} className="w-24 rounded-lg border border-slate-200 px-2 py-1.5 text-sm"/>
+          <button type="button" onClick={()=>setFloorSizeRows(floorSizeRows.filter((_,idx)=>idx!==i))} className="text-rose-500 hover:text-rose-700"><X className="h-4 w-4"/></button>
+        </div>)}
+        {floorSizeRows.length>0&&<p className="text-xs font-bold text-violet-700">Total: {floorSizeRows.reduce((s,r)=>s+(Number(r.qty)||0),0)} pcs — this becomes the completed qty automatically.</p>}
+      </div>}
+      {currentFloorFields.includes("wastage_mtrs")&&<div className="mt-4 rounded-xl border border-slate-200 p-3">
+        <div className="mb-2 flex items-center justify-between"><p className="text-[11px] font-black uppercase tracking-wide text-slate-500">Wastage by category (optional — leave off to just use the total above)</p><button type="button" onClick={()=>setFloorWasteRows([...floorWasteRows,{category:"",qty:""}])} disabled={!floorWasteCatOptions.length} className={`${BTN_SUBTLE} !px-2 !py-1 text-xs`}><Plus className="h-3 w-3"/>Add category</button></div>
+        {!floorWasteCatOptions.length&&<p className="text-xs text-slate-400">Categories load once a department is selected.</p>}
+        {floorWasteRows.map((row,i)=><div key={i} className="mb-2 flex items-center gap-2">
+          <select value={row.category} onChange={e=>setFloorWasteRows(floorWasteRows.map((r,idx)=>idx===i?{...r,category:e.target.value}:r))} className="flex-1 rounded-lg border border-slate-200 px-2 py-1.5 text-sm"><option value="">Select category</option>{floorWasteCatOptions.map(c=><option key={c.code} value={c.code}>{c.label}{c.is_recoverable?" (recoverable)":""}</option>)}</select>
+          <input type="number" min="0" step="0.01" placeholder="Qty" value={row.qty} onChange={e=>setFloorWasteRows(floorWasteRows.map((r,idx)=>idx===i?{...r,qty:e.target.value}:r))} className="w-24 rounded-lg border border-slate-200 px-2 py-1.5 text-sm"/>
+          <button type="button" onClick={()=>setFloorWasteRows(floorWasteRows.filter((_,idx)=>idx!==i))} className="text-rose-500 hover:text-rose-700"><X className="h-4 w-4"/></button>
+        </div>)}
+        {floorWasteRows.length>0&&<p className="text-xs font-bold text-violet-700">Total: {floorWasteRows.reduce((s,r)=>s+(Number(r.qty)||0),0)} — this becomes the wastage total automatically.</p>}
+      </div>}
       <datalist id="dp-floor-design-list">{data.projects.map(p=><option key={p.id} value={p.design_no}/>)}</datalist>
     </FormModal>}
     {modal==="floorworker"&&<FormModal title="Add floor worker" onClose={()=>setModal("")} onSubmit={submitFloorWorker}>
@@ -527,6 +765,60 @@ export default function DesignPattern(){
         <div className="flex justify-end gap-3"><button onClick={()=>{setModal("");setFloorBulk(null);}} className={BTN_GHOST}>Cancel</button><button disabled={!floorBulk.preview.summary.valid_count} onClick={commitFloorBulk} className={BTN_PRIMARY}>Import {floorBulk.preview.summary.valid_count} row(s)</button></div>
       </div>
     </Modal>}
+    {modal==="fabriclot"&&<FormModal title="Receive fabric lot" onClose={()=>setModal("")} onSubmit={submitFabricLot}>
+      <div className="grid gap-4 md:grid-cols-2">
+        <Field label="Fabric name *"><input required value={fabricLotForm.fabric_name} onChange={e=>setFabricLotForm({...fabricLotForm,fabric_name:e.target.value})}/></Field>
+        <Field label="Lot No. *"><input required value={fabricLotForm.lot_no} onChange={e=>setFabricLotForm({...fabricLotForm,lot_no:e.target.value})}/></Field>
+        <Field label="Roll No."><input value={fabricLotForm.roll_no} onChange={e=>setFabricLotForm({...fabricLotForm,roll_no:e.target.value})}/></Field>
+        <Field label="Colour / shade"><input value={fabricLotForm.colour} onChange={e=>setFabricLotForm({...fabricLotForm,colour:e.target.value})}/></Field>
+        <Field label="Width"><input value={fabricLotForm.width} onChange={e=>setFabricLotForm({...fabricLotForm,width:e.target.value})} placeholder="e.g. 58in"/></Field>
+        <Field label="GSM"><input value={fabricLotForm.gsm} onChange={e=>setFabricLotForm({...fabricLotForm,gsm:e.target.value})}/></Field>
+        <Field label="Vendor"><input value={fabricLotForm.vendor_name} onChange={e=>setFabricLotForm({...fabricLotForm,vendor_name:e.target.value})}/></Field>
+        <Field label="Unit"><select value={fabricLotForm.unit} onChange={e=>setFabricLotForm({...fabricLotForm,unit:e.target.value})}><option value="MTR">MTR</option><option value="KG">KG</option><option value="UNIT">UNIT</option></select></Field>
+        <Field label="Received qty *"><input required type="number" min="0.01" step="0.01" value={fabricLotForm.received_qty} onChange={e=>setFabricLotForm({...fabricLotForm,received_qty:e.target.value})}/></Field>
+        <Field label="Opening qty (carried over, if any)"><input type="number" min="0" step="0.01" value={fabricLotForm.opening_qty} onChange={e=>setFabricLotForm({...fabricLotForm,opening_qty:e.target.value})}/></Field>
+        <Field label="Rate (per unit)"><input type="number" min="0" step="0.01" value={fabricLotForm.rate} onChange={e=>setFabricLotForm({...fabricLotForm,rate:e.target.value})}/></Field>
+        <Field label="Design No. (optional link)"><input value={fabricLotForm.design_no} onChange={e=>setFabricLotForm({...fabricLotForm,design_no:e.target.value})}/></Field>
+        <Field label="QC status"><select value={fabricLotForm.qc_status} onChange={e=>setFabricLotForm({...fabricLotForm,qc_status:e.target.value})}><option value="PENDING">Pending</option><option value="PASSED">Passed</option><option value="FAILED">Failed</option></select></Field>
+        <Field label="QC note"><input value={fabricLotForm.qc_note} onChange={e=>setFabricLotForm({...fabricLotForm,qc_note:e.target.value})}/></Field>
+        <Field label="Notes" wide><textarea rows="2" value={fabricLotForm.notes} onChange={e=>setFabricLotForm({...fabricLotForm,notes:e.target.value})}/></Field>
+        <Field label="Swatch photo (optional)" wide>
+          <div>
+            <input type="file" accept="image/*" onChange={e=>setFabricLotFile(e.target.files?.[0]||null)}/>
+            {fabricLotFile&&<p className="mt-1.5 text-xs font-semibold text-violet-700">{fabricLotFile.name} selected — uploaded once the lot is saved.</p>}
+          </div>
+        </Field>
+      </div>
+    </FormModal>}
+    {modal==="fabrictxn"&&fabricTxnTarget&&<FormModal title={`${pretty(fabricTxnForm.type)} — ${fabricTxnTarget.lot_no}`} onClose={()=>{setModal("");setFabricTxnTarget(null);}} onSubmit={submitFabricTxn}>
+      <div className="mb-4 rounded-xl bg-slate-50 p-3 text-xs text-slate-600">Balance on hand: <b className="text-slate-900">{fabricTxnTarget.closing_balance} {fabricTxnTarget.unit}</b>{fabricTxnForm.type!=="ISSUE"&&<> · Issued fabric still unaccounted for: <b className="text-slate-900">{Math.max(0,(fabricTxnTarget.issued_qty||0)-(fabricTxnTarget.consumed_qty||0)-(fabricTxnTarget.waste_qty||0)-(fabricTxnTarget.returned_qty||0)).toFixed(2)} {fabricTxnTarget.unit}</b></>}</div>
+      <div className="grid gap-4 md:grid-cols-2">
+        <Field label="Type"><select value={fabricTxnForm.type} onChange={e=>setFabricTxnForm({...fabricTxnForm,type:e.target.value})}><option value="ISSUE">Issue (to floor)</option><option value="CONSUME">Consume</option><option value="WASTE">Waste</option><option value="RETURN">Return (unused, back to store)</option></select></Field>
+        <Field label={`Quantity (${fabricTxnTarget.unit}) *`}><input required type="number" min="0.01" step="0.01" value={fabricTxnForm.qty} onChange={e=>setFabricTxnForm({...fabricTxnForm,qty:e.target.value})}/></Field>
+        {fabricTxnForm.type==="WASTE"&&<Field label="Wastage category *"><select required value={fabricTxnForm.category} onChange={e=>setFabricTxnForm({...fabricTxnForm,category:e.target.value})}><option value="">Select category</option>{(cfg.wastage_categories||DEFAULT_WASTAGE_CATEGORIES).map(c=><option key={c.code} value={c.code}>{c.label}{c.is_recoverable?" (recoverable)":""}</option>)}</select></Field>}
+        <Field label="Design No."><input value={fabricTxnForm.design_no} onChange={e=>setFabricTxnForm({...fabricTxnForm,design_no:e.target.value})}/></Field>
+        <Field label="Note" wide><input value={fabricTxnForm.note} onChange={e=>setFabricTxnForm({...fabricTxnForm,note:e.target.value})}/></Field>
+      </div>
+    </FormModal>}
+    {modal==="library"&&<Modal title="Pattern variation library" onClose={()=>setModal("")}><div className="space-y-4 p-5 sm:p-6">
+      <p className="text-sm text-slate-500">Browse every pattern already built for a given base silhouette, across all design numbers — reuse or clone the closest match instead of starting from scratch.</p>
+      <label className="block text-xs font-bold uppercase tracking-wide text-slate-500">Family<select value={libraryFamily} onChange={e=>browseLibrary(e.target.value)} className="mt-1.5 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm font-medium text-slate-800"><option value="">Select a pattern family</option>{patternFamilies.map(f=><option key={f.family_name} value={f.family_name}>{f.family_name} ({f.variations})</option>)}</select></label>
+      {!patternFamilies.length&&<p className="rounded-lg bg-slate-50 p-3 text-xs text-slate-500">No patterns are tagged with a family yet. Add a "Pattern family" name next time you create a pattern to start building this library.</p>}
+      {libraryBusy?<p className="text-sm text-slate-400">Loading…</p>:<div className="grid gap-3 sm:grid-cols-2">{libraryRows.map(row=><div key={row.id} className="rounded-xl border border-slate-200 p-3">
+        {row.preview_image&&<img src={row.preview_image} alt="" className="mb-2 h-28 w-full rounded-lg object-cover"/>}
+        <p className="text-sm font-bold text-slate-900">{row.pattern_no} · {row.design_no}</p>
+        <p className="text-xs text-slate-500">{row.base_block||"No base block set"}</p>
+        {row.variation_notes&&<p className="mt-1 text-xs font-semibold text-violet-700">{row.variation_notes}</p>}
+        <button onClick={()=>{setCloneForm({source_id:row.id,source_label:`${row.pattern_no} · ${row.family_name}`,project_id:"",variation_notes:""});setModal("clone");}} className={`${BTN_SUBTLE} mt-2 !px-2.5 !py-1 text-xs`}>Clone as new variation</button>
+      </div>)}{libraryFamily&&!libraryRows.length&&!libraryBusy&&<p className="sm:col-span-2 rounded-lg bg-slate-50 p-4 text-center text-xs text-slate-400">No variations found for this family yet — this would be the first.</p>}</div>}
+    </div></Modal>}
+    {modal==="clone"&&cloneForm&&<FormModal title="Clone as new pattern variation" onClose={()=>{setModal("");setCloneForm(null);}} onSubmit={e=>{e.preventDefault();run(`/patterns/${cloneForm.source_id}/clone`,{project_id:cloneForm.project_id,variation_notes:cloneForm.variation_notes},"Pattern cloned.").then(loadFamilies);setCloneForm(null);}}>
+      <div className="grid gap-4">
+        <div className="rounded-xl border border-violet-100 bg-violet-50 p-3 text-xs leading-5 text-violet-900">Copying construction, measurements, size ratio and pattern pieces (with their images) from <b>{cloneForm.source_label}</b> onto a new pattern under the design you pick below. Edit only what's actually different afterwards.</div>
+        <ProjectSelect value={cloneForm.project_id} onChange={v=>setCloneForm({...cloneForm,project_id:v})} projects={data.projects}/>
+        <Field label="What's different in this variation" wide><input value={cloneForm.variation_notes} onChange={e=>setCloneForm({...cloneForm,variation_notes:e.target.value})} placeholder="e.g. Mandarin collar instead of classic collar"/></Field>
+      </div>
+    </FormModal>}
     {modal==="revision"&&revisionForm&&<FormModal title="Create pattern revision" onClose={()=>{setModal("");setRevisionForm(null);}} onSubmit={e=>{e.preventDefault();run(`/patterns/${revisionForm.id}/revision`,{version:revisionForm.version,reason:revisionForm.reason||"Technical revision"},"Pattern revision created.");setRevisionForm(null);}}>
       <div className="grid gap-4">
         <Field label="New version *"><input required value={revisionForm.version} onChange={e=>setRevisionForm({...revisionForm,version:e.target.value})}/></Field>
@@ -546,6 +838,7 @@ function SettingsPanel({settings,onSaved,onError}){
     default_base_size:base.default_base_size||"M",
     default_size_run:base.default_size_run||"S, M, L, XL",
     allowance_limits:{...DEFAULT_SETTINGS.allowance_limits,...(base.allowance_limits||{})},
+    wastage_categories:(base.wastage_categories?.length?base.wastage_categories:DEFAULT_WASTAGE_CATEGORIES).map(c=>({...c,departments_text:(c.departments||[]).join(", ")})),
     require_sample_approval:base.require_sample_approval!==false,
     require_design_head_approval:base.require_design_head_approval!==false,
     require_production_feasibility:base.require_production_feasibility!==false,
@@ -561,6 +854,7 @@ function SettingsPanel({settings,onSaved,onError}){
         default_base_size:form.default_base_size.trim(),
         default_size_run:form.default_size_run.trim(),
         allowance_limits:form.allowance_limits,
+        wastage_categories:form.wastage_categories.map(c=>({code:c.code,label:c.label,is_recoverable:c.is_recoverable,departments:c.departments_text.split(",").map(x=>x.trim()).filter(Boolean)})).filter(c=>c.code.trim()),
         require_sample_approval:form.require_sample_approval,
         require_design_head_approval:form.require_design_head_approval,
         require_production_feasibility:form.require_production_feasibility,
@@ -598,6 +892,17 @@ function SettingsPanel({settings,onSaved,onError}){
         <div><p className={labelClass}>Manual allowance exception limits</p><p className="text-xs leading-5 text-slate-500">These numbers never add wastage automatically. They only decide when a manually entered Tech Pack allowance must be approved by HQ.</p></div>
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">{Object.entries(form.allowance_limits||{}).map(([process,rule])=><label key={process} className="block"><span className={labelClass}>{pretty(process)}</span><div className="flex"><input type="number" min="0" step="0.01" value={rule.value} onChange={event=>setForm(current=>({...current,allowance_limits:{...current.allowance_limits,[process]:{...rule,value:Number(event.target.value)||0}}}))} className={box}/><span className="ml-1 grid min-w-20 place-items-center rounded-xl border border-slate-200 bg-white px-2 text-[10px] font-bold text-slate-500">{String(rule.unit||"").replaceAll("_"," / ")}</span></div></label>)}</div>
       </div>
+      <div className="space-y-3 rounded-2xl border border-slate-200 p-4">
+        <div><p className={labelClass}>Wastage categories</p><p className="text-xs leading-5 text-slate-500">Rename, remove, add or re-scope these to your own floor departments. "Recoverable" means the fabric can still be reused elsewhere (Fabric &amp; Production → Reuse matches) rather than true scrap. A category left with no departments is offered everywhere.</p></div>
+        <div className="space-y-2">{form.wastage_categories.map((cat,i)=><div key={i} className="grid items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 p-2.5 sm:grid-cols-[1fr_1fr_auto_1fr_auto]">
+          <input value={cat.code} onChange={e=>setForm(cur=>({...cur,wastage_categories:cur.wastage_categories.map((x,n)=>n===i?{...x,code:e.target.value.toLowerCase().replace(/\s+/g,"_")}:x)}))} placeholder="code (e.g. shade_issue)" className={`${box} !py-1.5 text-xs`}/>
+          <input value={cat.label} onChange={e=>setForm(cur=>({...cur,wastage_categories:cur.wastage_categories.map((x,n)=>n===i?{...x,label:e.target.value}:x)}))} placeholder="Label shown to staff" className={`${box} !py-1.5 text-xs`}/>
+          <label className="flex items-center gap-1.5 whitespace-nowrap text-[11px] font-bold text-slate-600"><input type="checkbox" checked={cat.is_recoverable} onChange={e=>setForm(cur=>({...cur,wastage_categories:cur.wastage_categories.map((x,n)=>n===i?{...x,is_recoverable:e.target.checked}:x)}))}/>Recoverable</label>
+          <input value={cat.departments_text} onChange={e=>setForm(cur=>({...cur,wastage_categories:cur.wastage_categories.map((x,n)=>n===i?{...x,departments_text:e.target.value}:x)}))} placeholder="Departments, comma separated (blank = everywhere)" className={`${box} !py-1.5 text-xs`}/>
+          <button type="button" onClick={()=>setForm(cur=>({...cur,wastage_categories:cur.wastage_categories.filter((_,n)=>n!==i)}))} className="rounded-lg border border-rose-200 bg-white px-2 py-1.5 text-xs font-bold text-rose-600 hover:bg-rose-50">Remove</button>
+        </div>)}</div>
+        <button type="button" onClick={()=>setForm(cur=>({...cur,wastage_categories:[...cur.wastage_categories,{code:"",label:"",is_recoverable:false,departments_text:""}]}))} className={`${BTN_SUBTLE} !px-3 !py-1.5 text-xs`}><Plus className="h-3.5 w-3.5"/>Add category</button>
+      </div>
       <div className="space-y-2 rounded-2xl border border-slate-200 p-4">
         <p className={labelClass}>Production handoff gates</p>
         <p className="text-xs text-slate-400">Which sign-offs a design needs before it can be released to Production. Turn off what your shop doesn't do — a design-owned Tech Pack can still always be released without them via "Release without sign-off".</p>
@@ -619,7 +924,7 @@ function Reports({data}){const byDesigner=Object.entries(data.projects.reduce((a
     <StatCard label="Revisions" value={data.samples.filter(s=>s.decision?.includes("REVISION")||s.decision==="RESAMPLE_REQUIRED").length} accent="amber"/>
   </section><div className="grid gap-5 xl:grid-cols-2"><Panel title="Designer workload" subtitle="Current project ownership.">{byDesigner.length?byDesigner.map(([name,count])=><div key={name} className="flex justify-between rounded-xl border p-3"><b>{name}</b><span>{count} project(s)</span></div>):<Empty>No workload data.</Empty>}</Panel><Panel title="Deadline calendar" subtitle="Upcoming sample and launch commitments.">{deadlines.length?deadlines.slice(0,12).map(x=><div key={`${x.date}${x.label}`} className="flex justify-between rounded-xl border p-3"><b>{x.label}</b><span>{x.date}</span></div>):<Empty>No dated commitments.</Empty>}</Panel></div><Panel title="Design cost & sales performance" subtitle="BOM material estimate, sampling cost and matched sales units.">{(data.insights||[]).length?(data.insights||[]).map(x=><div key={x.project_id} className="grid gap-2 rounded-xl border p-3 text-sm sm:grid-cols-5"><b>{x.design_no} · {x.style_name}</b><span>Target ₹{x.target_cost}</span><span>Material ₹{x.material_cost}</span><span>Samples ₹{x.sample_cost}</span><span className="font-bold text-emerald-700">Sales {x.sales_units} units</span></div>):<Empty>No linked costing or sales data.</Empty>}</Panel></div>}
 
-function FloorOpsView({section,setSection,depts,workers,logs,kpis,filters,setFilters,onApplyFilters,onAddLog,onAddWorker,onToggleWorker,onUpload,onTemplate}){
+function FloorOpsView({section,setSection,depts,workers,logs,kpis,filters,setFilters,onApplyFilters,onAddLog,onAddWorker,onToggleWorker,onUpload,onTemplate,onDeleteLog,kioskUrl,kioskBusy,kioskCopied,onGenerateKiosk,onCopyKiosk}){
   const sectionBtn=(v)=>"rounded-lg px-3.5 py-2 text-sm font-bold transition "+(section===v?"bg-violet-600 text-white shadow-sm":"text-slate-600 hover:bg-slate-100");
   return <div className="space-y-5">
     <nav className="inline-flex flex-wrap gap-1 rounded-xl border border-slate-200 bg-white p-1 shadow-sm" aria-label="Floor operations sections">
@@ -627,6 +932,16 @@ function FloorOpsView({section,setSection,depts,workers,logs,kpis,filters,setFil
       <button type="button" onClick={()=>setSection("workers")} className={sectionBtn("workers")}>Floor Workers</button>
       <button type="button" onClick={()=>setSection("kpi")} className={sectionBtn("kpi")}>KPI Summary</button>
     </nav>
+    <section className="overflow-hidden rounded-2xl border border-violet-200 bg-violet-50/60">
+      <div className="flex flex-col justify-between gap-3 p-4 sm:flex-row sm:items-center">
+        <div><h3 className="text-sm font-black text-slate-900">Floor Log Kiosk — a worker's own side of this same log</h3><p className="mt-0.5 text-xs text-slate-500">No login needed. Open this link on a shared floor tablet/PC — the worker picks their name, taps Start, then End when the work is done. This is purely an extra entry point; manual entry and Excel upload below still work exactly the same.</p></div>
+        <div className="flex shrink-0 flex-wrap gap-2">
+          <button onClick={onGenerateKiosk} disabled={kioskBusy} className={BTN_SUBTLE}>{kioskBusy?"Working…":(kioskUrl?"Rotate link":"Generate kiosk link")}</button>
+          {kioskUrl&&<button onClick={onCopyKiosk} className={BTN_PRIMARY}>{kioskCopied?"Copied ✓":"Copy link"}</button>}
+        </div>
+      </div>
+      {kioskUrl&&<div className="border-t border-violet-100 bg-white px-4 py-3"><p className="break-all font-mono text-xs text-slate-600">{kioskUrl}</p><p className="mt-1 text-[11px] text-amber-700">Rotating replaces this link — the old one stops working immediately. Use that if a printed QR is lost.</p></div>}
+    </section>
     {section==="log"&&<section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
       <div className="flex flex-col justify-between gap-3 border-b border-slate-100 p-5 sm:flex-row sm:items-center">
         <div><h2 className="text-base font-black text-slate-900">Daily production log</h2><p className="mt-0.5 text-sm text-slate-500">One entry per worker, per department, per day. Upload one spreadsheet for the whole day instead of a form each.</p></div>
@@ -659,12 +974,15 @@ function FloorOpsView({section,setSection,depts,workers,logs,kpis,filters,setFil
             <span>Waste <b className="text-slate-900">{l.wastage_mtrs||0}m</b></span>
             <span>On-time <b className="text-slate-900">{l.on_time?"Yes":"No"}</b></span>
           </div>
+          {(l.size_breakdown||[]).length>0&&<p className="mt-1.5 text-[11px] text-slate-500">Sizes: {l.size_breakdown.map(s=>`${s.size} ${s.qty}`).join(", ")}</p>}
+          {(l.wastage_breakdown||[]).length>0&&<p className="mt-1 text-[11px] text-slate-500">Waste: {l.wastage_breakdown.map(w=>`${w.label||w.category} ${w.qty}`).join(", ")}</p>}
           {l.remarks&&<p className="mt-1.5 text-xs text-slate-500">{l.remarks}</p>}
+          <button onClick={()=>onDeleteLog(l)} className="mt-2 text-[11px] font-bold text-rose-600">Delete entry</button>
         </div>):<p className="p-10 text-center text-sm text-slate-400">No entries yet for this filter.</p>}
       </div>
       <div className="hidden overflow-x-auto md:block">
         <table className="w-full text-sm">
-          <thead><tr className="border-b border-slate-200 bg-slate-50 text-left text-[11px] font-bold uppercase tracking-wide text-slate-500">{["Date","Dept","Worker","Style","Target","Done","Rework","Rejected","Fabric(m)","Waste(m)","On-time","Remarks"].map(h=><th key={h} className="whitespace-nowrap px-3 py-3">{h}</th>)}</tr></thead>
+          <thead><tr className="border-b border-slate-200 bg-slate-50 text-left text-[11px] font-bold uppercase tracking-wide text-slate-500">{["Date","Dept","Worker","Style","Target","Done","Rework","Rejected","Fabric(m)","Waste(m)","On-time","Remarks",""].map(h=><th key={h} className="whitespace-nowrap px-3 py-3">{h}</th>)}</tr></thead>
           <tbody className="divide-y divide-slate-100">
             {logs.length?logs.map(l=><tr key={l.id}>
               <td className="whitespace-nowrap px-3 py-2.5 text-xs text-slate-500">{l.date}{l.time?` · ${l.time}`:""}</td>
@@ -679,7 +997,8 @@ function FloorOpsView({section,setSection,depts,workers,logs,kpis,filters,setFil
               <td className="px-3 py-2.5 text-xs">{l.wastage_mtrs||0}</td>
               <td className="px-3 py-2.5 text-xs">{l.on_time?"Yes":"No"}</td>
               <td className="max-w-[220px] truncate px-3 py-2.5 text-xs text-slate-500" title={l.remarks}>{l.remarks||"—"}</td>
-            </tr>):<tr><td colSpan={12} className="p-10 text-center text-sm text-slate-400">No entries yet for this filter.</td></tr>}
+              <td className="px-3 py-2.5 text-xs"><button onClick={()=>onDeleteLog(l)} className="font-bold text-rose-600">Delete</button></td>
+            </tr>):<tr><td colSpan={13} className="p-10 text-center text-sm text-slate-400">No entries yet for this filter.</td></tr>}
           </tbody>
         </table>
       </div>
@@ -718,3 +1037,98 @@ function FloorOpsView({section,setSection,depts,workers,logs,kpis,filters,setFil
   </div>;
 }
 function KpiTable({title,rows}){return <Panel title={title} subtitle="Efficiency = completed/target · rework & rejection = % of completed.">{rows?.length?rows.map(r=><div key={r.key} className="flex items-center justify-between gap-2 rounded-xl border p-3 text-sm"><b className="truncate">{r.key}</b><span className="shrink-0 text-xs font-bold text-slate-500">{r.entries} entr{r.entries===1?"y":"ies"} · Eff {r.efficiency_pct!=null?`${r.efficiency_pct}%`:"—"} · Rej {r.rejection_pct!=null?`${r.rejection_pct}%`:"—"}</span></div>):<Empty>No data.</Empty>}</Panel>}
+
+// ── Fabric & Production ──────────────────────────────────────────────────
+// Fabric Lot/Roll ledger, Utilization dashboard, Reuse matching and Annual/FY
+// Planning — all additive, all reading/writing the /api/design-pattern
+// endpoints built for this module. Every derived number here (balance,
+// utilization %, planned fabric, next-year suggestion) is computed by the
+// backend; this view only ever asks for the raw facts (received qty, issue
+// qty, category…) per the module's core principle.
+function FabricProductionView({section,setSection,lots,onAddLot,onIssue,onConsume,onWaste,onReturn,onUploadSwatch,onReuse,utilFilter,setUtilFilter,utilData,onLoadUtil,onExportUtil,exportingUtil,reuseTarget,reuseData,fyDays,setFyDays,fyData,fyLoading,onLoadFy}){
+  const sectionBtn=(v)=>"rounded-lg px-3.5 py-2 text-sm font-bold transition "+(section===v?"bg-violet-600 text-white shadow-sm":"text-slate-600 hover:bg-slate-100");
+  return <div className="space-y-5">
+    <nav className="inline-flex flex-wrap gap-1 rounded-xl border border-slate-200 bg-white p-1 shadow-sm" aria-label="Fabric & Production sections">
+      <button type="button" onClick={()=>setSection("lots")} className={sectionBtn("lots")}>Fabric Lots</button>
+      <button type="button" onClick={()=>setSection("utilization")} className={sectionBtn("utilization")}>Utilization</button>
+      <button type="button" onClick={()=>setSection("fy")} className={sectionBtn("fy")}>FY Planning</button>
+    </nav>
+
+    {section==="lots"&&<section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+      <div className="flex flex-col justify-between gap-3 border-b border-slate-100 p-5 sm:flex-row sm:items-center">
+        <div><h2 className="text-base font-black text-slate-900">Fabric lot / roll ledger</h2><p className="mt-0.5 text-sm text-slate-500">Every physical roll received, with a live balance. Balance, issued and consumed are calculated — never typed.</p></div>
+        <button onClick={onAddLot} className={BTN_PRIMARY}><Plus className="h-4 w-4"/>Receive lot</button>
+      </div>
+      <div className="divide-y divide-slate-100">
+        {lots.length?lots.map(l=><div key={l.id} className="p-4 sm:p-5">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="flex items-start gap-3">
+              {l.swatch_image_url?<img src={l.swatch_image_url} alt="Fabric swatch" className="h-14 w-14 shrink-0 rounded-xl border border-slate-200 object-cover"/>:<label className="grid h-14 w-14 shrink-0 cursor-pointer place-items-center rounded-xl border border-dashed border-slate-300 bg-slate-50 text-[9px] font-bold uppercase text-slate-400 hover:bg-slate-100">Swatch<input type="file" accept="image/*" className="hidden" onChange={e=>{const f=e.target.files?.[0];e.target.value="";if(f)onUploadSwatch(l.id,f);}}/></label>}
+              <div>
+                <p className="font-black text-slate-900">{l.fabric_name} <span className="font-normal text-slate-400">· {l.lot_no}{l.roll_no?` / ${l.roll_no}`:""}</span></p>
+                <p className="text-xs text-slate-500">{[l.colour,l.width,l.gsm&&`${l.gsm} GSM`,l.vendor_name].filter(Boolean).join(" · ")||"No details recorded"}{l.design_no?<span className="ml-1.5 rounded-full bg-violet-100 px-1.5 py-0.5 text-[10px] font-bold text-violet-700">{l.design_no}</span>:null}</p>
+              </div>
+            </div>
+            <Badge value={l.qc_status}/>
+          </div>
+          <div className="mt-3 grid grid-cols-3 gap-2 sm:grid-cols-6">
+            {[["Received",l.received_qty],["Issued",l.issued_qty],["Consumed",l.consumed_qty],["Waste",l.waste_qty],["Returned",l.returned_qty],["Balance",l.closing_balance]].map(([label,value])=><div key={label} className="rounded-lg bg-slate-50 p-2 text-center"><p className="text-[10px] font-bold uppercase text-slate-400">{label}</p><p className={`text-sm font-black ${label==="Balance"?"text-violet-700":"text-slate-900"}`}>{value} <span className="text-[9px] font-normal text-slate-400">{l.unit}</span></p></div>)}
+          </div>
+          <div className="mt-3 flex flex-wrap gap-1.5">
+            <button onClick={()=>onIssue(l)} className={`${BTN_SUBTLE} !px-2.5 !py-1 text-xs`}>Issue</button>
+            <button onClick={()=>onConsume(l)} className={`${BTN_SUBTLE} !px-2.5 !py-1 text-xs`}>Consume</button>
+            <button onClick={()=>onWaste(l)} className={`${BTN_SUBTLE} !px-2.5 !py-1 text-xs`}>Waste</button>
+            <button onClick={()=>onReturn(l)} className={`${BTN_SUBTLE} !px-2.5 !py-1 text-xs`}>Return</button>
+            <button onClick={()=>onReuse(l)} className="rounded-lg border border-cyan-200 bg-cyan-50 px-2.5 py-1 text-xs font-bold text-cyan-700 hover:bg-cyan-100">Reuse matches</button>
+          </div>
+          {reuseTarget?.id===l.id&&reuseData&&<div className="mt-3 rounded-xl border border-cyan-200 bg-cyan-50/60 p-3 text-xs text-cyan-900">
+            {reuseData.matches?.length?<><p className="font-bold">Same fabric ({reuseData.fabric_name}, {reuseData.colour}, {reuseData.width}, {reuseData.gsm} GSM) is also in use for:</p><ul className="mt-1.5 space-y-1">{reuseData.matches.map(m=><li key={m.design_no}>• <b>{m.design_no}</b> — {m.own_balance} {reuseData.unit} of its own balance, {m.lot_count} lot(s)</li>)}</ul></>:<p>{reuseData.note}</p>}
+          </div>}
+        </div>):<Empty>No fabric lots received yet.</Empty>}
+      </div>
+    </section>}
+
+    {section==="utilization"&&<div className="space-y-4">
+      <div className="flex flex-wrap items-end gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+        <label className="block"><span className="mb-1 block text-[11px] font-bold uppercase tracking-wide text-slate-500">Design No. (blank = all designs)</span><input value={utilFilter} onChange={e=>setUtilFilter(e.target.value)} className="rounded-lg border border-slate-200 px-2 py-1.5 text-sm" placeholder="e.g. D-101"/></label>
+        <button onClick={()=>onLoadUtil(utilFilter)} className={BTN_PRIMARY}><RefreshCw className="h-4 w-4"/>Load utilization</button>
+        <button onClick={onExportUtil} disabled={!utilData?.by_design?.length||exportingUtil} className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-bold text-emerald-700 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-40"><FileText className="mr-1 inline h-4 w-4"/>{exportingUtil?"Preparing…":"Export Excel"}</button>
+      </div>
+      {utilData?<>
+        {utilData.by_design?.map(row=><section key={row.design_no} className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <div className="border-b border-slate-100 p-4"><p className="font-black text-slate-900">{row.design_no}</p><p className="text-xs text-slate-500">{row.lot_count} fabric lot(s)</p></div>
+          <div className="grid grid-cols-2 gap-3 p-4 sm:grid-cols-4 lg:grid-cols-8">
+            {[["Received",row.fabric_received],["Issued",row.fabric_issued],["Consumed",row.fabric_consumed],["Waste",row.fabric_waste],["Recoverable",row.fabric_recoverable],["Returned",row.fabric_returned],["Balance",row.closing_balance]].map(([l,v])=><StatCard key={l} label={l} value={v} accent="cyan"/>)}
+            <StatCard label="Utilization" value={row.utilization_pct!=null?`${row.utilization_pct}%`:"—"} accent={row.utilization_pct>=70?"emerald":row.utilization_pct>=40?"amber":"rose"} hint={`Wastage ${row.wastage_pct!=null?row.wastage_pct+"%":"—"}`}/>
+          </div>
+          {row.waste_by_category?.length>0&&<div className="border-t border-slate-100 p-4"><p className="mb-2 text-[11px] font-black uppercase tracking-wide text-slate-400">Waste by category</p><div className="flex flex-wrap gap-2">{row.waste_by_category.map(w=><span key={w.category} className={CHIP}>{w.label}: {w.qty}</span>)}</div></div>}
+        </section>)}
+        {!utilData.by_design?.length&&<Empty>No fabric lots recorded for this filter yet.</Empty>}
+      </>:<Empty>Load a design (or leave blank for every design) to see its fabric utilization.</Empty>}
+    </div>}
+
+    {section==="fy"&&<div className="space-y-5">
+      <div className="flex flex-wrap items-end gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+        <label className="block"><span className="mb-1 block text-[11px] font-bold uppercase tracking-wide text-slate-500">Look-back period (days)</span><input type="number" min="1" max="1095" value={fyDays} onChange={e=>setFyDays(e.target.value)} className="w-28 rounded-lg border border-slate-200 px-2 py-1.5 text-sm"/></label>
+        <button onClick={onLoadFy} disabled={fyLoading} className={BTN_PRIMARY}><TrendingUp className="h-4 w-4"/>{fyLoading?"Loading…":"Load FY planning"}</button>
+      </div>
+      {fyData?<div className="space-y-5">
+        <div className="grid gap-4 lg:grid-cols-2">
+          <Panel title="Best fabric utilization" subtitle="Highest consumed÷issued — replicate what these designs did right.">{fyData.utilization_ranking?.best?.length?fyData.utilization_ranking.best.map(r=><div key={r.design_no} className="flex items-center justify-between rounded-xl border p-3 text-sm"><b>{r.design_no}</b><span className="text-xs font-bold text-emerald-600">{r.utilization_pct}% utilized</span></div>):<Empty>No data yet.</Empty>}</Panel>
+          <Panel title="Worst fabric utilization" subtitle="Lowest consumed÷issued — investigate marker/cutting practice.">{fyData.utilization_ranking?.worst?.length?fyData.utilization_ranking.worst.map(r=><div key={r.design_no} className="flex items-center justify-between rounded-xl border p-3 text-sm"><b>{r.design_no}</b><span className="text-xs font-bold text-rose-600">{r.utilization_pct}% utilized</span></div>):<Empty>No data yet.</Empty>}</Panel>
+        </div>
+        <div className="grid gap-4 lg:grid-cols-2">
+          <Panel title="Time efficiency — internal workers" subtitle="Elapsed vs standard time, summed across every operation.">{fyData.time_efficiency?.by_worker?.length?fyData.time_efficiency.by_worker.map(w=><div key={w.name} className="flex items-center justify-between rounded-xl border p-3 text-sm"><b>{w.name}</b><span className={`text-xs font-bold ${w.variance_pct>0?"text-rose-600":"text-emerald-600"}`}>{w.variance_pct>0?"+":""}{w.variance_pct}%</span></div>):<Empty>No timed operations yet.</Empty>}</Panel>
+          <Panel title="Time efficiency — external job workers" subtitle="Elapsed vs standard time, summed across every operation.">{fyData.time_efficiency?.by_vendor?.length?fyData.time_efficiency.by_vendor.map(v=><div key={v.name} className="flex items-center justify-between rounded-xl border p-3 text-sm"><b>{v.name}</b><span className={`text-xs font-bold ${v.variance_pct>0?"text-rose-600":"text-emerald-600"}`}>{v.variance_pct>0?"+":""}{v.variance_pct}%</span></div>):<Empty>No timed operations yet.</Empty>}</Panel>
+        </div>
+        <Panel title="Next-FY fabric purchase suggestions" subtitle="Sold qty × this design's own pattern consumption. A size-ratio mismatch means the cut plan is worth re-grading before next year.">
+          {fyData.next_fy_suggestions?.length?fyData.next_fy_suggestions.map(s=><div key={s.design_no} className="rounded-xl border p-3 text-sm">
+            <div className="flex flex-wrap items-center justify-between gap-2"><b>{s.design_no}</b><span className="text-xs text-slate-500">Sold {s.sold_qty} pcs{s.suggested_fabric_qty!=null?` · Suggested fabric: ${s.suggested_fabric_qty}`:""}</span></div>
+            {s.note&&<p className="mt-1 text-xs text-amber-700">{s.note}</p>}
+            {s.size_ratio_mismatches?.length>0&&<div className="mt-2 flex flex-wrap gap-1.5">{s.size_ratio_mismatches.map(m=><span key={m.size} className="rounded-lg border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] font-bold text-amber-800">{m.size}: pattern {m.pattern_ratio_pct}% vs sold {m.actual_sold_pct}%</span>)}</div>}
+          </div>):<Empty>No sale-proven designs in this period yet.</Empty>}
+        </Panel>
+      </div>:<Empty>Load FY planning to see utilization ranking, time efficiency and next-year fabric suggestions from real sales.</Empty>}
+    </div>}
+  </div>;
+}

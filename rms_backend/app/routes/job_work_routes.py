@@ -237,11 +237,18 @@ def _parse_trims_items(raw: Any) -> list[dict]:
             continue
         items.append({
             "description": description,
+            "trim_type": str(row.get("trim_type") or "").strip()[:80],
             "color": str(row.get("color") or "").strip()[:60],
+            "material": str(row.get("material") or "").strip()[:120],
             "size": str(row.get("size") or "").strip()[:40],
             "supplier": str(row.get("supplier") or "").strip()[:120],
+            "supplier_sku": str(row.get("supplier_sku") or "").strip()[:120],
             "quantity": str(row.get("quantity") or "").strip()[:40],
+            "consumption": str(row.get("consumption") or "").strip()[:60],
             "price": str(row.get("price") or "").strip()[:40],
+            "placement": str(row.get("placement") or "").strip()[:240],
+            "attachment_method": str(row.get("attachment_method") or "").strip()[:240],
+            "image_url": str(row.get("image_url") or "").strip()[:1000],
         })
     return items
 
@@ -258,6 +265,10 @@ def _parse_colourways(raw: Any) -> list[dict]:
             "name": name,
             "fabric_ref": str(row.get("fabric_ref") or "").strip()[:120],
             "thread_ref": str(row.get("thread_ref") or "").strip()[:120],
+            "trim_ref": str(row.get("trim_ref") or "").strip()[:120],
+            "color_code": str(row.get("color_code") or "").strip()[:60],
+            "component_map": str(row.get("component_map") or "").strip()[:600],
+            "notes": str(row.get("notes") or "").strip()[:600],
             "image_url": str(row.get("image_url") or "").strip()[:1000],
         })
     return rows
@@ -311,7 +322,8 @@ async def _tech_pack_payload_from_request(request: Request) -> tuple[dict, dict[
             category = key[len("pack_image_"):]
             is_colourway_row = category.startswith("colourway_row_") and category[len("colourway_row_"):].isdigit()
             is_fabric_row = category.startswith("fabric_row_") and category[len("fabric_row_"):].isdigit()
-            if category not in TECH_PACK_IMAGE_CATEGORIES and not is_colourway_row and not is_fabric_row:
+            is_trim_row = category.startswith("trim_row_") and category[len("trim_row_"):].isdigit()
+            if category not in TECH_PACK_IMAGE_CATEGORIES and not is_colourway_row and not is_fabric_row and not is_trim_row:
                 continue
             try:
                 result = cloudinary.uploader.upload(
@@ -1488,6 +1500,10 @@ async def list_tech_packs(ctx: dict = Depends(_require_design_or_job_work)):
             {**item, "image_url": (_clean_asset_urls([item.get("image_url")], 1) or [""])[0]}
             for item in (row.get("colourways") or []) if isinstance(item, dict)
         ]
+        row["trims_items"] = [
+            {**item, "image_url": (_clean_asset_urls([item.get("image_url")], 1) or [""])[0]}
+            for item in (row.get("trims_items") or []) if isinstance(item, dict)
+        ]
         row["fabric_references"] = [
             {**item, "image_urls": _clean_asset_urls(item.get("image_urls"), 8)}
             for item in (row.get("fabric_references") or []) if isinstance(item, dict)
@@ -1611,7 +1627,10 @@ async def create_tech_pack(request: Request, ctx: dict = Depends(_require_design
         "sizes": [str(size).strip()[:20] for size in _parse_json_list(payload.get("sizes")) if str(size).strip()][:20],
         "measurement_rows": _parse_measurement_rows(payload.get("measurement_rows")),
         # Structured Trims & Label line items — description/color/size/supplier/qty/price.
-        "trims_items": _parse_trims_items(payload.get("trims_items")),
+        "trims_items": [
+            {**row, "image_url": (uploaded_by_category.get(f"trim_row_{index}") or [row.get("image_url", "")])[0]}
+            for index, row in enumerate(_parse_trims_items(payload.get("trims_items")))
+        ],
         # Artwork placement + real dimensions, alongside the artwork image(s).
         "artwork_width_cm": str(payload.get("artwork_width_cm") or "").strip()[:20],
         "artwork_height_cm": str(payload.get("artwork_height_cm") or "").strip()[:20],
@@ -1711,6 +1730,11 @@ async def update_tech_pack(tech_pack_id: str, request: Request, ctx: dict = Depe
         uploaded = uploaded_by_category.get(f"colourway_row_{index}") or []
         if uploaded:
             row["image_url"] = uploaded[0]
+    trims_items = _parse_trims_items(payload.get("trims_items"))
+    for index, row in enumerate(trims_items):
+        uploaded = uploaded_by_category.get(f"trim_row_{index}") or []
+        if uploaded:
+            row["image_url"] = uploaded[0]
     fabric_references = _parse_fabric_references(payload.get("fabric_references"))
     for index, row in enumerate(fabric_references):
         row["image_urls"] = _clean_asset_urls([
@@ -1750,7 +1774,7 @@ async def update_tech_pack(tech_pack_id: str, request: Request, ctx: dict = Depe
         "material_plan_id": material_plan_id or None,
         "sizes": [str(size).strip()[:20] for size in _parse_json_list(payload.get("sizes")) if str(size).strip()][:20],
         "measurement_rows": _parse_measurement_rows(payload.get("measurement_rows")),
-        "trims_items": _parse_trims_items(payload.get("trims_items")),
+        "trims_items": trims_items,
         "artwork_width_cm": str(payload.get("artwork_width_cm") or "").strip()[:20],
         "artwork_height_cm": str(payload.get("artwork_height_cm") or "").strip()[:20],
         "artwork_placement": str(payload.get("artwork_placement") or "").strip()[:300],

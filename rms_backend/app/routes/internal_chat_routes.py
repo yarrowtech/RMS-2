@@ -211,7 +211,10 @@ async def update_conversation_preference(payload: ConversationPreferenceUpdate, 
 
 
 @router.get("/conversations")
-async def list_conversations(ctx: TenantCtx = Depends(get_any_tenant)):
+async def list_conversations(
+    include_hidden: bool = Query(False),
+    ctx: TenantCtx = Depends(get_any_tenant),
+):
     """My own department-at-my-location channel, plus every DM I'm part of —
     each with a last-message preview and my own unread count."""
     tenant_id = ctx["tenant_id"]
@@ -233,7 +236,8 @@ async def list_conversations(ctx: TenantCtx = Depends(get_any_tenant)):
         last = await internal_chat_messages_collection.find_one(
             {"tenant_id": tenant_id, "conversation_key": key}, sort=[("created_at", -1)]
         )
-        if _hidden_for_me(preferences.get(key), last):
+        hidden = _hidden_for_me(preferences.get(key), last)
+        if hidden and not include_hidden:
             continue
         settings = await internal_chat_channel_settings_collection.find_one(
             {"tenant_id": tenant_id, "conversation_key": key}, {"archived": 1}
@@ -245,6 +249,7 @@ async def list_conversations(ctx: TenantCtx = Depends(get_any_tenant)):
             "last_at": last["created_at"].isoformat() if last and isinstance(last.get("created_at"), datetime) else None,
             "unread_count": await _unread_count(tenant_id, ctx["admin_id"], key),
             "muted": bool((preferences.get(key) or {}).get("muted")),
+            "hidden": hidden,
             "archived": bool((settings or {}).get("archived")),
             "can_archive": _can_manage_channels(ctx),
         })
@@ -262,7 +267,8 @@ async def list_conversations(ctx: TenantCtx = Depends(get_any_tenant)):
         last = await internal_chat_messages_collection.find_one(
             {"tenant_id": tenant_id, "conversation_key": key}, sort=[("created_at", -1)]
         )
-        if _hidden_for_me(preferences.get(key), last):
+        hidden = _hidden_for_me(preferences.get(key), last)
+        if hidden and not include_hidden:
             continue
         conversations.append({
             "conversation_key": key, "type": "dm", "other_admin_id": other_id,
@@ -272,6 +278,7 @@ async def list_conversations(ctx: TenantCtx = Depends(get_any_tenant)):
             "last_at": last["created_at"].isoformat() if last and isinstance(last.get("created_at"), datetime) else None,
             "unread_count": await _unread_count(tenant_id, ctx["admin_id"], key),
             "muted": bool((preferences.get(key) or {}).get("muted")),
+            "hidden": hidden,
         })
 
     conversations.sort(key=lambda c: c["last_at"] or "", reverse=True)

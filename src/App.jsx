@@ -24,6 +24,7 @@ import StockPlanForecasting from "./components/StockPlanForecastingDepartment/St
 import ForecastAnalytics from "./components/ForecastAnalytics.jsx";
 import ProductionJobWork from "./components/Production/ProductionJobWork.jsx";
 import { PublicWorkstationDisplay } from "./components/Production/HybridProduction.jsx";
+import FloorLogKiosk from "./components/FloorLogKiosk.jsx";
 import Marketing from "./components/Marketing/Marketing.jsx";
 import CustomerCRM from "./components/CustomerCRM/CustomerCRM.jsx";
 import Admin from "./components/Admin/Admin";
@@ -167,6 +168,7 @@ export default function App() {
         <Route path="/coupon/:couponId" element={<CouponPublicView />} />
         <Route path="/newsletter-unsubscribe/:token" element={<NewsletterUnsubscribe />} />
         <Route path="/production-display/:token" element={<PublicWorkstationDisplay />} />
+        <Route path="/floor-log-kiosk/:token" element={<FloorLogKiosk />} />
         
         
 

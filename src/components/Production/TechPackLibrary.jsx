@@ -37,8 +37,8 @@ const emptyMeasurementRow = (sizes) => ({
   pom_code: "", point: "", measure_instruction: "", unit: "cm", sample_value: "",
   tolerance: "", grade_rule: "", grades: Object.fromEntries(sizes.map((s) => [s, ""])),
 });
-const emptyTrimRow = () => ({ description: "", color: "", size: "", supplier: "", quantity: "", price: "" });
-const emptyColourway = () => ({ name: "", fabric_ref: "", thread_ref: "", image_file: null, image_preview: "" });
+const emptyTrimRow = () => ({ description: "", trim_type: "", color: "", material: "", size: "", supplier: "", supplier_sku: "", quantity: "", consumption: "", price: "", placement: "", attachment_method: "", image_url: "", image_file: null, image_preview: "" });
+const emptyColourway = () => ({ name: "", fabric_ref: "", thread_ref: "", trim_ref: "", color_code: "", component_map: "", notes: "", image_url: "", image_file: null, image_preview: "" });
 const emptyFabricReference = () => ({
   reference_name: "", usage: "", fabric_type: "", composition: "", color: "", color_code: "",
   gsm: "", width: "", consumption: "", unit: "metres", supplier: "", supplier_ref: "", lot_no: "",
@@ -253,10 +253,16 @@ async function buildTechPackPdf(pack, plans = []) {
   if (!imageGroups.artwork.length) y = textBox("Artwork reference", "No artwork file is attached for this style.", y, 40); footer();
 
   doc.addPage(); pageNo += 1; header("5. Trims, Labels & Packaging", pageNo); y = 108; y = sectionBar("Trim specification", y);
-  y = table(["Description", "Colour", "Size", "Supplier", "Qty", "Price"], (pack.trims_items || []).map((item) => [item.description, item.color, item.size, item.supplier, item.quantity, item.price]), y, [150, 72, 55, 105, 52, 63]); y = textBox("Trim / label notes", pack.trims_labels_notes, y, 44); y = await imageGrid(imageGroups.trims, y, 160); footer();
+  y = table(["Trim / type", "Colour & material", "Supplier / spec", "Usage & placement"], (pack.trims_items || []).map((item) => [
+    [item.description, item.trim_type].filter(Boolean).join("\n"),
+    [item.color, item.material].filter(Boolean).join("\n"),
+    [item.supplier, item.supplier_sku && "SKU: " + item.supplier_sku, item.size && "Size: " + item.size].filter(Boolean).join("\n"),
+    [item.quantity && "Qty: " + item.quantity, item.consumption && "Consumption: " + item.consumption, item.placement, item.attachment_method].filter(Boolean).join("\n"),
+  ]), y, [135, 125, 135, 147]);
+  y = await imageGrid((pack.trims_items || []).map((item) => item.image_url), y, 90); y = textBox("Trim / label notes", pack.trims_labels_notes, y, 44); y = await imageGrid(imageGroups.trims, y, 130); footer();
 
   doc.addPage(); pageNo += 1; header("6. Colourways, Comments & Handover", pageNo); y = 108; y = sectionBar("Colour and fabric combinations", y);
-  y = table(["Colourway", "Fabric reference", "Thread / trim reference"], (pack.colourways || []).map((row) => [row.name, row.fabric_ref, row.thread_ref]), y, [150, 180, 197]);
+  y = table(["Colourway", "Fabric / component map", "Thread, trim & notes"], (pack.colourways || []).map((row) => [row.name, [row.fabric_ref, row.component_map].filter(Boolean).join("\n"), [row.thread_ref, row.trim_ref, row.color_code && "Code: " + row.color_code, row.notes].filter(Boolean).join("\n")]), y, [130, 220, 177]);
   y = await imageGrid((Array.isArray(pack.colourways) ? pack.colourways : []).map((row) => row.image_url), y, 90);
   y = textBox("Colourway notes", pack.colourway_notes, y, 42); y = await imageGrid(imageGroups.colourway, y, 125);
   y = sectionBar("Job worker acknowledgement", y); doc.setDrawColor(148, 163, 184); doc.rect(margin, y, contentWidth, 100); doc.setFont("helvetica", "normal"); doc.setFontSize(9); doc.setTextColor(51, 65, 85);
@@ -392,7 +398,7 @@ function PackModal({ plans = [], themes = [], allowancePolicy = DEFAULT_ALLOWANC
   const [measurementRows, setMeasurementRows] = useState(() => pack?.measurement_rows?.length
     ? pack.measurement_rows.map((row) => ({ ...emptyMeasurementRow(pack?.sizes || []), ...row }))
     : [emptyMeasurementRow(pack?.sizes || [])]);
-  const [trimRows, setTrimRows] = useState(() => pack?.trims_items?.length ? pack.trims_items : [emptyTrimRow()]);
+  const [trimRows, setTrimRows] = useState(() => pack?.trims_items?.length ? pack.trims_items.map((row) => ({ ...emptyTrimRow(), ...row, image_file: null, image_preview: row.image_url || "" })) : [emptyTrimRow()]);
   const [colourways, setColourways] = useState(() => pack?.colourways?.length ? pack.colourways.map((row) => ({ ...row, image_file: null, image_preview: row.image_url || "" })) : [emptyColourway()]);
   const [fabricReferences, setFabricReferences] = useState(() => pack?.fabric_references?.length
     ? pack.fabric_references.map((row) => ({ ...emptyFabricReference(), ...row, image_urls: cleanAssetUrls(row.image_urls), image_previews: cleanAssetUrls(row.image_urls) }))
@@ -453,6 +459,11 @@ function PackModal({ plans = [], themes = [], allowancePolicy = DEFAULT_ALLOWANC
     if (!file) return;
     setColourways((rows) => rows.map((row, i) => i === index ? { ...row, image_file: file, image_preview: URL.createObjectURL(file) } : row));
   };
+  const setTrimImage = (index, files) => {
+    const file = Array.from(files || []).find((item) => item.type.startsWith("image/"));
+    if (!file) return;
+    setTrimRows((rows) => rows.map((row, i) => i === index ? { ...row, image_file: file, image_preview: URL.createObjectURL(file) } : row));
+  };
 
   const addImages = (category, files) => {
     const accepted = Array.from(files || []).filter((file) => file.type.startsWith("image/"));
@@ -480,7 +491,8 @@ function PackModal({ plans = [], themes = [], allowancePolicy = DEFAULT_ALLOWANC
       const cleanColourways = colourways.filter((row) => row.name.trim());
       const cleanFabricReferences = fabricReferences.filter((row) => row.reference_name.trim());
       const cleanProcessAllowances = processAllowances.filter((row) => Number(row.value) > 0);
-      const serializableColourways = cleanColourways.map((row) => ({ name: row.name, fabric_ref: row.fabric_ref, thread_ref: row.thread_ref, image_url: row.image_url || "" }));
+      const serializableTrimRows = cleanTrimRows.map((row) => ({ description: row.description, trim_type: row.trim_type, color: row.color, material: row.material, size: row.size, supplier: row.supplier, supplier_sku: row.supplier_sku, quantity: row.quantity, consumption: row.consumption, price: row.price, placement: row.placement, attachment_method: row.attachment_method, image_url: row.image_url || "" }));
+      const serializableColourways = cleanColourways.map((row) => ({ name: row.name, fabric_ref: row.fabric_ref, thread_ref: row.thread_ref, trim_ref: row.trim_ref, color_code: row.color_code, component_map: row.component_map, notes: row.notes, image_url: row.image_url || "" }));
       const serializableFabricReferences = cleanFabricReferences.map((row) => ({
         reference_name: row.reference_name, usage: row.usage, fabric_type: row.fabric_type, composition: row.composition,
         color: row.color, color_code: row.color_code, gsm: row.gsm, width: row.width,
@@ -489,7 +501,7 @@ function PackModal({ plans = [], themes = [], allowancePolicy = DEFAULT_ALLOWANC
         handling_notes: row.handling_notes, bom_material: row.bom_material, image_urls: cleanAssetUrls(row.image_urls),
       }));
       const fabricImageCount = cleanFabricReferences.reduce((sum, row) => sum + (row.image_files?.length || 0), 0);
-      const imageCount = Object.values(images).reduce((sum, list) => sum + (list?.length || 0), 0) + cleanColourways.filter((row) => row.image_file).length + fabricImageCount;
+      const imageCount = Object.values(images).reduce((sum, list) => sum + (list?.length || 0), 0) + cleanTrimRows.filter((row) => row.image_file).length + cleanColourways.filter((row) => row.image_file).length + fabricImageCount;
       let result;
       if (imageCount > 0) {
         // Multipart: every field must be a single string value (repeated
@@ -504,12 +516,13 @@ function PackModal({ plans = [], themes = [], allowancePolicy = DEFAULT_ALLOWANC
         body.append("document_urls", form.document_urls);
         body.append("sizes", JSON.stringify(sizeList));
         body.append("measurement_rows", JSON.stringify(cleanMeasurementRows));
-        body.append("trims_items", JSON.stringify(cleanTrimRows));
+        body.append("trims_items", JSON.stringify(serializableTrimRows));
         body.append("colourways", JSON.stringify(serializableColourways));
         body.append("fabric_references", JSON.stringify(serializableFabricReferences));
         body.append("process_allowances", JSON.stringify(cleanProcessAllowances));
         IMAGE_SECTIONS.forEach(([category]) => body.append(`${category}_images`, JSON.stringify((previews[category] || []).filter((url) => !url.startsWith("blob:")))));
         Object.entries(images).forEach(([category, files]) => (files || []).forEach((file) => body.append(`pack_image_${category}`, file)));
+        cleanTrimRows.forEach((row, index) => { if (row.image_file) body.append(`pack_image_trim_row_${index}`, row.image_file); });
         cleanColourways.forEach((row, index) => { if (row.image_file) body.append(`pack_image_colourway_row_${index}`, row.image_file); });
         cleanFabricReferences.forEach((row, index) => (row.image_files || []).forEach((file) => body.append(`pack_image_fabric_row_${index}`, file)));
         result = await api(editing ? `/tech-packs/${pack.id}` : "/tech-packs", { method: editing ? "PUT" : "POST", body });
@@ -520,7 +533,7 @@ function PackModal({ plans = [], themes = [], allowancePolicy = DEFAULT_ALLOWANC
           document_urls: form.document_urls.split("\n").map((x) => x.trim()).filter(Boolean),
           sizes: JSON.stringify(sizeList),
           measurement_rows: JSON.stringify(cleanMeasurementRows),
-          trims_items: JSON.stringify(cleanTrimRows),
+          trims_items: JSON.stringify(serializableTrimRows),
           colourways: JSON.stringify(serializableColourways),
           fabric_references: JSON.stringify(serializableFabricReferences),
           process_allowances: JSON.stringify(cleanProcessAllowances),
@@ -636,12 +649,22 @@ function PackModal({ plans = [], themes = [], allowancePolicy = DEFAULT_ALLOWANC
             <thead className="bg-slate-50"><tr>{["Description", "Color", "Size", "Supplier", "Quantity", "Price", ""].map((h) => <th key={h} className="px-3 py-2 text-left font-bold text-slate-500">{h}</th>)}</tr></thead>
             <tbody>
               {trimRows.map((row, index) => (
-                <tr key={index} className="border-t border-slate-100">
-                  {["description", "color", "size", "supplier", "quantity", "price"].map((key) => (
-                    <td key={key} className="px-3 py-1.5"><input value={row[key]} onChange={(e) => changeTrim(index, key, e.target.value)} className="w-full min-w-[70px] rounded-lg border border-slate-200 px-2 py-1.5" /></td>
-                  ))}
-                  <td><button type="button" disabled={trimRows.length === 1} onClick={() => setTrimRows((rows) => rows.filter((_, i) => i !== index))} className="px-2 text-lg font-bold text-rose-500 disabled:text-slate-300">x</button></td>
-                </tr>
+                <React.Fragment key={index}>
+                  <tr className="border-t border-slate-100">
+                    {["description", "color", "size", "supplier", "quantity", "price"].map((key) => (
+                      <td key={key} className="px-3 py-1.5"><input value={row[key]} onChange={(e) => changeTrim(index, key, e.target.value)} className="w-full min-w-[70px] rounded-lg border border-slate-200 px-2 py-1.5" /></td>
+                    ))}
+                    <td><button type="button" disabled={trimRows.length === 1} onClick={() => setTrimRows((rows) => rows.filter((_, i) => i !== index))} className="px-2 text-lg font-bold text-rose-500 disabled:text-slate-300">x</button></td>
+                  </tr>
+                  <tr className="border-t border-violet-100 bg-violet-50/40"><td colSpan="7" className="p-3">
+                    <p className="mb-2 text-[11px] font-black uppercase tracking-wide text-violet-700">Optional production details for this trim / label</p>
+                    <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                      {[["trim_type", "Trim type", "e.g. Button, care label, hangtag"], ["material", "Material / composition", "e.g. Metal, polyester"], ["supplier_sku", "Supplier SKU", "Supplier reference"], ["consumption", "Consumption per garment", "e.g. 5 buttons / 1 label"], ["placement", "Placement", "e.g. centre back neck"], ["attachment_method", "Attachment method", "e.g. Sewn into seam"]].map(([key, label, placeholder]) => <label key={key} className="text-[10px] font-bold uppercase tracking-wide text-slate-500">{label}<input value={row[key]} onChange={(e) => changeTrim(index, key, e.target.value)} placeholder={placeholder} className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs font-medium normal-case tracking-normal text-slate-700" /></label>)}
+                      <label className="text-[10px] font-bold uppercase tracking-wide text-slate-500">Reference image (optional)<input type="file" accept="image/*" onChange={(e) => { setTrimImage(index, e.target.files); e.target.value = ""; }} className="mt-1 block w-full text-[10px] normal-case tracking-normal file:mr-2 file:rounded-lg file:border-0 file:bg-violet-600 file:px-2 file:py-1.5 file:text-[10px] file:font-bold file:text-white" /></label>
+                      {row.image_preview && <div className="relative w-fit self-end"><img src={row.image_preview} alt={row.description || "Trim reference"} className="h-14 w-14 rounded-lg border object-cover" /><button type="button" onClick={() => setTrimRows((rows) => rows.map((item, i) => i === index ? { ...item, image_file: null, image_preview: "", image_url: "" } : item))} className="absolute -right-2 -top-2 grid h-5 w-5 place-items-center rounded-full bg-rose-600 text-[10px] font-bold text-white">x</button></div>}
+                    </div>
+                  </td></tr>
+                </React.Fragment>
               ))}
             </tbody>
           </table>
@@ -657,13 +680,18 @@ function PackModal({ plans = [], themes = [], allowancePolicy = DEFAULT_ALLOWANC
             <thead className="bg-slate-50"><tr>{["Colourway name", "Fabric reference", "Thread reference", "Image (optional)", ""].map((h) => <th key={h} className="px-3 py-2 text-left font-bold text-slate-500">{h}</th>)}</tr></thead>
             <tbody>
               {colourways.map((row, index) => (
-                <tr key={index} className="border-t border-slate-100">
-                  {["name", "fabric_ref", "thread_ref"].map((key) => (
-                    <td key={key} className="px-3 py-1.5"><input value={row[key]} onChange={(e) => changeColourway(index, key, e.target.value)} className="w-full min-w-[90px] rounded-lg border border-slate-200 px-2 py-1.5" /></td>
-                  ))}
-                  <td className="min-w-[150px] px-3 py-1.5"><input type="file" accept="image/*" onChange={(e) => { setColourwayImage(index, e.target.files); e.target.value = ""; }} className="w-full text-[10px] file:mr-2 file:rounded-lg file:border-0 file:bg-violet-600 file:px-2 file:py-1.5 file:text-[10px] file:font-bold file:text-white" />{row.image_preview && <div className="relative mt-2 w-fit"><img src={row.image_preview} alt={`${row.name || "Colourway"} preview`} className="h-12 w-12 rounded-lg border object-cover" /><button type="button" onClick={() => setColourways((rows) => rows.map((item, i) => i === index ? { ...item, image_file: null, image_preview: "", image_url: "" } : item))} className="absolute -right-2 -top-2 grid h-5 w-5 place-items-center rounded-full bg-rose-600 text-[10px] font-bold text-white">x</button></div>}</td>
-                  <td><button type="button" disabled={colourways.length === 1} onClick={() => setColourways((rows) => rows.filter((_, i) => i !== index))} className="px-2 text-lg font-bold text-rose-500 disabled:text-slate-300">x</button></td>
-                </tr>
+                <React.Fragment key={index}>
+                  <tr className="border-t border-slate-100">
+                    {["name", "fabric_ref", "thread_ref"].map((key) => (
+                      <td key={key} className="px-3 py-1.5"><input value={row[key]} onChange={(e) => changeColourway(index, key, e.target.value)} className="w-full min-w-[90px] rounded-lg border border-slate-200 px-2 py-1.5" /></td>
+                    ))}
+                    <td className="min-w-[150px] px-3 py-1.5"><input type="file" accept="image/*" onChange={(e) => { setColourwayImage(index, e.target.files); e.target.value = ""; }} className="w-full text-[10px] file:mr-2 file:rounded-lg file:border-0 file:bg-violet-600 file:px-2 file:py-1.5 file:text-[10px] file:font-bold file:text-white" />{row.image_preview && <div className="relative mt-2 w-fit"><img src={row.image_preview} alt={row.name || "Colourway preview"} className="h-12 w-12 rounded-lg border object-cover" /><button type="button" onClick={() => setColourways((rows) => rows.map((item, i) => i === index ? { ...item, image_file: null, image_preview: "", image_url: "" } : item))} className="absolute -right-2 -top-2 grid h-5 w-5 place-items-center rounded-full bg-rose-600 text-[10px] font-bold text-white">x</button></div>}</td>
+                    <td><button type="button" disabled={colourways.length === 1} onClick={() => setColourways((rows) => rows.filter((_, i) => i !== index))} className="px-2 text-lg font-bold text-rose-500 disabled:text-slate-300">x</button></td>
+                  </tr>
+                  <tr className="border-t border-violet-100 bg-violet-50/40"><td colSpan="5" className="p-3"><div className="grid gap-2 sm:grid-cols-3">
+                    {[["trim_ref", "Trim reference", "e.g. Navy button / gold zip"], ["color_code", "Colour code", "e.g. Pantone 19-4052"], ["component_map", "Garment component map", "e.g. Body: Fabric A; collar: Fabric B"], ["notes", "Colourway notes", "Placement, matching or approval notes"]].map(([key, label, placeholder]) => <label key={key} className={key === "notes" ? "sm:col-span-2 text-[10px] font-bold uppercase tracking-wide text-slate-500" : "text-[10px] font-bold uppercase tracking-wide text-slate-500"}>{label}<input value={row[key]} onChange={(e) => changeColourway(index, key, e.target.value)} placeholder={placeholder} className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs font-medium normal-case tracking-normal text-slate-700" /></label>)}
+                  </div></td></tr>
+                </React.Fragment>
               ))}
             </tbody>
           </table>

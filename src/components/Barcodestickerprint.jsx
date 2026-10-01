@@ -347,9 +347,10 @@ export default function BarcodeStickerPrint({ items = [], onClose, storeName = "
     return () => { clearTimeout(t); window.removeEventListener("keydown", esc); document.body.style.overflow = ""; };
   }, [onClose]);
 
+  const safeCopies = Math.max(1, Math.min(50, Number.parseInt(copies, 10) || 1));
   const printItems = [];
   for (const item of items) {
-    for (let i = 0; i < copies; i++) printItems.push(item);
+    for (let i = 0; i < safeCopies; i++) printItems.push(item);
   }
 
   const totalRows = Math.ceil(printItems.length / 2);
@@ -395,9 +396,9 @@ export default function BarcodeStickerPrint({ items = [], onClose, storeName = "
           <div>
             <label style={{ display:"block", fontSize:9, fontWeight:700, color:"#64748B", textTransform:"uppercase", letterSpacing:"0.07em", marginBottom:4 }}>Copies per Item</label>
             <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-              <button onClick={() => setCopies(c=>Math.max(1,c-1))} style={{ width:32, height:32, borderRadius:8, border:"1.5px solid #E4EAF3", background:"#fff", cursor:"pointer", fontSize:20, fontWeight:700, color:"#475569", display:"flex", alignItems:"center", justifyContent:"center" }}>−</button>
-              <span style={{ fontSize:22, fontWeight:800, color:"#0F1B2D", minWidth:36, textAlign:"center" }}>{copies}</span>
-              <button onClick={() => setCopies(c=>Math.min(50,c+1))} style={{ width:32, height:32, borderRadius:8, border:"1.5px solid #E4EAF3", background:"#fff", cursor:"pointer", fontSize:20, fontWeight:700, color:"#475569", display:"flex", alignItems:"center", justifyContent:"center" }}>＋</button>
+              <button onClick={() => setCopies(c=>Math.max(1, safeCopies-1))} style={{ width:32, height:32, borderRadius:8, border:"1.5px solid #E4EAF3", background:"#fff", cursor:"pointer", fontSize:20, fontWeight:700, color:"#475569", display:"flex", alignItems:"center", justifyContent:"center" }}>−</button>
+              <input aria-label="Copies per item" type="number" min="1" max="50" value={copies} onChange={e=>setCopies(e.target.value)} onBlur={()=>setCopies(safeCopies)} style={{ width:48, height:32, borderRadius:8, border:"1.5px solid #E4EAF3", background:"#fff", color:"#0F1B2D", fontSize:15, fontWeight:800, textAlign:"center", outline:"none" }} />
+              <button onClick={() => setCopies(c=>Math.min(50, safeCopies+1))} style={{ width:32, height:32, borderRadius:8, border:"1.5px solid #E4EAF3", background:"#fff", cursor:"pointer", fontSize:20, fontWeight:700, color:"#475569", display:"flex", alignItems:"center", justifyContent:"center" }}>＋</button>
             </div>
           </div>
 

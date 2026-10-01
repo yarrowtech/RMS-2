@@ -23,6 +23,7 @@ from ..db import (
     tenants_collection,
     unstitched_stock_collection,
 )
+from .internal_notification_routes import notify as notify_internal
 from .job_work_routes import (
     _increase_central_stock, _require_job_work, _require_vendor_job_work_access,
     _stock_scope, _vendor_session,
@@ -79,8 +80,29 @@ def clean_steps(raw: Any) -> list[dict]:
             "index": len(steps), "name": name, "mode": mode,
             "instructions": clean(item.get("instructions"), 1500),
             "sections": sections,
+            # Standard time (SAM) — one-time setup per operation type on the
+            # route, minutes to produce ONE piece at this operation. 0/unset
+            # means no time standard has been set yet for it; planned
+            # duration then simply isn't estimated for that operation rather
+            # than showing a misleading zero.
+            "standard_minutes_per_pc": number(item.get("standard_minutes_per_pc")),
         })
     return steps
+
+
+WORKING_HOURS_PER_DAY = 8  # used only to express a planned/actual minute figure as days for readability
+
+# How far over standard time an operation has to run before HQ is silently
+# alerted. The person completing the operation is never told they've been
+# flagged — the completion response and the on-screen card just show the
+# real planned/actual numbers, same as always; this only adds a background
+# notification to HQ, so an exceedance is caught even if nobody happens to
+# be looking at that batch's card that day.
+TIME_VARIANCE_ALERT_THRESHOLD_PCT = 20
+
+
+def _minutes_to_days(minutes: float) -> float:
+    return round(minutes / 60 / WORKING_HOURS_PER_DAY, 2) if minutes else 0.0
 
 
 async def _unstitched_opportunities(tenant_id: str) -> list[dict]:
@@ -209,6 +231,83 @@ async def workspace(ctx: dict = Depends(_require_job_work)):
     }
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Design-wise Stage Tracking — Fabric & Production module, Step 8. A
+# read-only rollup over the batches/operations that already exist for a
+# design_no, translated into the plain Planned → Cut → Stitched → QC →
+# Finished → Packed pipeline management actually thinks in — regardless of
+# how a tenant's own operation route happens to name its steps (a route step
+# literally called "Numbering" or "Bundling" still lands somewhere sensible
+# via a loose keyword match, rather than forcing every tenant onto one rigid
+# step list). Nothing new is stored; this only reads.
+# ─────────────────────────────────────────────────────────────────────────────
+
+_STAGE_KEYWORDS = [
+    ("Cut", ["cut"]),
+    ("Stitched", ["stitch", "sew"]),
+    ("QC", ["qc", "check", "inspect", "quality"]),
+    ("Finished", ["finish"]),
+    ("Packed", ["pack"]),
+]
+_STAGE_ORDER = ["Planned", "Cut", "Stitched", "QC", "Finished", "Packed"]
+
+
+def _stage_for_operation(name: str) -> str:
+    lowered = (name or "").lower()
+    for stage, keywords in _STAGE_KEYWORDS:
+        if any(k in lowered for k in keywords):
+            return stage
+    return "Other"
+
+
+@router.get("/design-progress")
+async def design_progress(design_no: str, ctx: dict = Depends(_require_job_work)):
+    design_no = clean(design_no, 120)
+    if not design_no:
+        raise HTTPException(status_code=400, detail="design_no is required.")
+    batches = [b async for b in production_batches_collection.find({"tenant_id": ctx["tenant_id"], "design_no": design_no}).sort("created_at", 1)]
+    if not batches:
+        raise HTTPException(status_code=404, detail="No production batches found for this design.")
+
+    stage_completed_qty = {stage: 0.0 for stage in _STAGE_ORDER}
+    stage_completed_qty["Planned"] = sum(number(b.get("planned_quantity")) for b in batches)
+    batch_rows = []
+    for b in batches:
+        operations = b.get("operations") or []
+        current_stage = "Packed" if b.get("status") == "COMPLETED" else "Planned"
+        for op in operations:
+            stage = _stage_for_operation(op.get("name"))
+            # "Packed" is deliberately NOT tallied from an operation named
+            # e.g. "Finishing & Packing" completing — that only means the
+            # pieces were physically packed, not that they cleared Final QC
+            # and were posted to inventory. Only final_qc below (the actual
+            # gate to COMPLETED) counts as "Packed" here, so a batch sitting
+            # in AWAITING_FINAL_QC never double-counts or jumps the gun.
+            if op.get("status") in {"COMPLETED", "QC_COMPLETED"} and stage in stage_completed_qty and stage != "Packed":
+                stage_completed_qty[stage] += number(op.get("accepted_qty"))
+            if op.get("status") not in {"COMPLETED", "QC_COMPLETED", None} and current_stage == "Planned":
+                current_stage = f"{stage} ({op.get('status')})" if stage != "Other" else op.get("name") or "In progress"
+        if b.get("status") == "COMPLETED":
+            stage_completed_qty["Packed"] += number((b.get("final_qc") or {}).get("accepted_qty"))
+        batch_rows.append({
+            "batch_no": b.get("batch_no"), "status": b.get("status"), "planned_quantity": number(b.get("planned_quantity")),
+            "current_stage": current_stage,
+        })
+
+    stuck_batches = [r["batch_no"] for r in batch_rows if r["status"] in {"REWORK_PENDING", "FINAL_QC_REWORK"}]
+
+    return {
+        "status": "success",
+        "data": {
+            "design_no": design_no,
+            "batch_count": len(batches),
+            "stage_pipeline": [{"stage": stage, "completed_qty": round(stage_completed_qty[stage], 2)} for stage in _STAGE_ORDER],
+            "batches": batch_rows,
+            "stuck_batches": stuck_batches,
+        },
+    }
+
+
 @router.post("/routes", status_code=201)
 async def create_route(payload: dict, ctx: dict = Depends(_require_job_work)):
     name = clean(payload.get("name"), 120)
@@ -257,12 +356,23 @@ async def create_batch(payload: dict, ctx: dict = Depends(_require_job_work)):
     sequence = await production_batches_collection.count_documents({"tenant_id": tenant_id}) + 1
     operations = []
     for index, step in enumerate(route.get("steps") or []):
+        # Planned duration is estimated up front from the batch's overall
+        # planned_quantity (the true per-operation input isn't known until
+        # the previous operation actually completes) — an estimate, not a
+        # moving target that gets recalculated at every stage. Left unset
+        # when the operation has no standard time configured yet, rather
+        # than showing a misleading 0.
+        standard_minutes_per_pc = number(step.get("standard_minutes_per_pc"))
+        planned_minutes = round(quantity * standard_minutes_per_pc, 1) if standard_minutes_per_pc else None
         operations.append({
             **step, "index": index, "status": "READY" if index == 0 else "PENDING",
             "worker_id": None, "worker_name": "", "workstation": "",
             "input_qty": quantity if index == 0 else 0, "accepted_qty": 0,
             "rejected_qty": 0, "rework_qty": 0, "started_at": None,
             "completed_at": None, "external_party": None, "history": [],
+            "planned_minutes": planned_minutes,
+            "planned_days": _minutes_to_days(planned_minutes) if planned_minutes else None,
+            "elapsed_minutes": None, "variance_minutes": None, "variance_pct": None,
         })
     row = {
         "tenant_id": tenant_id, "batch_no": f"PB-{now.strftime('%y%m%d')}-{sequence:04d}",
@@ -427,7 +537,27 @@ async def complete_operation(batch_id: str, operation_index: int, payload: dict,
     if round(accepted + rejected + rework, 3) != round(input_qty, 3):
         raise HTTPException(status_code=400, detail=f"Accepted + rejected + rework must equal the operation input ({input_qty}).")
     now = datetime.utcnow()
-    operation.update({"accepted_qty": accepted, "rejected_qty": rejected, "rework_qty": rework, "remarks": clean(payload.get("remarks"), 1000), "completed_at": now if not rework else None, "status": "COMPLETED" if not rework else "REWORK_PENDING"})
+    # Elapsed wall-clock time from start to completion — this is elapsed
+    # PRODUCTION time (the operation was "open"), not necessarily continuous
+    # labour hours; an external job-worker leg especially can span several
+    # calendar days with no one actively working the whole time. Variance is
+    # only computed when this operation actually has a standard time set.
+    elapsed_minutes = None
+    variance_minutes = None
+    variance_pct = None
+    started_at = operation.get("started_at")
+    if started_at and not rework:
+        elapsed_minutes = round((now - started_at).total_seconds() / 60, 1)
+        planned_minutes = operation.get("planned_minutes")
+        if planned_minutes:
+            variance_minutes = round(elapsed_minutes - planned_minutes, 1)
+            variance_pct = round(variance_minutes / planned_minutes * 100, 1)
+    operation.update({
+        "accepted_qty": accepted, "rejected_qty": rejected, "rework_qty": rework, "remarks": clean(payload.get("remarks"), 1000),
+        "completed_at": now if not rework else None, "status": "COMPLETED" if not rework else "REWORK_PENDING",
+        "elapsed_minutes": elapsed_minutes, "elapsed_days": _minutes_to_days(elapsed_minutes) if elapsed_minutes else None,
+        "variance_minutes": variance_minutes, "variance_pct": variance_pct,
+    })
     if operation.get("mode") == "EXTERNAL" and operation.get("external_party"):
         # Closes the loop opened when the challan was issued in start_operation:
         # the same qty-in/qty-out reconciliation an internal step already gets.
@@ -463,6 +593,24 @@ async def complete_operation(batch_id: str, operation_index: int, payload: dict,
             "on_time": bool(payload.get("on_time", True)), "remarks": clean(payload.get("remarks"), 1000),
             "created_by": ctx.get("admin_id"), "created_by_name": ctx.get("admin_name", ""), "created_at": now, "updated_at": now,
         })
+    # Silent HQ alert on a real time exceedance — deliberately NOT reflected
+    # in the message below or flagged in any special way to whoever just
+    # completed this operation. They see the same plain confirmation either
+    # way; only HQ/Administrator get told, via the ordinary notification
+    # bell, that this operation ran significantly over its standard time.
+    if variance_pct is not None and variance_pct > TIME_VARIANCE_ALERT_THRESHOLD_PCT:
+        try:
+            who = operation.get("worker_name") or (operation.get("external_party") or {}).get("vendor_name") or "Unassigned"
+            title = f"{operation['name']} ran {variance_pct}% over standard time"
+            message_text = f"Batch {batch.get('batch_no')} ({batch.get('design_no')}) — {who} took {elapsed_minutes} min against a planned {operation.get('planned_minutes')} min."
+            for department in ("HQ", "Administrator"):
+                await notify_internal(
+                    ctx["tenant_id"], type="time_variance_exceeded", title=title, message=message_text,
+                    department=department, ref_type="production_batch", ref_id=batch_id, priority="normal",
+                )
+        except Exception:
+            pass
+
     if rework:
         message = f"{operation['name']} has {rework} pieces in rework. Correct them and complete this same operation again."
     elif operation_index < len(operations) - 1:
@@ -470,6 +618,42 @@ async def complete_operation(batch_id: str, operation_index: int, payload: dict,
     else:
         message = f"All route operations are complete with {accepted} pieces. Next, perform Final QC and post accepted outputs to inventory."
     return {"message": message}
+
+
+@router.get("/batches/{batch_id}/time-summary")
+async def batch_time_summary(batch_id: str, ctx: dict = Depends(_require_job_work)):
+    """Planned vs Actual vs Variance per operation for one batch, plus a
+    running total — the 'how long will this take / how long did it actually
+    take' view. Reads only what create_batch/complete_operation already
+    computed; no new storage."""
+    batch = await get_batch(batch_id, ctx["tenant_id"])
+    rows = []
+    total_planned = 0.0
+    total_elapsed = 0.0
+    for op in batch.get("operations") or []:
+        planned = op.get("planned_minutes")
+        elapsed = op.get("elapsed_minutes")
+        if planned:
+            total_planned += planned
+        if elapsed:
+            total_elapsed += elapsed
+        rows.append({
+            "name": op.get("name"), "mode": op.get("mode"), "status": op.get("status"),
+            "planned_minutes": planned, "planned_days": op.get("planned_days"),
+            "elapsed_minutes": elapsed, "elapsed_days": op.get("elapsed_days"),
+            "variance_minutes": op.get("variance_minutes"), "variance_pct": op.get("variance_pct"),
+        })
+    return {
+        "status": "success",
+        "data": {
+            "batch_no": batch.get("batch_no"), "design_no": batch.get("design_no"),
+            "operations": rows,
+            "total_planned_minutes": round(total_planned, 1) or None,
+            "total_planned_days": _minutes_to_days(total_planned) if total_planned else None,
+            "total_elapsed_minutes": round(total_elapsed, 1) or None,
+            "total_elapsed_days": _minutes_to_days(total_elapsed) if total_elapsed else None,
+        },
+    }
 
 
 @router.post("/batches/{batch_id}/final-qc")

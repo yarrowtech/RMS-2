@@ -5,7 +5,7 @@
 import { API_BASE_URL as APP_API_URL } from "../config/api.js";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Archive, EyeOff, Hash, Maximize2, MessageCircle, Minimize2, Paperclip, Send, Trash2, Users, Volume2, VolumeX, X } from "lucide-react";
+import { Archive, Eye, EyeOff, Hash, Maximize2, MessageCircle, Minimize2, Paperclip, Send, Trash2, Users, Volume2, VolumeX, X } from "lucide-react";
 import { DEPARTMENT_NAMES } from "../utils/departments.js";
 
 const API_BASE = APP_API_URL;
@@ -29,6 +29,7 @@ export default function InternalChatPanel() {
   const [open, setOpen] = useState(false);
   const [maximized, setMaximized] = useState(false); // small dropdown by default; toggles to a full-screen inbox
   const [conversations, setConversations] = useState([]);
+  const [hiddenConversations, setHiddenConversations] = useState([]);
   const [people, setPeople] = useState([]);
   const [pickingPerson, setPickingPerson] = useState(false);
   const [selected, setSelected] = useState(null); // { type, conversation_key, other_admin_id?, department?, label }
@@ -64,6 +65,14 @@ export default function InternalChatPanel() {
     return rows;
   };
 
+  const loadHiddenConversations = async () => {
+    const r = await request("/conversations?include_hidden=true");
+    const j = await r.json();
+    const rows = r.ok && Array.isArray(j.data) ? j.data.filter((row) => row.hidden) : [];
+    if (r.ok) setHiddenConversations(rows);
+    return rows;
+  };
+
   const fetchPeople = async () => {
     const r = await request("/people");
     const j = await r.json();
@@ -79,6 +88,7 @@ export default function InternalChatPanel() {
   useEffect(() => {
     if (!open) return;
     loadConversations();
+    loadHiddenConversations();
     fetchPeople(); // preloaded so @mentions work in any open conversation
     // Portaled to <body> so it's never clipped by a header's own
     // overflow:hidden (several department headers use it for their
@@ -232,8 +242,26 @@ export default function InternalChatPanel() {
     try {
       if (await updatePreference({ hidden: true })) {
         setConversations((old) => old.filter((c) => c.conversation_key !== selected.conversation_key));
+        setHiddenConversations((old) => [...old.filter((c) => c.conversation_key !== selected.conversation_key), { ...selected, hidden: true }]);
         setSelected(null);
         setMessages([]);
+      }
+    } finally {
+      setChangingConversation(false);
+    }
+  };
+
+  const unhideConversation = async () => {
+    if (!selected || changingConversation) return;
+    setChangingConversation(true);
+    try {
+      if (await updatePreference({ hidden: false })) {
+        const restored = { ...selected, hidden: false };
+        setSelected(restored);
+        setHiddenConversations((old) => old.filter((c) => c.conversation_key !== selected.conversation_key));
+        const rows = await loadConversations();
+        const refreshed = rows.find((c) => c.conversation_key === restored.conversation_key);
+        if (refreshed) setSelected(refreshed);
       }
     } finally {
       setChangingConversation(false);
@@ -327,6 +355,17 @@ export default function InternalChatPanel() {
               <div className="flex items-center gap-1 border-y border-white/10 bg-fuchsia-400/10 px-3 py-2 text-[9px] font-black uppercase tracking-[0.14em] text-fuchsia-200"><Users size={11} /> Direct messages</div>
               {directConversations.map(conversationRow)}
               {!directConversations.length && <button onClick={loadPeople} className="w-full px-3 py-3 text-left text-[10px] font-bold text-teal-200 hover:bg-white/10">Start a private chat</button>}
+              {hiddenConversations.length > 0 && (
+                <details className="border-t border-white/10">
+                  <summary className="cursor-pointer px-3 py-2 text-[10px] font-black uppercase tracking-[0.12em] text-slate-300 hover:bg-white/10">Hidden chats ({hiddenConversations.length})</summary>
+                  {hiddenConversations.map((c) => (
+                    <button key={c.conversation_key} onClick={() => openConversation(c)} className="flex w-full items-center gap-2 border-t border-white/10 px-3 py-2 text-left text-[11px] font-bold text-slate-200 transition hover:bg-white/10">
+                      <Eye size={12} className="shrink-0 text-teal-200" />
+                      <span className="truncate">{c.label}</span>
+                    </button>
+                  ))}
+                </details>
+              )}
             </div>
           </div>
 
@@ -342,7 +381,9 @@ export default function InternalChatPanel() {
               <div className="flex items-center gap-1">
                 {selected && !pickingPerson && (
                   <>
-                    <button onClick={hideConversation} disabled={changingConversation} title="Hide from my chat list" className="p-1 text-slate-400 hover:text-slate-700"><EyeOff size={14} /></button>
+                    {selected.hidden
+                      ? <button onClick={unhideConversation} disabled={changingConversation} title="Restore to my chat list" className="p-1 text-teal-600 hover:text-teal-800"><Eye size={14} /></button>
+                      : <button onClick={hideConversation} disabled={changingConversation} title="Hide from my chat list" className="p-1 text-slate-400 hover:text-slate-700"><EyeOff size={14} /></button>}
                     <button onClick={toggleMute} disabled={changingConversation} title={selected.muted ? "Unmute conversation" : "Mute conversation"} className={selected.muted ? "p-1 text-amber-500" : "p-1 text-slate-400 hover:text-slate-700"}>{selected.muted ? <VolumeX size={14} /> : <Volume2 size={14} />}</button>
                     {selected.type === "department" && selected.can_archive && <button onClick={toggleArchive} disabled={changingConversation} title={selected.archived ? "Reopen department channel" : "Archive department channel"} className={selected.archived ? "p-1 text-emerald-600" : "p-1 text-slate-400 hover:text-amber-600"}><Archive size={14} /></button>}
                   </>

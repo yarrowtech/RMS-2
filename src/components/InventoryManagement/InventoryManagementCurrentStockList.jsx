@@ -1267,7 +1267,7 @@ function ProductDetailModal({ row, onClose, onSaved, setShowForm, setEditProduct
             </button>
           </div>
 
-          {/* Tabs + Print button */}
+          {/* Tabs */}
           <div style={{ display:"flex", alignItems:"flex-end" }}>
             {TABS.map(({ key, label }) => {
               const isActive = tab === key;
@@ -1283,21 +1283,6 @@ function ProductDetailModal({ row, onClose, onSaved, setShowForm, setEditProduct
                 }}>{label}</button>
               );
             })}
-
-            {/* Print Stickers button */}
-            <button
-              onClick={() => setPrintOpen(true)}
-              style={{
-                marginLeft:"auto", marginBottom:-1,
-                padding:"7px 16px", border:"none", cursor:"pointer",
-                fontSize:12, fontWeight:700, borderRadius:"8px 8px 0 0",
-                background:"#FEF3C7", color:"#D97706",
-                borderBottom:"2px solid #F59E0B",
-                display:"flex", alignItems:"center", gap:6,
-              }}
-            >
-              🏷️ Print Stickers
-            </button>
           </div>
         </div>
 
@@ -1521,7 +1506,7 @@ function ProductDetailModal({ row, onClose, onSaved, setShowForm, setEditProduct
               onClick={() => setPrintOpen(true)}
               style={{ padding:"7px 16px", borderRadius:8, border:"1px solid #FDE68A", background:"#FEF3C7", fontSize:12, fontWeight:700, cursor:"pointer", color:"#D97706", display:"flex", alignItems:"center", gap:6 }}
             >
-              🏷️ Print Sticker
+              🏷️ Prepare labels
             </button>
           </div>
           <button onClick={onClose} style={{ padding:"8px 22px", borderRadius:8, border:"1px solid #e2e8f0", background:"#fff", fontSize:13, fontWeight:600, cursor:"pointer", color:"#374151" }}>
