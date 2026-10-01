@@ -27,7 +27,7 @@ techpacks:["Use the exact Design Project number.","Complete Sketch, Spec Sheet, 
 handoff:["Confirm approved sample and matching Tech Pack.","Record Design Head approval; Production separately records feasibility.","Choose an existing BOM or auto-create one from pattern consumption, then Release to Production."],
 floorops:["Floor workers have no login — a supervisor logs each entry on their behalf; pick a name or type one for a walk-in.","Or generate the Kiosk link at the top of this tab and open it on a shared floor tablet/PC — a worker can then pick their own name, tap Start and End themselves, no login needed.","Choose the department first; the form only shows the fields that department needs (set these up under Settings).","For Cutting/Stitching-style departments, use the Size and Wastage breakdown rows instead of typing one total — the total is calculated for you.","Switch to KPI Summary for efficiency, rework, rejection and on-time % by department, worker or style.","A genuinely wrong entry (duplicate kiosk tap, wrong worker, test entry) can be removed with Delete — it asks for a reason every time, and automatically reverses any fabric it already posted to the Fabric Lot ledger."],
 fabric:[
-  "Step 1 — Receive: the moment fabric physically arrives, log it as a lot (name, colour, width, GSM, lot/roll no., vendor, quantity). This is entered once per roll.",
+  "Step 1 — Receive: the moment fabric physically arrives, log it as a lot (name, colour, width, GSM, lot/roll no., vendor, quantity). This is entered once per roll. If one invoice brought in several DIFFERENT fabrics on the same day, use Receive invoice instead — one shared invoice no./bill date/received date, with a row per fabric (type, width, rate, qty, image, design no., item and gender), or Upload invoice to bring in a whole bill from a spreadsheet.",
   "Step 2 — Issue: when fabric is actually handed to Layering/Cutting for a design, click Issue on that lot. This is the moment it leaves the store balance.",
   "Step 3 — Consume / Waste / Return: as the work happens, record what was really used (Consume), lost (Waste, with a category) and any genuine unused leftover (Return). The balance updates itself — nothing here is typed by hand.",
   "Step 4 — Utilization: load a design (or leave blank for all) to see Received/Issued/Consumed/Waste/Balance and Utilization %/Wastage %, calculated automatically. Export Excel to share or archive it.",
@@ -102,6 +102,8 @@ const BUTTON_GUIDES = {
   ],
   fabric: [
     ["Receive lot", "Records a physical fabric roll the moment it arrives — name, colour, width, GSM, vendor, qty, QC status. This is entered ONCE per roll.", "Use every time fabric physically comes in, whether or not it's tied to a specific design yet.", "Don't re-receive the same roll to \"top up\" its quantity — that creates a duplicate lot with its own separate balance. Use Issue/Consume/Waste/Return on the existing lot instead."],
+    ["Receive invoice", "Records every fabric on ONE bill in a single form — shared invoice no./bill date/received date, with a row per fabric (type, colour, width, rate, qty, image, design no. it's for, item/garment and gender). Each row becomes its own ordinary fabric lot.", "Use whenever one invoice brings in more than one fabric type/colour on the same day — e.g. 3 colours of cotton + 1 linen.", "\"Leftover fabric\" is never typed here — it's each lot's own live balance, the same as a single Receive Lot, visible once the roll starts being issued."],
+    ["Upload invoice (Excel)", "Bulk-imports a whole paper invoice/GRN in one spreadsheet — repeat the SAME Invoice No. across multiple rows for multiple fabrics on one bill.", "Use when fabric receiving is still tracked on a paper register and transcribed at day's end.", "Download Template first and keep its headers — the importer matches columns by name, not position."],
     ["Swatch upload", "Attaches a photo of the fabric to its lot for visual reference.", "Use so anyone approving a cut plan can see the actual fabric.", "Optional — nothing else depends on it being uploaded."],
     ["Issue", "Moves fabric OUT of the store balance to the floor for a design/batch. Reduces the lot's balance immediately.", "Use the moment fabric is actually handed to Layering/Cutting, not when it's merely planned.", "Don't issue more than the current balance shows — RMS blocks it; if you're short, receive more stock or check another lot first."],
     ["Consume", "Records how much of the ISSUED fabric was actually used/cut. Doesn't touch the store balance (that already happened at Issue).", "Use after cutting/layering is done, from the real fabric_used figure.", "Can't exceed what's still unaccounted for from that lot's issue — consume + waste + return together can never be more than what was issued."],
@@ -398,6 +400,14 @@ export default function DesignPattern(){
   const [fyDays,setFyDays]=useState(365), [fyData,setFyData]=useState(null), [fyLoading,setFyLoading]=useState(false);
   const [exportingFabric,setExportingFabric]=useState(false);
   const [fabricLotFile,setFabricLotFile]=useState(null);
+  // Invoice-based receiving — one bill often brings in several DIFFERENT
+  // fabrics on the same day; this captures all of them in one form instead
+  // of repeating "Receive lot" per fabric. Each row becomes its own ordinary
+  // Fabric Lot once saved — ONE call, same balance/ledger machinery.
+  const emptyInvoiceRow=()=>({fabric_name:"",colour:"",width:"",gsm:"",rate:"",received_qty:"",opening_qty:"",design_no:"",garment_type:"",gender_segment:"",image_url:""});
+  const emptyFabricInvoice=()=>({invoice_no:"",bill_date:"",received_date:todayISO(),vendor_name:"",rows:[emptyInvoiceRow()]});
+  const [fabricInvoiceForm,setFabricInvoiceForm]=useState(emptyFabricInvoice());
+  const [fabricBulk,setFabricBulk]=useState(null);
   const loadFabricLots=useCallback(async()=>{try{setFabricError("");const r=await api("/fabric-lots");setFabricLots(r.data||[]);}catch(e){setFabricError(e.message);}},[]);
   useEffect(()=>{if(active==="fabric"&&!fabricLoaded){setFabricLoaded(true);loadFabricLots();}},[active,fabricLoaded,loadFabricLots]);
   const uploadFabricSwatch=async(lotId,file)=>{if(!file)return;try{await apiUpload(`/fabric-lots/${lotId}/swatch`,file);setNotice("Swatch image saved.");await loadFabricLots();}catch(e2){setFabricError(e2.message);}};
@@ -407,6 +417,14 @@ export default function DesignPattern(){
   const submitFabricLot=async(e)=>{e.preventDefault();try{const payload={...fabricLotForm,rate:Number(fabricLotForm.rate)||0,opening_qty:Number(fabricLotForm.opening_qty)||0,received_qty:Number(fabricLotForm.received_qty)||0};const r=await api("/fabric-lots",{method:"POST",body:JSON.stringify(payload)});const newLotId=r.data?.id;setModal("");setFabricLotForm(emptyFabricLot());if(newLotId&&fabricLotFile){await uploadFabricSwatch(newLotId,fabricLotFile);setNotice((r.message||"Fabric lot recorded.")+" Swatch image saved.");}else{setNotice(r.message||"Fabric lot recorded.");await loadFabricLots();}setFabricLotFile(null);}catch(e2){setFabricError(e2.message);}};
   const openFabricTxn=(lot,type)=>{setFabricTxnTarget(lot);setFabricTxnForm({type,qty:"",design_no:lot.design_no||"",category:"",note:""});setModal("fabrictxn");};
   const submitFabricTxn=async(e)=>{e.preventDefault();if(!fabricTxnTarget)return;try{const payload={...fabricTxnForm,qty:Number(fabricTxnForm.qty)||0};const r=await api(`/fabric-lots/${fabricTxnTarget.id}/transactions`,{method:"POST",body:JSON.stringify(payload)});setNotice(r.message||"Transaction recorded.");setModal("");await loadFabricLots();}catch(e2){setFabricError(e2.message);}};
+  const submitFabricInvoice=async(e)=>{e.preventDefault();try{
+    const rows=fabricInvoiceForm.rows.filter(r=>r.fabric_name.trim()&&Number(r.received_qty)>0).map(r=>({...r,rate:Number(r.rate)||0,received_qty:Number(r.received_qty)||0,opening_qty:Number(r.opening_qty)||0}));
+    if(!rows.length)return setFabricError("Add at least one fabric row with a name and received quantity.");
+    const r=await api("/fabric-lots/invoice",{method:"POST",body:JSON.stringify({...fabricInvoiceForm,rows})});
+    setNotice(r.message||"Fabric invoice received.");setModal("");setFabricInvoiceForm(emptyFabricInvoice());await loadFabricLots();
+  }catch(e2){setFabricError(e2.message);}};
+  const openFabricBulk=async(fileToUpload)=>{if(!fileToUpload)return;try{setFabricError("");const preview=await apiUpload("/fabric-lots/bulk/preview",fileToUpload);setFabricBulk({file:fileToUpload,preview});setModal("fabricbulk");}catch(e2){setFabricError(e2.message);}};
+  const commitFabricBulk=async()=>{if(!fabricBulk?.file)return;try{const r=await apiUpload("/fabric-lots/bulk/commit",fabricBulk.file);setNotice(r.message||"Fabric lots imported.");setModal("");setFabricBulk(null);await loadFabricLots();}catch(e2){setFabricError(e2.message);}};
   const loadFabricUtilization=async(designNo)=>{try{setFabricError("");const q=designNo?`?design_no=${encodeURIComponent(designNo)}`:"";const r=await api(`/fabric-utilization${q}`);setFabricUtilData(r.data);}catch(e2){setFabricError(e2.message);}};
   const openFabricReuse=async(lot)=>{setFabricReuseTarget(lot);try{setFabricError("");const r=await api(`/fabric-lots/${lot.id}/reuse-matches`);setFabricReuseData(r.data);}catch(e2){setFabricError(e2.message);}};
   const loadFyPlanning=async()=>{setFyLoading(true);try{setFabricError("");const r=await api(`/fy-planning?days=${fyDays}`);setFyData(r.data);}catch(e2){setFabricError(e2.message);}finally{setFyLoading(false);}};
@@ -638,6 +656,8 @@ export default function DesignPattern(){
         {active==="fabric"&&<>{fabricError&&<div className="mb-4 flex gap-2 rounded-2xl border border-rose-200 bg-rose-50 p-3 text-sm font-bold text-rose-800"><AlertCircle className="h-5 w-5 shrink-0"/><span>{fabricError}</span></div>}<FabricProductionView
           section={fabricSection} setSection={setFabricSection}
           lots={fabricLots} onAddLot={()=>{setFabricLotForm(emptyFabricLot());setFabricLotFile(null);setModal("fabriclot");}}
+          onAddInvoice={()=>{setFabricInvoiceForm(emptyFabricInvoice());setModal("fabricinvoice");}}
+          onUploadInvoice={openFabricBulk} onInvoiceTemplate={()=>apiDownload("/fabric-lots/template","fabric-receiving-template.csv").catch(e=>setFabricError(e.message))}
           onIssue={l=>openFabricTxn(l,"ISSUE")} onConsume={l=>openFabricTxn(l,"CONSUME")} onWaste={l=>openFabricTxn(l,"WASTE")} onReturn={l=>openFabricTxn(l,"RETURN")}
           onUploadSwatch={uploadFabricSwatch} onReuse={openFabricReuse}
           utilFilter={fabricUtilFilter} setUtilFilter={setFabricUtilFilter} utilData={fabricUtilData} onLoadUtil={loadFabricUtilization}
@@ -790,6 +810,41 @@ export default function DesignPattern(){
         </Field>
       </div>
     </FormModal>}
+    {modal==="fabricinvoice"&&<FormModal title="Receive fabric invoice" onClose={()=>setModal("")} onSubmit={submitFabricInvoice}>
+      <div className="mb-4 rounded-xl border border-violet-100 bg-violet-50 p-3 text-xs leading-5 text-violet-900">One invoice/bill often brings in more than one fabric on the same day — add a row per fabric below; each becomes its own fabric lot once saved.</div>
+      <div className="grid gap-4 md:grid-cols-4">
+        <Field label="Invoice No."><input value={fabricInvoiceForm.invoice_no} onChange={e=>setFabricInvoiceForm({...fabricInvoiceForm,invoice_no:e.target.value})}/></Field>
+        <Field label="Bill date"><input type="date" value={fabricInvoiceForm.bill_date} onChange={e=>setFabricInvoiceForm({...fabricInvoiceForm,bill_date:e.target.value})}/></Field>
+        <Field label="Received date"><input type="date" value={fabricInvoiceForm.received_date} onChange={e=>setFabricInvoiceForm({...fabricInvoiceForm,received_date:e.target.value})}/></Field>
+        <Field label="Vendor"><input value={fabricInvoiceForm.vendor_name} onChange={e=>setFabricInvoiceForm({...fabricInvoiceForm,vendor_name:e.target.value})}/></Field>
+      </div>
+      <div className="mt-4 space-y-3">
+        {fabricInvoiceForm.rows.map((row,index)=>{
+          const updateRow=(key,value)=>{const rows=[...fabricInvoiceForm.rows];rows[index]={...rows[index],[key]:value};setFabricInvoiceForm({...fabricInvoiceForm,rows});};
+          const removeRow=()=>setFabricInvoiceForm({...fabricInvoiceForm,rows:fabricInvoiceForm.rows.filter((_,i)=>i!==index)});
+          return <div key={index} className="rounded-xl border border-slate-200 p-3">
+            <div className="mb-2 flex items-center justify-between"><p className="text-[11px] font-black uppercase tracking-wide text-slate-500">Fabric row {index+1}</p>{fabricInvoiceForm.rows.length>1&&<button type="button" onClick={removeRow} className="text-[11px] font-bold text-rose-600">Remove</button>}</div>
+            <div className="grid gap-2 md:grid-cols-3 xl:grid-cols-5">
+              <label className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Fabric type *<input required value={row.fabric_name} onChange={e=>updateRow("fabric_name",e.target.value)} placeholder="Cotton Poplin" className="mt-1 w-full rounded-lg border border-slate-200 px-2.5 py-2 text-sm font-medium normal-case tracking-normal"/></label>
+              <label className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Colour<input value={row.colour} onChange={e=>updateRow("colour",e.target.value)} className="mt-1 w-full rounded-lg border border-slate-200 px-2.5 py-2 text-sm font-medium normal-case tracking-normal"/></label>
+              <label className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Width<input value={row.width} onChange={e=>updateRow("width",e.target.value)} placeholder="44in" className="mt-1 w-full rounded-lg border border-slate-200 px-2.5 py-2 text-sm font-medium normal-case tracking-normal"/></label>
+              <label className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Rate (per unit)<input type="number" min="0" step="0.01" value={row.rate} onChange={e=>updateRow("rate",e.target.value)} className="mt-1 w-full rounded-lg border border-slate-200 px-2.5 py-2 text-sm font-medium normal-case tracking-normal"/></label>
+              <label className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Total fabric (qty) *<input required type="number" min="0.01" step="0.01" value={row.received_qty} onChange={e=>updateRow("received_qty",e.target.value)} className="mt-1 w-full rounded-lg border border-slate-200 px-2.5 py-2 text-sm font-medium normal-case tracking-normal"/></label>
+              <label className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Design No. made from this fabric<input value={row.design_no} onChange={e=>updateRow("design_no",e.target.value)} className="mt-1 w-full rounded-lg border border-slate-200 px-2.5 py-2 text-sm font-medium normal-case tracking-normal"/></label>
+              <label className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Item (what's made)<input value={row.garment_type} onChange={e=>updateRow("garment_type",e.target.value)} placeholder="Shirt, Tunic, Dress…" className="mt-1 w-full rounded-lg border border-slate-200 px-2.5 py-2 text-sm font-medium normal-case tracking-normal"/></label>
+              <label className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Gender<input value={row.gender_segment} onChange={e=>updateRow("gender_segment",e.target.value)} placeholder="Men / Women / Kids / Unisex" className="mt-1 w-full rounded-lg border border-slate-200 px-2.5 py-2 text-sm font-medium normal-case tracking-normal"/></label>
+              <div className="md:col-span-3 xl:col-span-2"><AssetUploader label="Fabric image" onUploaded={urls=>updateRow("image_url",urls[0]||row.image_url)}/>{row.image_url&&<a href={row.image_url} target="_blank" rel="noreferrer" className="mt-1 block truncate text-[11px] font-semibold text-violet-700 underline">Image uploaded — view</a>}</div>
+            </div>
+          </div>;
+        })}
+        <button type="button" onClick={()=>setFabricInvoiceForm({...fabricInvoiceForm,rows:[...fabricInvoiceForm.rows,emptyInvoiceRow()]})} className={BTN_SUBTLE}>+ Add another fabric on this invoice</button>
+      </div>
+    </FormModal>}
+    {modal==="fabricbulk"&&fabricBulk?.preview&&<Modal title="Import fabric receiving" onClose={()=>{setModal("");setFabricBulk(null);}}><div className="space-y-4 p-5 sm:p-6">
+      <div className="grid gap-3 sm:grid-cols-3">{[["Rows in file",fabricBulk.preview.summary.row_count],["Will import",fabricBulk.preview.summary.valid_count],["Will skip",fabricBulk.preview.summary.invalid_count]].map(([l,v])=><div key={l} className="rounded-xl border border-slate-200 p-3"><p className="text-[11px] font-black uppercase tracking-wide text-slate-400">{l}</p><p className="mt-1 text-2xl font-black text-slate-900">{v}</p></div>)}</div>
+      {fabricBulk.preview.rows.filter(r=>r.errors?.length).slice(0,20).map(r=><div key={r.row_no} className="rounded-lg bg-rose-50 p-2 text-xs text-rose-700"><b>Row {r.row_no}</b> ({r.fabric_name||"—"}): {r.errors.join("; ")}</div>)}
+      <div className="flex justify-end gap-3"><button onClick={()=>{setModal("");setFabricBulk(null);}} className={BTN_GHOST}>Cancel</button><button disabled={!fabricBulk.preview.summary.valid_count} onClick={commitFabricBulk} className={BTN_PRIMARY}>Import {fabricBulk.preview.summary.valid_count} row(s)</button></div>
+    </div></Modal>}
     {modal==="fabrictxn"&&fabricTxnTarget&&<FormModal title={`${pretty(fabricTxnForm.type)} — ${fabricTxnTarget.lot_no}`} onClose={()=>{setModal("");setFabricTxnTarget(null);}} onSubmit={submitFabricTxn}>
       <div className="mb-4 rounded-xl bg-slate-50 p-3 text-xs text-slate-600">Balance on hand: <b className="text-slate-900">{fabricTxnTarget.closing_balance} {fabricTxnTarget.unit}</b>{fabricTxnForm.type!=="ISSUE"&&<> · Issued fabric still unaccounted for: <b className="text-slate-900">{Math.max(0,(fabricTxnTarget.issued_qty||0)-(fabricTxnTarget.consumed_qty||0)-(fabricTxnTarget.waste_qty||0)-(fabricTxnTarget.returned_qty||0)).toFixed(2)} {fabricTxnTarget.unit}</b></>}</div>
       <div className="grid gap-4 md:grid-cols-2">
@@ -1045,7 +1100,7 @@ function KpiTable({title,rows}){return <Panel title={title} subtitle="Efficiency
 // utilization %, planned fabric, next-year suggestion) is computed by the
 // backend; this view only ever asks for the raw facts (received qty, issue
 // qty, category…) per the module's core principle.
-function FabricProductionView({section,setSection,lots,onAddLot,onIssue,onConsume,onWaste,onReturn,onUploadSwatch,onReuse,utilFilter,setUtilFilter,utilData,onLoadUtil,onExportUtil,exportingUtil,reuseTarget,reuseData,fyDays,setFyDays,fyData,fyLoading,onLoadFy}){
+function FabricProductionView({section,setSection,lots,onAddLot,onAddInvoice,onUploadInvoice,onInvoiceTemplate,onIssue,onConsume,onWaste,onReturn,onUploadSwatch,onReuse,utilFilter,setUtilFilter,utilData,onLoadUtil,onExportUtil,exportingUtil,reuseTarget,reuseData,fyDays,setFyDays,fyData,fyLoading,onLoadFy}){
   const sectionBtn=(v)=>"rounded-lg px-3.5 py-2 text-sm font-bold transition "+(section===v?"bg-violet-600 text-white shadow-sm":"text-slate-600 hover:bg-slate-100");
   return <div className="space-y-5">
     <nav className="inline-flex flex-wrap gap-1 rounded-xl border border-slate-200 bg-white p-1 shadow-sm" aria-label="Fabric & Production sections">
@@ -1057,7 +1112,12 @@ function FabricProductionView({section,setSection,lots,onAddLot,onIssue,onConsum
     {section==="lots"&&<section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
       <div className="flex flex-col justify-between gap-3 border-b border-slate-100 p-5 sm:flex-row sm:items-center">
         <div><h2 className="text-base font-black text-slate-900">Fabric lot / roll ledger</h2><p className="mt-0.5 text-sm text-slate-500">Every physical roll received, with a live balance. Balance, issued and consumed are calculated — never typed.</p></div>
-        <button onClick={onAddLot} className={BTN_PRIMARY}><Plus className="h-4 w-4"/>Receive lot</button>
+        <div className="flex flex-wrap gap-2">
+          <button onClick={onInvoiceTemplate} className={`${BTN_GHOST} !py-2`}>Template</button>
+          <label className={`${BTN_SUBTLE} !py-2 cursor-pointer`}>Upload invoice (Excel)<input type="file" accept=".csv,.xlsx,.xls" className="hidden" onChange={e=>{const f=e.target.files?.[0];e.target.value="";if(f)onUploadInvoice(f);}}/></label>
+          <button onClick={onAddInvoice} className={BTN_SUBTLE}><Plus className="h-4 w-4"/>Receive invoice</button>
+          <button onClick={onAddLot} className={BTN_PRIMARY}><Plus className="h-4 w-4"/>Receive lot</button>
+        </div>
       </div>
       <div className="divide-y divide-slate-100">
         {lots.length?lots.map(l=><div key={l.id} className="p-4 sm:p-5">
@@ -1066,7 +1126,8 @@ function FabricProductionView({section,setSection,lots,onAddLot,onIssue,onConsum
               {l.swatch_image_url?<img src={l.swatch_image_url} alt="Fabric swatch" className="h-14 w-14 shrink-0 rounded-xl border border-slate-200 object-cover"/>:<label className="grid h-14 w-14 shrink-0 cursor-pointer place-items-center rounded-xl border border-dashed border-slate-300 bg-slate-50 text-[9px] font-bold uppercase text-slate-400 hover:bg-slate-100">Swatch<input type="file" accept="image/*" className="hidden" onChange={e=>{const f=e.target.files?.[0];e.target.value="";if(f)onUploadSwatch(l.id,f);}}/></label>}
               <div>
                 <p className="font-black text-slate-900">{l.fabric_name} <span className="font-normal text-slate-400">· {l.lot_no}{l.roll_no?` / ${l.roll_no}`:""}</span></p>
-                <p className="text-xs text-slate-500">{[l.colour,l.width,l.gsm&&`${l.gsm} GSM`,l.vendor_name].filter(Boolean).join(" · ")||"No details recorded"}{l.design_no?<span className="ml-1.5 rounded-full bg-violet-100 px-1.5 py-0.5 text-[10px] font-bold text-violet-700">{l.design_no}</span>:null}</p>
+                <p className="text-xs text-slate-500">{[l.colour,l.width,l.gsm&&`${l.gsm} GSM`,l.vendor_name].filter(Boolean).join(" · ")||"No details recorded"}{l.design_no?<span className="ml-1.5 rounded-full bg-violet-100 px-1.5 py-0.5 text-[10px] font-bold text-violet-700">{l.design_no}</span>:null}{(l.garment_type||l.gender_segment)&&<span className="ml-1.5 rounded-full bg-cyan-100 px-1.5 py-0.5 text-[10px] font-bold text-cyan-700">{[l.garment_type,l.gender_segment].filter(Boolean).join(" · ")}</span>}</p>
+                {(l.invoice_no||l.bill_date||l.received_date)&&<p className="mt-0.5 text-[11px] text-slate-400">{l.invoice_no?`Invoice ${l.invoice_no}`:""}{l.bill_date?` · Bill ${l.bill_date}`:""}{l.received_date?` · Received ${l.received_date}`:""}</p>}
               </div>
             </div>
             <Badge value={l.qc_status}/>

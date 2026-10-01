@@ -79,6 +79,16 @@ PIECE_NAME_SUGGESTIONS = {
 }
 DEFAULT_PIECE_NAME_SUGGESTIONS = ["Front body", "Back body", "Sleeve", "Collar/Neckline", "Pocket", "Yoke", "Waistband", "Cuff"]
 
+# Garment type / gender options offered on the Floor Log Kiosk (and HQ's own
+# manual entry) — a simple pick list so a worker can say "Shirt" / "Pant" /
+# "Other" even for a design_no the system doesn't recognise yet, rather than
+# only ever getting this from an auto Design Project lookup. Free text is
+# still accepted (the kiosk lets "Other" be typed), this is just the common
+# starting list. Manual entry, when given, always takes priority over the
+# auto-looked-up value from the Design Project — see _lookup_design_context.
+GARMENT_TYPE_OPTIONS = ["Shirt", "T-Shirt", "Pant", "Trouser", "Tunic", "Kurta", "Dress", "Skirt", "Jacket", "Other"]
+GENDER_SEGMENT_OPTIONS = ["Men", "Women", "Kids", "Unisex"]
+
 # Wastage taxonomy — Fabric & Production module, Step 5. Replaces one generic
 # "wastage_mtrs" number with a real breakdown of WHY fabric was lost, so
 # management can tell a bad marker from a bad fabric batch from a genuine
@@ -1439,7 +1449,8 @@ async def create_floor_log(payload: dict, ctx: dict = Depends(require_design_or_
         "tenant_id": ctx["tenant_id"], "date": date, "time": clean(payload.get("time"), 10),
         "department": department, "worker_id": worker_id or None, "worker_name": worker_name,
         "design_no": design_no,
-        "garment_type": design_context.get("garment_type", ""), "gender_segment": design_context.get("gender_segment", ""),
+        "garment_type": clean(payload.get("garment_type"), 80) or design_context.get("garment_type", ""),
+        "gender_segment": clean(payload.get("gender_segment"), 80) or design_context.get("gender_segment", ""),
         # Explicit fabric lot this entry draws from (Fabric & Production,
         # Step 3) — optional; when set, the sync bridge below posts against
         # THIS lot deterministically instead of guessing across every lot
@@ -1544,7 +1555,10 @@ async def floor_kiosk_context(kiosk_token: str):
     # route, so the full tenant list (same one Settings edits) rides along
     # here instead.
     tenant_settings = _merge_settings(await design_settings_collection.find_one({"tenant_id": tenant_id}) or {})
-    return {"status": "success", "data": {"departments": departments, "workers": workers, "wastage_categories": tenant_settings["wastage_categories"]}}
+    return {"status": "success", "data": {
+        "departments": departments, "workers": workers, "wastage_categories": tenant_settings["wastage_categories"],
+        "garment_type_options": GARMENT_TYPE_OPTIONS, "gender_segment_options": GENDER_SEGMENT_OPTIONS,
+    }}
 
 
 async def _lookup_design_context(tenant_id: str, design_no: str) -> dict:
@@ -1657,10 +1671,14 @@ async def floor_kiosk_start(kiosk_token: str, payload: dict):
         "tenant_id": tenant_id, "date": now.date().isoformat(), "time": now.strftime("%H:%M"),
         "department": department, "worker_id": worker_id or None, "worker_name": worker_name,
         "design_no": design_no,
-        # Pulled once at Start from the matching Design Project, never typed
-        # by the worker — shown back to them throughout the session and
-        # carried onto this row for HQ's own reporting.
-        "garment_type": design_context.get("garment_type", ""), "gender_segment": design_context.get("gender_segment", ""),
+        # Pulled from the matching Design Project when one exists — but the
+        # worker can always type/pick their own Item (Shirt/Pant/Other) and
+        # Gender too, and that manual pick always wins over the auto lookup.
+        # This covers a design_no the system doesn't recognise yet (no
+        # Design Project on file), where auto lookup alone would leave both
+        # blank with no way to fill them in.
+        "garment_type": clean(payload.get("garment_type"), 80) or design_context.get("garment_type", ""),
+        "gender_segment": clean(payload.get("gender_segment"), 80) or design_context.get("gender_segment", ""),
         # Informational only (Step 4) — the End form pre-fills its size
         # rows from this so the worker just fills in counts instead of
         # typing "S"/"M"/"L" from scratch; the actual saved size_breakdown
@@ -1699,10 +1717,18 @@ async def floor_kiosk_end(kiosk_token: str, log_id: str, payload: dict):
     end_design_no = clean(payload.get("design_no"), 120) or log.get("design_no", "")
     design_context = await _lookup_design_context(tenant_id, end_design_no) if end_design_no != log.get("design_no", "") else None
     fabric_lot_id = clean(payload.get("fabric_lot_id"), 40) or log.get("fabric_lot_id")
+    # A manual garment_type/gender_segment typed/picked at End always wins —
+    # over a re-looked-up design context, and over whatever was stamped at
+    # Start — so a worker can correct or fill these in even for a design_no
+    # with no matching Design Project.
+    manual_garment_type = clean(payload.get("garment_type"), 80)
+    manual_gender_segment = clean(payload.get("gender_segment"), 80)
     update = {
         "status": "COMPLETED", "ended_at": now, "elapsed_minutes": elapsed_minutes, "elapsed_days": _minutes_to_days_floor(elapsed_minutes),
         "design_no": end_design_no, "fabric_lot_id": fabric_lot_id,
         **({"garment_type": design_context.get("garment_type", ""), "gender_segment": design_context.get("gender_segment", ""), "pattern_size_ratio": design_context.get("size_ratio", [])} if design_context else {}),
+        **({"garment_type": manual_garment_type} if manual_garment_type else {}),
+        **({"gender_segment": manual_gender_segment} if manual_gender_segment else {}),
         "size_breakdown": size_breakdown, "wastage_breakdown": wastage_breakdown,
         "remarks": clean(payload.get("remarks"), 1000), "on_time": bool(payload.get("on_time", True)),
         "updated_at": now,
@@ -2040,12 +2066,6 @@ async def list_fabric_lots(design_no: str = "", ctx: dict = Depends(require_desi
     return {"status": "success", "data": rows}
 
 
-@router.get("/fabric-lots/{lot_id}")
-async def get_fabric_lot(lot_id: str, ctx: dict = Depends(require_design_or_production)):
-    lot = await _fabric_lot_or_404(lot_id, ctx["tenant_id"])
-    return {"status": "success", "data": serialize(lot)}
-
-
 def _build_fabric_lot_doc(tenant_id: str, payload: dict, created_by: str = None, created_by_name: str = "") -> dict:
     """Shared by the authenticated Receive Lot form and the kiosk's own
     quick-add (a worker who's holding a roll HQ never logged yet) — same
@@ -2075,8 +2095,20 @@ def _build_fabric_lot_doc(tenant_id: str, payload: dict, created_by: str = None,
         "vendor_name": clean(payload.get("vendor_name"), 160),
         "unit": unit, "rate": number(payload.get("rate")),
         "qc_status": qc_status, "qc_note": clean(payload.get("qc_note"), 500),
-        "swatch_image_url": "",
+        "swatch_image_url": clean(payload.get("swatch_image_url") or payload.get("image_url"), 1000),
         "design_no": clean(payload.get("design_no"), 80),
+        # What the fabric is actually destined to become — set once at
+        # receiving time (often already known from the Design Project the
+        # fabric was bought for), shown alongside the design_no so a roll
+        # isn't just "D-205", it's "D-205 · Tunic · Women".
+        "garment_type": clean(payload.get("garment_type"), 80), "gender_segment": clean(payload.get("gender_segment"), 80),
+        # Invoice-based receiving (Step: Receive invoice) — bill_date and
+        # received_date are the real-world dates on the paper invoice/GRN;
+        # received_at below stays the system timestamp of when this record
+        # was actually entered, same as before. invoice_no groups multiple
+        # fabric rows received together on one bill.
+        "invoice_no": clean(payload.get("invoice_no"), 80), "bill_date": clean(payload.get("bill_date"), 10),
+        "received_date": clean(payload.get("received_date"), 10),
         "opening_qty": opening_qty, "received_qty": received_qty,
         "issued_qty": 0.0, "consumed_qty": 0.0, "waste_qty": 0.0, "returned_qty": 0.0, "recoverable_qty": 0.0,
         "closing_balance": round(opening_qty + received_qty, 3),
@@ -2092,12 +2124,222 @@ def _build_fabric_lot_doc(tenant_id: str, payload: dict, created_by: str = None,
     }
 
 
+@router.post("/fabric-lots/invoice", status_code=201)
+async def receive_fabric_invoice(payload: dict, ctx: dict = Depends(require_design_or_production)):
+    """One invoice/GRN often brings in several DIFFERENT fabrics on the same
+    day (e.g. 3 colours of cotton + 1 linen) — this records all of them in
+    one go instead of repeating the single-roll Receive Lot form per fabric,
+    sharing the invoice header (invoice_no/bill_date/received_date/vendor)
+    across every row. Each row still becomes its own ordinary Fabric Lot —
+    same balance/ledger machinery as a single Receive Lot, nothing new there.
+    "Leftover fabric" is never typed here; it's each lot's own live balance,
+    visible the moment the roll starts being issued/consumed."""
+    invoice_no = clean(payload.get("invoice_no"), 80)
+    bill_date = clean(payload.get("bill_date"), 10)
+    received_date = clean(payload.get("received_date"), 10)
+    vendor_name = clean(payload.get("vendor_name"), 160)
+    rows = payload.get("rows") or []
+    if not isinstance(rows, list) or not rows:
+        raise HTTPException(status_code=400, detail="Add at least one fabric row to this invoice.")
+    if len(rows) > 50:
+        raise HTTPException(status_code=400, detail="Too many rows in one invoice — split into more than one invoice entry.")
+
+    now = datetime.utcnow()
+    docs = []
+    for index, row in enumerate(rows, start=1):
+        if not isinstance(row, dict):
+            continue
+        row_payload = {
+            **row,
+            "vendor_name": row.get("vendor_name") or vendor_name,
+            "invoice_no": invoice_no, "bill_date": bill_date, "received_date": received_date,
+            "lot_no": clean(row.get("lot_no"), 80) or (f"{invoice_no}-{index}" if invoice_no else f"INV-{now.strftime('%y%m%d')}-{index}"),
+        }
+        doc = _build_fabric_lot_doc(ctx["tenant_id"], row_payload, ctx.get("admin_id"), ctx.get("admin_name"))
+        docs.append(doc)
+    if not docs:
+        raise HTTPException(status_code=400, detail="Add at least one fabric row to this invoice.")
+    result = await fabric_lots_collection.insert_many(docs)
+    saved = [serialize(await fabric_lots_collection.find_one({"_id": _id})) for _id in result.inserted_ids]
+    return {"message": f"{len(saved)} fabric lot(s) received against invoice {invoice_no or '(no invoice no.)'}.", "data": saved}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Bulk fabric-receiving upload — same idea as the Daily Floor Log's Excel
+# upload (template/preview/commit), for whoever still receives fabric
+# against a paper invoice and transcribes it at day's end. The SAME
+# Invoice No. repeated across several spreadsheet rows is exactly how more
+# than one fabric on one bill gets captured — no special multi-row syntax.
+# ─────────────────────────────────────────────────────────────────────────────
+
+_FABRIC_TEMPLATE_HEADERS = [
+    "Invoice No", "Bill Date", "Received Date", "Vendor", "Fabric Name", "Colour",
+    "Width", "GSM", "Unit (MTR/KG/UNIT)", "Rate", "Received Qty", "Opening Qty",
+    "Design No", "Item / Garment Type", "Gender", "Notes",
+]
+_FABRIC_COL_ALIASES = {
+    "invoice_no": ("invoiceno", "invoicenumber", "billno", "grnno"),
+    "bill_date": ("billdate", "invoicedate"),
+    "received_date": ("receiveddate", "grndate", "date"),
+    "vendor_name": ("vendor", "vendorname", "supplier", "suppliername"),
+    "fabric_name": ("fabricname", "fabrictype", "fabric", "material", "materialname"),
+    "colour": ("colour", "color", "shade"),
+    "width": ("width", "fabricwidth"),
+    "gsm": ("gsm",),
+    "unit": ("unit", "uom"),
+    "rate": ("rate", "ratepermtr", "unitrate", "price"),
+    "received_qty": ("receivedqty", "totalfabric", "qty", "quantity", "receivedquantity"),
+    "opening_qty": ("openingqty", "opening"),
+    "design_no": ("designno", "designnumber", "style", "styleno"),
+    "garment_type": ("item", "itemgarmenttype", "garmenttype", "itemtype", "garment"),
+    "gender_segment": ("gender", "gendersegment", "department"),
+    "notes": ("notes", "note", "remarks"),
+}
+
+
+def _fabric_key(value: Any) -> str:
+    return re.sub(r"[^a-z0-9]+", "", str(value or "").strip().lower())
+
+
+def _parse_fabric_upload(content: bytes, filename: str) -> list:
+    name = (filename or "").lower()
+    try:
+        if name.endswith(".csv"):
+            frame = pd.read_csv(io.BytesIO(content), dtype=str)
+        elif name.endswith((".xlsx", ".xls")):
+            frame = pd.read_excel(io.BytesIO(content), dtype=str)
+        else:
+            raise HTTPException(status_code=400, detail="Upload a .csv or .xlsx file.")
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=400, detail="The file could not be read. Download the template and keep the headers.")
+    frame = frame.where(pd.notnull(frame), "")
+
+    colmap: Dict[str, str] = {}
+    for column in frame.columns:
+        key = _fabric_key(column)
+        for field, aliases in _FABRIC_COL_ALIASES.items():
+            if key in aliases and field not in colmap:
+                colmap[field] = column
+    if "fabric_name" not in colmap or "received_qty" not in colmap:
+        raise HTTPException(status_code=400, detail="The file needs at least a Fabric Name and a Received Qty column.")
+
+    rows = []
+    for index, record in enumerate(frame.to_dict(orient="records"), start=2):
+        def cell(field: str) -> str:
+            return str(record.get(colmap.get(field, ""), "") or "").strip()
+
+        errors: list = []
+
+        def parse_date(field: str, label: str) -> str:
+            raw = cell(field)
+            if not raw:
+                return ""
+            try:
+                return pd.to_datetime(raw, dayfirst=True, errors="raise").date().isoformat()
+            except Exception:
+                errors.append(f"{label} '{raw}' is not a valid date.")
+                return ""
+
+        bill_date = parse_date("bill_date", "Bill Date")
+        received_date = parse_date("received_date", "Received Date")
+
+        fabric_name = cell("fabric_name")
+        if not fabric_name:
+            errors.append("Fabric Name is required.")
+
+        unit = cell("unit").upper() or "MTR"
+        if unit not in FABRIC_LOT_UNITS:
+            errors.append(f"Unit '{unit}' must be MTR, KG or UNIT.")
+
+        def parse_number(field: str, label: str, required: bool = False) -> float:
+            text = cell(field).replace(",", "")
+            if not text:
+                if required:
+                    errors.append(f"{label} is required.")
+                return 0.0
+            try:
+                value = float(text)
+            except ValueError:
+                errors.append(f"{label} '{text}' is not a number.")
+                return 0.0
+            if value < 0:
+                errors.append(f"{label} cannot be negative.")
+            return max(0.0, value)
+
+        received_qty = parse_number("received_qty", "Received Qty", required=True)
+        rate = parse_number("rate", "Rate")
+        opening_qty = parse_number("opening_qty", "Opening Qty")
+
+        rows.append({
+            "row_no": index, "invoice_no": cell("invoice_no")[:80], "bill_date": bill_date, "received_date": received_date,
+            "vendor_name": cell("vendor_name")[:160], "fabric_name": fabric_name[:160], "colour": cell("colour")[:80],
+            "width": cell("width")[:40], "gsm": cell("gsm")[:40], "unit": unit, "rate": rate,
+            "received_qty": received_qty, "opening_qty": opening_qty,
+            "design_no": cell("design_no")[:80], "garment_type": cell("garment_type")[:80], "gender_segment": cell("gender_segment")[:80],
+            "notes": cell("notes")[:1000], "errors": errors,
+        })
+    if not rows:
+        raise HTTPException(status_code=400, detail="The file has no data rows.")
+    return rows
+
+
+@router.get("/fabric-lots/template")
+async def fabric_lot_template(ctx: dict = Depends(require_design_or_production)):
+    body = ",".join(f'"{h}"' for h in _FABRIC_TEMPLATE_HEADERS) + "\r\n"
+    return Response(content=body, media_type="text/csv", headers={"Content-Disposition": 'attachment; filename="fabric-receiving-template.csv"'})
+
+
+@router.post("/fabric-lots/bulk/preview")
+async def preview_fabric_lots(file: UploadFile = File(...), ctx: dict = Depends(require_design_or_production)):
+    rows = _parse_fabric_upload(await file.read(), file.filename or "")
+    invalid = sum(1 for r in rows if r["errors"])
+    return {
+        "status": "success", "mode": "preview_only",
+        "summary": {"row_count": len(rows), "valid_count": len(rows) - invalid, "invalid_count": invalid},
+        "rows": rows[:200], "truncated": len(rows) > 200,
+    }
+
+
+@router.post("/fabric-lots/bulk/commit")
+async def commit_fabric_lots(file: UploadFile = File(...), ctx: dict = Depends(require_design_or_production)):
+    rows = _parse_fabric_upload(await file.read(), file.filename or "")
+    now = datetime.utcnow()
+    docs, skipped = [], []
+    # Per-invoice row counters so auto-generated lot numbers (when a row has
+    # no lot_no of its own — this upload path never asks for one) don't
+    # collide when the same Invoice No. repeats across several rows.
+    seq_by_invoice: Dict[str, int] = {}
+    for row in rows:
+        if row["errors"]:
+            skipped.append({"row_no": row["row_no"], "fabric_name": row["fabric_name"], "errors": row["errors"]})
+            continue
+        invoice_no = row["invoice_no"]
+        seq_by_invoice[invoice_no] = seq_by_invoice.get(invoice_no, 0) + 1
+        row_payload = {**row, "lot_no": f"{invoice_no}-{seq_by_invoice[invoice_no]}" if invoice_no else f"INV-{now.strftime('%y%m%d')}-{len(docs) + 1}"}
+        docs.append(_build_fabric_lot_doc(ctx["tenant_id"], row_payload, ctx.get("admin_id"), ctx.get("admin_name")))
+    if docs:
+        await fabric_lots_collection.insert_many(docs, ordered=False)
+    return {
+        "status": "success", "mode": "committed",
+        "inserted": len(docs), "rows_skipped": len(skipped), "skipped_rows": skipped[:200],
+        "message": f"{len(docs)} fabric lot(s) imported" + (f", {len(skipped)} row(s) skipped" if skipped else "") + ".",
+    }
+
+
 @router.post("/fabric-lots", status_code=201)
 async def create_fabric_lot(payload: dict, ctx: dict = Depends(require_design_or_production)):
     doc = _build_fabric_lot_doc(ctx["tenant_id"], payload, ctx.get("admin_id"), ctx.get("admin_name"))
     result = await fabric_lots_collection.insert_one(doc)
     saved = await fabric_lots_collection.find_one({"_id": result.inserted_id})
     return {"message": f"Fabric lot {doc['lot_no']} recorded.", "data": serialize(saved)}
+
+
+@router.get("/fabric-lots/{lot_id}")
+async def get_fabric_lot(lot_id: str, ctx: dict = Depends(require_design_or_production)):
+    lot = await _fabric_lot_or_404(lot_id, ctx["tenant_id"])
+    return {"status": "success", "data": serialize(lot)}
 
 
 @router.patch("/fabric-lots/{lot_id}")

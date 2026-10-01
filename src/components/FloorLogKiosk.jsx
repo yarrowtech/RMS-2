@@ -41,12 +41,16 @@ export default function FloorLogKiosk() {
   const [workerId, setWorkerId] = useState("");
   const [workerName, setWorkerName] = useState("");
   const [designNo, setDesignNo] = useState("");
-  const [designPreview, setDesignPreview] = useState(null); // live lookup as they type — style/garment/gender, never typed by hand
+  const [designPreview, setDesignPreview] = useState(null); // live lookup as they type — style/garment/gender, pre-fills below but stays editable
+  const [garmentType, setGarmentType] = useState(""); // what's being made (Shirt/Pant/Other...) — auto-suggested from the design lookup, but always editable/typeable by the worker
+  const [garmentTypeOther, setGarmentTypeOther] = useState("");
+  const [genderSegment, setGenderSegment] = useState("");
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState("");
   const [session, setSession] = useState(null);
   const [tick, setTick] = useState(0); // forces the elapsed-time label to re-render every minute
-  const [endForm, setEndForm] = useState({ design_no: "", fabric_lot_id: "", rejected_qty: "", rework_qty: "", fabric_used_mtrs: "", remarks: "" });
+  const [endForm, setEndForm] = useState({ design_no: "", fabric_lot_id: "", rejected_qty: "", rework_qty: "", fabric_used_mtrs: "", remarks: "", garment_type: "", gender_segment: "" });
+  const [endGarmentOther, setEndGarmentOther] = useState("");
   const [sizeRows, setSizeRows] = useState([]);
   const [wasteRows, setWasteRows] = useState([]);
   const [doneResult, setDoneResult] = useState(null);
@@ -70,7 +74,15 @@ export default function FloorLogKiosk() {
     const q = designNo.trim();
     if (!q) { setDesignPreview(null); return undefined; }
     const timer = window.setTimeout(() => {
-      kioskApi(token, `/design-lookup?design_no=${encodeURIComponent(q)}`).then((r) => setDesignPreview(r.data)).catch(() => setDesignPreview(null));
+      kioskApi(token, `/design-lookup?design_no=${encodeURIComponent(q)}`).then((r) => {
+        setDesignPreview(r.data);
+        // Only pre-fill if the worker hasn't already picked something — a
+        // manual pick always stays, never gets overwritten by a lookup.
+        if (r.data?.found) {
+          setGarmentType((current) => current || r.data.garment_type || "");
+          setGenderSegment((current) => current || r.data.gender_segment || "");
+        }
+      }).catch(() => setDesignPreview(null));
     }, 400);
     return () => window.clearTimeout(timer);
   }, [designNo, token]);
@@ -94,7 +106,11 @@ export default function FloorLogKiosk() {
       const open = await kioskApi(token, `/open?worker_name=${encodeURIComponent(name)}`);
       const existing = (open.data || [])[0];
       if (existing) { setSession(existing); setStep("active"); return; }
-      const started = await kioskApi(token, "/start", { method: "POST", body: JSON.stringify({ department, worker_id: workerId, worker_name: name, design_no: design }) });
+      const started = await kioskApi(token, "/start", { method: "POST", body: JSON.stringify({
+        department, worker_id: workerId, worker_name: name, design_no: design,
+        garment_type: garmentType === "Other" ? garmentTypeOther.trim() : garmentType,
+        gender_segment: genderSegment,
+      }) });
       setSession(started.data);
       setStep("active");
     } catch (e) { setActionError(e.message); }
@@ -107,6 +123,8 @@ export default function FloorLogKiosk() {
     try {
       const payload = {
         design_no: endForm.design_no, fabric_lot_id: endForm.fabric_lot_id || undefined,
+        garment_type: endForm.garment_type === "Other" ? endGarmentOther.trim() : endForm.garment_type,
+        gender_segment: endForm.gender_segment,
         rejected_qty: endForm.rejected_qty || 0, rework_qty: endForm.rework_qty || 0,
         fabric_used_mtrs: endForm.fabric_used_mtrs || 0, remarks: endForm.remarks,
         size_breakdown: sizeRows.filter((r) => r.size && Number(r.qty) > 0).map((r) => ({ size: r.size, qty: Number(r.qty) })),
@@ -134,7 +152,8 @@ export default function FloorLogKiosk() {
 
   const startOver = () => {
     setStep("pick"); setDepartment(""); setWorkerId(""); setWorkerName(""); setDesignNo(""); setDesignPreview(null); setSession(null);
-    setEndForm({ design_no: "", fabric_lot_id: "", rejected_qty: "", rework_qty: "", fabric_used_mtrs: "", remarks: "" });
+    setGarmentType(""); setGarmentTypeOther(""); setGenderSegment(""); setEndGarmentOther("");
+    setEndForm({ design_no: "", fabric_lot_id: "", rejected_qty: "", rework_qty: "", fabric_used_mtrs: "", remarks: "", garment_type: "", gender_segment: "" });
     setFabricLots([]); setShowNewLot(false); setNewLot({ fabric_name: "", lot_no: "", colour: "", width: "", gsm: "", unit: "MTR", received_qty: "" });
     setSizeRows([]); setWasteRows([]); setDoneResult(null); setActionError("");
   };
@@ -189,8 +208,27 @@ export default function FloorLogKiosk() {
                   </div>
                 )}
                 {designNo.trim() && designPreview && !designPreview.found && (
-                  <p className="mt-2 text-xs text-amber-300">No design record found for this number — you can still log against it.</p>
+                  <p className="mt-2 text-xs text-amber-300">No design record found for this number — pick the item and gender below yourself.</p>
                 )}
+              </section>
+            )}
+            {department && workerName.trim() && designNo.trim() && (
+              <section>
+                <p className="mb-2 text-sm font-bold uppercase tracking-wide text-violet-300">4. What's being made?</p>
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                  {(context.garment_type_options || []).map((g) => (
+                    <button key={g} type="button" onClick={() => setGarmentType(g)} className={`rounded-xl border-2 px-3 py-2.5 text-sm font-bold transition ${garmentType === g ? "border-violet-400 bg-violet-500/20 text-white" : "border-white/10 bg-white/5 text-slate-300 hover:bg-white/10"}`}>{g}</button>
+                  ))}
+                </div>
+                {garmentType === "Other" && (
+                  <input value={garmentTypeOther} onChange={(e) => setGarmentTypeOther(e.target.value)} placeholder="Type what it is" className="mt-2 w-full rounded-xl border-2 border-white/10 bg-white/5 px-4 py-2.5 text-white outline-none placeholder:text-slate-500 focus:border-violet-400" />
+                )}
+                <p className="mb-2 mt-4 text-xs font-bold uppercase tracking-wide text-slate-400">Gender</p>
+                <div className="flex flex-wrap gap-2">
+                  {(context.gender_segment_options || []).map((g) => (
+                    <button key={g} type="button" onClick={() => setGenderSegment(g)} className={`rounded-xl border-2 px-4 py-2 text-sm font-bold transition ${genderSegment === g ? "border-violet-400 bg-violet-500/20 text-white" : "border-white/10 bg-white/5 text-slate-300 hover:bg-white/10"}`}>{g}</button>
+                  ))}
+                </div>
               </section>
             )}
             {department && workerName.trim() && designNo.trim() && (
@@ -210,7 +248,7 @@ export default function FloorLogKiosk() {
               <p className="text-xs text-slate-400">elapsed since you tapped Start</p>
             </div>
             <button onClick={() => {
-              setEndForm({ ...endForm, design_no: session.design_no || "" });
+              setEndForm({ ...endForm, design_no: session.design_no || "", garment_type: session.garment_type || "", gender_segment: session.gender_segment || "" });
               kioskApi(token, `/fabric-lots?design_no=${encodeURIComponent(session.design_no || "")}`).then((r) => setFabricLots(r.data || [])).catch(() => setFabricLots([]));
               // Pre-fill size rows from the pattern's own size ratio (Step 4)
               // — the worker just fills in real counts instead of typing
@@ -226,6 +264,24 @@ export default function FloorLogKiosk() {
           <form onSubmit={submitEnd} className="space-y-5">
             <p className="text-sm text-slate-300">Ending your <b>{session.department}</b> session, started {elapsedLabel(session.started_at)} ago. Fill in what you actually did — the rest is calculated for you.</p>
             <label className="block"><span className="mb-1 block text-xs font-bold uppercase text-slate-400">Design No. (from Start — change only if it was wrong)</span><input value={endForm.design_no} onChange={(e) => setEndForm({ ...endForm, design_no: e.target.value })} className="w-full rounded-xl border-2 border-white/10 bg-white/5 px-3 py-2.5 text-white outline-none focus:border-violet-400" /></label>
+
+            <div className="rounded-2xl border-2 border-white/10 bg-white/5 p-4">
+              <p className="mb-2 text-xs font-bold uppercase text-slate-400">What's being made? (change if it was wrong at Start)</p>
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                {(context.garment_type_options || []).map((g) => (
+                  <button key={g} type="button" onClick={() => setEndForm({ ...endForm, garment_type: g })} className={`rounded-lg border-2 px-3 py-2 text-xs font-bold transition ${endForm.garment_type === g ? "border-violet-400 bg-violet-500/20 text-white" : "border-white/10 bg-white/5 text-slate-300 hover:bg-white/10"}`}>{g}</button>
+                ))}
+              </div>
+              {endForm.garment_type === "Other" && (
+                <input value={endGarmentOther} onChange={(e) => setEndGarmentOther(e.target.value)} placeholder="Type what it is" className="mt-2 w-full rounded-lg border border-white/10 bg-white/10 px-2 py-1.5 text-sm text-white" />
+              )}
+              <p className="mb-1.5 mt-3 text-xs font-bold uppercase text-slate-400">Gender</p>
+              <div className="flex flex-wrap gap-2">
+                {(context.gender_segment_options || []).map((g) => (
+                  <button key={g} type="button" onClick={() => setEndForm({ ...endForm, gender_segment: g })} className={`rounded-lg border-2 px-3 py-1.5 text-xs font-bold transition ${endForm.gender_segment === g ? "border-violet-400 bg-violet-500/20 text-white" : "border-white/10 bg-white/5 text-slate-300 hover:bg-white/10"}`}>{g}</button>
+                ))}
+              </div>
+            </div>
 
             <div className="rounded-2xl border-2 border-white/10 bg-white/5 p-4">
               <p className="mb-2 text-xs font-bold uppercase text-slate-400">Which fabric roll? (optional — leave blank to skip)</p>
