@@ -191,6 +191,26 @@ data_hub_imports_collection = db["data_hub_imports"]
 # pieces are never counted as sellable stock by any existing screen.
 unstitched_stock_collection = db["unstitched_stock"]
 
+# Citimart Data Hub — intentionally SEPARATE from the live store_stock/sales/
+# products collections every other screen (POS, billing, GRN) reads and
+# writes. This import only ever lands in its own collections and is read
+# back only by the Citimart Data Hub's own forecasting/purchase-plan views —
+# it can never change what a cashier, GRN or stock-transfer screen sees.
+citimart_stock_snapshot_collection = db["citimart_stock_snapshot"]
+citimart_sales_import_collection = db["citimart_sales_import"]
+citimart_purchase_import_collection = db["citimart_purchase_import"]
+citimart_data_hub_imports_collection = db["citimart_data_hub_imports"]
+
+# Citimart Store Ops — live per-store retail floor KPIs (footfall/NOB/billing
+# time-slot logs + sales targets). Separate from the Data Hub above (that's
+# bulk historical import for forecasting; this is day-to-day live entry) and,
+# like it, fully isolated from the live sales/store_stock collections.
+citimart_bill_logs_collection = db["citimart_bill_logs"]
+citimart_footfall_logs_collection = db["citimart_footfall_logs"]
+citimart_nob_logs_collection = db["citimart_nob_logs"]
+citimart_sales_targets_collection = db["citimart_sales_targets"]
+citimart_kpi_override_audit_collection = db["citimart_kpi_override_audit"]
+
 # Product-usage analytics (page views, feature clicks, session start/end,
 # device type) — separate from audit_logs_collection, which is a
 # compliance-style record of discrete admin actions. This is aggregate

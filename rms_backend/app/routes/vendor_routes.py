@@ -737,6 +737,56 @@ async def vendor_login(request: Request):
     }
 
 
+@vendor_bp.post("/google-login")
+async def vendor_google_login(request: Request):
+    """Google Sign-In for vendors. Same rules as /login — the Google-verified
+    email must match an EXISTING vendor who has at least one Approved retailer
+    link. Never creates a vendor, and password login is untouched."""
+    import re
+    from google.oauth2 import id_token as google_id_token
+    from google.auth.transport import requests as google_requests
+    from ..config import settings
+
+    if not settings.google_client_id:
+        raise HTTPException(status_code=404, detail="Google sign-in is not enabled.")
+    body = await request.json()
+    try:
+        info = google_id_token.verify_oauth2_token(body.get("credential") or "", google_requests.Request(), settings.google_client_id)
+    except Exception:
+        raise HTTPException(status_code=401, detail="Google sign-in could not be verified.")
+    if not info.get("email_verified"):
+        raise HTTPException(status_code=401, detail="Google account email is not verified.")
+
+    email = (info.get("email") or "").strip().lower()
+    vendor = await vendors_collection.find_one({"email": {"$regex": f"^{re.escape(email)}$", "$options": "i"}})
+    if not vendor:
+        raise HTTPException(status_code=401, detail="No vendor account is linked to this Google account.")
+
+    approved_links = await vendor_tenant_links_collection.find({
+        "vendor_id": vendor["_id"], "status": "Approved",
+    }).to_list(length=None)
+    if not approved_links:
+        raise HTTPException(status_code=403, detail="Vendor not approved yet by any retailer.")
+
+    token = create_token({"vendor_id": str(vendor["_id"]), "email": vendor["email"]})
+    for link in approved_links:
+        tenant = await tenants_collection.find_one({"tenant_id": link.get("tenant_id")}, {"company_name": 1})
+        await log_activity(
+            vendor.get("name") or vendor.get("vendor_name") or vendor.get("email", ""),
+            "Vendor logged in with Google", type="info",
+            tenant_id=link.get("tenant_id"),
+            tenant_name=(tenant or {}).get("company_name") or link.get("tenant_id"),
+            actor_email=vendor.get("email"), actor_role="Vendor",
+        )
+    return {
+        "access_token": token,
+        "vendor_id":    str(vendor["_id"]),
+        "vendor_name":  vendor.get("name") or vendor.get("vendor_name") or "",
+        "email":        vendor.get("email", ""),
+        "redirect":     "/merchandiser-seller",
+    }
+
+
 @vendor_bp.get("/me")
 async def get_vendor_profile(authorization: str = Header(None)):
     """Fetch logged-in vendor's IDENTITY profile. Unchanged in shape — no tenant/status fields here anymore (see /my-tenant for those, per relationship)."""

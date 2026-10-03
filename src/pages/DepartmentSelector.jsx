@@ -21,6 +21,7 @@ const DEPT_ROUTES = {
   "Merchandiser Buyer":             "/dashboard/merchandiser-buyer",
   "Marketing":                       "/dashboard/marketing",
   "Customer CRM":                    "/dashboard/customer-crm",
+  "Store Ops":                      "/citimart-store-ops",
   "Vendor":                         "/dashboard/vendor",
 };
 
@@ -39,6 +40,7 @@ const DEPT_META = {
   "Third Party":                  { emoji: "🌐", gradient: "linear-gradient(135deg,#6366f1,#4338ca)", glow: "rgba(99,102,241,0.4)" },
   "Merchandiser Buyer":           { emoji: "🛍️", gradient: "linear-gradient(135deg,#ef4444,#dc2626)", glow: "rgba(239,68,68,0.4)"  },
   "Vendor":                       { emoji: "🏪", gradient: "linear-gradient(135deg,#64748b,#475569)", glow: "rgba(100,116,139,0.4)" },
+  "Store Ops":                    { emoji: "📍", gradient: "linear-gradient(135deg,#7c3aed,#5b21b6)", glow: "rgba(124,58,237,0.4)"  },
 };
 const DEFAULT_META = { emoji: "💼", gradient: "linear-gradient(135deg,#6b7280,#4b5563)", glow: "rgba(107,114,128,0.4)" };
 

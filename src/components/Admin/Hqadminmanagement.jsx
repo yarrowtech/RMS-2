@@ -549,13 +549,37 @@ function AddAdminModal({ onClose, onCreated, stores = [], deptConfig, admins = [
 // ══════════════════════════════════════════════════════════════════════════════
 // VIEW ADMIN MODAL
 // ══════════════════════════════════════════════════════════════════════════════
-function EditPermissionsModal({ admin, onClose, onSaved, deptConfig, admins = [] }) {
+function EditPermissionsModal({ admin, onClose, onSaved, deptConfig, admins = [], stores = [] }) {
   const [permissions, setPermissions] = useState([...(admin.permissions || [])]);
   const [departments, setDepartments] = useState([...(admin.managedDepartments || [])]);
   const [division, setDivision] = useState(admin.division || "");
   const [section, setSection] = useState(admin.section || "");
   const [floor, setFloor] = useState(admin.floor || "");
   const [isHead, setIsHead] = useState(Boolean(admin.is_department_head));
+  // Reassigning the store this admin belongs to — the login stays the same,
+  // only which store it's scoped to changes. Separate from the department/
+  // permission fields above (and from PATCH /hq/admins/{id}), saved via its
+  // own PUT /hq/store-admins/{id} call so a store move can't accidentally
+  // get bundled with — or blocked by — an access-permission validation error.
+  const [storeId, setStoreId] = useState(admin.store_id || "");
+  const [storeSaving, setStoreSaving] = useState(false);
+  const storeOptions = stores.flatMap(s => [
+    { id: s.id, label: `🏪 ${s.name} (${s.code})` },
+    ...(s.branches || []).map(b => ({ id: b.id, label: `  🌿 ${b.name} (${b.code})` })),
+  ]);
+  const saveStore = async () => {
+    if (!storeId || storeId === admin.store_id) return;
+    try {
+      setStoreSaving(true);
+      await api(`/hq/store-admins/${admin.id}`, { method: "PUT", body: JSON.stringify({ store_id: storeId }) });
+      toast.success(`${admin.name} moved to the selected store.`);
+      await onSaved();
+    } catch (e) {
+      toast.error(e.message || "Could not change store.");
+    } finally {
+      setStoreSaving(false);
+    }
+  };
   const divisionOptions = orgValuesForStore(admins, admin.store_id, "division");
   const sectionOptions  = orgValuesForStore(admins, admin.store_id, "section");
   const floorOptions    = orgValuesForStore(admins, admin.store_id, "floor");
@@ -605,11 +629,27 @@ function EditPermissionsModal({ admin, onClose, onSaved, deptConfig, admins = []
           <button onClick={onClose} className="text-slate-400 hover:text-slate-600 p-1"><X className="w-4 h-4"/></button>
         </div>
         <div className="p-6 overflow-y-auto">
+          {admin.scope === "store" && (
+            <section className="mb-6 bg-slate-50 border border-slate-200 rounded-xl p-4">
+              <p className="text-xs font-black uppercase tracking-widest text-slate-500">Store</p>
+              <p className="mt-1 mb-3 text-xs text-slate-400">Moves this same login to a different store — departments/permissions below stay as they are.</p>
+              <div className="flex gap-2">
+                <select className={`${INP} flex-1`} value={storeId} onChange={e => setStoreId(e.target.value)}>
+                  {!storeOptions.length && <option value={admin.store_id}>{admin.store_name || admin.store_id}</option>}
+                  {storeOptions.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
+                </select>
+                <button onClick={saveStore} disabled={storeSaving || !storeId || storeId === admin.store_id} className="px-4 py-2 rounded-xl bg-violet-600 text-sm font-bold text-white disabled:opacity-40">
+                  {storeSaving ? "Moving…" : "Move"}
+                </button>
+              </div>
+              <p className="mt-2 text-xs text-slate-500">Currently: <b>{admin.store_name || admin.store_id}</b></p>
+            </section>
+          )}
           <section className="mb-6">
             <div className="mb-3 flex items-center justify-between gap-3">
               <div>
                 <p className="text-xs font-black uppercase tracking-widest text-slate-500">Departments</p>
-                <p className="mt-1 text-xs text-slate-400">{admin.scope === "store" ? "Store scope is fixed for this admin." : "HQ scope is fixed for this admin."}</p>
+                <p className="mt-1 text-xs text-slate-400">{admin.scope === "store" ? "Store-only departments shown here; use Move above to change which store." : "HQ scope is fixed for this admin."}</p>
               </div>
               <span className="rounded-full bg-indigo-50 px-2.5 py-1 text-xs font-bold text-indigo-700">{departments.length} selected</span>
             </div>
@@ -1722,7 +1762,7 @@ export default function HQAdminManagement() {
         />
       )}
       {viewAdmin && createPortal(<ViewAdminModal admin={viewAdmin} onClose={() => setViewAdmin(null)}/>, document.body)}
-      {editAdmin && createPortal(<EditPermissionsModal admin={editAdmin} onClose={() => setEditAdmin(null)} onSaved={fetchAll} deptConfig={deptConfig} admins={admins}/>, document.body)}
+      {editAdmin && createPortal(<EditPermissionsModal admin={editAdmin} onClose={() => setEditAdmin(null)} onSaved={fetchAll} deptConfig={deptConfig} admins={admins} stores={stores}/>, document.body)}
     </div>
   );
 }

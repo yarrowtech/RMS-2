@@ -34,6 +34,8 @@ from .routes.store_upgrade_routes import router as store_upgrade_router
 from .routes.retailer_signup_routes import router as retailer_signup_router
 from .routes.forecast_analytics_routes import router as forecast_analytics_router
 from .routes.forecast_data_hub_routes import router as forecast_data_hub_router
+from .routes.citimart_data_hub_routes import router as citimart_data_hub_router
+from .routes.citimart_store_ops_routes import router as citimart_store_ops_router
 from .routes.retailer_subscription_routes import router as retailer_subscription_router
 from .routes.vendor_role_operations_routes import router as vendor_role_operations_router
 from .routes.vendor_b2b_routes import router as vendor_b2b_router
@@ -154,6 +156,8 @@ app.include_router(store_upgrade_router)
 app.include_router(retailer_signup_router)
 app.include_router(forecast_analytics_router)
 app.include_router(forecast_data_hub_router)
+app.include_router(citimart_data_hub_router)
+app.include_router(citimart_store_ops_router)
 app.include_router(retailer_subscription_router)
 app.include_router(vendor_role_operations_router)
 app.include_router(vendor_b2b_router)

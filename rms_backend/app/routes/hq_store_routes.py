@@ -607,8 +607,14 @@ STORE_ONLY_DEPARTMENTS = [
 # capture its own customer follow-ups/feedback at the counter — the routes
 # already scope everything by store_id once an admin has this department,
 # so no route logic needed to change, only where this string is allowed.
+#
+# "Store Ops" (added for Citimart's live floor-KPI tracking — footfall/NOB/
+# billing time-slot logs) is likewise shared: a store-level "Store Ops"
+# admin at New Market/Hatibagan/Chowringhee is confined to their own store's
+# numbers by citimart_store_ops_routes.py's own scoping, while an HQ-level
+# "Store Ops" admin can see every store plus the blended Overall Summary.
 SHARED_DEPARTMENTS = [
-    "Inventory", "Finance", "HR", "Customer CRM",
+    "Inventory", "Finance", "HR", "Customer CRM", "Store Ops",
 ]
 
 HQ_DEPARTMENTS    = HQ_ONLY_DEPARTMENTS + SHARED_DEPARTMENTS

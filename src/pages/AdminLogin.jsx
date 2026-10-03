@@ -5,6 +5,11 @@ import { API_BASE_URL as APP_API_URL } from "../config/api.js";
 import React, { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { handleAuthRedirect } from "../utils/authRedirect";
+import { GoogleOAuthProvider, GoogleLogin } from "@react-oauth/google";
+
+// Google button only renders when this is set at build time — unset means
+// the login page is exactly what it was before.
+const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || "";
 
 const API_BASE = APP_API_URL;
 
@@ -32,6 +37,30 @@ export default function AdminLogin() {
 
   const handleChange = (e) =>
     setForm(prev => ({ ...prev, [e.target.name]: e.target.value }));
+
+  const handleGoogleSuccess = async (credentialResponse) => {
+    setError("");
+    setLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/auth/google-login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ credential: credentialResponse.credential }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setError(data.detail || "Google sign-in failed"); return; }
+      localStorage.setItem("admin_token", data.access_token);
+      localStorage.setItem("store_id",   data.store_id   || "");
+      localStorage.setItem("store_name", data.store_name || "");
+      localStorage.setItem("store_type", data.store_type || "");
+      localStorage.setItem("scope",      data.scope      || "hq");
+      handleAuthRedirect({ ...data, name: data.name || "" }, navigate);
+    } catch {
+      setError("Network error. Please try again.");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -447,6 +476,18 @@ export default function AdminLogin() {
                   {loading ? "Signing in…" : "Sign in"}
                 </span>
               </button>
+
+              {GOOGLE_CLIENT_ID && (
+                <div style={{ marginTop: 12, display: "flex", justifyContent: "center" }}>
+                  <GoogleOAuthProvider clientId={GOOGLE_CLIENT_ID}>
+                    <GoogleLogin
+                      onSuccess={handleGoogleSuccess}
+                      onError={() => setError("Google sign-in failed. Try again or use your password.")}
+                      text="signin_with"
+                    />
+                  </GoogleOAuthProvider>
+                </div>
+              )}
 
               <div className="lg-footer">
                 <div className="lg-footer-line" />

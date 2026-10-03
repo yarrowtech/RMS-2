@@ -47,7 +47,7 @@ FULL_ACCESS_DEPARTMENTS = {"HQ", "Administrator", "IT", "SUPERADMIN", "Store Own
 DEPARTMENT_ORDER = [
     "HQ", "IT", "Merchandiser Buyer", "Inventory", "Cashier", "Finance", "HR",
     "Logistics", "Design & Pattern", "Production & Job Work", "Forecast & Analytics",
-    "Third Party", "Marketing", "Customer CRM", "Store Owner",
+    "Third Party", "Marketing", "Customer CRM", "Store Owner", "Store Ops",
 ]
 
 

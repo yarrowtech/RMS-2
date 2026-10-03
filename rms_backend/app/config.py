@@ -34,6 +34,11 @@ class Settings(BaseSettings):
     # subscription expiry reminder sweep. Optional: unset disables that path,
     # a Super Admin JWT still works either way.
     cron_secret: Optional[str] = Field(None, env='CRON_SECRET')
+
+    # Google Sign-In client ID (Google Cloud Console → OAuth 2.0 Client ID,
+    # type "Web application"). Optional: unset means the Google button is
+    # hidden on the login page and the Google endpoint returns 404.
+    google_client_id: Optional[str] = Field(None, env='GOOGLE_CLIENT_ID')
     anthropic_api_key: Optional[str] = Field(None, env='ANTHROPIC_API_KEY')
 
 

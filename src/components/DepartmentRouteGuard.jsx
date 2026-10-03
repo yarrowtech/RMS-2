@@ -21,6 +21,7 @@ const DEPARTMENT_PATHS = {
   "Marketing": "/dashboard/marketing",
   "Customer CRM": "/dashboard/customer-crm",
   "Store Owner": "/dashboard/store-owner",
+  "Store Ops": "/citimart-store-ops",
 };
 
 function getToken() {

@@ -34,6 +34,7 @@ DEPARTMENT_ROUTES: Dict[str, str] = {
     "Merchandiser Buyer":             "/merchandiser-buyer",
     "Marketing":                       "/marketing",
     "Customer CRM":                    "/dashboard/customer-crm",
+    "Store Ops":                      "/citimart-store-ops",
     "Vendor":                         "/merchandiser-seller",
     "Store Owner":                    "/dashboard/store-owner",
 }
@@ -282,6 +283,75 @@ async def login(req: LoginRequest):
         "name":         admin.get("name", ""),
         **({"idle_timeout_minutes": COUNTER_IDLE_MINUTES} if counter else {}),
         **store,          # ← store_id, store_name, store_type, scope
+        **redirect_info,
+    }
+
+
+# ─── Google Sign-In (admin) ───────────────────────────────────────────────────
+# Additive alternative to /login: verifies a Google ID token, then only signs
+# in an EXISTING admin whose email matches. Never creates an account, never
+# grants access beyond what that admin record already has. The checks and
+# response mirror /login exactly (kept as a separate function so /login
+# itself stays untouched).
+@router.post("/google-login", response_model=TokenResponse)
+async def google_login(payload: dict):
+    import re
+    from google.oauth2 import id_token as google_id_token
+    from google.auth.transport import requests as google_requests
+
+    if not settings.google_client_id:
+        raise HTTPException(status_code=404, detail="Google sign-in is not enabled.")
+    credential = payload.get("credential") or ""
+    try:
+        info = google_id_token.verify_oauth2_token(credential, google_requests.Request(), settings.google_client_id)
+    except Exception:
+        raise HTTPException(status_code=401, detail="Google sign-in could not be verified.")
+    if not info.get("email_verified"):
+        raise HTTPException(status_code=401, detail="Google account email is not verified.")
+
+    email = (info.get("email") or "").strip().lower()
+    admin = await admins_collection.find_one({"email": {"$regex": f"^{re.escape(email)}$", "$options": "i"}})
+    if not admin:
+        raise HTTPException(status_code=401, detail="No RMS account is linked to this Google account.")
+    if admin.get("status") not in ("ACTIVE", "Active"):
+        raise HTTPException(status_code=403, detail="Admin is not active")
+
+    store = _store_info(admin)
+    if not store["tenant_id"]:
+        raise HTTPException(status_code=403, detail="Admin has no tenant assigned. Contact your Super Admin.")
+
+    counter = _is_counter_account(admin, store["scope"])
+    token = create_access_token(
+        str(admin["_id"]),
+        admin.get("department", ""),
+        role="ADMIN",
+        extra={
+            "tenant_id": store["tenant_id"], "store_id": store["store_id"], "store_name": store["store_name"],
+            "store_type": store["store_type"], "scope": store["scope"],
+        },
+        expires_minutes=max(COUNTER_SESSION_MINUTES, int(settings.access_token_expire_minutes)) if counter else None,
+    )
+    managed: List[str] = admin.get("managedDepartments", [admin["department"]] if admin.get("department") else [])
+    redirect_info = get_redirect_for_departments(managed)
+
+    await admins_collection.update_one({"_id": admin["_id"]}, {"$set": {"last_login": datetime.utcnow()}})
+    await log_activity(
+        admin.get("name") or admin.get("email", ""),
+        f"Logged in with Google ({admin.get('department', '') or store['scope']})",
+        type="info",
+        tenant_id=store["tenant_id"],
+        tenant_name=store["store_name"],
+        actor_email=admin.get("email"),
+        actor_role=admin.get("department") or "Retailer Admin",
+    )
+    return {
+        "access_token": token,
+        "role": "ADMIN",
+        "department": admin.get("department"),
+        "account_type": admin.get("account_type", "department_retailer"),
+        "name": admin.get("name", ""),
+        **({"idle_timeout_minutes": COUNTER_IDLE_MINUTES} if counter else {}),
+        **store,
         **redirect_info,
     }
 

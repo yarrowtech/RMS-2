@@ -1,5 +1,6 @@
 import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
 import React, { useState } from "react";
+import { GoogleOAuthProvider, GoogleLogin } from "@react-oauth/google";
 import {
   ArrowLeft,
   ArrowRight,
@@ -18,12 +19,42 @@ import {
 } from "lucide-react";
 
 const API_BASE = APP_API_URL;
+// Google button only renders when this is set at build time.
+const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || "";
 
 const MSellerLogin = () => {
   const [showPassword, setShowPassword] = useState(false);
   const [formData, setFormData] = useState({ email: "", password: "" });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+
+  const handleGoogleSuccess = async (credentialResponse) => {
+    setLoading(true);
+    setError("");
+    try {
+      const response = await fetch(`${API_BASE}/api/vendors/google-login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ credential: credentialResponse.credential }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        setError(data.detail || "Google sign-in failed.");
+        return;
+      }
+      localStorage.removeItem("admin_token");
+      localStorage.removeItem("token");
+      localStorage.removeItem("access_token");
+      localStorage.setItem("vendor_token", data.access_token);
+      localStorage.setItem("vendor_id", data.vendor_id);
+      localStorage.setItem("role", "VENDOR");
+      window.location.replace(data.redirect || "/merchandiser-seller");
+    } catch {
+      setError("Unable to connect to RMS. Please check your connection and try again.");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleChange = (event) => {
     setFormData((previous) => ({ ...previous, [event.target.name]: event.target.value }));
@@ -206,6 +237,13 @@ const MSellerLogin = () => {
                   <><LogIn size={18} /> Sign in to Partner Portal</>
                 )}
               </button>
+              {GOOGLE_CLIENT_ID && (
+                <div className="mt-3 flex justify-center">
+                  <GoogleOAuthProvider clientId={GOOGLE_CLIENT_ID}>
+                    <GoogleLogin onSuccess={handleGoogleSuccess} onError={() => setError("Google sign-in failed. Try again or use your password.")} text="signin_with" />
+                  </GoogleOAuthProvider>
+                </div>
+              )}
             </form>
 
             <div className="mt-5 rounded-2xl border border-emerald-100 bg-gradient-to-r from-emerald-50 to-teal-50 p-4 lg:hidden">

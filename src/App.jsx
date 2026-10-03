@@ -22,6 +22,8 @@ import ProductMapping from "./components/ProductMapping.jsx";
 import InventoryManagement from "./components/InventoryManagement/InventoryManagement.jsx";
 import StockPlanForecasting from "./components/StockPlanForecastingDepartment/StockPlanForecasting.jsx";
 import ForecastAnalytics from "./components/ForecastAnalytics.jsx";
+import CitimartDataHub from "./components/CitimartDataHub.jsx";
+import CitimartStoreOps from "./components/CitimartStoreOps.jsx";
 import ProductionJobWork from "./components/Production/ProductionJobWork.jsx";
 import { PublicWorkstationDisplay } from "./components/Production/HybridProduction.jsx";
 import FloorLogKiosk from "./components/FloorLogKiosk.jsx";
@@ -128,6 +130,8 @@ export default function App() {
         <Route path="/dashboard/inventory"          element={<DepartmentRouteGuard department={["Inventory", "Store Owner"]}><InventoryManagement /></DepartmentRouteGuard>} />
         <Route path="/dashboard/stock-planning"     element={<DepartmentRouteGuard department="Stock Planning & Forecasting"><StockPlanForecasting /></DepartmentRouteGuard>} />
         <Route path="/dashboard/forecast-analytics" element={<DepartmentRouteGuard department="Forecast & Analytics"><ForecastAnalytics /></DepartmentRouteGuard>} />
+        <Route path="/dashboard/citimart-data-hub" element={<DepartmentRouteGuard department={["Forecast & Analytics", "Inventory"]}><CitimartDataHub /></DepartmentRouteGuard>} />
+        <Route path="/dashboard/citimart-store-ops" element={<DepartmentRouteGuard department={["Store Ops", "Forecast & Analytics", "Inventory"]}><CitimartStoreOps /></DepartmentRouteGuard>} />
         <Route path="/dashboard/third-party"        element={<DepartmentRouteGuard department="Third Party"><ThirdPartyDept /></DepartmentRouteGuard>} />
         <Route path="/dashboard/production"         element={<DepartmentRouteGuard department="Production & Job Work"><ProductionJobWork /></DepartmentRouteGuard>} />
         <Route path="/dashboard/merchandiser-buyer" element={<DepartmentRouteGuard department="Merchandiser Buyer"><Mbuyer /></DepartmentRouteGuard>} />
@@ -182,6 +186,8 @@ export default function App() {
         <Route path="/inventory" element={<DepartmentRouteGuard department={["Inventory", "Store Owner"]}><InventoryManagement /></DepartmentRouteGuard>} />
         <Route path="/stock"     element={<DepartmentRouteGuard department="Stock Planning & Forecasting"><StockPlanForecasting /></DepartmentRouteGuard>} />
         <Route path="/forecast-analytics" element={<DepartmentRouteGuard department="Forecast & Analytics"><ForecastAnalytics /></DepartmentRouteGuard>} />
+        <Route path="/citimart-data-hub" element={<DepartmentRouteGuard department={["Forecast & Analytics", "Inventory"]}><CitimartDataHub /></DepartmentRouteGuard>} />
+        <Route path="/citimart-store-ops" element={<DepartmentRouteGuard department={["Store Ops", "Forecast & Analytics", "Inventory"]}><CitimartStoreOps /></DepartmentRouteGuard>} />
 
 
         {/* Purchase / Warehouse Flow */}

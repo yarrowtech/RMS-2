@@ -58,6 +58,7 @@ export default function FloorLogKiosk() {
   const [showNewLot, setShowNewLot] = useState(false);
   const [newLot, setNewLot] = useState({ fabric_name: "", lot_no: "", colour: "", width: "", gsm: "", unit: "MTR", received_qty: "" });
   const [lotBusy, setLotBusy] = useState(false);
+  const [wipInfo, setWipInfo] = useState(null);
 
   useEffect(() => {
     kioskApi(token, "/context").then((r) => setContext(r.data)).catch((e) => setLoadError(e.message));
@@ -93,6 +94,23 @@ export default function FloorLogKiosk() {
     const scoped = all.filter((c) => (c.departments || []).includes(department));
     return scoped.length ? scoped : all;
   }, [context, department]);
+
+  // What this department actually needs to report — a Cutting/Layering
+  // worker draws fabric and produces pieces, but a Stitching/Embroidery
+  // worker only works on pieces already cut, with no fabric to report at
+  // all. Driven by the SAME per-department field list HQ's own manual Daily
+  // Floor Log form already uses — nothing new to configure, nothing
+  // hardcoded to specific department names.
+  const endFields = useMemo(() => {
+    const deptConfig = (context?.departments || []).find((d) => d.name === session?.department);
+    const fields = deptConfig?.fields || [];
+    return {
+      fabric: fields.includes("fabric_used_mtrs"),
+      wastage: fields.includes("wastage_mtrs"),
+      rejected: fields.includes("rejected_qty"),
+      rework: fields.includes("rework_qty"),
+    };
+  }, [context, session]);
 
   const checkIn = async () => {
     const name = workerName.trim();
@@ -155,7 +173,7 @@ export default function FloorLogKiosk() {
     setGarmentType(""); setGarmentTypeOther(""); setGenderSegment(""); setEndGarmentOther("");
     setEndForm({ design_no: "", fabric_lot_id: "", rejected_qty: "", rework_qty: "", fabric_used_mtrs: "", remarks: "", garment_type: "", gender_segment: "" });
     setFabricLots([]); setShowNewLot(false); setNewLot({ fabric_name: "", lot_no: "", colour: "", width: "", gsm: "", unit: "MTR", received_qty: "" });
-    setSizeRows([]); setWasteRows([]); setDoneResult(null); setActionError("");
+    setSizeRows([]); setWasteRows([]); setDoneResult(null); setActionError(""); setWipInfo(null);
   };
 
   if (loadError) {
@@ -166,7 +184,16 @@ export default function FloorLogKiosk() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-violet-950 via-slate-950 to-slate-950 p-4 text-white sm:p-8">
+    <div className="floor-log-kiosk min-h-screen bg-gradient-to-b from-violet-950 via-slate-950 to-slate-950 p-4 text-white sm:p-8">
+      <style>{`
+        /* Windows/Chrome renders native select popups on a white surface.
+           Give every popup option an explicit light-theme foreground so the
+           kiosk's inherited white text never becomes white-on-white. */
+        .floor-log-kiosk select option {
+          background-color: #ffffff;
+          color: #0f172a;
+        }
+      `}</style>
       <div className="mx-auto max-w-xl">
         <header className="mb-6 flex items-center gap-3">
           <div className="grid h-12 w-12 place-items-center rounded-2xl bg-violet-600"><ClipboardList size={22} /></div>
@@ -250,6 +277,7 @@ export default function FloorLogKiosk() {
             <button onClick={() => {
               setEndForm({ ...endForm, design_no: session.design_no || "", garment_type: session.garment_type || "", gender_segment: session.gender_segment || "" });
               kioskApi(token, `/fabric-lots?design_no=${encodeURIComponent(session.design_no || "")}`).then((r) => setFabricLots(r.data || [])).catch(() => setFabricLots([]));
+              kioskApi(token, `/wip?design_no=${encodeURIComponent(session.design_no || "")}&department=${encodeURIComponent(session.department)}`).then((r) => setWipInfo(r.data)).catch(() => setWipInfo(null));
               // Pre-fill size rows from the pattern's own size ratio (Step 4)
               // — the worker just fills in real counts instead of typing
               // "S"/"M"/"L" from scratch every time. Purely a starting
@@ -264,6 +292,12 @@ export default function FloorLogKiosk() {
           <form onSubmit={submitEnd} className="space-y-5">
             <p className="text-sm text-slate-300">Ending your <b>{session.department}</b> session, started {elapsedLabel(session.started_at)} ago. Fill in what you actually did — the rest is calculated for you.</p>
             <label className="block"><span className="mb-1 block text-xs font-bold uppercase text-slate-400">Design No. (from Start — change only if it was wrong)</span><input value={endForm.design_no} onChange={(e) => setEndForm({ ...endForm, design_no: e.target.value })} className="w-full rounded-xl border-2 border-white/10 bg-white/5 px-3 py-2.5 text-white outline-none focus:border-violet-400" /></label>
+
+            {wipInfo?.prior_department && (
+              <div className="rounded-2xl border-2 border-cyan-400/30 bg-cyan-500/10 p-3 text-sm text-cyan-100">
+                <b>{wipInfo.available}</b> pc(s) available to work on for this design, handed down from <b>{wipInfo.prior_department}</b>. This is just a guide — enter what you actually completed below.
+              </div>
+            )}
 
             <div className="rounded-2xl border-2 border-white/10 bg-white/5 p-4">
               <p className="mb-2 text-xs font-bold uppercase text-slate-400">What's being made? (change if it was wrong at Start)</p>
@@ -283,7 +317,7 @@ export default function FloorLogKiosk() {
               </div>
             </div>
 
-            <div className="rounded-2xl border-2 border-white/10 bg-white/5 p-4">
+            {endFields.fabric && <div className="rounded-2xl border-2 border-white/10 bg-white/5 p-4">
               <p className="mb-2 text-xs font-bold uppercase text-slate-400">Which fabric roll? (optional — leave blank to skip)</p>
               {fabricLots.length > 0 && (
                 <select value={endForm.fabric_lot_id} onChange={(e) => setEndForm({ ...endForm, fabric_lot_id: e.target.value })} className="w-full rounded-xl border-2 border-white/10 bg-white/10 px-3 py-2.5 text-white outline-none focus:border-violet-400">
@@ -310,7 +344,7 @@ export default function FloorLogKiosk() {
                   </div>
                 </div>
               )}
-            </div>
+            </div>}
 
             <div className="rounded-2xl border-2 border-white/10 bg-white/5 p-4">
               <div className="mb-2 flex items-center justify-between"><p className="text-xs font-bold uppercase text-slate-400">Pieces by size (optional)</p><button type="button" onClick={() => setSizeRows([...sizeRows, { size: "", qty: "" }])} className="rounded-lg bg-violet-600 px-2.5 py-1 text-xs font-bold"><Plus size={14} className="inline" /> Add size</button></div>
@@ -328,7 +362,7 @@ export default function FloorLogKiosk() {
               })}
             </div>
 
-            <div className="rounded-2xl border-2 border-white/10 bg-white/5 p-4">
+            {endFields.wastage && <div className="rounded-2xl border-2 border-white/10 bg-white/5 p-4">
               <div className="mb-2 flex items-center justify-between"><p className="text-xs font-bold uppercase text-slate-400">Wastage by category (optional)</p><button type="button" onClick={() => setWasteRows([...wasteRows, { category: "", qty: "" }])} className="rounded-lg bg-violet-600 px-2.5 py-1 text-xs font-bold"><Plus size={14} className="inline" /> Add</button></div>
               {wasteRows.map((row, i) => (
                 <div key={i} className="mb-2 flex gap-2">
@@ -337,13 +371,13 @@ export default function FloorLogKiosk() {
                   <button type="button" onClick={() => setWasteRows(wasteRows.filter((_, n) => n !== i))} className="text-rose-400"><X size={18} /></button>
                 </div>
               ))}
-            </div>
+            </div>}
 
-            <div className="grid grid-cols-2 gap-3">
-              <label className="block"><span className="mb-1 block text-xs font-bold uppercase text-slate-400">Rejected qty</span><input type="number" min="0" value={endForm.rejected_qty} onChange={(e) => setEndForm({ ...endForm, rejected_qty: e.target.value })} className="w-full rounded-xl border-2 border-white/10 bg-white/5 px-3 py-2.5 text-white outline-none focus:border-violet-400" /></label>
-              <label className="block"><span className="mb-1 block text-xs font-bold uppercase text-slate-400">Rework qty</span><input type="number" min="0" value={endForm.rework_qty} onChange={(e) => setEndForm({ ...endForm, rework_qty: e.target.value })} className="w-full rounded-xl border-2 border-white/10 bg-white/5 px-3 py-2.5 text-white outline-none focus:border-violet-400" /></label>
-            </div>
-            <label className="block"><span className="mb-1 block text-xs font-bold uppercase text-slate-400">Fabric used (mtrs)</span><input type="number" min="0" step="0.01" value={endForm.fabric_used_mtrs} onChange={(e) => setEndForm({ ...endForm, fabric_used_mtrs: e.target.value })} className="w-full rounded-xl border-2 border-white/10 bg-white/5 px-3 py-2.5 text-white outline-none focus:border-violet-400" /></label>
+            {(endFields.rejected || endFields.rework) && <div className="grid grid-cols-2 gap-3">
+              {endFields.rejected && <label className="block"><span className="mb-1 block text-xs font-bold uppercase text-slate-400">Rejected qty</span><input type="number" min="0" value={endForm.rejected_qty} onChange={(e) => setEndForm({ ...endForm, rejected_qty: e.target.value })} className="w-full rounded-xl border-2 border-white/10 bg-white/5 px-3 py-2.5 text-white outline-none focus:border-violet-400" /></label>}
+              {endFields.rework && <label className="block"><span className="mb-1 block text-xs font-bold uppercase text-slate-400">Rework qty</span><input type="number" min="0" value={endForm.rework_qty} onChange={(e) => setEndForm({ ...endForm, rework_qty: e.target.value })} className="w-full rounded-xl border-2 border-white/10 bg-white/5 px-3 py-2.5 text-white outline-none focus:border-violet-400" /></label>}
+            </div>}
+            {endFields.fabric && <label className="block"><span className="mb-1 block text-xs font-bold uppercase text-slate-400">Fabric used (mtrs)</span><input type="number" min="0" step="0.01" value={endForm.fabric_used_mtrs} onChange={(e) => setEndForm({ ...endForm, fabric_used_mtrs: e.target.value })} className="w-full rounded-xl border-2 border-white/10 bg-white/5 px-3 py-2.5 text-white outline-none focus:border-violet-400" /></label>}
             <label className="block"><span className="mb-1 block text-xs font-bold uppercase text-slate-400">Remarks</span><textarea rows="2" value={endForm.remarks} onChange={(e) => setEndForm({ ...endForm, remarks: e.target.value })} className="w-full rounded-xl border-2 border-white/10 bg-white/5 px-3 py-2.5 text-white outline-none focus:border-violet-400" /></label>
 
             <button type="submit" disabled={busy} className={`${BTN_PRIMARY} w-full`}>{busy ? "Saving…" : "Submit my log"}</button>

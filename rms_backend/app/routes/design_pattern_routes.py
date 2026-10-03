@@ -1617,6 +1617,44 @@ async def floor_kiosk_fabric_lots(kiosk_token: str, design_no: str = ""):
     return {"status": "success", "data": rows}
 
 
+@router.get("/floor-kiosk/{kiosk_token}/wip")
+async def floor_kiosk_wip(kiosk_token: str, design_no: str = "", department: str = ""):
+    """Stitching/Embroidery don't consume fabric — they consume PIECES handed
+    down from the stage before them (Cutting's cut pieces, Stitching's
+    stitched pieces). This tells a worker how many pieces are actually
+    sitting there to work on for this design: previous department's total
+    completed_qty for the design, minus however much the CURRENT department
+    has already logged against it. "Previous" is whichever department sits
+    right before this one in the tenant's own configured department order
+    (same order driving HQ's per-department field list) — not a hardcoded
+    department name, so a tenant's own custom flow (e.g. an extra QC stage)
+    is respected. Purely informational, like the fabric lot picker's
+    balances — the worker's own completed_qty at End is still what's saved,
+    never clamped to this number, since real counts can genuinely differ
+    (e.g. a few pieces held back for rework)."""
+    tenant_id = await _resolve_kiosk_tenant(kiosk_token)
+    design_no = clean(design_no, 120)
+    department = clean(department, 80)
+    if not design_no or not department:
+        return {"status": "success", "data": {"available": None, "prior_department": None}}
+    dept_settings = await floor_ops_settings_collection.find_one({"tenant_id": tenant_id})
+    departments = [d["name"] for d in ((dept_settings or {}).get("departments") or DEFAULT_FLOOR_DEPARTMENTS)]
+    if department not in departments or departments.index(department) == 0:
+        return {"status": "success", "data": {"available": None, "prior_department": None}}
+    prior_department = departments[departments.index(department) - 1]
+
+    async def total_completed(dept: str) -> float:
+        total = 0.0
+        async for row in daily_production_logs_collection.find({"tenant_id": tenant_id, "design_no": design_no, "department": dept}, {"completed_qty": 1}):
+            total += number(row.get("completed_qty"))
+        return total
+
+    prior_total = await total_completed(prior_department)
+    current_total = await total_completed(department)
+    available = round(max(0.0, prior_total - current_total), 2)
+    return {"status": "success", "data": {"available": available, "prior_department": prior_department}}
+
+
 @router.post("/floor-kiosk/{kiosk_token}/quick-lot", status_code=201)
 async def floor_kiosk_quick_lot(kiosk_token: str, payload: dict):
     """A worker holding a roll HQ never logged yet can add it right here —
@@ -2582,6 +2620,49 @@ async def fabric_lot_reuse_matches(lot_id: str, ctx: dict = Depends(require_desi
             "fabric_name": source.get("fabric_name"), "colour": source.get("colour"), "width": source.get("width"), "gsm": source.get("gsm"),
             "matches": matches,
             "note": None if matches else "No other design currently uses this exact fabric spec (type, colour, width and GSM).",
+        },
+    }
+
+
+@router.get("/fabric-lots/{lot_id}/usage")
+async def fabric_lot_usage(lot_id: str, ctx: dict = Depends(require_design_or_production)):
+    """What actually came OUT of this roll — broken down by design_no, not
+    just one lump consumed/waste total. A lot's own `history` already stamps
+    design_no on every CONSUME/WASTE transaction (whether posted manually or
+    auto-synced from a floor log), so this is a rollup of data already being
+    recorded, not a new field to fill in. "Pieces produced" is pulled
+    separately from the Daily Floor Log entries that named this exact
+    fabric_lot_id (set at Cutting, mainly) — a lot's ledger has no concept of
+    "pieces" on its own. A design_no that reappears here after the lot's
+    first consumption (the leftover-reuse case — e.g. a second, smaller
+    design drawing from the same roll's remaining balance) shows up as its
+    own separate row, which is exactly how "leftover was then used on design
+    Y" becomes visible without any new field."""
+    lot = await _fabric_lot_or_404(lot_id, ctx["tenant_id"])
+
+    by_design: Dict[str, dict] = {}
+    for entry in lot.get("history") or []:
+        if entry.get("type") not in {"CONSUME", "WASTE"}:
+            continue
+        design_no = entry.get("design_no") or "(no design linked)"
+        bucket = by_design.setdefault(design_no, {"design_no": design_no, "consumed_qty": 0.0, "waste_qty": 0.0, "pieces_produced": 0.0})
+        if entry.get("type") == "CONSUME":
+            bucket["consumed_qty"] += number(entry.get("qty"))
+        else:
+            bucket["waste_qty"] += number(entry.get("qty"))
+
+    async for row in daily_production_logs_collection.find({"tenant_id": ctx["tenant_id"], "fabric_lot_id": lot_id}, {"design_no": 1, "completed_qty": 1}):
+        design_no = row.get("design_no") or "(no design linked)"
+        bucket = by_design.setdefault(design_no, {"design_no": design_no, "consumed_qty": 0.0, "waste_qty": 0.0, "pieces_produced": 0.0})
+        bucket["pieces_produced"] += number(row.get("completed_qty"))
+
+    rows = sorted(({**v, "consumed_qty": round(v["consumed_qty"], 3), "waste_qty": round(v["waste_qty"], 3), "pieces_produced": round(v["pieces_produced"], 2)} for v in by_design.values()), key=lambda x: x["design_no"])
+    return {
+        "status": "success",
+        "data": {
+            "lot_id": lot_id, "lot_no": lot.get("lot_no"), "unit": lot.get("unit"),
+            "closing_balance": lot.get("closing_balance"), "by_design": rows,
+            "note": None if rows else "Nothing consumed or wasted from this lot yet.",
         },
     }
 

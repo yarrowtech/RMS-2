@@ -32,6 +32,7 @@ fabric:[
   "Step 3 — Consume / Waste / Return: as the work happens, record what was really used (Consume), lost (Waste, with a category) and any genuine unused leftover (Return). The balance updates itself — nothing here is typed by hand.",
   "Step 4 — Utilization: load a design (or leave blank for all) to see Received/Issued/Consumed/Waste/Balance and Utilization %/Wastage %, calculated automatically. Export Excel to share or archive it.",
   "Step 5 — Reuse: before ordering fresh fabric for a new design, check Reuse matches on any lot with leftover balance — it may already cover the new design.",
+  "Usage by design: open \"Usage by design\" on any lot to see consumed/waste AND pieces produced, broken down per design — including a second design row if this roll's leftover was later used on a different design.",
   "Step 6 — FY Planning: once a real season of data exists, load it for best/worst utilization designs, real time efficiency, and next-year fabric purchase suggestions from actual sales.",
 ],
 queries:["Select the affected design, category and priority.","Describe one clear technical issue; Design and Production share the same feed.","Resolve with a written answer. Use Change Control if released instructions change."],
@@ -110,6 +111,7 @@ const BUTTON_GUIDES = {
     ["Waste", "Records fabric lost during use, tagged to one of the 10 wastage categories (marker, cutting, shade issue, recoverable, etc).", "Use for every genuine loss, picking the category that actually matches what happened.", "Don't default to \"Production waste\" for everything — a wrong category here quietly ruins the utilization dashboard's real diagnostic value. \"Recoverable fabric\" specifically means it can still be reused elsewhere (see Reuse matches)."],
     ["Return", "Sends unused issued fabric back to the store — adds back to the balance.", "Use when a cutting job finishes with genuine leftover, unused fabric.", "This is for fabric that's still good and unused — a fabric that was cut wrong is Waste, not a Return."],
     ["Reuse matches", "Shows other designs already using the exact same fabric type+colour+width+GSM as this lot's leftover.", "Use before ordering fresh fabric for a new design — check if an existing leftover can cover it instead.", "This only ever SUGGESTS a match — it never moves fabric by itself. You still record the actual Issue against whichever lot you decide to use."],
+    ["Usage by design", "Breaks this ONE lot's consumed/waste down by design_no, plus how many pieces each design actually produced from it (pulled from floor logs that named this fabric lot).", "Use to answer \"how many pieces came out of this roll\" or \"which design used the leftover from this roll\" — a second design row appearing here after the first IS that leftover-reuse trail.", "Pieces produced only ever reflects floor log entries that explicitly picked this fabric lot — an entry logged without picking a lot (FIFO-matched instead) won't show its pieces here."],
     ["Load utilization", "Shows Received/Issued/Consumed/Waste/Recoverable/Balance and Utilization %/Wastage % for one design (or every design if left blank).", "Use anytime to check how a design's fabric is actually performing, not just how much was planned.", "Utilization % is measured against ISSUED fabric, not received — fabric still sitting unused in the store correctly does NOT count against utilization yet."],
     ["Export Excel (Utilization)", "Downloads the currently loaded utilization view as a workbook — Fabric Utilization sheet + Waste by Category sheet + a Read Me with the filter/date applied.", "Use after Load utilization, to share the numbers outside RMS or archive a season's figures.", "Exports exactly what's on screen — change the Design No. filter and click Load utilization again before exporting a different scope."],
     ["Load FY planning", "Rolls up best/worst utilization designs, real time efficiency by worker/vendor, and next-year fabric suggestions from actual sales.", "Use once a real season of data exists — a handful of days won't produce meaningful rankings.", "The \"suggested fabric qty\" and size-ratio mismatch are guidance from real sell-through, not an order — always sense-check before committing a purchase."],
@@ -397,6 +399,7 @@ export default function DesignPattern(){
   const [fabricTxnTarget,setFabricTxnTarget]=useState(null), [fabricTxnForm,setFabricTxnForm]=useState({type:"ISSUE",qty:"",design_no:"",category:"",note:""});
   const [fabricUtilFilter,setFabricUtilFilter]=useState(""), [fabricUtilData,setFabricUtilData]=useState(null);
   const [fabricReuseTarget,setFabricReuseTarget]=useState(null), [fabricReuseData,setFabricReuseData]=useState(null);
+  const [fabricUsageTarget,setFabricUsageTarget]=useState(null), [fabricUsageData,setFabricUsageData]=useState(null);
   const [fyDays,setFyDays]=useState(365), [fyData,setFyData]=useState(null), [fyLoading,setFyLoading]=useState(false);
   const [exportingFabric,setExportingFabric]=useState(false);
   const [fabricLotFile,setFabricLotFile]=useState(null);
@@ -427,6 +430,10 @@ export default function DesignPattern(){
   const commitFabricBulk=async()=>{if(!fabricBulk?.file)return;try{const r=await apiUpload("/fabric-lots/bulk/commit",fabricBulk.file);setNotice(r.message||"Fabric lots imported.");setModal("");setFabricBulk(null);await loadFabricLots();}catch(e2){setFabricError(e2.message);}};
   const loadFabricUtilization=async(designNo)=>{try{setFabricError("");const q=designNo?`?design_no=${encodeURIComponent(designNo)}`:"";const r=await api(`/fabric-utilization${q}`);setFabricUtilData(r.data);}catch(e2){setFabricError(e2.message);}};
   const openFabricReuse=async(lot)=>{setFabricReuseTarget(lot);try{setFabricError("");const r=await api(`/fabric-lots/${lot.id}/reuse-matches`);setFabricReuseData(r.data);}catch(e2){setFabricError(e2.message);}};
+  const openFabricUsage=async(lot)=>{
+    if(fabricUsageTarget?.id===lot.id){setFabricUsageTarget(null);setFabricUsageData(null);return;}
+    setFabricUsageTarget(lot);try{setFabricError("");const r=await api(`/fabric-lots/${lot.id}/usage`);setFabricUsageData(r.data);}catch(e2){setFabricError(e2.message);}
+  };
   const loadFyPlanning=async()=>{setFyLoading(true);try{setFabricError("");const r=await api(`/fy-planning?days=${fyDays}`);setFyData(r.data);}catch(e2){setFabricError(e2.message);}finally{setFyLoading(false);}};
   const exportFabricUtilization=async()=>{
     if(!fabricUtilData?.by_design?.length){setFabricError("Load utilization data first — nothing to export yet.");return;}
@@ -660,6 +667,7 @@ export default function DesignPattern(){
           onUploadInvoice={openFabricBulk} onInvoiceTemplate={()=>apiDownload("/fabric-lots/template","fabric-receiving-template.csv").catch(e=>setFabricError(e.message))}
           onIssue={l=>openFabricTxn(l,"ISSUE")} onConsume={l=>openFabricTxn(l,"CONSUME")} onWaste={l=>openFabricTxn(l,"WASTE")} onReturn={l=>openFabricTxn(l,"RETURN")}
           onUploadSwatch={uploadFabricSwatch} onReuse={openFabricReuse}
+          onUsage={openFabricUsage} usageTarget={fabricUsageTarget} usageData={fabricUsageData}
           utilFilter={fabricUtilFilter} setUtilFilter={setFabricUtilFilter} utilData={fabricUtilData} onLoadUtil={loadFabricUtilization}
           onExportUtil={exportFabricUtilization} exportingUtil={exportingFabric}
           reuseTarget={fabricReuseTarget} reuseData={fabricReuseData}
@@ -1100,7 +1108,7 @@ function KpiTable({title,rows}){return <Panel title={title} subtitle="Efficiency
 // utilization %, planned fabric, next-year suggestion) is computed by the
 // backend; this view only ever asks for the raw facts (received qty, issue
 // qty, category…) per the module's core principle.
-function FabricProductionView({section,setSection,lots,onAddLot,onAddInvoice,onUploadInvoice,onInvoiceTemplate,onIssue,onConsume,onWaste,onReturn,onUploadSwatch,onReuse,utilFilter,setUtilFilter,utilData,onLoadUtil,onExportUtil,exportingUtil,reuseTarget,reuseData,fyDays,setFyDays,fyData,fyLoading,onLoadFy}){
+function FabricProductionView({section,setSection,lots,onAddLot,onAddInvoice,onUploadInvoice,onInvoiceTemplate,onIssue,onConsume,onWaste,onReturn,onUploadSwatch,onReuse,onUsage,usageTarget,usageData,utilFilter,setUtilFilter,utilData,onLoadUtil,onExportUtil,exportingUtil,reuseTarget,reuseData,fyDays,setFyDays,fyData,fyLoading,onLoadFy}){
   const sectionBtn=(v)=>"rounded-lg px-3.5 py-2 text-sm font-bold transition "+(section===v?"bg-violet-600 text-white shadow-sm":"text-slate-600 hover:bg-slate-100");
   return <div className="space-y-5">
     <nav className="inline-flex flex-wrap gap-1 rounded-xl border border-slate-200 bg-white p-1 shadow-sm" aria-label="Fabric & Production sections">
@@ -1141,9 +1149,13 @@ function FabricProductionView({section,setSection,lots,onAddLot,onAddInvoice,onU
             <button onClick={()=>onWaste(l)} className={`${BTN_SUBTLE} !px-2.5 !py-1 text-xs`}>Waste</button>
             <button onClick={()=>onReturn(l)} className={`${BTN_SUBTLE} !px-2.5 !py-1 text-xs`}>Return</button>
             <button onClick={()=>onReuse(l)} className="rounded-lg border border-cyan-200 bg-cyan-50 px-2.5 py-1 text-xs font-bold text-cyan-700 hover:bg-cyan-100">Reuse matches</button>
+            <button onClick={()=>onUsage(l)} className="rounded-lg border border-violet-200 bg-violet-50 px-2.5 py-1 text-xs font-bold text-violet-700 hover:bg-violet-100">{usageTarget?.id===l.id?"Hide usage":"Usage by design"}</button>
           </div>
           {reuseTarget?.id===l.id&&reuseData&&<div className="mt-3 rounded-xl border border-cyan-200 bg-cyan-50/60 p-3 text-xs text-cyan-900">
             {reuseData.matches?.length?<><p className="font-bold">Same fabric ({reuseData.fabric_name}, {reuseData.colour}, {reuseData.width}, {reuseData.gsm} GSM) is also in use for:</p><ul className="mt-1.5 space-y-1">{reuseData.matches.map(m=><li key={m.design_no}>• <b>{m.design_no}</b> — {m.own_balance} {reuseData.unit} of its own balance, {m.lot_count} lot(s)</li>)}</ul></>:<p>{reuseData.note}</p>}
+          </div>}
+          {usageTarget?.id===l.id&&usageData&&<div className="mt-3 overflow-x-auto rounded-xl border border-violet-200 bg-violet-50/60 p-3 text-xs text-violet-900">
+            {usageData.by_design?.length?<table className="w-full text-xs"><thead><tr className="text-left font-bold text-violet-700"><th className="pr-3 py-1">Design No.</th><th className="pr-3 py-1">Consumed</th><th className="pr-3 py-1">Waste</th><th className="py-1">Pieces produced</th></tr></thead><tbody>{usageData.by_design.map(d=><tr key={d.design_no} className="border-t border-violet-200/60"><td className="pr-3 py-1 font-bold">{d.design_no}</td><td className="pr-3 py-1">{d.consumed_qty} {usageData.unit}</td><td className="pr-3 py-1">{d.waste_qty} {usageData.unit}</td><td className="py-1">{d.pieces_produced || "—"}</td></tr>)}</tbody></table>:<p>{usageData.note}</p>}
           </div>}
         </div>):<Empty>No fabric lots received yet.</Empty>}
       </div>

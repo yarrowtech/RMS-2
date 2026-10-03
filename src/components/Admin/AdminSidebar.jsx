@@ -326,6 +326,7 @@ import {
 import { PanelLeft, PanelRight, PackageCheck, Building2, Wrench, Shield, DollarSign, Palette, TrendingUp, Network, Factory, Package, LineChart, Megaphone, HeartHandshake, Ruler } from "lucide-react";
 import { FaSitemap } from "react-icons/fa";
 import { useNavigate } from "react-router-dom";
+import { getTenantId } from "../../utils/authRedirect.js";
 
 // Departments granted through the multi-store upgrade / HQ Admin Management
 // that have a real, dedicated workspace page — but no entry point anywhere
@@ -434,6 +435,15 @@ export default function AdminSidebar({
   }, []);
 
   const departmentWorkspaces = DEPARTMENT_WORKSPACES.filter((w) => managedDepartments.includes(w.department));
+  // Citimart-only extra entry point into its own Data Hub — kept OUT of
+  // DEPARTMENT_WORKSPACES itself so it never appears for any other tenant;
+  // every other tenant's Forecast & Analytics/Inventory nav is unchanged.
+  if (getTenantId() === "citimart" && (managedDepartments.includes("Forecast & Analytics") || managedDepartments.includes("Inventory"))) {
+    departmentWorkspaces.push({ department: "Citimart Data Hub", path: "/citimart-data-hub", icon: LineChart, label: "Citimart Data Hub" });
+  }
+  if (getTenantId() === "citimart" && (managedDepartments.includes("Store Ops") || managedDepartments.includes("Forecast & Analytics") || managedDepartments.includes("Inventory"))) {
+    departmentWorkspaces.push({ department: "Citimart Store Ops", path: "/citimart-store-ops", icon: TrendingUp, label: "Citimart Store Ops" });
+  }
 
   const userName = useMemo(() => {
     try {
