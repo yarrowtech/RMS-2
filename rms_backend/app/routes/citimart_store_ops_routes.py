@@ -25,20 +25,24 @@ achievement_pct by hand (e.g. a POS export gap) — the raw log sums
 (net_sales/bill_quantity/footfall/nob) are never overridable, only the
 derived ratios.
 """
+import io
 import uuid
-from datetime import datetime, time as dtime
+from datetime import date as ddate, datetime, time as dtime, timedelta
 from typing import Any, Dict, List, Optional
 
 from bson import ObjectId
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+import pandas as pd
 
 from .deps import get_tenant
+from ..citimart_target_adjustment import store_adjustment, store_buckets
 from ..db import (
     citimart_bill_logs_collection,
     citimart_footfall_logs_collection,
     citimart_nob_logs_collection,
     citimart_sales_targets_collection,
     citimart_kpi_override_audit_collection,
+    citimart_day_submissions_collection,
 )
 
 router = APIRouter(prefix="/api/citimart/store-ops", tags=["Citimart Store Ops"])
@@ -303,12 +307,155 @@ async def set_target(payload: dict, ctx: TenantCtx = Depends(_citimart_context))
     store = _store_scope(ctx, payload.get("store", ""))
     entry_date = payload.get("entry_date") or datetime.utcnow().date().isoformat()
     sales_target = float(payload["sales_target"]) if payload.get("sales_target") not in (None, "") else None
+    fields: Dict[str, Any] = {"sales_target": sales_target, "updated_at": datetime.utcnow()}
+    if "prev_year_net_sales" in payload:
+        fields["prev_year_net_sales"] = _optional_amount(payload.get("prev_year_net_sales"), "prev_year_net_sales")
     await citimart_sales_targets_collection.update_one(
         {"tenant_id": ctx["tenant_id"], "store": store, "entry_date": entry_date},
-        {"$set": {"sales_target": sales_target, "updated_at": datetime.utcnow()}},
+        {"$set": fields},
         upsert=True,
     )
     return {"message": "Sales target saved."}
+
+
+def _optional_amount(value, label: str):
+    if value in (None, ""):
+        return None
+    try:
+        amount = float(value)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail=f"{label} must be a number.")
+    if amount < 0:
+        raise HTTPException(status_code=400, detail=f"{label} cannot be negative.")
+    return amount
+
+
+async def _apply_target_rows(ctx: TenantCtx, store: str, rows: List[dict]) -> int:
+    now = datetime.utcnow()
+    prepared = []
+    for row in rows:
+        entry_date = row.get("date")
+        try:
+            ddate.fromisoformat(entry_date)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail=f"Invalid date: {entry_date}")
+        fields: Dict[str, Any] = {"updated_at": now}
+        if "sales_target" in row:
+            fields["sales_target"] = _optional_amount(row.get("sales_target"), "sales_target")
+        if "prev_year_net_sales" in row:
+            fields["prev_year_net_sales"] = _optional_amount(row.get("prev_year_net_sales"), "prev_year_net_sales")
+        prepared.append((entry_date, fields))
+    for entry_date, fields in prepared:
+        await citimart_sales_targets_collection.update_one(
+            {"tenant_id": ctx["tenant_id"], "store": store, "entry_date": entry_date}, {"$set": fields}, upsert=True,
+        )
+    return len(prepared)
+
+
+@router.get("/targets/month")
+async def targets_month(store: str, month: str, ctx: TenantCtx = Depends(_citimart_context)):
+    store = _store_scope(ctx, store)
+    try:
+        first = ddate.fromisoformat(f"{month}-01")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="month must look like 2026-10.")
+    prefix = f"{first.year:04d}-{first.month:02d}-"
+    actual: Dict[str, float] = {}
+    async for row in citimart_bill_logs_collection.find({"tenant_id": ctx["tenant_id"], "store": store, "entry_date": {"$regex": f"^{prefix}"}}, {"entry_date": 1, "net_amount": 1}):
+        actual[row["entry_date"]] = actual.get(row["entry_date"], 0.0) + float(row.get("net_amount") or 0)
+    rows = []
+    async for row in citimart_sales_targets_collection.find({"tenant_id": ctx["tenant_id"], "store": store, "entry_date": {"$regex": f"^{prefix}"}}).sort("entry_date", 1):
+        rows.append({
+            "date": row["entry_date"],
+            "sales_target": row.get("sales_target"),
+            "prev_year_net_sales": row.get("prev_year_net_sales"),
+            "net_sales": actual.get(row["entry_date"]),
+        })
+    return {"status": "success", "data": rows}
+
+
+@router.get("/targets/summary")
+async def targets_summary(month: str, ctx: TenantCtx = Depends(_citimart_context)):
+    _require_hq(ctx)
+    try:
+        first = ddate.fromisoformat(f"{month}-01")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="month must look like 2026-10.")
+    prefix = f"{first.year:04d}-{first.month:02d}-"
+    month_target = 0.0
+    prev_total = 0.0
+    has_target = False
+    has_prev = False
+    for code in STORE_CODE_TO_NAME:
+        async for row in citimart_sales_targets_collection.find({"tenant_id": ctx["tenant_id"], "store": code, "entry_date": {"$regex": f"^{prefix}"}}):
+            if row.get("sales_target") is not None:
+                month_target += float(row["sales_target"])
+                has_target = True
+            if row.get("prev_year_net_sales") is not None:
+                prev_total += float(row["prev_year_net_sales"])
+                has_prev = True
+    growth = ((month_target - prev_total) / prev_total * 100.0) if has_target and has_prev and prev_total > 0 else None
+    return {"status": "success", "data": {
+        "month_target": month_target if has_target else None,
+        "prev_year_total": prev_total if has_prev else None,
+        "growth_pct": growth,
+    }}
+
+
+@router.post("/targets/bulk")
+async def targets_bulk(payload: dict, ctx: TenantCtx = Depends(_citimart_context)):
+    _require_hq(ctx)
+    store = _validate_store(payload.get("store", ""))
+    rows = payload.get("rows") or []
+    if not isinstance(rows, list) or not rows:
+        raise HTTPException(status_code=400, detail="rows must be a non-empty list.")
+    count = await _apply_target_rows(ctx, store, rows)
+    return {"message": f"{count} day(s) saved.", "saved": count}
+
+
+def _norm_col(name) -> str:
+    return " ".join(str(name).strip().lower().split())
+
+
+@router.post("/targets/upload")
+async def targets_upload(store: str, file: UploadFile = File(...), ctx: TenantCtx = Depends(_citimart_context)):
+    _require_hq(ctx)
+    store = _validate_store(store)
+    content = await file.read()
+    name = (file.filename or "").lower()
+    try:
+        if name.endswith(".csv"):
+            df = pd.read_csv(io.BytesIO(content), dtype=str)
+        else:
+            df = pd.read_excel(io.BytesIO(content), dtype=str)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Could not read this file. Upload a .xlsx or .csv.")
+    cols = {_norm_col(c): c for c in df.columns}
+    present_date = cols.get("present year date") or cols.get("date")
+    target_col = cols.get("sales target")
+    prev_col = cols.get("net sales")
+    if not present_date or not target_col:
+        raise HTTPException(status_code=400, detail="Columns needed: 'Date' and 'Sales Target' (or 'Present Year Date' and 'Sales Target').")
+    rows = []
+    skipped = 0
+    for _, rec in df.iterrows():
+        raw_date = rec.get(present_date)
+        if pd.isna(raw_date):
+            skipped += 1
+            continue
+        parsed = pd.to_datetime(str(raw_date), dayfirst=True, errors="coerce")
+        if pd.isna(parsed):
+            skipped += 1
+            continue
+        row = {"date": parsed.date().isoformat()}
+        target_raw = rec.get(target_col)
+        if not pd.isna(target_raw):
+            row["sales_target"] = str(target_raw).replace(",", "")
+        if prev_col and not pd.isna(rec.get(prev_col)):
+            row["prev_year_net_sales"] = str(rec.get(prev_col)).replace(",", "")
+        rows.append(row)
+    count = await _apply_target_rows(ctx, store, rows)
+    return {"message": f"{count} day(s) imported" + (f", {skipped} skipped" if skipped else "") + ".", "saved": count, "skipped": skipped}
 
 
 @router.put("/kpi-override")
@@ -417,7 +564,23 @@ async def _compute_live_kpis(tenant_id: str, store: str, entry_date: str) -> dic
 @router.get("/live")
 async def live_kpis(store: str, date: str, ctx: TenantCtx = Depends(_citimart_context)):
     store = _store_scope(ctx, store)
-    return {"status": "success", "data": await _compute_live_kpis(ctx["tenant_id"], store, date)}
+    kpis = await _compute_live_kpis(ctx["tenant_id"], store, date)
+    kpis["adjustment"] = await _adjustment_view(store, date, kpis.get("net_sales") or 0.0)
+    return {"status": "success", "data": kpis}
+
+
+async def _adjustment_view(store: str, date_iso: str, net_sales: float) -> Optional[dict]:
+    try:
+        target_day = ddate.fromisoformat(date_iso)
+    except ValueError:
+        return None
+    adj = await store_adjustment(store, target_day)
+    if adj is None:
+        return None
+    adjusted = adj["adjusted_target"]
+    adj["adjusted_remaining"] = round(adjusted - net_sales, 2) if adjusted is not None else None
+    adj["adjusted_achievement_pct"] = (safe_divide(net_sales, adjusted) * 100) if safe_divide(net_sales, adjusted) is not None else None
+    return adj
 
 
 @router.get("/live/overall")
@@ -434,13 +597,25 @@ async def live_kpis_overall(date: str, ctx: TenantCtx = Depends(_citimart_contex
     achievement_pct = achievement_pct * 100 if achievement_pct is not None else None
     conversion_pct = safe_divide(nob, footfall)
     conversion_pct = conversion_pct * 100 if conversion_pct is not None else None
+    adjustments = [await _adjustment_view(code, date, s["net_sales"] or 0.0) for code, s in zip(STORE_CODE_TO_NAME, stores)]
+    present = [a for a in adjustments if a is not None]
+    adjusted_target_sum = sum(a["adjusted_target"] for a in present if a["adjusted_target"] is not None) or None
+    outstanding_sum = sum(a["outstanding_before"] for a in present) if present else None
+    overall_adjustment = None
+    if present:
+        overall_adjustment = {
+            "adjusted_target": adjusted_target_sum,
+            "outstanding_before": outstanding_sum,
+            "adjusted_remaining": (adjusted_target_sum - net_sales) if adjusted_target_sum is not None else None,
+            "adjusted_achievement_pct": (safe_divide(net_sales, adjusted_target_sum) * 100) if safe_divide(net_sales, adjusted_target_sum) is not None else None,
+        }
     overall = {
         "entry_date": date, "net_sales": round(net_sales, 2), "footfall": footfall, "nob": nob,
         "bill_quantity": bill_quantity, "sales_target": sales_target,
         "remaining": (sales_target - net_sales) if sales_target is not None else None,
         "atv": safe_divide(net_sales, nob), "rpv": safe_divide(net_sales, footfall),
         "basket_size": safe_divide(bill_quantity, nob), "conversion_pct": conversion_pct,
-        "achievement_pct": achievement_pct,
+        "achievement_pct": achievement_pct, "adjustment": overall_adjustment,
     }
     return {"status": "success", "data": {"overall": overall, "stores": stores}}
 
@@ -548,4 +723,147 @@ async def review_override_audit(date: str = "", ctx: TenantCtx = Depends(_citima
         row["id"] = str(row.pop("_id"))
         row["changed_at"] = row["changed_at"].isoformat()
         rows.append(row)
+    return {"status": "success", "data": rows}
+
+
+# ── Day close: Remarks and Final Submission ─────────────────────────────────
+def _day_key(ctx: TenantCtx, store: str, entry_date: str) -> Dict[str, Any]:
+    return {"tenant_id": ctx["tenant_id"], "store": store, "entry_date": entry_date}
+
+
+def _day_view(row: Optional[dict]) -> dict:
+    if not row:
+        return {"submitted": False, "remarks": "", "submitted_at": None, "submitted_by": None, "auto_finalized": False}
+    return {
+        "submitted": bool(row.get("submitted")),
+        "remarks": row.get("remarks") or "",
+        "submitted_at": row["submitted_at"].isoformat() if row.get("submitted_at") else None,
+        "submitted_by": row.get("submitted_by"),
+        "auto_finalized": bool(row.get("auto_finalized")),
+    }
+
+
+@router.get("/day-status")
+async def day_status(store: str, date: str, ctx: TenantCtx = Depends(_citimart_context)):
+    store = _store_scope(ctx, store)
+    row = await citimart_day_submissions_collection.find_one(_day_key(ctx, store, date))
+    return {"status": "success", "data": _day_view(row)}
+
+
+@router.put("/remarks")
+async def save_remarks(payload: dict, ctx: TenantCtx = Depends(_citimart_context)):
+    store = _store_scope(ctx, payload.get("store", ""))
+    entry_date = payload.get("entry_date") or datetime.utcnow().date().isoformat()
+    key = _day_key(ctx, store, entry_date)
+    existing = await citimart_day_submissions_collection.find_one(key)
+    if existing and existing.get("submitted"):
+        raise HTTPException(status_code=409, detail="This day is finally submitted. Remarks are locked.")
+    remarks = (payload.get("remarks") or "").strip()[:1000]
+    await citimart_day_submissions_collection.update_one(
+        key, {"$set": {"remarks": remarks, "updated_at": datetime.utcnow()}}, upsert=True,
+    )
+    return {"message": "Remarks saved."}
+
+
+@router.post("/final-submit")
+async def final_submit(payload: dict, ctx: TenantCtx = Depends(_citimart_context)):
+    store = _store_scope(ctx, payload.get("store", ""))
+    entry_date = payload.get("entry_date") or datetime.utcnow().date().isoformat()
+    key = _day_key(ctx, store, entry_date)
+    existing = await citimart_day_submissions_collection.find_one(key)
+    if existing and existing.get("submitted"):
+        raise HTTPException(status_code=409, detail="This day is already finally submitted.")
+    await citimart_day_submissions_collection.update_one(
+        key,
+        {"$set": {
+            "submitted": True, "submitted_at": datetime.utcnow(), "auto_finalized": False,
+            "submitted_by": ctx.get("admin_name") or ctx.get("admin_email") or "",
+        }},
+        upsert=True,
+    )
+    row = await citimart_day_submissions_collection.find_one(key)
+    return {"message": "Day finally submitted.", "data": _day_view(row)}
+
+
+@router.post("/unlock-day")
+async def unlock_day(payload: dict, ctx: TenantCtx = Depends(_citimart_context)):
+    _require_hq(ctx)
+    store = _validate_store(payload.get("store", ""))
+    entry_date = payload.get("entry_date") or datetime.utcnow().date().isoformat()
+    await citimart_day_submissions_collection.update_one(
+        _day_key(ctx, store, entry_date), {"$set": {"submitted": False, "unlocked_by": ctx.get("admin_name") or ctx.get("admin_email") or "", "unlocked_at": datetime.utcnow()}},
+    )
+    return {"message": "Day unlocked for editing."}
+
+
+# ── At a Glance: comparisons against past periods ───────────────────────────
+def _shift_months(d: ddate, months: int) -> ddate:
+    total = d.year * 12 + (d.month - 1) + months
+    year, month = divmod(total, 12)
+    month += 1
+    last_day = (ddate(year + (month // 12), month % 12 + 1, 1) - timedelta(days=1)).day
+    return ddate(year, month, min(d.day, last_day))
+
+
+async def _net_on(tenant_id: str, store: str, iso_day: str) -> float:
+    if store != "ALL":
+        return (await _compute_live_kpis(tenant_id, store, iso_day))["net_sales"]
+    total = 0.0
+    for code in STORE_CODE_TO_NAME:
+        total += (await _compute_live_kpis(tenant_id, code, iso_day))["net_sales"]
+    return total
+
+
+async def _average_before(tenant_id: str, store: str, anchor: ddate, days: int) -> Optional[float]:
+    values = []
+    for back in range(1, days + 1):
+        values.append(await _net_on(tenant_id, store, (anchor - timedelta(days=back)).isoformat()))
+    return sum(values) / len(values) if values else None
+
+
+def _change_pct(current: float, reference: Optional[float]) -> Optional[float]:
+    if reference is None or reference == 0:
+        return None
+    return (current - reference) / reference * 100.0
+
+
+@router.get("/glance")
+async def at_a_glance(store: str, date: str, ctx: TenantCtx = Depends(_citimart_context)):
+    store = _store_scope(ctx, store) if store != "ALL" else _require_hq_all(ctx)
+    try:
+        anchor = ddate.fromisoformat(date)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="date must look like 2026-10-05.")
+    tenant = ctx["tenant_id"]
+    current = await _net_on(tenant, store, anchor.isoformat())
+    periods = [
+        ("yoy", "Same day last year", _shift_months(anchor, -12).isoformat()),
+        ("two_years", "Same day two years ago", _shift_months(anchor, -24).isoformat()),
+        ("mom", "Same day last month", _shift_months(anchor, -1).isoformat()),
+        ("wow", "Same day last week", (anchor - timedelta(days=7)).isoformat()),
+        ("qoq", "90 days ago", (anchor - timedelta(days=90)).isoformat()),
+    ]
+    comparisons = []
+    for key, label, ref_day in periods:
+        ref = await _net_on(tenant, store, ref_day)
+        comparisons.append({"key": key, "label": label, "reference_date": ref_day, "reference_net_sales": ref, "change_pct": _change_pct(current, ref)})
+    for days in (7, 14, 30):
+        ref = await _average_before(tenant, store, anchor, days)
+        comparisons.append({"key": f"avg_{days}", "label": f"Average of previous {days} days", "reference_date": None, "reference_net_sales": ref, "change_pct": _change_pct(current, ref)})
+    return {"status": "success", "data": {"store": store, "date": anchor.isoformat(), "net_sales": current, "comparisons": comparisons}}
+
+
+def _require_hq_all(ctx: TenantCtx) -> str:
+    _require_hq(ctx)
+    return "ALL"
+
+
+@router.get("/target-buckets")
+async def target_buckets(store: str, date: str, ctx: TenantCtx = Depends(_citimart_context)):
+    store = _store_scope(ctx, store)
+    try:
+        target_day = ddate.fromisoformat(date)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="date must look like 2026-10-05.")
+    rows = await store_buckets(store, target_day)
     return {"status": "success", "data": rows}

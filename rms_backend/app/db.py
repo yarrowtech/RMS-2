@@ -210,6 +210,7 @@ citimart_footfall_logs_collection = db["citimart_footfall_logs"]
 citimart_nob_logs_collection = db["citimart_nob_logs"]
 citimart_sales_targets_collection = db["citimart_sales_targets"]
 citimart_kpi_override_audit_collection = db["citimart_kpi_override_audit"]
+citimart_day_submissions_collection = db["citimart_day_submissions"]
 
 # Product-usage analytics (page views, feature clicks, session start/end,
 # device type) — separate from audit_logs_collection, which is a

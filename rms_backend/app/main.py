@@ -1,7 +1,9 @@
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+import asyncio
 from .error_log import log_error
+from .citimart_midnight_job import run_citimart_midnight_loop
 from .routes import superadmin_routes, auth_routes, admin_routes
 from .db import admins_collection, ensure_procurement_indexes
 from .routes import vendor_routes,order_routes, grc_routes , grn_routes,Purchaseinvoice_routes
@@ -191,6 +193,7 @@ app.include_router(internal_attachment_router)
 async def startup_event():
     """Ensure Super Admin exists and syncs with .env credentials."""
     await ensure_procurement_indexes()
+    asyncio.create_task(run_citimart_midnight_loop())
     existing = await admins_collection.find_one({"email": settings.superadmin_email})
 
     if not existing:

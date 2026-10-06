@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { getAdminName, getAdminScope, getStoreName, logoutOrReturnToDepartmentSelector } from "../utils/authRedirect";
+import { getAdminName, getAdminScope, getStoreName, getTenantId, logoutOrReturnToDepartmentSelector } from "../utils/authRedirect";
+import { useNavigate } from "react-router-dom";
 import { API_BASE_URL } from "../config/api.js";
 import {
   LineChart, TrendingUp, TrendingDown, Minus, Building2, Wallet, LogOut,
@@ -13,6 +14,7 @@ import {
 } from "recharts";
 import InternalNotificationBell from "./InternalNotificationBell.jsx";
 import InternalChatPanel from "./InternalChatPanel.jsx";
+import CitimartDataHub from "./CitimartDataHub.jsx";
 
 function getAdminToken() {
   return (
@@ -2453,6 +2455,8 @@ export default function ForecastAnalytics() {
   const [productEnrichmentEnabled, setProductEnrichmentEnabled] = useState(false);
   const [unstitchedImportEnabled, setUnstitchedImportEnabled] = useState(false);
   const [dataHubTenantId, setDataHubTenantId] = useState("");
+  const navigate = useNavigate();
+  const isCitimart = getTenantId() === "citimart";
   const isStoreWorkspace = getAdminScope() !== "hq";
   const workspaceName = isStoreWorkspace ? (getStoreName() || "Store workspace") : "Head office workspace";
   const adminName = getAdminName() || "Analytics Administrator";
@@ -2469,7 +2473,7 @@ export default function ForecastAnalytics() {
       .catch(() => { setDataHubEnabled(false); setProductEnrichmentEnabled(false); setUnstitchedImportEnabled(false); });
   }, []);
 
-  const menu = dataHubEnabled
+  let menu = dataHubEnabled
     ? [
         ...MENU,
         ...(productEnrichmentEnabled ? [{ id: "design-performance", label: "Design Performance", icon: Scissors }] : []),
@@ -2478,6 +2482,13 @@ export default function ForecastAnalytics() {
         { id: "import", label: "Data Import", icon: UploadCloud },
       ]
     : MENU;
+  // Citimart doesn't use the generic Data Import above (that's gated to
+  // raphaaa tenants) -- it has its own isolated Data Hub page. Linked in as
+  // an extra nav item here, outside the MENU/activeSection system, since
+  // it's a separate route (/citimart-data-hub), not a section of this page.
+  if (isCitimart) {
+    menu = [...menu, { id: "citimart-data-hub", label: "Citimart Data Hub", icon: UploadCloud }];
+  }
   const activeLabel = menu.find((item) => item.id === activeSection)?.label || "Overview";
 
   const renderContent = () => {
@@ -2491,6 +2502,7 @@ export default function ForecastAnalytics() {
       case "design-themes": return productEnrichmentEnabled ? <DesignThemesView /> : <DashboardView onNavigate={setActiveSection} raphaaaMode={productEnrichmentEnabled} />;
       case "store-value": return dataHubEnabled ? <StoreStockValueView /> : <DashboardView onNavigate={setActiveSection} raphaaaMode={productEnrichmentEnabled} />;
       case "import": return dataHubEnabled ? <DataImportView enrichmentEnabled={productEnrichmentEnabled} unstitchedEnabled={unstitchedImportEnabled} /> : <DashboardView onNavigate={setActiveSection} raphaaaMode={productEnrichmentEnabled} />;
+      case "citimart-data-hub": return isCitimart ? <CitimartDataHub /> : <DashboardView onNavigate={setActiveSection} raphaaaMode={productEnrichmentEnabled} />;
       default: return <DashboardView onNavigate={setActiveSection} raphaaaMode={productEnrichmentEnabled} />;
     }
   };
@@ -2517,10 +2529,10 @@ export default function ForecastAnalytics() {
 
         <nav className="mt-6 flex-1 space-y-1.5 overflow-y-auto pr-1">
           <p className="fa-sidebar-note px-3 pb-2 text-[10px] font-bold uppercase tracking-[.18em] text-slate-400">Workspace</p>
-          {menu.map(({ id, label, icon }) => (
+          {menu.map(({ id, label, icon, external }) => (
             <button
               key={id}
-              onClick={() => setActiveSection(id)}
+              onClick={() => (external ? navigate(external) : setActiveSection(id))}
               className={`fa-nav-item flex w-full items-center rounded-xl px-3.5 py-3 text-left text-sm font-semibold transition-all ${activeSection === id ? "fa-nav-item-active" : ""}`}
             >
               {React.createElement(icon, { className: "mr-3 h-[18px] w-[18px] shrink-0" })}
