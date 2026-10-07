@@ -29,12 +29,15 @@ from typing import Any, Dict, List
 import pandas as pd
 from bson import ObjectId
 from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile, status
+from pymongo import InsertOne, UpdateOne
 
 from .deps import get_hq_tenant
 from .products import generate_base_sku
 from ..db import (
     citimart_data_hub_imports_collection,
     citimart_purchase_import_collection,
+    citimart_purchase_stage_rows_collection,
+    citimart_purchase_sync_audit_collection,
     citimart_sales_import_collection,
     citimart_stock_snapshot_collection,
     citimart_stock_stage_rows_collection,
@@ -49,8 +52,19 @@ from ..db import (
 
 router = APIRouter(prefix="/api/citimart/data-hub", tags=["Citimart Data Hub"])
 TenantCtx = Dict[str, Any]
-MAX_ROWS = 20_000
+MAX_ROWS = 200_000
+BULK_CHUNK = 2_000  # rows per bulk_write batch — keeps each round trip small and fast
 PREVIEW_ROWS = 300
+
+
+async def _bulk_write_chunked(collection, operations: List[Any], *, ordered: bool = False) -> None:
+    """Writes a (possibly huge) list of pymongo write operations in chunks, one
+    bulk_write per chunk, instead of one operation per round trip. This is what
+    makes large imports fast — a 20k-row file becomes ~10 round trips, not 20k."""
+    for start in range(0, len(operations), BULK_CHUNK):
+        chunk = operations[start:start + BULK_CHUNK]
+        if chunk:
+            await collection.bulk_write(chunk, ordered=ordered)
 
 _CENTRAL_SEGMENTS = {
     "MAIN": {"label": "Main Warehouse", "aliases": ("warehouse", "central", "central inventory", "hq", "head office")},
@@ -130,7 +144,7 @@ async def _log_batch(tenant_id: str, kind: str, row_count: int, by: str, *, batc
     await citimart_data_hub_imports_collection.insert_one({
         "tenant_id": tenant_id, "batch_id": batch_id, "kind": kind, "row_count": row_count,
         "imported_by": by, "imported_at": datetime.utcnow(), "file_name": file_name,
-        "file_sha256": file_sha256, "live_sync_status": "NOT_SYNCED" if kind == "stock" else "ANALYTICS_ONLY",
+        "file_sha256": file_sha256, "live_sync_status": "NOT_SYNCED" if kind in ("stock", "purchase") else "ANALYTICS_ONLY",
     })
     return batch_id
 
@@ -337,6 +351,45 @@ async def _set_central_segments(tenant_id: str, product: dict, segments: dict, b
     }
     await inventory_collection.update_one(query, {"$set": common, "$setOnInsert": {"createdAt": now}}, upsert=True)
     return {"qty": _number(before_doc.get("stockQty")), "segments": before_segments}
+
+
+async def _bulk_store_qty_map(tenant_id: str, barcodes: List[str]) -> Dict[tuple, dict]:
+    """One query instead of one-per-row: every store_stock doc for these
+    barcodes, indexed by (barcode, store_id) so a big sync batch does a
+    single round trip for its 'before' values."""
+    if not barcodes:
+        return {}
+    docs = await store_stock_collection.find({"tenant_id": tenant_id, "barcode": {"$in": list(set(barcodes))}}).to_list(length=None)
+    return {(d.get("barcode"), d.get("store_id")): d for d in docs}
+
+
+async def _bulk_inventory_map(tenant_id: str, barcodes: List[str]) -> Dict[str, dict]:
+    if not barcodes:
+        return {}
+    docs = await inventory_collection.find({"tenant_id": tenant_id, "barcode": {"$in": list(set(barcodes))}}).to_list(length=None)
+    return {d.get("barcode"): d for d in docs}
+
+
+async def _reconcile_bulk(tenant_id: str, written: List[dict]) -> List[dict]:
+    """Checks every written row's live value in two bulk queries (one for
+    stores, one for central) instead of one query per row."""
+    store_barcodes = [w["barcode"] for w in written if w.get("store_id")]
+    central_barcodes = [w["barcode"] for w in written if not w.get("store_id")]
+    store_map = await _bulk_store_qty_map(tenant_id, store_barcodes)
+    central_map = await _bulk_inventory_map(tenant_id, central_barcodes)
+    mismatches = []
+    for item in written:
+        if item.get("store_id"):
+            doc = store_map.get((item["barcode"], item["store_id"])) or {}
+        else:
+            doc = central_map.get(item["barcode"]) or {}
+        actual = _number(doc.get("stockQty"))
+        segments_ok = item.get("expected_segments") is None or _central_segments(doc) == item.get("expected_segments")
+        if abs(actual - item["expected"]) > 0.0001 or not segments_ok:
+            mismatches.append({**item, "actual": actual})
+    return mismatches
+
+
 # ── STOCK ────────────────────────────────────────────────────────────────
 # One row per product × store. Locname/Source Site is the store; whichever
 # is present (Locname preferred) becomes store_name. The snapshot is
@@ -410,18 +463,20 @@ async def commit_stock(file: UploadFile = File(...), ctx: TenantCtx = Depends(_c
     if duplicate:
         raise HTTPException(status_code=409, detail=f"This exact stock file was already imported as batch {duplicate.get('batch_id')}.")
 
-    saved, skipped = 0, []
+    stage_ops: List[Any] = []
+    snapshot_ops: List[Any] = []
+    skipped = []
     for row in rows:
         if row["errors"]:
             skipped.append({"row_no": row["row_no"], "errors": row["errors"]})
             continue
         key = {"tenant_id": ctx["tenant_id"], "store_name": row["store_name"], "barcode": row["barcode"] or row["item_code"]}
         staged = {**row, **key, "batch_id": batch_id, "updated_at": now}
-        await citimart_stock_stage_rows_collection.insert_one(staged)
-        await citimart_stock_snapshot_collection.update_one(
-            key, {"$set": staged}, upsert=True,
-        )
-        saved += 1
+        stage_ops.append(InsertOne(staged))
+        snapshot_ops.append(UpdateOne(key, {"$set": staged}, upsert=True))
+    saved = len(stage_ops)
+    await _bulk_write_chunked(citimart_stock_stage_rows_collection, stage_ops, ordered=True)
+    await _bulk_write_chunked(citimart_stock_snapshot_collection, snapshot_ops, ordered=False)
     await _log_batch(
         ctx["tenant_id"], "stock", saved, ctx.get("admin_name") or ctx.get("admin_email") or "",
         batch_id=batch_id, file_name=file.filename or "", file_sha256=file_sha256,
@@ -491,6 +546,7 @@ async def sync_stock_to_live(batch_id: str, payload: dict, ctx: TenantCtx = Depe
     now = datetime.utcnow()
     audit_rows, written = [], []
     try:
+        store_rows = []
         central_by_barcode: Dict[str, dict] = {}
         for row in resolution["rows"]:
             product, location, qty = row["product"], row["location"], row["closing_qty"]
@@ -498,27 +554,59 @@ async def sync_stock_to_live(batch_id: str, payload: dict, ctx: TenantCtx = Depe
                 entry = central_by_barcode.setdefault(product["barcode"], {"product": product, "values": {}})
                 entry["values"][location["central_segment"]] = qty
                 continue
-            before = await _set_live_qty(ctx["tenant_id"], product, location, qty, batch_id, now)
+            store_rows.append((product, location, qty))
+
+        # Fetch every "before" value in two bulk queries (store + central)
+        # instead of one query per row — this is what makes a 100k-row sync
+        # finish in seconds instead of tens of minutes.
+        store_before_map = await _bulk_store_qty_map(ctx["tenant_id"], [p["barcode"] for p, _, _ in store_rows])
+        central_before_map = await _bulk_inventory_map(ctx["tenant_id"], list(central_by_barcode.keys()))
+
+        store_ops = []
+        for product, location, qty in store_rows:
+            before_doc = store_before_map.get((product["barcode"], location["store_id"])) or {}
+            before = _number(before_doc.get("stockQty"))
+            common = {
+                "tenant_id": ctx["tenant_id"], "barcode": product["barcode"], "stockQty": qty,
+                "description": product.get("name", ""), "product_name": product.get("name", ""),
+                "product_id": product.get("product_id", ""), "rate": product.get("rate", 0),
+                "mrp": product.get("mrp", 0), "source": "citimart_data_hub_sync",
+                "data_hub_batch_id": batch_id, "updatedAt": now, "store_id": location["store_id"],
+                "store_name": location.get("store_name", ""), "store_code": location.get("store_code", ""),
+            }
+            store_ops.append(UpdateOne(
+                {"tenant_id": ctx["tenant_id"], "barcode": product["barcode"], "store_id": location["store_id"]},
+                {"$set": common, "$setOnInsert": {"createdAt": now}}, upsert=True,
+            ))
             audit_rows.append({"tenant_id": ctx["tenant_id"], "batch_id": batch_id, "barcode": product["barcode"], "product_id": product.get("product_id", ""), "product_name": product.get("name", ""), "store_id": location["store_id"], "store_name": location.get("store_name"), "previous_qty": before, "new_qty": qty, "difference": qty-before, "change_type": "FILE_ROW", "synced_at": now})
             written.append({"barcode": product["barcode"], "store_id": location["store_id"], "expected": qty})
+        await _bulk_write_chunked(store_stock_collection, store_ops, ordered=False)
 
+        central_ops = []
         for barcode, entry in central_by_barcode.items():
-            live = await _live_state(ctx["tenant_id"], barcode, None)
-            segments = _central_segments(live)
+            before_doc = central_before_map.get(barcode) or {}
+            segments = _central_segments(before_doc)
+            before_segments = dict(segments)
             segments.update(entry["values"])
-            before = await _set_central_segments(ctx["tenant_id"], entry["product"], segments, batch_id, now)
             total = sum(segments.values())
-            audit_rows.append({"tenant_id": ctx["tenant_id"], "batch_id": batch_id, "barcode": barcode, "product_id": entry["product"].get("product_id", ""), "product_name": entry["product"].get("name", ""), "store_id": None, "store_name": "Central Inventory", "previous_qty": before["qty"], "new_qty": total, "previous_segments": before["segments"], "new_segments": segments, "difference": total-before["qty"], "change_type": "CENTRAL_SEGMENT_SNAPSHOT", "synced_at": now})
+            product = entry["product"]
+            common = {
+                "tenant_id": ctx["tenant_id"], "barcode": barcode, "stockQty": total,
+                "central_segments": segments, "central_segments_total": total,
+                "description": product.get("name") or before_doc.get("description", ""),
+                "product_name": product.get("name") or before_doc.get("product_name", ""),
+                "product_id": product.get("product_id") or before_doc.get("product_id", ""),
+                "rate": product.get("rate", before_doc.get("rate", 0)), "mrp": product.get("mrp", before_doc.get("mrp", 0)),
+                "source": "citimart_data_hub_sync", "data_hub_batch_id": batch_id, "updatedAt": now,
+            }
+            central_ops.append(UpdateOne({"tenant_id": ctx["tenant_id"], "barcode": barcode}, {"$set": common, "$setOnInsert": {"createdAt": now}}, upsert=True))
+            audit_rows.append({"tenant_id": ctx["tenant_id"], "batch_id": batch_id, "barcode": barcode, "product_id": product.get("product_id", ""), "product_name": product.get("name", ""), "store_id": None, "store_name": "Central Inventory", "previous_qty": _number(before_doc.get("stockQty")), "new_qty": total, "previous_segments": before_segments, "new_segments": segments, "difference": total-_number(before_doc.get("stockQty")), "change_type": "CENTRAL_SEGMENT_SNAPSHOT", "synced_at": now})
             written.append({"barcode": barcode, "store_id": None, "expected": total, "expected_segments": segments})
+        await _bulk_write_chunked(inventory_collection, central_ops, ordered=False)
 
         if audit_rows:
-            await citimart_stock_sync_audit_collection.insert_many(audit_rows, ordered=True)
-        mismatches = []
-        for item in written:
-            state = await _live_state(ctx["tenant_id"], item["barcode"], item["store_id"])
-            actual = _number(state.get("stockQty"))
-            if abs(actual-item["expected"]) > 0.0001 or (item.get("expected_segments") is not None and _central_segments(state) != item["expected_segments"]):
-                mismatches.append({**item, "actual": actual})
+            await _bulk_write_chunked(citimart_stock_sync_audit_collection, [InsertOne(a) for a in audit_rows], ordered=True)
+        mismatches = await _reconcile_bulk(ctx["tenant_id"], written)
         if mismatches:
             raise RuntimeError(f"Live-stock reconciliation failed for {len(mismatches)} row(s).")
         await citimart_data_hub_imports_collection.update_one(
@@ -541,27 +629,24 @@ async def rollback_stock_sync(batch_id: str, payload: dict, ctx: TenantCtx = Dep
     if not batch or batch.get("live_sync_status") != "SYNCED":
         raise HTTPException(status_code=409, detail="Only a successfully synced stock batch can be rolled back.")
     changes = await citimart_stock_sync_audit_collection.find({"tenant_id": ctx["tenant_id"], "batch_id": batch_id}).to_list(length=MAX_ROWS * 3)
-    conflicts = []
-    for change in changes:
-        state = await _live_state(ctx["tenant_id"], change["barcode"], change.get("store_id"))
-        actual = _number(state.get("stockQty"))
-        segments_match = change.get("new_segments") is None or _central_segments(state) == change.get("new_segments")
-        if abs(actual - _number(change.get("new_qty"))) > 0.0001 or not segments_match:
-            conflicts.append({"barcode": change["barcode"], "store_name": change.get("store_name"), "expected": change.get("new_qty"), "actual": actual})
-    if conflicts:
-        raise HTTPException(status_code=409, detail=f"Rollback blocked: {len(conflicts)} stock record(s) changed after this sync. Use reviewed stock adjustments instead.")
+    written = [{"barcode": c["barcode"], "store_id": c.get("store_id"), "expected": _number(c.get("new_qty")), "expected_segments": c.get("new_segments")} for c in changes]
+    mismatches = await _reconcile_bulk(ctx["tenant_id"], written)
+    if mismatches:
+        raise HTTPException(status_code=409, detail=f"Rollback blocked: {len(mismatches)} stock record(s) changed after this sync. Use reviewed stock adjustments instead.")
     now = datetime.utcnow()
+    store_ops, central_ops = [], []
     for change in changes:
         store_id = change.get("store_id")
-        collection = store_stock_collection if store_id else inventory_collection
-        query = {"tenant_id": ctx["tenant_id"], "barcode": change["barcode"]}
-        if store_id:
-            query["store_id"] = store_id
         restore = {"stockQty": change["previous_qty"], "source": "citimart_data_hub_rollback", "updatedAt": now}
-        if not store_id and change.get("previous_segments") is not None:
-            restore["central_segments"] = change["previous_segments"]
-            restore["central_segments_total"] = sum(change["previous_segments"].values())
-        await collection.update_one(query, {"$set": restore})
+        if store_id:
+            store_ops.append(UpdateOne({"tenant_id": ctx["tenant_id"], "barcode": change["barcode"], "store_id": store_id}, {"$set": restore}))
+        else:
+            if change.get("previous_segments") is not None:
+                restore["central_segments"] = change["previous_segments"]
+                restore["central_segments_total"] = sum(change["previous_segments"].values())
+            central_ops.append(UpdateOne({"tenant_id": ctx["tenant_id"], "barcode": change["barcode"]}, {"$set": restore}))
+    await _bulk_write_chunked(store_stock_collection, store_ops, ordered=False)
+    await _bulk_write_chunked(inventory_collection, central_ops, ordered=False)
     await citimart_data_hub_imports_collection.update_one(
         {"tenant_id": ctx["tenant_id"], "batch_id": batch_id},
         {"$set": {"live_sync_status": "ROLLED_BACK", "rolled_back_at": now, "rolled_back_by": ctx.get("admin_name") or ctx.get("admin_email") or ""}},
@@ -630,7 +715,7 @@ async def commit_sales(file: UploadFile = File(...), ctx: TenantCtx = Depends(_c
             continue
         docs.append({"tenant_id": ctx["tenant_id"], **row, "imported_at": now})
     if docs:
-        await citimart_sales_import_collection.insert_many(docs, ordered=False)
+        await _bulk_write_chunked(citimart_sales_import_collection, [InsertOne(d) for d in docs])
     batch_id = await _log_batch(ctx["tenant_id"], "sales", len(docs), ctx.get("admin_name") or ctx.get("admin_email") or "")
     voided = sum(1 for r in rows if r["is_void"])
     return {
@@ -691,19 +776,26 @@ async def preview_purchase(file: UploadFile = File(...), ctx: TenantCtx = Depend
 async def commit_purchase(file: UploadFile = File(...), ctx: TenantCtx = Depends(_citimart_context)):
     rows = _parse_purchase_rows(_read_rows(file.filename or "", await file.read()))
     now = datetime.utcnow()
-    docs, skipped = [], []
+    batch_id = uuid.uuid4().hex[:12]
+    docs, staged, skipped = [], [], []
     for row in rows:
         if row["errors"]:
             skipped.append({"row_no": row["row_no"], "errors": row["errors"]})
             continue
-        docs.append({"tenant_id": ctx["tenant_id"], **row, "imported_at": now})
+        docs.append({"tenant_id": ctx["tenant_id"], **row, "batch_id": batch_id, "imported_at": now})
+        staged.append({"tenant_id": ctx["tenant_id"], **row, "batch_id": batch_id, "updated_at": now})
     if docs:
-        await citimart_purchase_import_collection.insert_many(docs, ordered=False)
-    batch_id = await _log_batch(ctx["tenant_id"], "purchase", len(docs), ctx.get("admin_name") or ctx.get("admin_email") or "")
+        await _bulk_write_chunked(citimart_purchase_import_collection, [InsertOne(d) for d in docs])
+    if staged:
+        await _bulk_write_chunked(citimart_purchase_stage_rows_collection, [InsertOne(d) for d in staged])
+    await _log_batch(
+        ctx["tenant_id"], "purchase", len(docs), ctx.get("admin_name") or ctx.get("admin_email") or "", batch_id=batch_id,
+    )
     return {
         "status": "success", "mode": "committed", "batch_id": batch_id,
         "saved": len(docs), "rows_skipped": len(skipped), "skipped_rows": skipped[:200],
-        "message": f"{len(docs)} purchase/GRC row(s) imported" + (f", {len(skipped)} skipped" if skipped else "") + ".",
+        "message": f"{len(docs)} purchase/GRC row(s) imported" + (f", {len(skipped)} skipped" if skipped else "")
+        + ". Review the mapping, then explicitly sync receipts into live stock.",
     }
 
 
@@ -1198,4 +1290,371 @@ async def store_inventory(
             "total_qty": round(sum(s["total_qty"] for s in stores_summary), 2),
             "note": None if items else "No stock imported yet -- import a Stock sheet first.",
         },
+    }
+
+
+# ── PURCHASE / GRC -- credit receipts into live stock (additive) ───────────
+# Unlike the Stock sync above (which SETS an absolute snapshot), a purchase
+# receipt is additive: Rec Qty gets ADDED to whatever stock already exists
+# at that location, never replacing it. Everything else -- staged review,
+# explicit confirm, Inventory permission, one-sync-per-batch, guarded
+# rollback -- mirrors the Stock sync bridge exactly, on purpose.
+async def _resolve_purchase_batch(tenant_id: str, batch_id: str) -> dict:
+    batch = await citimart_data_hub_imports_collection.find_one({"tenant_id": tenant_id, "batch_id": batch_id, "kind": "purchase"})
+    if not batch:
+        raise HTTPException(status_code=404, detail="Purchase/GRC import batch not found.")
+    rows = await citimart_purchase_stage_rows_collection.find({"tenant_id": tenant_id, "batch_id": batch_id}).to_list(length=MAX_ROWS + 1)
+    products = await product_collection.find({"tenant_id": tenant_id}).to_list(length=None)
+    stores = await stores_collection.find({"tenant_id": tenant_id, "active": True}).to_list(length=None)
+    product_lookup = _build_product_lookup(products)
+    location_lookup = _build_location_lookup(stores)
+    resolved_rows, problems = [], []
+    for row in rows:
+        product, product_errors = _resolve_product_row(row, product_lookup)
+        location, location_errors = _resolve_location(row.get("stockpoint") or "Central Inventory", location_lookup)
+        errors = product_errors + location_errors
+        rec_qty = _number(row.get("rec_qty"))
+        if rec_qty <= 0:
+            errors.append("Rec Qty must be greater than zero.")
+        public = {
+            "row_no": row.get("row_no"), "grc_no": row.get("grc_no"), "source_barcode": row.get("barcode"),
+            "source_item_code": row.get("item_code"), "source_location": row.get("stockpoint") or "Central Inventory",
+            "rec_qty": rec_qty, "errors": errors, "product": product, "location": location,
+        }
+        (problems if errors else resolved_rows).append(public)
+    return {"batch": batch, "rows": resolved_rows, "problems": problems, "staged_row_count": len(rows)}
+
+
+@router.get("/purchase/{batch_id}/sync-preview")
+async def purchase_sync_preview(batch_id: str, ctx: TenantCtx = Depends(_citimart_context)):
+    resolution = await _resolve_purchase_batch(ctx["tenant_id"], batch_id)
+    rows, problems = resolution["rows"], resolution["problems"]
+    by_location: Dict[str, dict] = {}
+    for row in rows:
+        location = row["location"]
+        label = location.get("location_label") or location["store_name"]
+        summary = by_location.setdefault(label, {"location": label, "store_id": location["store_id"], "product_count": 0, "quantity_to_add": 0.0})
+        summary["product_count"] += 1
+        summary["quantity_to_add"] += row["rec_qty"]
+    return {
+        "status": "success",
+        "data": {
+            "batch_id": batch_id, "live_sync_status": resolution["batch"].get("live_sync_status", "NOT_SYNCED"),
+            "staged_row_count": resolution["staged_row_count"], "resolved_count": len(rows), "problem_count": len(problems),
+            "can_sync": bool(rows) and not problems and resolution["batch"].get("live_sync_status", "NOT_SYNCED") in {"NOT_SYNCED", "FAILED"},
+            "locations": [{**item, "quantity_to_add": round(item["quantity_to_add"], 2)} for item in by_location.values()],
+            "rows": rows[:PREVIEW_ROWS], "problems": problems[:PREVIEW_ROWS],
+            "truncated": len(rows) > PREVIEW_ROWS or len(problems) > PREVIEW_ROWS,
+        },
+    }
+
+
+async def _add_store_qty(tenant_id: str, product: dict, location: dict, add_qty: float, batch_id: str, now: datetime) -> float:
+    store_id = location["store_id"]
+    before = await _live_qty(tenant_id, product["barcode"], store_id)
+    query = {"tenant_id": tenant_id, "barcode": product["barcode"], "store_id": store_id}
+    await store_stock_collection.update_one(
+        query,
+        {
+            "$inc": {"stockQty": add_qty},
+            "$set": {
+                "description": product.get("name", ""), "product_name": product.get("name", ""),
+                "product_id": product.get("product_id", ""), "store_name": location.get("store_name", ""),
+                "store_code": location.get("store_code", ""), "updatedAt": now, "source": "citimart_data_hub_purchase_sync",
+                "data_hub_batch_id": batch_id,
+            },
+            "$setOnInsert": {"createdAt": now, "rate": product.get("rate", 0), "mrp": product.get("mrp", 0)},
+        },
+        upsert=True,
+    )
+    return before
+
+
+async def _add_central_segment_qty(tenant_id: str, product: dict, segment: str, add_qty: float, batch_id: str, now: datetime) -> dict:
+    query = {"tenant_id": tenant_id, "barcode": product["barcode"]}
+    before_doc = await inventory_collection.find_one(query) or {}
+    before_segments = _central_segments(before_doc)
+    segments = dict(before_segments)
+    segments[segment] = segments.get(segment, 0.0) + add_qty
+    total = sum(segments.values())
+    await inventory_collection.update_one(
+        query,
+        {
+            "$set": {
+                "tenant_id": tenant_id, "barcode": product["barcode"], "stockQty": total,
+                "central_segments": segments, "central_segments_total": total,
+                "description": product.get("name") or before_doc.get("description", ""),
+                "product_name": product.get("name") or before_doc.get("product_name", ""),
+                "product_id": product.get("product_id") or before_doc.get("product_id", ""),
+                "rate": before_doc.get("rate", product.get("rate", 0)), "mrp": before_doc.get("mrp", product.get("mrp", 0)),
+                "source": "citimart_data_hub_purchase_sync", "data_hub_batch_id": batch_id, "updatedAt": now,
+            },
+            "$setOnInsert": {"createdAt": now},
+        },
+        upsert=True,
+    )
+    return {"qty": _number(before_doc.get("stockQty")), "segments": before_segments}
+
+
+@router.post("/purchase/{batch_id}/sync")
+async def sync_purchase_to_live(batch_id: str, payload: dict, ctx: TenantCtx = Depends(_citimart_context)):
+    _require_live_sync_permission(ctx)
+    if payload.get("confirm") is not True:
+        raise HTTPException(status_code=400, detail="Explicit confirmation is required before live stock is changed.")
+    tenant_id = ctx["tenant_id"]
+    resolution = await _resolve_purchase_batch(tenant_id, batch_id)
+    if resolution["problems"]:
+        raise HTTPException(status_code=409, detail=f"Resolve all {len(resolution['problems'])} product/location mapping problem(s) before syncing.")
+    if not resolution["rows"]:
+        raise HTTPException(status_code=400, detail="This batch has no valid purchase rows to sync.")
+    if resolution["batch"].get("live_sync_status", "NOT_SYNCED") in {"SYNCED", "SYNCING"}:
+        raise HTTPException(status_code=409, detail="This purchase batch has already been synced or is syncing.")
+    claim = await citimart_data_hub_imports_collection.update_one(
+        {"tenant_id": tenant_id, "batch_id": batch_id, "kind": "purchase", "live_sync_status": {"$in": ["NOT_SYNCED", "FAILED"]}},
+        {"$set": {"live_sync_status": "SYNCING", "sync_started_at": datetime.utcnow()}},
+    )
+    if claim.modified_count != 1:
+        raise HTTPException(status_code=409, detail="This batch cannot be synced in its current state.")
+
+    now = datetime.utcnow()
+    audit_rows = []
+    try:
+        store_rows = [r for r in resolution["rows"] if r["location"].get("store_id")]
+        central_rows = [r for r in resolution["rows"] if not r["location"].get("store_id")]
+
+        # One bulk read for every barcode involved, instead of one read per
+        # row — multiple receipts for the same item/store in this batch are
+        # accumulated in memory below, so still only ONE write per item/store.
+        store_before_map = await _bulk_store_qty_map(tenant_id, [r["product"]["barcode"] for r in store_rows])
+        central_before_map = await _bulk_inventory_map(tenant_id, [r["product"]["barcode"] for r in central_rows])
+
+        store_running: Dict[tuple, float] = {}
+        store_meta: Dict[tuple, dict] = {}
+        for row in store_rows:
+            product, location, qty = row["product"], row["location"], row["rec_qty"]
+            key = (product["barcode"], location["store_id"])
+            if key not in store_running:
+                store_running[key] = _number((store_before_map.get(key) or {}).get("stockQty"))
+            before = store_running[key]
+            store_running[key] = before + qty
+            store_meta[key] = (product, location)
+            audit_rows.append({
+                "tenant_id": tenant_id, "batch_id": batch_id, "barcode": product["barcode"], "grc_no": row["grc_no"],
+                "store_id": location["store_id"], "store_name": location.get("store_name"), "central_segment": None,
+                "qty_added": qty, "previous_qty": before, "new_qty": store_running[key], "synced_at": now,
+            })
+        store_ops = []
+        for key, final_qty in store_running.items():
+            product, location = store_meta[key]
+            store_ops.append(UpdateOne(
+                {"tenant_id": tenant_id, "barcode": product["barcode"], "store_id": location["store_id"]},
+                {
+                    "$set": {
+                        "tenant_id": tenant_id, "barcode": product["barcode"], "stockQty": final_qty,
+                        "description": product.get("name", ""), "product_name": product.get("name", ""),
+                        "product_id": product.get("product_id", ""), "store_name": location.get("store_name", ""),
+                        "store_code": location.get("store_code", ""), "updatedAt": now,
+                        "source": "citimart_data_hub_purchase_sync", "data_hub_batch_id": batch_id,
+                    },
+                    "$setOnInsert": {"createdAt": now, "rate": product.get("rate", 0), "mrp": product.get("mrp", 0)},
+                },
+                upsert=True,
+            ))
+        await _bulk_write_chunked(store_stock_collection, store_ops, ordered=False)
+
+        central_running: Dict[str, Dict[str, float]] = {}
+        central_meta: Dict[str, dict] = {}
+        for row in central_rows:
+            product, location, qty = row["product"], row["location"], row["rec_qty"]
+            barcode = product["barcode"]
+            if barcode not in central_running:
+                central_running[barcode] = _central_segments(central_before_map.get(barcode) or {})
+            segments = central_running[barcode]
+            before_total = sum(segments.values())
+            before_segments = dict(segments)
+            segments[location["central_segment"]] = segments.get(location["central_segment"], 0.0) + qty
+            central_meta[barcode] = product
+            audit_rows.append({
+                "tenant_id": tenant_id, "batch_id": batch_id, "barcode": barcode, "grc_no": row["grc_no"],
+                "store_id": None, "store_name": "Central Inventory", "central_segment": location["central_segment"],
+                "qty_added": qty, "previous_qty": before_total, "new_qty": sum(segments.values()),
+                "previous_segments": before_segments, "synced_at": now,
+            })
+        central_ops = []
+        for barcode, segments in central_running.items():
+            product = central_meta[barcode]
+            before_doc = central_before_map.get(barcode) or {}
+            total = sum(segments.values())
+            central_ops.append(UpdateOne(
+                {"tenant_id": tenant_id, "barcode": barcode},
+                {
+                    "$set": {
+                        "tenant_id": tenant_id, "barcode": barcode, "stockQty": total,
+                        "central_segments": segments, "central_segments_total": total,
+                        "description": product.get("name") or before_doc.get("description", ""),
+                        "product_name": product.get("name") or before_doc.get("product_name", ""),
+                        "product_id": product.get("product_id") or before_doc.get("product_id", ""),
+                        "rate": before_doc.get("rate", product.get("rate", 0)), "mrp": before_doc.get("mrp", product.get("mrp", 0)),
+                        "source": "citimart_data_hub_purchase_sync", "data_hub_batch_id": batch_id, "updatedAt": now,
+                    },
+                    "$setOnInsert": {"createdAt": now},
+                },
+                upsert=True,
+            ))
+        await _bulk_write_chunked(inventory_collection, central_ops, ordered=False)
+
+        if audit_rows:
+            await _bulk_write_chunked(citimart_purchase_sync_audit_collection, [InsertOne(a) for a in audit_rows], ordered=True)
+
+        written = [
+            {"barcode": key[0], "store_id": key[1], "expected": final_qty}
+            for key, final_qty in store_running.items()
+        ] + [
+            {"barcode": barcode, "store_id": None, "expected": sum(segments.values()), "expected_segments": segments}
+            for barcode, segments in central_running.items()
+        ]
+        mismatches = [m["barcode"] for m in await _reconcile_bulk(tenant_id, written)]
+        if mismatches:
+            raise RuntimeError(f"Live-stock reconciliation failed for {len(mismatches)} row(s).")
+
+        await citimart_data_hub_imports_collection.update_one(
+            {"tenant_id": tenant_id, "batch_id": batch_id},
+            {"$set": {
+                "live_sync_status": "SYNCED", "synced_at": now,
+                "synced_by": ctx.get("admin_name") or ctx.get("admin_email") or "",
+                "synced_change_count": len(audit_rows), "reconciliation_status": "MATCHED",
+            }},
+        )
+        return {
+            "status": "success", "batch_id": batch_id, "changed_records": len(audit_rows),
+            "reconciliation_status": "MATCHED",
+            "message": "Purchase receipts added to live stock. Only the quantities in this batch were added; nothing else changed.",
+        }
+    except Exception as exc:
+        await citimart_data_hub_imports_collection.update_one(
+            {"tenant_id": tenant_id, "batch_id": batch_id},
+            {"$set": {"live_sync_status": "FAILED", "sync_error": str(exc), "sync_failed_at": datetime.utcnow()}},
+        )
+        if isinstance(exc, HTTPException):
+            raise
+        raise HTTPException(status_code=500, detail=f"Live stock receipt sync failed: {exc}")
+
+
+@router.post("/purchase/{batch_id}/rollback")
+async def rollback_purchase_sync(batch_id: str, payload: dict, ctx: TenantCtx = Depends(_citimart_context)):
+    _require_live_sync_permission(ctx)
+    if payload.get("confirm") is not True:
+        raise HTTPException(status_code=400, detail="Explicit confirmation is required before rollback.")
+    tenant_id = ctx["tenant_id"]
+    batch = await citimart_data_hub_imports_collection.find_one({"tenant_id": tenant_id, "batch_id": batch_id, "kind": "purchase"})
+    if not batch or batch.get("live_sync_status") != "SYNCED":
+        raise HTTPException(status_code=409, detail="Only a successfully synced purchase batch can be rolled back.")
+    changes = await citimart_purchase_sync_audit_collection.find({"tenant_id": tenant_id, "batch_id": batch_id}).to_list(length=MAX_ROWS * 3)
+
+    # Several receipts in one batch can target the same item/store — only the
+    # LAST audit row for a key reflects the true post-sync live value, so
+    # conflict-check (and the rollback write) must be keyed/deduped, not
+    # applied once per raw audit row.
+    last_by_key: Dict[tuple, dict] = {}
+    first_segments_by_barcode: Dict[str, dict] = {}
+    qty_added_by_key: Dict[tuple, float] = {}
+    for change in changes:
+        key = (change["barcode"], change.get("store_id"))
+        last_by_key[key] = change
+        qty_added_by_key[key] = qty_added_by_key.get(key, 0.0) + _number(change.get("qty_added"))
+        if not change.get("store_id") and change["barcode"] not in first_segments_by_barcode:
+            first_segments_by_barcode[change["barcode"]] = change.get("previous_segments") or {}
+
+    written = [
+        {"barcode": c["barcode"], "store_id": c.get("store_id"), "expected": _number(c.get("new_qty")), "expected_segments": None}
+        for c in last_by_key.values()
+    ]
+    mismatches = await _reconcile_bulk(tenant_id, written)
+    if mismatches:
+        raise HTTPException(status_code=409, detail=f"Rollback blocked: {len(mismatches)} stock record(s) changed after this sync. Use a reviewed stock adjustment instead.")
+    now = datetime.utcnow()
+    store_ops, central_ops = [], []
+    for key, change in last_by_key.items():
+        barcode, store_id = key
+        if store_id:
+            store_ops.append(UpdateOne(
+                {"tenant_id": tenant_id, "barcode": barcode, "store_id": store_id},
+                {"$inc": {"stockQty": -qty_added_by_key[key]}, "$set": {"updatedAt": now, "source": "citimart_data_hub_purchase_rollback"}},
+            ))
+        else:
+            restored_segments = dict(first_segments_by_barcode.get(barcode) or {})
+            central_ops.append(UpdateOne(
+                {"tenant_id": tenant_id, "barcode": barcode},
+                {"$set": {
+                    "stockQty": sum(restored_segments.values()) if restored_segments else 0,
+                    "central_segments": restored_segments,
+                    "central_segments_total": sum(restored_segments.values()),
+                    "updatedAt": now, "source": "citimart_data_hub_purchase_rollback",
+                }},
+            ))
+    await _bulk_write_chunked(store_stock_collection, store_ops, ordered=False)
+    await _bulk_write_chunked(inventory_collection, central_ops, ordered=False)
+    await citimart_data_hub_imports_collection.update_one(
+        {"tenant_id": tenant_id, "batch_id": batch_id},
+        {"$set": {"live_sync_status": "ROLLED_BACK", "rolled_back_at": now, "rolled_back_by": ctx.get("admin_name") or ctx.get("admin_email") or ""}},
+    )
+    return {"status": "success", "restored_records": len(changes), "message": "Live stock receipts from this batch were reversed."}
+
+
+@router.post("/purchase/{batch_id}/create-products")
+async def create_products_from_purchase_batch(batch_id: str, payload: dict, ctx: TenantCtx = Depends(_citimart_context)):
+    _require_live_sync_permission(ctx)
+    tenant_id = ctx["tenant_id"]
+    barcodes = payload.get("barcodes")
+    if not isinstance(barcodes, list) or not barcodes:
+        raise HTTPException(status_code=400, detail="barcodes must be a non-empty list.")
+    batch = await citimart_data_hub_imports_collection.find_one({"tenant_id": tenant_id, "batch_id": batch_id, "kind": "purchase"})
+    if not batch:
+        raise HTTPException(status_code=404, detail="Purchase/GRC import batch not found.")
+
+    wanted = {_identity_key(b) for b in barcodes}
+    rows = await citimart_purchase_stage_rows_collection.find({"tenant_id": tenant_id, "batch_id": batch_id}).to_list(length=MAX_ROWS + 1)
+    by_key: Dict[str, dict] = {}
+    for row in rows:
+        key = _identity_key(row.get("barcode") or row.get("item_code"))
+        if key in wanted and key not in by_key:
+            by_key[key] = row
+    missing = wanted - set(by_key)
+    if missing:
+        raise HTTPException(status_code=400, detail=f"{len(missing)} barcode(s)/item code(s) not found among this batch's staged rows.")
+
+    now = datetime.utcnow()
+    by = ctx.get("admin_name") or ctx.get("admin_email") or ""
+    created, already_existed = [], []
+    for row in by_key.values():
+        barcode = (row.get("barcode") or row.get("item_code") or "").strip()
+        if not barcode:
+            continue
+        existing = await product_collection.find_one({"tenant_id": tenant_id, "barcode": barcode})
+        if existing:
+            already_existed.append(barcode)
+            continue
+        name = " ".join(filter(None, [row.get("category1"), row.get("category2"), row.get("department")])) or barcode
+        sku = await generate_base_sku(row.get("division") or "GEN", name, tenant_id)
+        rsp = _number(row.get("rsp"))
+        doc = {
+            "tenant_id": tenant_id, "product_name": name, "product_type": "general",
+            "sku": sku, "barcode": barcode,
+            "division": row.get("division", ""), "section": row.get("section", ""), "department": row.get("department", ""),
+            "vendor_name": row.get("vendor", ""),
+            "cost_price": _number(row.get("std_rate")), "mrp": rsp, "selling_price": rsp,
+            "quantity": 0, "unit": "pcs", "description": "", "specification": "",
+            "has_variants": False, "variant_type": "none", "variants": [], "images": [],
+            "source": "citimart_data_hub_import", "import_batch_id": batch_id,
+            "created_at": now, "created_by": by,
+        }
+        await product_collection.insert_one(doc)
+        created.append(barcode)
+
+    resolution = await _resolve_purchase_batch(tenant_id, batch_id)
+    return {
+        "status": "success", "created_count": len(created), "created_barcodes": created,
+        "already_existed": already_existed,
+        "resolved_count": len(resolution["rows"]), "problem_count": len(resolution["problems"]),
+        "message": f"{len(created)} product(s) created." + (f" {len(already_existed)} already existed." if already_existed else ""),
     }

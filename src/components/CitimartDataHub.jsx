@@ -91,29 +91,31 @@ function UploadCard({ title, hint, kind, onCommitted, accent }) {
   );
 }
 
-function LiveStockSync({ batchId, onClose, onChanged }) {
+function LiveStockSync({ kind = "stock", batchId, onClose, onChanged }) {
   const [preview, setPreview] = useState(null);
-  const mode = "partial";
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const isPurchase = kind === "purchase";
 
   const load = useCallback(async () => {
     if (!batchId) return;
     setBusy(true); setError("");
-    try { setPreview((await apiGet(`/stock/${batchId}/sync-preview`)).data); }
+    try { setPreview((await apiGet(`/${kind}/${batchId}/sync-preview`)).data); }
     catch (e) { setError(e.message); }
     finally { setBusy(false); }
-  }, [batchId]);
+  }, [kind, batchId]);
   useEffect(() => { load(); }, [load]);
 
   const sync = async () => {
-    const label = "ADDITIVE update: only products and central segments present in this batch will change. Continue?";
-    if (!window.confirm(`${label}\n\nThis writes approved Citimart quantities into the live stock used by POS and Store Transfer.`)) return;
+    const label = isPurchase
+      ? "ADDITIVE: these receipt quantities will be ADDED to whatever stock already exists at each location. Continue?"
+      : "ADDITIVE update: only products and central segments present in this batch will change. Continue?";
+    if (!window.confirm(`${label}\n\nThis writes into the live stock used by POS and Store Transfer.`)) return;
     setBusy(true); setError("");
     try {
-      const result = await fetch(`${API_BASE_URL}/api/citimart/data-hub/stock/${batchId}/sync`, {
+      const result = await fetch(`${API_BASE_URL}/api/citimart/data-hub/${kind}/${batchId}/sync`, {
         method: "POST", headers: { ...headers(), "Content-Type": "application/json" },
-        body: JSON.stringify({ snapshot_mode: mode, confirm: true }),
+        body: JSON.stringify({ snapshot_mode: "partial", confirm: true }),
       });
       const data = await result.json().catch(() => ({}));
       if (!result.ok) throw new Error(data.detail || "Live inventory sync failed.");
@@ -133,7 +135,7 @@ function LiveStockSync({ batchId, onClose, onChanged }) {
     if (!window.confirm(`Create ${barcodes.length} new Citimart product(s) from this batch's own data (division/section/department/vendor/rates), using the imported barcode as-is?`)) return;
     setBusy(true); setError("");
     try {
-      const result = await apiPostJson(`/stock/${batchId}/create-products`, { barcodes });
+      const result = await apiPostJson(`/${kind}/${batchId}/create-products`, { barcodes });
       onChanged(result.message || "Products created.");
       await load();
     } catch (e) { setError(e.message); }
@@ -144,7 +146,7 @@ function LiveStockSync({ batchId, onClose, onChanged }) {
     if (!window.confirm("Restore the pre-sync quantities? Rollback will be blocked if POS, transfers, or another process changed any affected stock afterward.")) return;
     setBusy(true); setError("");
     try {
-      const result = await fetch(`${API_BASE_URL}/api/citimart/data-hub/stock/${batchId}/rollback`, {
+      const result = await fetch(`${API_BASE_URL}/api/citimart/data-hub/${kind}/${batchId}/rollback`, {
         method: "POST", headers: { ...headers(), "Content-Type": "application/json" }, body: JSON.stringify({ confirm: true }),
       });
       const data = await result.json().catch(() => ({}));
@@ -157,7 +159,7 @@ function LiveStockSync({ batchId, onClose, onChanged }) {
   return (
     <section className="rounded-2xl border-2 border-violet-300 bg-white p-5 shadow-lg">
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <div><h3 className="font-black text-slate-900">Review and sync stock batch {batchId}</h3><p className="mt-1 text-xs text-slate-500">Upload remains in staging until this separate approval succeeds. Historical Sales and Purchase/GRC imports are never posted to live stock.</p></div>
+        <div><h3 className="font-black text-slate-900">Review and sync {isPurchase ? "purchase/GRC" : "stock"} batch {batchId}</h3><p className="mt-1 text-xs text-slate-500">{isPurchase ? "Receipts are ADDED to existing live stock, never replacing it." : "Upload remains in staging until this separate approval succeeds."} Historical Sales {isPurchase ? "" : "and Purchase/GRC "}imports {isPurchase ? "do" : "are never posted"} to live stock{isPurchase ? " only once reviewed and synced here." : "."}</p></div>
         <button onClick={onClose} className={BTN_GHOST}>Close</button>
       </div>
       {error && <p className="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-xs font-bold text-rose-700">{error}</p>}
@@ -166,7 +168,7 @@ function LiveStockSync({ batchId, onClose, onChanged }) {
         <div className="grid gap-2 sm:grid-cols-4">
           {[["Staged", preview.staged_row_count], ["Resolved", preview.resolved_count], ["Problems", preview.problem_count], ["Status", preview.live_sync_status]].map(([label, value]) => <div key={label} className="rounded-xl bg-slate-50 p-3"><p className="text-[10px] font-bold uppercase text-slate-500">{label}</p><p className="mt-1 font-black text-slate-900">{value}</p></div>)}
         </div>
-        {!!preview.locations?.length && <div className="overflow-x-auto"><table className="w-full text-xs"><thead><tr className="bg-slate-100 text-left"><th className="p-2">Mapped location</th><th className="p-2">Products</th><th className="p-2">Quantity</th></tr></thead><tbody>{preview.locations.map((row) => <tr key={`${row.store_id || "central"}-${row.location}`} className="border-t"><td className="p-2 font-bold">{row.location}</td><td className="p-2">{row.product_count}</td><td className="p-2">{row.quantity}</td></tr>)}</tbody></table></div>}
+        {!!preview.locations?.length && <div className="overflow-x-auto"><table className="w-full text-xs"><thead><tr className="bg-slate-100 text-left"><th className="p-2">Mapped location</th><th className="p-2">Products</th><th className="p-2">{isPurchase ? "Quantity to add" : "Quantity"}</th></tr></thead><tbody>{preview.locations.map((row) => <tr key={`${row.store_id || "central"}-${row.location}`} className="border-t"><td className="p-2 font-bold">{row.location}</td><td className="p-2">{row.product_count}</td><td className="p-2">{row.quantity ?? row.quantity_to_add}</td></tr>)}</tbody></table></div>}
         {!!preview.problems?.length && <div className="rounded-xl border border-rose-200 bg-rose-50 p-3">
           <p className="text-xs font-black text-rose-800">Sync blocked — resolve these mappings</p>
           {preview.problems.slice(0, 20).map((row, i) => <p key={`${row.row_no}-${i}`} className="mt-1 text-xs text-rose-700">Row {row.row_no}: {row.errors.join(" ")}</p>)}
@@ -175,9 +177,9 @@ function LiveStockSync({ batchId, onClose, onChanged }) {
           )}
         </div>}
         {preview.can_sync && <div className="rounded-xl border border-amber-200 bg-amber-50 p-3">
-          <p className="text-xs font-black text-amber-900">Additive stock update</p>
-          <p className="mt-2 text-[11px] text-amber-800">Only supplied products, stores, and Central Inventory segments change. Omitted stock is preserved.</p>
-          <button onClick={sync} disabled={busy} className={`${BTN_PRIMARY} mt-3 w-full`}>{busy ? "Reconciling…" : "Approve and sync to live POS & Inventory"}</button>
+          <p className="text-xs font-black text-amber-900">{isPurchase ? "Additive receipt update" : "Additive stock update"}</p>
+          <p className="mt-2 text-[11px] text-amber-800">{isPurchase ? "These Rec Qty amounts are added to whatever's already there." : "Only supplied products, stores, and Central Inventory segments change. Omitted stock is preserved."}</p>
+          <button onClick={sync} disabled={busy} className={`${BTN_PRIMARY} mt-3 w-full`}>{busy ? "Reconciling…" : isPurchase ? "Add these receipts to live stock" : "Approve and sync to live POS & Inventory"}</button>
         </div>}
         {preview.live_sync_status === "SYNCED" && <button onClick={rollback} disabled={busy} className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-2 text-sm font-bold text-rose-700 disabled:opacity-50">Guarded rollback</button>}
       </div>}
@@ -520,6 +522,7 @@ export default function CitimartDataHub() {
   const [imports, setImports] = useState([]);
   const [blocked, setBlocked] = useState(false);
   const [reviewBatchId, setReviewBatchId] = useState("");
+  const [reviewKind, setReviewKind] = useState("stock");
 
   const loadImports = useCallback(async () => {
     try { setImports((await apiGet("/imports")).data || []); setBlocked(false); }
@@ -541,12 +544,12 @@ export default function CitimartDataHub() {
 
       {notice && <div className="rounded-xl bg-gradient-to-r from-emerald-50 to-teal-50 px-4 py-2.5 text-sm font-bold text-emerald-700 shadow-sm">{notice}</div>}
 
-      {reviewBatchId && <LiveStockSync batchId={reviewBatchId} onClose={() => setReviewBatchId("")} onChanged={(message) => { setNotice(message); loadImports(); }} />}
+      {reviewBatchId && <LiveStockSync kind={reviewKind} batchId={reviewBatchId} onClose={() => setReviewBatchId("")} onChanged={(message) => { setNotice(message); loadImports(); }} />}
 
       <div className="grid gap-5 lg:grid-cols-3">
         <UploadCard title="Stock snapshot" hint="One row per product per store (Locname/Source Site + Barcode/Item Code)." kind="stock" accent={CARD_ACCENTS[0]} onCommitted={(result) => { setNotice(result.message || "Imported."); setReviewBatchId(result.batch_id || ""); loadImports(); }} />
         <UploadCard title="Day-wise sales" hint="Bill-line export — Bill Date, Bill No, Barcode/Item Code, Bill Qty, Net Amt. Voided rows are excluded automatically." kind="sales" accent={CARD_ACCENTS[1]} onCommitted={(result) => { setNotice(result.message || "Imported."); loadImports(); }} />
-        <UploadCard title="Purchase / GRC" hint="Goods received — GRC No., Rec Dt, Rec Qty, Barcode/Item Code." kind="purchase" accent={CARD_ACCENTS[2]} onCommitted={(result) => { setNotice(result.message || "Imported."); loadImports(); }} />
+        <UploadCard title="Purchase / GRC" hint="Goods received — GRC No., Rec Dt, Rec Qty, Barcode/Item Code." kind="purchase" accent={CARD_ACCENTS[2]} onCommitted={(result) => { setNotice(result.message || "Imported."); setReviewKind("purchase"); setReviewBatchId(result.batch_id || ""); loadImports(); }} />
       </div>
 
       <PurchasePlan />
@@ -558,8 +561,8 @@ export default function CitimartDataHub() {
         <div className="mt-3 divide-y divide-slate-100">
           {imports.length ? imports.map((row) => (
 <div key={row.batch_id} className="flex flex-wrap items-center justify-between gap-2 py-2 text-xs">
-              <div className="flex items-center gap-2"><span className="rounded-full bg-gradient-to-r from-violet-100 to-fuchsia-100 px-2.5 py-0.5 font-bold capitalize text-violet-800">{row.kind}</span>{row.kind === "stock" && <span className="rounded-full bg-slate-100 px-2 py-0.5 font-bold text-slate-600">{row.live_sync_status}</span>}</div>
-              <div className="flex flex-wrap items-center justify-end gap-2"><span className="text-slate-500">{row.row_count} row(s) · {row.imported_by} · {new Date(row.imported_at).toLocaleString()}</span>{row.kind === "stock" && <button onClick={() => setReviewBatchId(row.batch_id)} className="rounded-lg border border-violet-200 bg-violet-50 px-2 py-1 font-bold text-violet-700">Review{row.live_sync_status === "SYNCED" ? " / rollback" : " / sync"}</button>}</div>
+              <div className="flex items-center gap-2"><span className="rounded-full bg-gradient-to-r from-violet-100 to-fuchsia-100 px-2.5 py-0.5 font-bold capitalize text-violet-800">{row.kind}</span>{(row.kind === "stock" || row.kind === "purchase") && <span className="rounded-full bg-slate-100 px-2 py-0.5 font-bold text-slate-600">{row.live_sync_status}</span>}</div>
+              <div className="flex flex-wrap items-center justify-end gap-2"><span className="text-slate-500">{row.row_count} row(s) · {row.imported_by} · {new Date(row.imported_at).toLocaleString()}</span>{(row.kind === "stock" || row.kind === "purchase") && <button onClick={() => { setReviewKind(row.kind); setReviewBatchId(row.batch_id); }} className="rounded-lg border border-violet-200 bg-violet-50 px-2 py-1 font-bold text-violet-700">Review{row.live_sync_status === "SYNCED" ? " / rollback" : " / sync"}</button>}</div>
             </div>
           )) : <p className="py-4 text-center text-xs text-slate-400">No imports yet.</p>}
         </div>

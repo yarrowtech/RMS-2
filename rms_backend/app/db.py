@@ -201,8 +201,10 @@ citimart_stock_snapshot_collection = db["citimart_stock_snapshot"]
 citimart_stock_stage_rows_collection = db["citimart_stock_stage_rows"]
 citimart_sales_import_collection = db["citimart_sales_import"]
 citimart_purchase_import_collection = db["citimart_purchase_import"]
+citimart_purchase_stage_rows_collection = db["citimart_purchase_stage_rows"]
 citimart_data_hub_imports_collection = db["citimart_data_hub_imports"]
 citimart_stock_sync_audit_collection = db["citimart_stock_sync_audit"]
+citimart_purchase_sync_audit_collection = db["citimart_purchase_sync_audit"]
 
 # Citimart Store Ops — live per-store retail floor KPIs (footfall/NOB/billing
 # time-slot logs + sales targets). Separate from the Data Hub above (that's
@@ -361,6 +363,8 @@ async def ensure_procurement_indexes():
     await store_stock_collection.create_index([("tenant_id", 1), ("store_id", 1), ("stock_identity", 1)], name="store_stock_tenant_identity")
     await citimart_stock_stage_rows_collection.create_index([("tenant_id", 1), ("batch_id", 1)], name="citimart_stock_stage_batch")
     await citimart_stock_sync_audit_collection.create_index([("tenant_id", 1), ("batch_id", 1)], name="citimart_stock_sync_audit_batch")
+    await citimart_purchase_stage_rows_collection.create_index([("tenant_id", 1), ("batch_id", 1)], name="citimart_purchase_stage_batch")
+    await citimart_purchase_sync_audit_collection.create_index([("tenant_id", 1), ("batch_id", 1)], name="citimart_purchase_sync_audit_batch")
     await citimart_data_hub_imports_collection.create_index([("tenant_id", 1), ("kind", 1), ("file_sha256", 1)], name="citimart_import_file_dedup")
     await reorder_rules_collection.create_index([("tenant_id", 1), ("stock_identity", 1), ("warehouse", 1)], name="reorder_rule_tenant_identity")
     await supplier_returns_collection.create_index([('tenant_id', 1), ('created_at', -1)], name='supplier_returns_tenant_created')
