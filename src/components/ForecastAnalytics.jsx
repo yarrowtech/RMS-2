@@ -14,7 +14,7 @@ import {
 } from "recharts";
 import InternalNotificationBell from "./InternalNotificationBell.jsx";
 import InternalChatPanel from "./InternalChatPanel.jsx";
-import CitimartDataHub from "./CitimartDataHub.jsx";
+import CitimartDataHub, { CitimartStoreInventory } from "./CitimartDataHub.jsx";
 
 function getAdminToken() {
   return (
@@ -105,6 +105,30 @@ const FA_UI_STYLES = `
 // to. Keyed by the sidebar section id; "import" covers all of Data Import's
 // sub-tabs since they share one screen.
 const BUTTON_GUIDES_FA = {
+  "citimart-data-hub": [
+    ["Stock / Sales / Purchase upload", "Preview checks the sheet before anything is saved. Commit saves it into a separate, isolated area — it does not touch live POS, billing or stock on its own.", "Upload a fresh Stock sheet regularly; it's the only way stock updates here, there is no automatic feed.", "Re-uploading the exact same file is blocked, so you can't accidentally double-import it."],
+    ["Review / sync (on a Stock import)", "Opens the batch so you can check every row matched a real product and store before anything live changes.", "Use it after every Stock import, before relying on the numbers anywhere else.", "A row with no matching product blocks the whole batch — use 'Create missing products' below to fix it, or edit the sheet and re-upload."],
+    ["Create missing products from this batch", "Creates a product for any barcode the batch couldn't match, using only the sheet's own data (division, section, vendor, rates).", "Use when sync is blocked only because a barcode is new to the system.", "It does not fix ambiguous or conflicting rows — those need a person to sort out."],
+    ["Approve and sync to live POS & Inventory", "Writes the batch's quantities into the real stock used by billing and store transfer.", "Only after the batch shows no unresolved problems.", "Needs the Inventory department/permission. Only the rows in this batch change — nothing else is touched."],
+    ["Guarded rollback", "Restores stock to exactly what it was before this batch's sync.", "If a sync was a mistake.", "Refuses to run if POS, a transfer, or anything else changed that stock since the sync — it won't silently overwrite someone else's change."],
+    ["Purchase plan", "Suggests a reorder quantity per item from sell-through vs current stock, over the look-back window you choose.", "Check it regularly; always sense-check before actually ordering.", "Once an item is synced (above), its current stock switches to the live figure automatically — shown as a 'Live' or 'Snapshot' tag on each row."],
+    ["Purchase plan filters", "Narrows the plan to one Division, Section, Department, Design No., Size or Vendor, typed as free text.", "Use to focus on one category before ordering.", "Matching is exact, not partial — so 'Menswear' won't also catch 'Womenswear'."],
+    ["Show vendor (once onboarded)", "Adds a Vendor column and a vendor ranking table, built from the same purchase history.", "Turn on once you've onboarded vendors below.", "A vendor's grade (A/B/C) reflects how much of its sales were on promotion — a vendor that only moves stock on discount is never graded A, however many units it sold."],
+    ["Vendors seen in purchase history / Onboard selected", "Lists every vendor name found in your Purchase/GRC imports and lets you add them to the system.", "Tick the ones you want and onboard them so the Purchase Plan can show their status.", "Onboarding only sets them to Pending — the normal Approve step is still required before they can receive orders or get paid."],
+  ],
+  "citimart-inventory": [
+    ["Summary cards", "The three top cards total stock value, units and matching rows across whatever filters are currently applied.", "Check these first for a quick read before scrolling the table.", "They update live as you change filters — they are not a separate, fixed total."],
+    ["Store cards", "Each card totals one store's stock value, item count, and units.", "Click a card to filter the table to that store; click again to clear it.", "A store with no imported stock yet won't show a card."],
+    ["Division / Section / Department / Vendor filters", "Dropdowns built from the values actually present in your imported data — nothing is typed free-hand.", "Combine them with Search and the store filter to narrow down to one exact slice.", "Selecting a filter reloads the list immediately; Search needs Enter or the Apply button."],
+    ["Live / Snapshot tag", "Shows whether this row's quantity is the real, live stock (after syncing in the Data Hub) or the import snapshot.", "Trust 'Live' rows first if the two ever look different.", "An item only becomes 'Live' after it has been reviewed and explicitly synced in the Citimart Data Hub tab — importing alone is not enough."],
+  ],
+  "vendor-sales": [
+    ["How ranking works", "Ranks vendors inside each department and section by full-price units sold in the chosen period.", "Use it to see which vendor's designs actually sell at full price in each section.", "Promotion sales never count toward the rank. They are shown beside it so you can see how much a vendor relies on discounts."],
+    ["Full-price vs promotion", "A sale line counts as promotion when it has a discount above ₹0.50. Everything else is full price.", "Look at the promo share before trusting a vendor's rank.", "A high promo share means the sales were discounted, so the vendor may look stronger than it is at normal price."],
+    ["Returns", "Returned units are subtracted from the same vendor and design.", "Nothing to do; it's automatic.", "A design with many returns can drop in rank even if it sold well."],
+    ["Vendor source", "Taken from the latest goods receipt for that item, falling back to the product master.", "Check this when a vendor looks wrong: the vendor is the one on the most recent receipt.", "Items with no receipt or master vendor appear under Unassigned vendor."],
+    ["Period and expand", "Pick 30, 90, 180 or 365 days. Click a vendor row to see its designs.", "Start with 90 days; use 365 days to smooth out seasonal swings.", "The period is a look-back from today, not a calendar month."],
+  ],
   dashboard: [
     ["Alert banner", "Jumps to Low Stock Alerts when items are projected to run low.", "Click it to see which items and why.", "It's a shortcut, not a live count — the number comes from the last daily automation run."],
     ["Hierarchy filters", "Narrows the \"top 5\" table to one Division/Section/Department/Design/Vendor.", "Use to check a specific area instead of the whole tenant.", "Doesn't change the alert count above it — that's always tenant-wide."],
@@ -536,6 +560,128 @@ function GenericVendorRankingView() {
         </>
       )}
     </div>
+  );
+}
+
+function VendorSalesRankingView() {
+  const [days, setDays] = useState(90);
+  const [data, setData] = useState(null);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [open, setOpen] = useState({});
+  const [search, setSearch] = useState("");
+  const [filters, setFilters] = useState({});
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      setError("");
+      setData(await faFetch(`/api/forecast-analytics/raphaaa/vendor-sales-ranking?days=${days}&limit=10`));
+    } catch (e) { setData(null); setError(e.message); }
+    finally { setLoading(false); }
+  }, [days]);
+  useEffect(() => { load(); }, [load]);
+
+  const pct = (v) => (v == null ? "—" : `${v.toFixed(1)}%`);
+  const money = (v) => `₹${Math.round(v || 0).toLocaleString("en-IN")}`;
+
+  const designRows = React.useMemo(() => (data?.groups || []).flatMap((g) =>
+    g.vendors.flatMap((v) => v.designs.map((d) => ({
+      department: g.department, section: g.section, vendor_name: v.vendor_name, design_no: d.design_no,
+      full_price_qty: d.full_price_qty, full_price_net: d.full_price_net, promo_qty: d.promo_qty,
+    })))
+  ), [data]);
+  const filterFields = React.useMemo(() => [
+    ["department", "Department"], ["section", "Section"], ["vendor_name", "Vendor"], ["design_no", "Design"],
+  ], []);
+  const visibleRows = React.useMemo(
+    () => filterProductRows(designRows, search, filters, filterFields),
+    [designRows, search, filters, filterFields],
+  );
+  const visibleGroups = React.useMemo(() => {
+    const groups = new Map();
+    for (const r of visibleRows) {
+      const gKey = `${r.department}|${r.section}`;
+      if (!groups.has(gKey)) groups.set(gKey, { department: r.department, section: r.section, vendors: new Map() });
+      const g = groups.get(gKey);
+      if (!g.vendors.has(r.vendor_name)) g.vendors.set(r.vendor_name, { vendor_name: r.vendor_name, full_price_qty: 0, full_price_net: 0, promo_qty: 0, designs: [] });
+      const v = g.vendors.get(r.vendor_name);
+      v.full_price_qty += r.full_price_qty;
+      v.full_price_net += r.full_price_net;
+      v.promo_qty += r.promo_qty;
+      v.designs.push({ design_no: r.design_no, full_price_qty: r.full_price_qty, full_price_net: r.full_price_net, promo_qty: r.promo_qty, promo_share_pct: r.full_price_qty + r.promo_qty > 0 ? (r.promo_qty / (r.full_price_qty + r.promo_qty)) * 100 : null });
+    }
+    return [...groups.values()].sort((a, b) => `${a.department}${a.section}`.localeCompare(`${b.department}${b.section}`)).map((g) => {
+      const vendors = [...g.vendors.values()].sort((a, b) => b.full_price_qty - a.full_price_qty).map((v, i) => ({
+        ...v, rank: i + 1,
+        promo_share_pct: v.full_price_qty + v.promo_qty > 0 ? (v.promo_qty / (v.full_price_qty + v.promo_qty)) * 100 : null,
+        designs: v.designs.sort((a, b) => b.full_price_qty - a.full_price_qty),
+      }));
+      return { department: g.department, section: g.section, vendors };
+    });
+  }, [visibleRows]);
+
+  return (
+    <section className="space-y-5">
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h2 className="text-xl font-black text-slate-900">Vendor Sales Ranking</h2>
+          <p className="mt-1 text-sm text-slate-500">Which vendor's designs sold most at full price, department by department and section by section. Promotion sales are shown beside the ranking and never counted toward it.</p>
+        </div>
+        <div className="flex items-end gap-2">
+          <label className="text-xs font-bold text-slate-500">Period
+            <select value={days} onChange={(e) => setDays(Number(e.target.value))} className="mt-1 block rounded-lg border border-slate-200 px-2 py-1.5 text-sm">
+              <option value={30}>Last 30 days</option>
+              <option value={90}>Last 90 days</option>
+              <option value={180}>Last 180 days</option>
+              <option value={365}>Last 365 days</option>
+            </select>
+          </label>
+          <button onClick={load} disabled={loading} className="rounded-xl bg-violet-600 px-3.5 py-2 text-sm font-bold text-white shadow-sm hover:bg-violet-700 disabled:opacity-40">{loading ? "Loading…" : "Refresh"}</button>
+        </div>
+      </div>
+      {error && <p className="rounded-lg bg-rose-50 px-3 py-2 text-xs font-bold text-rose-700">{error}</p>}
+      {data && designRows.length > 0 && (
+        <ProductFilterPanel rows={designRows} search={search} setSearch={setSearch} filters={filters} setFilters={setFilters} fields={filterFields} title="Vendor sales filters" description={`Showing ${visibleRows.length} of ${designRows.length} design rows. Ranks and promo shares recalculate from the filtered rows.`} />
+      )}
+      {data && designRows.length === 0 && <p className="rounded-xl border border-dashed border-slate-300 p-6 text-center text-sm text-slate-400">No sales in this period.</p>}
+      {data && designRows.length > 0 && visibleGroups.length === 0 && <p className="rounded-xl border border-dashed border-slate-300 p-6 text-center text-sm text-slate-400">No rows match these filters.</p>}
+      {visibleGroups.map((g) => (
+        <div key={`${g.department}|${g.section}`} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <p className="mb-3 text-sm font-black text-violet-800">{g.department} <span className="text-slate-400">›</span> {g.section}</p>
+          <table className="w-full text-sm">
+            <thead><tr className="bg-gradient-to-r from-violet-100 to-fuchsia-100 text-left text-xs font-bold text-violet-800"><th className="px-2 py-1.5">#</th><th className="px-2">Vendor</th><th className="px-2 text-right">Full-price qty</th><th className="px-2 text-right">Full-price sales</th><th className="px-2 text-right">Promo qty</th><th className="px-2 text-right">Promo share</th></tr></thead>
+            <tbody>
+              {g.vendors.map((v) => {
+                const key = `${g.department}|${g.section}|${v.vendor_name}`;
+                return (
+                  <React.Fragment key={key}>
+                    <tr onClick={() => setOpen((o) => ({ ...o, [key]: !o[key] }))} className="cursor-pointer border-t border-slate-100 hover:bg-violet-50/50">
+                      <td className="px-2 py-1.5 font-black text-violet-700">{v.rank}</td>
+                      <td className="px-2 font-semibold text-slate-800">{v.vendor_name} <span className="text-xs text-slate-400">{open[key] ? "▲" : "▼"}</span></td>
+                      <td className="px-2 text-right font-bold">{v.full_price_qty}</td>
+                      <td className="px-2 text-right">{money(v.full_price_net)}</td>
+                      <td className="px-2 text-right text-amber-700">{v.promo_qty}</td>
+                      <td className="px-2 text-right text-amber-700">{pct(v.promo_share_pct)}</td>
+                    </tr>
+                    {open[key] && v.designs.map((d) => (
+                      <tr key={d.design_no} className="bg-slate-50/70 text-xs text-slate-600">
+                        <td></td>
+                        <td className="px-2 py-1 pl-6">Design {d.design_no}</td>
+                        <td className="px-2 text-right">{d.full_price_qty}</td>
+                        <td className="px-2 text-right">{money(d.full_price_net)}</td>
+                        <td className="px-2 text-right">{d.promo_qty}</td>
+                        <td className="px-2 text-right">{pct(d.promo_share_pct)}</td>
+                      </tr>
+                    ))}
+                  </React.Fragment>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      ))}
+    </section>
   );
 }
 
@@ -2486,8 +2632,11 @@ export default function ForecastAnalytics() {
   // raphaaa tenants) -- it has its own isolated Data Hub page. Linked in as
   // an extra nav item here, outside the MENU/activeSection system, since
   // it's a separate route (/citimart-data-hub), not a section of this page.
+  if (productEnrichmentEnabled) {
+    menu = [...menu.slice(0, 3), { id: "vendor-sales", label: "Vendor Sales Ranking", icon: BarChart3 }, ...menu.slice(3)];
+  }
   if (isCitimart) {
-    menu = [...menu, { id: "citimart-data-hub", label: "Citimart Data Hub", icon: UploadCloud }];
+    menu = [...menu, { id: "citimart-data-hub", label: "Citimart Data Hub", icon: UploadCloud }, { id: "citimart-inventory", label: "Store-wise Inventory", icon: Warehouse }];
   }
   const activeLabel = menu.find((item) => item.id === activeSection)?.label || "Overview";
 
@@ -2498,11 +2647,13 @@ export default function ForecastAnalytics() {
       case "vendors": return <VendorRankingView raphaaaMode={productEnrichmentEnabled} />;
       case "purchase": return <PurchasePlanView raphaaaMode={productEnrichmentEnabled} />;
       case "alerts": return <AlertsView raphaaaMode={productEnrichmentEnabled} />;
+      case "vendor-sales": return productEnrichmentEnabled ? <VendorSalesRankingView /> : <DashboardView onNavigate={setActiveSection} raphaaaMode={productEnrichmentEnabled} />;
       case "design-performance": return productEnrichmentEnabled ? <DesignPerformanceView /> : <DashboardView onNavigate={setActiveSection} raphaaaMode={productEnrichmentEnabled} />;
       case "design-themes": return productEnrichmentEnabled ? <DesignThemesView /> : <DashboardView onNavigate={setActiveSection} raphaaaMode={productEnrichmentEnabled} />;
       case "store-value": return dataHubEnabled ? <StoreStockValueView /> : <DashboardView onNavigate={setActiveSection} raphaaaMode={productEnrichmentEnabled} />;
       case "import": return dataHubEnabled ? <DataImportView enrichmentEnabled={productEnrichmentEnabled} unstitchedEnabled={unstitchedImportEnabled} /> : <DashboardView onNavigate={setActiveSection} raphaaaMode={productEnrichmentEnabled} />;
       case "citimart-data-hub": return isCitimart ? <CitimartDataHub /> : <DashboardView onNavigate={setActiveSection} raphaaaMode={productEnrichmentEnabled} />;
+      case "citimart-inventory": return isCitimart ? <CitimartStoreInventory /> : <DashboardView onNavigate={setActiveSection} raphaaaMode={productEnrichmentEnabled} />;
       default: return <DashboardView onNavigate={setActiveSection} raphaaaMode={productEnrichmentEnabled} />;
     }
   };

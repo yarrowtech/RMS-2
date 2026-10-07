@@ -156,74 +156,71 @@ async def _get_stock_qty(barcode: str, store_id: Optional[str], tenant_id: str) 
 
 
 async def _deduct_stock(barcode: str, store_id: Optional[str], qty: float, reason: str, tenant_id: str):
-    """Remove qty from the SOURCE location. Raises if insufficient stock."""
+    """Remove qty from the source; Citimart central stock also consumes its segment buckets."""
     available = await _get_stock_qty(barcode, store_id, tenant_id)
     if qty > available:
         loc = f"store {store_id}" if store_id else "central inventory"
-        raise HTTPException(
-            status_code=400,
-            detail=f"Insufficient stock for '{barcode}' in {loc}. Available: {available}, requested: {qty}."
-        )
-
+        raise HTTPException(status_code=400, detail=f"Insufficient stock for '{barcode}' in {loc}. Available: {available}, requested: {qty}.")
     if store_id:
         await store_stock_collection.update_one(
             {"barcode": barcode, "store_id": store_id, "tenant_id": tenant_id},
-            {"$inc": {"stockQty": -qty}, "$set": {"updatedAt": datetime.utcnow()}}
+            {"$inc": {"stockQty": -qty}, "$set": {"updatedAt": datetime.utcnow()}},
         )
-    else:
-        await inventory_collection.update_one(
-            {"barcode": barcode, "tenant_id": tenant_id},
-            {
-                "$inc": {"stockQty": -qty},
-                "$set": {"updatedAt": datetime.utcnow()},
-                "$push": {"adjustments": {
-                    "qty_change": -qty, "reason": reason,
-                    "adjustedAt": datetime.utcnow().isoformat(), "source": "stock_transfer_dispatch",
-                }},
-            }
-        )
+        return None
+
+    query = {"barcode": barcode, "tenant_id": tenant_id}
+    allocation = None
+    if str(tenant_id).strip().lower() == "citimart":
+        doc = await inventory_collection.find_one(query) or {}
+        raw = doc.get("central_segments") or {}
+        segments = {key: float(raw.get(key, 0) or 0) for key in ("MAIN", "PACKED", "SEMI_FRESH")}
+        if not any(segments.values()) and available:
+            segments["MAIN"] = available
+        allocation, remaining = {}, qty
+        for key in ("MAIN", "PACKED", "SEMI_FRESH"):
+            used = min(segments[key], remaining)
+            if used:
+                segments[key] -= used
+                allocation[key] = used
+                remaining -= used
+        if remaining > 0.0001:
+            raise HTTPException(status_code=409, detail=f"Citimart central segment balance is inconsistent for '{barcode}'. Re-sync stock before transfer.")
+        await inventory_collection.update_one(query, {"$set": {"stockQty": sum(segments.values()), "central_segments": segments, "central_segments_total": sum(segments.values()), "updatedAt": datetime.utcnow()}, "$push": {"adjustments": {"qty_change": -qty, "reason": reason, "central_segment_allocation": allocation, "adjustedAt": datetime.utcnow().isoformat(), "source": "stock_transfer_dispatch"}}})
+        return allocation
+
+    await inventory_collection.update_one(query, {"$inc": {"stockQty": -qty}, "$set": {"updatedAt": datetime.utcnow()}, "$push": {"adjustments": {"qty_change": -qty, "reason": reason, "adjustedAt": datetime.utcnow().isoformat(), "source": "stock_transfer_dispatch"}}})
+    return None
 
 
 async def _add_stock(barcode: str, store_id: Optional[str], qty: float, reason: str, tenant_id: str,
-                      product_name: str = "", rate: float = 0.0, store_name: str = "", store_type: str = "store"):
-    """Add qty to the DESTINATION location. Creates the record if missing."""
+                     product_name: str = "", rate: float = 0.0, store_name: str = "", store_type: str = "store",
+                     central_segment_allocation: Optional[dict] = None):
+    """Add qty to the destination; Citimart central receipts default to Main Warehouse."""
     if store_id:
         await store_stock_collection.update_one(
             {"barcode": barcode, "store_id": store_id, "tenant_id": tenant_id},
-            {
-                "$inc": {"stockQty": qty},
-                "$set": {
-                    "store_id": store_id, "store_name": store_name, "store_type": store_type,
-                    "barcode": barcode, "updatedAt": datetime.utcnow(),
-                },
-                "$setOnInsert": {"createdAt": datetime.utcnow()},
-            },
+            {"$inc": {"stockQty": qty}, "$set": {"store_id": store_id, "store_name": store_name, "store_type": store_type, "barcode": barcode, "updatedAt": datetime.utcnow()}, "$setOnInsert": {"createdAt": datetime.utcnow()}},
             upsert=True,
         )
+        return
+    query = {"barcode": barcode, "tenant_id": tenant_id}
+    existing = await inventory_collection.find_one(query) or {}
+    if str(tenant_id).strip().lower() == "citimart":
+        raw = existing.get("central_segments") or {}
+        segments = {key: float(raw.get(key, 0) or 0) for key in ("MAIN", "PACKED", "SEMI_FRESH")}
+        if not any(segments.values()) and float(existing.get("stockQty", 0) or 0):
+            segments["MAIN"] = float(existing.get("stockQty", 0) or 0)
+        allocation = central_segment_allocation or {"MAIN": qty}
+        for key, amount in allocation.items():
+            if key in segments:
+                segments[key] += float(amount or 0)
+        total = sum(segments.values())
+        await inventory_collection.update_one(query, {"$set": {"barcode": barcode, "tenant_id": tenant_id, "stockQty": total, "central_segments": segments, "central_segments_total": total, "rate": existing.get("rate", rate), "description": existing.get("description", product_name), "updatedAt": datetime.utcnow()}, "$setOnInsert": {"createdAt": datetime.utcnow()}, "$push": {"adjustments": {"qty_change": qty, "reason": reason, "central_segment_allocation": allocation, "adjustedAt": datetime.utcnow().isoformat(), "source": "stock_transfer_receive"}}}, upsert=True)
+        return
+    if existing:
+        await inventory_collection.update_one(query, {"$inc": {"stockQty": qty}, "$set": {"updatedAt": datetime.utcnow()}, "$push": {"adjustments": {"qty_change": qty, "reason": reason, "adjustedAt": datetime.utcnow().isoformat(), "source": "stock_transfer_receive"}}})
     else:
-        existing = await inventory_collection.find_one({"barcode": barcode, "tenant_id": tenant_id})
-        if existing:
-            await inventory_collection.update_one(
-                {"barcode": barcode, "tenant_id": tenant_id},
-                {
-                    "$inc": {"stockQty": qty},
-                    "$set": {"updatedAt": datetime.utcnow()},
-                    "$push": {"adjustments": {
-                        "qty_change": qty, "reason": reason,
-                        "adjustedAt": datetime.utcnow().isoformat(), "source": "stock_transfer_receive",
-                    }},
-                }
-            )
-        else:
-            await inventory_collection.insert_one({
-                "barcode": barcode, "tenant_id": tenant_id, "stockQty": qty, "rate": rate, "description": product_name,
-                "source": "stock_transfer_receive", "createdAt": datetime.utcnow(),
-                "adjustments": [{
-                    "qty_change": qty, "reason": reason,
-                    "adjustedAt": datetime.utcnow().isoformat(), "source": "stock_transfer_receive",
-                }],
-            })
-
+        await inventory_collection.insert_one({"barcode": barcode, "tenant_id": tenant_id, "stockQty": qty, "rate": rate, "description": product_name, "source": "stock_transfer_receive", "createdAt": datetime.utcnow(), "adjustments": [{"qty_change": qty, "reason": reason, "adjustedAt": datetime.utcnow().isoformat(), "source": "stock_transfer_receive"}]})
 
 async def _resolve_store_name(store_id: Optional[str], tenant_id: str) -> dict:
     """Scoped to tenant so a store_id that happens to collide with another
@@ -436,8 +433,10 @@ async def create_transfer_out(payload: dict, authorization: str = Header(None)):
     for line in lines:
         bc, qty = line["barcode"], line["qty"]
         if bc:
-            await _deduct_stock(bc, from_store_id, qty,
+            allocation = await _deduct_stock(bc, from_store_id, qty,
                 reason=f"Dispatched to {to_info['name']} (Ref: {ref_no})", tenant_id=tenant_id)
+            if allocation:
+                line["central_segment_deduction"] = allocation
 
     doc = {
         "_id":               ObjectId(),
@@ -756,7 +755,7 @@ async def update_transfer(transfer_id: str, payload: dict, authorization: Option
     for line in old_lines:
         bc, qty = line.get("barcode"), line.get("qty", 0)
         if bc and qty:
-            await _add_stock(bc, old_from, qty, reason=f"Edit reversal — {existing.get('refNo')}", tenant_id=tenant_id)
+            await _add_stock(bc, old_from, qty, reason=f"Edit reversal — {existing.get('refNo')}", tenant_id=tenant_id, central_segment_allocation=line.get("central_segment_deduction"))
 
     from_info = await _resolve_store_name(new_from, tenant_id)
     to_info   = await _resolve_store_name(new_to, tenant_id)
@@ -765,7 +764,9 @@ async def update_transfer(transfer_id: str, payload: dict, authorization: Option
     for line in new_lines:
         bc, qty = line["barcode"], line["qty"]
         if bc:
-            await _deduct_stock(bc, new_from, qty, reason=f"Re-dispatch — {existing.get('refNo')}", tenant_id=tenant_id)
+            allocation = await _deduct_stock(bc, new_from, qty, reason=f"Re-dispatch — {existing.get('refNo')}", tenant_id=tenant_id)
+            if allocation:
+                line["central_segment_deduction"] = allocation
 
     patch = {
         "from_store_id":  new_from,
@@ -823,7 +824,7 @@ async def delete_transfer(transfer_id: str, authorization: Optional[str] = Heade
     for line in doc.get("lines", []):
         bc, qty = line.get("barcode"), line.get("qty", 0)
         if bc and qty:
-            await _add_stock(bc, from_store, qty, reason=f"Transfer cancelled — {doc.get('refNo')}", tenant_id=tenant_id)
+            await _add_stock(bc, from_store, qty, reason=f"Transfer cancelled — {doc.get('refNo')}", tenant_id=tenant_id, central_segment_allocation=line.get("central_segment_deduction"))
 
     await stock_transfers_collection.delete_one({"_id": oid, "tenant_id": tenant_id})
 

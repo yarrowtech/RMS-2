@@ -331,10 +331,28 @@ async def _apply_stock_change(
 
     collection = store_stock_collection if store_id else inventory_collection
 
+    central_segment_set = None
+    if not store_id and str(tenant_id or "").strip().lower() == "citimart":
+        raw = stk.get("central_segments") or {}
+        segments = {key: float(raw.get(key, 0) or 0) for key in ("MAIN", "PACKED", "SEMI_FRESH")}
+        if not any(segments.values()) and current_qty:
+            segments["MAIN"] = current_qty
+        if qty_change >= 0:
+            segments["MAIN"] += qty_change
+        else:
+            remaining = -qty_change
+            for key in ("MAIN", "PACKED", "SEMI_FRESH"):
+                used = min(segments[key], remaining)
+                segments[key] -= used
+                remaining -= used
+            if remaining:
+                segments["MAIN"] -= remaining
+        central_segment_set = {"central_segments": segments, "central_segments_total": sum(segments.values()), "stockQty": sum(segments.values())}
+
     result = await collection.update_one(
         {"_id": doc_id, "tenant_id": tenant_id, "store_id": store_id},
         {
-            "$inc": {"stockQty": qty_change},
+            **({"$set": central_segment_set} if central_segment_set else {"$inc": {"stockQty": qty_change}}),
             "$push": {
                 "adjustments": {
                     "qty_change": qty_change,

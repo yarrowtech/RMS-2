@@ -1730,3 +1730,144 @@ async def get_restock_draft(ctx: TenantCtx = Depends(_require_forecast_context))
         "lines": lines,
         "line_count": len(lines),
     }
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# RAPHAAA — VENDOR SALES RANKING (department → section → vendor → design)
+# Read-only. Ranks by what actually sold at full price; promotion sales are
+# shown alongside but never counted toward the rank.
+# ═══════════════════════════════════════════════════════════════════════════
+
+FULL_PRICE_TOLERANCE = 0.5
+
+
+def _sale_lines(sale: dict):
+    """Yield (item, qty, gross, net, discount) per line, sign-adjusted for returns."""
+    sign = -1.0 if sale.get("type") == "return" else 1.0
+    items = sale.get("items") or []
+    gross_values = []
+    for item in items:
+        qty = abs(_number(item.get("qty") or item.get("quantity")))
+        explicit_gross = _number(item.get("gross_amount") or item.get("grossAmount"))
+        line_total = abs(_number(item.get("total")))
+        gross_values.append(explicit_gross or line_total or qty * _number(item.get("price")))
+    bill_gross = sum(gross_values)
+    summary = sale.get("summary") or {}
+    bill_discount = _number(summary.get("total_savings") or summary.get("totalSavings"))
+    if bill_discount <= 0:
+        summary_gross = _number(summary.get("total_sale") or summary.get("totalSale"))
+        summary_net = _number(summary.get("net_payable") or summary.get("netPayable"))
+        if summary_gross > summary_net > 0:
+            bill_discount = summary_gross - summary_net
+        else:
+            bill_discount = _number(sale.get("applied_offer") or sale.get("appliedOffer"))
+            bill_discount += bill_gross * _number(sale.get("discount_pct") or sale.get("discount")) / 100
+    for index, item in enumerate(items):
+        qty = abs(_number(item.get("qty") or item.get("quantity")))
+        if qty <= 0:
+            continue
+        gross = gross_values[index]
+        explicit_net = item.get("net_amount", item.get("netAmount"))
+        if explicit_net not in (None, ""):
+            net = max(0.0, _number(explicit_net))
+            discount = max(0.0, gross - net)
+        else:
+            allocated = (bill_discount * gross / bill_gross) if bill_gross > 0 else 0.0
+            discount = min(gross, max(0.0, allocated))
+            net = max(0.0, gross - discount)
+        yield item, sign * qty, sign * gross, sign * net, sign * discount
+
+
+async def _compute_raphaaa_vendor_sales_ranking(tenant_id: str, days: int, limit: int) -> dict:
+    now = datetime.utcnow()
+    aliases = await _barcode_identity_aliases(tenant_id)
+    product_metadata = await _raphaaa_product_metadata(tenant_id)
+    grn_costs = await _latest_grn_costs(tenant_id, aliases)
+    match = {
+        "tenant_id": tenant_id,
+        "type": {"$in": ["sale", "return"]},
+        "created_at": {"$gte": now - timedelta(days=days), "$lte": now},
+    }
+    cursor = sales_collection.find(match, {
+        "type": 1, "created_at": 1, "items": 1, "summary": 1,
+        "applied_offer": 1, "discount_pct": 1, "appliedOffer": 1, "discount": 1,
+    })
+    buckets: Dict[tuple, dict] = {}
+    async for sale in cursor:
+        for item, qty, gross, net, discount in _sale_lines(sale):
+            barcode = str(item.get("barcode") or "").strip()
+            if not barcode:
+                continue
+            identity = (
+                item.get("stock_identity") or aliases.get(barcode) or stock_identity(item)
+                or f"barcode:{barcode.lower()}"
+            )
+            master = product_metadata.get(barcode) or {}
+            context = _raphaaa_master_context(master) if master else {}
+            grn = grn_costs.get(identity) or {}
+            department = context.get("department") or "Unassigned department"
+            section = context.get("section") or "Unassigned section"
+            vendor = grn.get("vendor_name") or context.get("vendor_name") or "Unassigned vendor"
+            design = context.get("design_no") or "—"
+            bucket = buckets.setdefault((department, section, vendor, design), {
+                "full_qty": 0.0, "full_net": 0.0, "promo_qty": 0.0, "promo_net": 0.0,
+            })
+            if discount > FULL_PRICE_TOLERANCE:
+                bucket["promo_qty"] += qty
+                bucket["promo_net"] += net
+            else:
+                bucket["full_qty"] += qty
+                bucket["full_net"] += net
+
+    def share(promo: float, full: float) -> Optional[float]:
+        total = promo + full
+        return round(promo / total * 100, 1) if total > 0 else None
+
+    grouped: Dict[tuple, Dict[str, dict]] = defaultdict(dict)
+    for (department, section, vendor, design), b in buckets.items():
+        vendor_row = grouped[(department, section)].setdefault(vendor, {
+            "vendor_name": vendor, "full_price_qty": 0.0, "full_price_net": 0.0,
+            "promo_qty": 0.0, "promo_net": 0.0, "designs": [],
+        })
+        vendor_row["full_price_qty"] += b["full_qty"]
+        vendor_row["full_price_net"] += b["full_net"]
+        vendor_row["promo_qty"] += b["promo_qty"]
+        vendor_row["promo_net"] += b["promo_net"]
+        vendor_row["designs"].append({
+            "design_no": design,
+            "full_price_qty": round(b["full_qty"], 2),
+            "full_price_net": round(b["full_net"], 2),
+            "promo_qty": round(b["promo_qty"], 2),
+            "promo_share_pct": share(b["promo_qty"], b["full_qty"]),
+        })
+
+    groups = []
+    for (department, section) in sorted(grouped):
+        vendors = sorted(grouped[(department, section)].values(), key=lambda v: v["full_price_qty"], reverse=True)[:limit]
+        ranked = []
+        for rank, v in enumerate(vendors, start=1):
+            v["designs"].sort(key=lambda d: d["full_price_qty"], reverse=True)
+            ranked.append({
+                "rank": rank,
+                "vendor_name": v["vendor_name"],
+                "full_price_qty": round(v["full_price_qty"], 2),
+                "full_price_net": round(v["full_price_net"], 2),
+                "promo_qty": round(v["promo_qty"], 2),
+                "promo_net": round(v["promo_net"], 2),
+                "promo_share_pct": share(v["promo_qty"], v["full_price_qty"]),
+                "designs": v["designs"][:limit],
+            })
+        groups.append({"department": department, "section": section, "vendors": ranked})
+
+    return {"status": "success", "days": days, "generated_at": now.isoformat(), "groups": groups}
+
+
+@router.get("/raphaaa/vendor-sales-ranking")
+async def raphaaa_vendor_sales_ranking(
+    days: int = Query(90, ge=7, le=365),
+    limit: int = Query(10, ge=1, le=50),
+    ctx: TenantCtx = Depends(_require_forecast_context),
+):
+    if not is_raphaaa_tenant(ctx["tenant_id"]):
+        raise HTTPException(status_code=404, detail="This ranking is configured only for the Raphaaa tenant.")
+    return await _compute_raphaaa_vendor_sales_ranking(ctx["tenant_id"], days, limit)

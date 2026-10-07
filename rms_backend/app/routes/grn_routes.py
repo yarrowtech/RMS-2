@@ -491,10 +491,21 @@ async def update_inventory(grn_dict: dict, reverse: bool = False) -> None:
         #       catalog (added earlier through a flow that DID stamp
         #       tenant_id) — the upsert just updated that existing,
         #       correctly-tagged document instead of creating a new one.
+        inventory_inc = {"stockQty": factor * inward}
+        if str(tenant_id).strip().lower() == "citimart":
+            current_inventory = await inventory_collection.find_one({"barcode": barcode, "tenant_id": tenant_id}) or {}
+            if not current_inventory.get("central_segments"):
+                legacy_qty = float(current_inventory.get("stockQty", 0) or 0)
+                await inventory_collection.update_one(
+                    {"barcode": barcode, "tenant_id": tenant_id},
+                    {"$set": {"central_segments": {"MAIN": legacy_qty, "PACKED": 0.0, "SEMI_FRESH": 0.0}, "central_segments_total": legacy_qty}},
+                    upsert=True,
+                )
+            inventory_inc.update({"central_segments.MAIN": factor * inward, "central_segments_total": factor * inward})
         await inventory_collection.update_one(
             {"barcode": barcode, "tenant_id": tenant_id},
             {
-                "$inc": {"stockQty": factor * inward},
+                "$inc": inventory_inc,
                 "$set": {
                     "description": display_name,
                     "rate":        float(item.get("rate", 0)),

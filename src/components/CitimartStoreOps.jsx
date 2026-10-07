@@ -5,7 +5,7 @@
 // citimart_store_ops_routes.py for the full isolation note.
 import React, { useCallback, useEffect, useState } from "react";
 import { API_BASE_URL } from "../config/api.js";
-import { getAdminScope, getStoreName } from "../utils/authRedirect.js";
+import { getAdminScope, getStoreName, logoutOrReturnToDepartmentSelector } from "../utils/authRedirect.js";
 
 const STORES = [
   { code: "NM", name: "CITIMART-NEW MARKET" },
@@ -609,6 +609,9 @@ export default function CitimartStoreOps() {
           <button onClick={() => setSection("glance")} className={navBtn(section === "glance")}>At a Glance</button>
           {scope !== "store" && <button onClick={() => setSection("review")} className={navBtn(section === "review")}>HQ Review</button>}
           <button disabled className={`${navBtn(false)} cursor-not-allowed opacity-50`}>Product Requisition <span className="text-[10px]">LATER</span></button>
+        </div>
+        <div className="border-t border-slate-200 pt-4">
+          <button onClick={() => logoutOrReturnToDepartmentSelector()} className="flex w-full items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-bold text-rose-600 transition hover:bg-rose-50">Log out</button>
         </div>
       </aside>
       <main className="min-w-0 space-y-5">
