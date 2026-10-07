@@ -30,6 +30,17 @@ REQUIRED before this does anything useful:
   4. Each retailer/tenant registers the WhatsApp number their buyers will
      message vendors from, via POST /register-number below — also real
      and working, just has nothing to receive until 1-2 exist.
+  5. ✅ DONE — each catalogue item that should be orderable over WhatsApp
+     needs its Meta product_retailer_id recorded via PATCH
+     /api/catalogue/my-catalogue/{item_id} ({"whatsapp_retailer_id": "..."}).
+     The webhook below now matches incoming order lines on vendor_id +
+     whatsapp_retailer_id instead of guessing "any active item from this
+     vendor" — an item with no retailer_id set, or a line with no match,
+     is reported back as unresolved rather than silently misattributed.
+  6. Still undecided: WhatsApp cart items carry no size/color, so
+     requested_size/requested_color are always blank on a WhatsApp-sourced
+     inquiry. Decide the follow-up mechanism (manual text, or a WhatsApp
+     Flow) before relying on this for anything size/color-sensitive.
 
 Until 1-2 are done, treat the webhook handler as a napkin sketch of the
 shape, not working code. Nothing in main.py should include this router
@@ -340,25 +351,22 @@ async def receive_webhook(request: Request):
         return {"status": "unresolved", "reason": "no approved relationship between this vendor and tenant"}
 
     created_ids = []
+    unresolved_items = []
     for item in product_items:
-        catalogue_item = await vendor_catalogue_collection.find_one({
-            # ⚠️ STILL A PLACEHOLDER — this only narrows to "some catalogue
-            # item this vendor owns," not the SPECIFIC item the buyer
-            # picked in their WhatsApp cart. Meta's product_items entries
-            # carry a `product_retailer_id` that needs to map to a
-            # specific vendor_catalogue_collection document — that
-            # per-product mapping isn't built yet (it depends on how/
-            # whether you sync catalogues to Meta at all, see
-            # catalogue_routes.py's module docstring on that being a
-            # separate, heavier integration). Until then, if a vendor has
-            # more than one active catalogue item, this will pick
-            # whichever one Mongo returns first — REPLACE WITH REAL by
-            # storing Meta's retailer_id on vendor_catalogue_collection
-            # items once catalogue sync exists, and matching on that here.
-            "vendor_id": vendor_id,
-            "active": True,
-        })
+        # ✅ REAL NOW — matches on Meta's product_retailer_id, which the
+        # vendor records against the exact catalogue item via PATCH
+        # /api/catalogue/my-catalogue/{item_id} (whatsapp_retailer_id field)
+        # once they've synced that item to their Meta Commerce Manager
+        # catalog. No retailer_id on the incoming line, or no matching item
+        # found, means it's correctly skipped rather than guessed.
+        retailer_id = str(item.get("product_retailer_id") or "").strip()
+        catalogue_item = None
+        if retailer_id:
+            catalogue_item = await vendor_catalogue_collection.find_one({
+                "vendor_id": vendor_id, "whatsapp_retailer_id": retailer_id, "active": True,
+            })
         if not catalogue_item:
+            unresolved_items.append({"product_retailer_id": retailer_id or None, "reason": "no retailer_id on item" if not retailer_id else "no catalogue item mapped to this retailer_id"})
             continue
 
         doc = {
@@ -382,4 +390,4 @@ async def receive_webhook(request: Request):
         result = await catalogue_inquiries_collection.insert_one(doc)
         created_ids.append(str(result.inserted_id))
 
-    return {"status": "success", "created_inquiry_ids": created_ids}
+    return {"status": "success", "created_inquiry_ids": created_ids, "unresolved_items": unresolved_items}

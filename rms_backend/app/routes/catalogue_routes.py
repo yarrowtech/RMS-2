@@ -440,6 +440,10 @@ async def add_catalogue_item(
         "catalogue_kind":    catalogue_kind,
         "fabric_specs":      fabric_specs_clean,
         "service_specs":     service_specs_clean,
+        # Set later via PATCH /my-catalogue/{item_id} once the vendor has
+        # synced this item to their Meta WhatsApp Business Catalog and can
+        # see Meta's product_retailer_id for it — empty until then.
+        "whatsapp_retailer_id": "",
         "active":            True,
         "tier_at_upload":    tier["tier"],
         "created_at":        now,
@@ -764,8 +768,24 @@ async def update_catalogue_item(item_id: str, payload: dict, authorization: str 
                "available_sizes", "available_colors", "moq", "variants", "active",
                "catalogue_kind", "fabric_specs", "service_specs", "product_type",
                "vendor_barcode", "brand", "manufacturer", "pack_size",
-               "requires_expiry", "batch_tracking", "shelf_life_days"}
+               "requires_expiry", "batch_tracking", "shelf_life_days",
+               "whatsapp_retailer_id"}
     patch = {k: v for k, v in payload.items() if k in allowed}
+    if "whatsapp_retailer_id" in patch:
+        # The product_retailer_id Meta assigns this exact item inside the
+        # vendor's WhatsApp Business Catalog. Set once the vendor has synced
+        # their catalog to Meta Commerce Manager and can see this ID there —
+        # this is what lets an incoming WhatsApp order resolve to the
+        # correct catalogue item instead of "any active item from this
+        # vendor" (see whatsapp_routes.py). Unique per vendor, not globally
+        # — two different vendors' catalogs can reuse the same retailer_id,
+        # Meta scopes it per-catalog.
+        patch["whatsapp_retailer_id"] = str(patch["whatsapp_retailer_id"] or "").strip()
+        if patch["whatsapp_retailer_id"] and await vendor_catalogue_collection.find_one({
+            "_id": {"$ne": item["_id"]}, "vendor_id": ObjectId(vendor_id),
+            "whatsapp_retailer_id": patch["whatsapp_retailer_id"],
+        }, {"_id": 1}):
+            raise HTTPException(status_code=409, detail=f"WhatsApp retailer ID '{patch['whatsapp_retailer_id']}' is already mapped to another item in your catalogue.")
     if "product_type" in patch:
         patch["product_type"] = str(patch["product_type"] or "general").strip().lower()
         if patch["product_type"] not in {"general", "garment", "fabric", "fmcg"}:

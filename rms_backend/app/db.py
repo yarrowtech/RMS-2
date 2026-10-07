@@ -47,6 +47,11 @@ vendor_catalogue_collection    = db["vendor_catalogue"]
 catalogue_inquiries_collection = db["catalogue_inquiries"]
 catalogue_public_orders_collection = db["catalogue_public_orders"]
 rfq_awards_collection        = db["rfq_awards"]
+# WhatsApp Catalog+Cart integration (see routes/whatsapp_routes.py — stub,
+# not wired into main.py yet; these two collections just need to exist so
+# that module imports cleanly once credentials are ready to wire it in).
+vendor_whatsapp_catalogs_collection = db["vendor_whatsapp_catalogs"]  # vendor_id <-> Meta catalog_id
+tenant_whatsapp_numbers_collection  = db["tenant_whatsapp_numbers"]   # tenant_id <-> WhatsApp number buyers message from
 procurement_notifications_collection = db["procurement_notifications"]
 vendor_subscriptions_collection = db["vendor_subscriptions"]
 vendor_subscription_payments_collection = db["vendor_subscription_payments"]
