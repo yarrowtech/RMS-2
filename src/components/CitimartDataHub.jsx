@@ -14,24 +14,46 @@ function headers() {
   const token = localStorage.getItem("admin_token") || localStorage.getItem("access_token") || localStorage.getItem("token") || "";
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
+// "Failed to fetch" (a browser TypeError, not an HTTP error) means the
+// request never got a response at all — server down, crashed, a 502/503
+// from the host, or no network. That's a completely different situation
+// from a 400 with a validation message, so it gets its own clear wording
+// instead of surfacing the raw, confusing browser error text.
+const SERVER_UNREACHABLE_MESSAGE = "Can't reach the server right now — it may be down or restarting. Please try again in a moment.";
+
 async function apiUpload(path, file) {
   const body = new FormData();
   body.append("file", file);
-  const r = await fetch(`${API_BASE_URL}/api/citimart/data-hub${path}`, { method: "POST", headers: headers(), body });
+  let r;
+  try {
+    r = await fetch(`${API_BASE_URL}/api/citimart/data-hub${path}`, { method: "POST", headers: headers(), body });
+  } catch {
+    throw new Error(SERVER_UNREACHABLE_MESSAGE);
+  }
   const d = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(d.detail || "Request failed.");
+  if (!r.ok) throw new Error(d.detail || (r.status >= 500 ? SERVER_UNREACHABLE_MESSAGE : "Request failed."));
   return d;
 }
 async function apiGet(path) {
-  const r = await fetch(`${API_BASE_URL}/api/citimart/data-hub${path}`, { headers: headers() });
+  let r;
+  try {
+    r = await fetch(`${API_BASE_URL}/api/citimart/data-hub${path}`, { headers: headers() });
+  } catch {
+    throw new Error(SERVER_UNREACHABLE_MESSAGE);
+  }
   const d = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(d.detail || "Request failed.");
+  if (!r.ok) throw new Error(d.detail || (r.status >= 500 ? SERVER_UNREACHABLE_MESSAGE : "Request failed."));
   return d;
 }
 async function apiPostJson(path, body) {
-  const r = await fetch(`${API_BASE_URL}/api/citimart/data-hub${path}`, { method: "POST", headers: { ...headers(), "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  let r;
+  try {
+    r = await fetch(`${API_BASE_URL}/api/citimart/data-hub${path}`, { method: "POST", headers: { ...headers(), "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  } catch {
+    throw new Error(SERVER_UNREACHABLE_MESSAGE);
+  }
   const d = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(d.detail || "Request failed.");
+  if (!r.ok) throw new Error(d.detail || (r.status >= 500 ? SERVER_UNREACHABLE_MESSAGE : "Request failed."));
   return d;
 }
 
@@ -44,14 +66,20 @@ function UploadCard({ title, hint, kind, onCommitted, accent }) {
   const [file, setFile] = useState(null);
   const [preview, setPreview] = useState(null);
   const [busy, setBusy] = useState(false);
+  // Separate from `busy` on purpose: `busy` also covers the final Import
+  // click, which already shows "Importing…" on the button itself. This one
+  // is specifically for the silent gap right after "Choose file" — reading
+  // and validating the file — which previously showed nothing at all until
+  // either the preview appeared or an error did.
+  const [checking, setChecking] = useState(false);
   const [error, setError] = useState("");
 
   const choose = async (f) => {
     if (!f) return;
-    setFile(f); setPreview(null); setError(""); setBusy(true);
+    setFile(f); setPreview(null); setError(""); setChecking(true);
     try { setPreview(await apiUpload(`/${kind}/preview`, f)); }
     catch (e) { setError(e.message); }
-    finally { setBusy(false); }
+    finally { setChecking(false); }
   };
   const commit = async () => {
     if (!file) return;
@@ -68,9 +96,15 @@ function UploadCard({ title, hint, kind, onCommitted, accent }) {
     <section className={`rounded-2xl border-t-4 ${accent || "border-violet-400"} bg-gradient-to-br from-white to-slate-50/60 p-5 shadow-md`}>
       <h3 className="text-sm font-black text-slate-900">{title}</h3>
       <p className="mt-1 text-xs text-slate-500">{hint}</p>
-      <label className={`${BTN_GHOST} mt-3 cursor-pointer`}>
-        Choose file<input type="file" accept=".csv,.xlsx,.xls" className="hidden" onChange={(e) => { choose(e.target.files?.[0]); e.target.value = ""; }} />
+      <label className={`${BTN_GHOST} mt-3 cursor-pointer ${checking ? "pointer-events-none opacity-60" : ""}`}>
+        Choose file<input type="file" accept=".csv,.xlsx,.xls" className="hidden" disabled={checking} onChange={(e) => { choose(e.target.files?.[0]); e.target.value = ""; }} />
       </label>
+      {checking && (
+        <p className="mt-3 flex items-center gap-2 rounded-lg bg-sky-50 px-3 py-2 text-xs font-bold text-sky-700">
+          <span className="h-3 w-3 animate-spin rounded-full border-2 border-sky-300 border-t-sky-600" />
+          Uploading &amp; checking file{file ? ` "${file.name}"` : ""}…
+        </p>
+      )}
       {error && <p className="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-xs font-bold text-rose-700">{error}</p>}
       {preview && (
         <div className="mt-4 space-y-3">
