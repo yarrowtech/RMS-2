@@ -19,6 +19,7 @@ reusing the Raphaa Data Hub or any live route):
   * each committed batch is logged (citimart_data_hub_imports) with a
     batch_id, so a bad upload can be identified and rolled back.
 """
+import asyncio
 import hashlib
 import io
 import re
@@ -109,7 +110,19 @@ def _read_rows(filename: str, content: bytes) -> List[dict]:
     try:
         if name.endswith(".csv"):
             frames = [pd.read_csv(io.BytesIO(content), dtype=str)]
-        elif name.endswith((".xlsx", ".xls")):
+        elif name.endswith(".xlsx"):
+            # engine_kwargs={"read_only": True} tells openpyxl to skip
+            # loading cell styles/formatting entirely — for a large sheet
+            # (tens of thousands of rows) that's the dominant cost, not the
+            # cell values themselves. This is the single biggest lever for
+            # "a 55k-row Excel file takes 5 minutes to import": the values
+            # parse in seconds, the formatting metadata is what was slow.
+            sheets = pd.read_excel(io.BytesIO(content), dtype=str, sheet_name=None, engine="openpyxl", engine_kwargs={"read_only": True})
+            frames = list(sheets.values())
+        elif name.endswith(".xls"):
+            # Legacy format (xlrd engine) — no read_only mode available,
+            # but .xls can't hold anywhere near 55k rows in the first place
+            # (65,536-row hard cap), so this path was never the slow one.
             sheets = pd.read_excel(io.BytesIO(content), dtype=str, sheet_name=None)
             frames = list(sheets.values())
         else:
@@ -129,6 +142,22 @@ def _read_rows(filename: str, content: bytes) -> List[dict]:
     if len(frame.index) > MAX_ROWS:
         raise HTTPException(status_code=400, detail=f"A maximum of {MAX_ROWS:,} rows is allowed per file.")
     return frame.to_dict(orient="records")
+
+
+async def _parse_in_thread(parse_fn, filename: str, content: bytes):
+    """Runs the (synchronous, CPU-heavy) file-parsing pipeline on a worker
+    thread instead of the main asyncio event loop.
+
+    pandas.read_excel + the row-by-row parse/dedup passes are pure CPU work,
+    not I/O — calling them directly inside an `async def` route blocks the
+    ENTIRE event loop for as long as they run. Since this server runs a
+    single event loop, that doesn't just slow down this one upload — it
+    freezes every other request, for every tenant, until parsing finishes
+    (confirmed: a large import made even GET /docs time out). to_thread()
+    moves that blocking work off the loop so the rest of the server stays
+    responsive while a big file is being parsed.
+    """
+    return await asyncio.to_thread(lambda: parse_fn(_read_rows(filename, content)))
 
 
 def _column(row: dict, *names: str) -> str:
@@ -440,7 +469,8 @@ def _mark_stock_duplicates(rows: List[dict]) -> List[dict]:
 
 @router.post("/stock/preview")
 async def preview_stock(file: UploadFile = File(...), ctx: TenantCtx = Depends(_citimart_context)):
-    rows = _mark_stock_duplicates(_parse_stock_rows(_read_rows(file.filename or "", await file.read())))
+    content = await file.read()
+    rows = await _parse_in_thread(lambda raw: _mark_stock_duplicates(_parse_stock_rows(raw)), file.filename or "", content)
     invalid = sum(1 for r in rows if r["errors"])
     stores = sorted({r["store_name"] for r in rows if r["store_name"]})
     return {
@@ -453,7 +483,7 @@ async def preview_stock(file: UploadFile = File(...), ctx: TenantCtx = Depends(_
 @router.post("/stock/commit")
 async def commit_stock(file: UploadFile = File(...), ctx: TenantCtx = Depends(_citimart_context)):
     content = await file.read()
-    rows = _mark_stock_duplicates(_parse_stock_rows(_read_rows(file.filename or "", content)))
+    rows = await _parse_in_thread(lambda raw: _mark_stock_duplicates(_parse_stock_rows(raw)), file.filename or "", content)
     now = datetime.utcnow()
     batch_id = uuid.uuid4().hex[:12]
     file_sha256 = hashlib.sha256(content).hexdigest()
@@ -694,7 +724,8 @@ def _parse_sales_rows(rows: List[dict]) -> List[dict]:
 
 @router.post("/sales/preview")
 async def preview_sales(file: UploadFile = File(...), ctx: TenantCtx = Depends(_citimart_context)):
-    rows = _parse_sales_rows(_read_rows(file.filename or "", await file.read()))
+    content = await file.read()
+    rows = await _parse_in_thread(_parse_sales_rows, file.filename or "", content)
     invalid = sum(1 for r in rows if r["errors"])
     return {
         "status": "success", "mode": "preview_only",
@@ -705,7 +736,8 @@ async def preview_sales(file: UploadFile = File(...), ctx: TenantCtx = Depends(_
 
 @router.post("/sales/commit")
 async def commit_sales(file: UploadFile = File(...), ctx: TenantCtx = Depends(_citimart_context)):
-    rows = _parse_sales_rows(_read_rows(file.filename or "", await file.read()))
+    content = await file.read()
+    rows = await _parse_in_thread(_parse_sales_rows, file.filename or "", content)
     now = datetime.utcnow()
     docs, skipped = [], []
     for row in rows:
@@ -763,7 +795,8 @@ def _parse_purchase_rows(rows: List[dict]) -> List[dict]:
 
 @router.post("/purchase/preview")
 async def preview_purchase(file: UploadFile = File(...), ctx: TenantCtx = Depends(_citimart_context)):
-    rows = _parse_purchase_rows(_read_rows(file.filename or "", await file.read()))
+    content = await file.read()
+    rows = await _parse_in_thread(_parse_purchase_rows, file.filename or "", content)
     invalid = sum(1 for r in rows if r["errors"])
     return {
         "status": "success", "mode": "preview_only",
@@ -774,7 +807,8 @@ async def preview_purchase(file: UploadFile = File(...), ctx: TenantCtx = Depend
 
 @router.post("/purchase/commit")
 async def commit_purchase(file: UploadFile = File(...), ctx: TenantCtx = Depends(_citimart_context)):
-    rows = _parse_purchase_rows(_read_rows(file.filename or "", await file.read()))
+    content = await file.read()
+    rows = await _parse_in_thread(_parse_purchase_rows, file.filename or "", content)
     now = datetime.utcnow()
     batch_id = uuid.uuid4().hex[:12]
     docs, staged, skipped = [], [], []
