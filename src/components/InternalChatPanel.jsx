@@ -53,16 +53,28 @@ export default function InternalChatPanel() {
   const token = () => localStorage.getItem("admin_token") || localStorage.getItem("token");
   const request = (path, options = {}) =>
     fetch(`${API_BASE}/api/internal-chat${path}`, {
+      // Same reasoning as InternalNotificationBell.jsx: a background poll
+      // shouldn't hang for tens of seconds when the backend is slow/down —
+      // fail fast so requests don't stack up unbounded.
+      signal: AbortSignal.timeout(12000),
       ...options,
       headers: { Authorization: `Bearer ${token()}`, ...(options.headers || {}) },
     });
 
+  // Guards the 20s polling interval below — skip starting a new poll while
+  // one is still in flight instead of piling requests on top of each other.
+  const pollInFlight = useRef(false);
+
   const loadConversations = async () => {
-    const r = await request("/conversations");
-    const j = await r.json();
-    const rows = r.ok && Array.isArray(j.data) ? j.data : [];
-    if (r.ok) setConversations(rows);
-    return rows;
+    try {
+      const r = await request("/conversations");
+      const j = await r.json();
+      const rows = r.ok && Array.isArray(j.data) ? j.data : [];
+      if (r.ok) setConversations(rows);
+      return rows;
+    } catch {
+      return conversations; // network/timeout — keep showing what we already have
+    }
   };
 
   const loadHiddenConversations = async () => {
@@ -82,7 +94,11 @@ export default function InternalChatPanel() {
   useEffect(() => { loadConversations(); }, []); // for the unread badge, before the panel is even opened
   useEffect(() => {
     // Safe polling fallback until a WebSocket service is introduced.
-    const timer = window.setInterval(() => { loadConversations(); }, 20000);
+    const timer = window.setInterval(() => {
+      if (pollInFlight.current) return;
+      pollInFlight.current = true;
+      loadConversations().finally(() => { pollInFlight.current = false; });
+    }, 20000);
     return () => window.clearInterval(timer);
   }, []);
   useEffect(() => {

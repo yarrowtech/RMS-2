@@ -31,9 +31,19 @@ export default function InternalNotificationBell() {
   const token = () => localStorage.getItem("admin_token") || localStorage.getItem("token");
   const request = (path, options = {}) =>
     fetch(`${API_BASE}/api/internal-notifications${path}`, {
+      // When the backend is slow/down, the browser can otherwise leave a
+      // request hanging for a very long time (tens of seconds). A background
+      // poll has no reason to wait that long — fail fast so the next poll
+      // isn't piling up on top of one that's still stuck.
+      signal: AbortSignal.timeout(12000),
       ...options,
       headers: { Authorization: `Bearer ${token()}`, ...(options.headers || {}) },
     });
+
+  // Guards the 20s interval below: if a poll is still in flight (backend
+  // slow/down), skip starting another on top of it instead of stacking up
+  // an unbounded number of pending requests until the backend recovers.
+  const pollInFlight = useRef(false);
 
   const load = async () => {
     setLoading(true);
@@ -41,6 +51,9 @@ export default function InternalNotificationBell() {
       const r = await request("");
       const j = await r.json();
       if (r.ok) setRows(Array.isArray(j.data) ? j.data : []);
+    } catch {
+      // Network/timeout failure — leave existing rows as-is, try again on
+      // the next poll rather than clearing what's already shown.
     } finally {
       setLoading(false);
     }
@@ -50,7 +63,11 @@ export default function InternalNotificationBell() {
   useEffect(() => {
     // Matches the chat panel's polling fallback so a recipient sees a normal
     // message alert without needing to reload the workspace.
-    const timer = window.setInterval(() => { load(); }, 20000);
+    const timer = window.setInterval(() => {
+      if (pollInFlight.current) return;
+      pollInFlight.current = true;
+      load().finally(() => { pollInFlight.current = false; });
+    }, 20000);
     return () => window.clearInterval(timer);
   }, []);
   useEffect(() => {
