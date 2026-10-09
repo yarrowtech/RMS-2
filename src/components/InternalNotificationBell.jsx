@@ -26,19 +26,25 @@ export default function InternalNotificationBell() {
   const root = useRef(null);
   const buttonRef = useRef(null);
   const panelRef = useRef(null);
+  const authFailed = useRef(false);
   const canAnnounce = CAN_ANNOUNCE_DEPARTMENTS.has(getActiveDepartment());
 
-  const token = () => localStorage.getItem("admin_token") || localStorage.getItem("token");
-  const request = (path, options = {}) =>
-    fetch(`${API_BASE}/api/internal-notifications${path}`, {
+  const token = () => localStorage.getItem("admin_token") || localStorage.getItem("access_token") || localStorage.getItem("token");
+  const request = async (path, options = {}) => {
+    const accessToken = token();
+    if (!accessToken || authFailed.current) throw new Error("Admin login required");
+    const response = await fetch(`${API_BASE}/api/internal-notifications${path}`, {
       // When the backend is slow/down, the browser can otherwise leave a
       // request hanging for a very long time (tens of seconds). A background
       // poll has no reason to wait that long — fail fast so the next poll
       // isn't piling up on top of one that's still stuck.
       signal: AbortSignal.timeout(12000),
       ...options,
-      headers: { Authorization: `Bearer ${token()}`, ...(options.headers || {}) },
+      headers: { Authorization: `Bearer ${accessToken}`, ...(options.headers || {}) },
     });
+    if (response.status === 401) authFailed.current = true;
+    return response;
+  };
 
   // Guards the 20s interval below: if a poll is still in flight (backend
   // slow/down), skip starting another on top of it instead of stacking up
@@ -64,7 +70,7 @@ export default function InternalNotificationBell() {
     // Matches the chat panel's polling fallback so a recipient sees a normal
     // message alert without needing to reload the workspace.
     const timer = window.setInterval(() => {
-      if (pollInFlight.current) return;
+      if (!token() || authFailed.current || pollInFlight.current) return;
       pollInFlight.current = true;
       load().finally(() => { pollInFlight.current = false; });
     }, 20000);

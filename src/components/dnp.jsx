@@ -936,7 +936,7 @@ function SettingsPanel({settings,onSaved,onError}){
       <button type="button" onClick={()=>setSection("workflow")} className={sectionButton("workflow")}>Design workflow</button>
       <button type="button" onClick={()=>setSection("account")} className={sectionButton("account")}>Account &amp; Security</button>
     </nav>
-    {section==="account"?<AdminSettings departmentMode/>:<section className="max-w-4xl space-y-5 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
+    {section==="account"?<AdminSettings departmentMode showWhatsApp={localStorage.getItem("admin_active_department")==="Production & Job Work"}/>:<section className="max-w-4xl space-y-5 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
       <div><h3 className="text-base font-black text-slate-900">Design workflow defaults</h3><p className="mt-1 text-sm text-slate-500">Control lists and starting values used in Design Projects, Research, Patterns and Sample Approval.</p></div>
       <div className="grid gap-4 sm:grid-cols-3">
         <StatCard label="Departments" value={form.departments.split("\n").filter(Boolean).length} accent="violet"/>

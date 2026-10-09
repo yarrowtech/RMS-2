@@ -144,6 +144,15 @@ export default function App() {
         <Route path="/dashboard/store-owner/verification" element={<DepartmentRouteGuard department="Store Owner"><StoreOwnerVerification /></DepartmentRouteGuard>} />
         <Route path="/dashboard/store-owner/usage-analytics" element={<DepartmentRouteGuard department="Store Owner"><StoreOwnerUsageAnalytics /></DepartmentRouteGuard>} />
         <Route path="/dashboard/store-owner/settings" element={<DepartmentRouteGuard department="Store Owner"><AdminSettings /></DepartmentRouteGuard>} />
+        {/* Tenant-wide settings for HQ-department admins (e.g. manufacturer
+            tenants whose only departments are things like Design & Pattern /
+            Production & Job Work, with no "Store Owner" or "Merchandiser
+            Buyer" department granted to anyone) — previously there was no
+            route at all for an "HQ" admin to reach Organisation/Verification/
+            Usage Analytics/WhatsApp settings; /admin (admin.jsx) never
+            rendered AdminSettings. Same component, same can_manage_organisation
+            (scope === "hq") gate as the Store Owner route above. */}
+        <Route path="/dashboard/hq/settings" element={<DepartmentRouteGuard department="HQ"><AdminSettings /></DepartmentRouteGuard>} />
 
         {/* Legacy department dashboards (keep for backward compatibility) */}
         <Route path="/cashier"            element={<DepartmentRouteGuard department="Cashier"><Cashier /></DepartmentRouteGuard>} />

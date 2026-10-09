@@ -1369,6 +1369,7 @@ function EditDetailsModal({ item, onClose, onSaved }) {
     requires_expiry:  Boolean(item.requires_expiry),
     batch_tracking:   Boolean(item.batch_tracking),
     shelf_life_days:  item.shelf_life_days || "",
+    whatsapp_retailer_id: item.whatsapp_retailer_id || "",
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
@@ -1408,6 +1409,7 @@ function EditDetailsModal({ item, onClose, onSaved }) {
           requires_expiry:  form.requires_expiry,
           batch_tracking:   form.batch_tracking || form.requires_expiry,
           shelf_life_days:  Number(form.shelf_life_days) || 0,
+          whatsapp_retailer_id: form.whatsapp_retailer_id.trim(),
         }),
       });
       const data = await res.json();
@@ -1526,6 +1528,17 @@ function EditDetailsModal({ item, onClose, onSaved }) {
             <label className="text-xs font-bold text-slate-600 block mb-1">{copy.moqLabel}</label>
             <input type="number" value={form.moq} onChange={e => setForm(f => ({ ...f, moq: e.target.value }))}
               className="w-full h-9 px-3 border border-slate-200 rounded-lg text-sm" />
+          </div>
+          <div className="rounded-xl border border-emerald-100 bg-emerald-50/50 p-3">
+            <label className="text-xs font-bold text-emerald-900 block mb-1">WhatsApp Catalog product ID (optional)</label>
+            <input value={form.whatsapp_retailer_id} onChange={e => setForm(f => ({ ...f, whatsapp_retailer_id: e.target.value }))}
+              placeholder="product_retailer_id from Meta Commerce Manager"
+              className="w-full h-9 px-3 border border-slate-200 rounded-lg text-sm font-mono" />
+            <p className="mt-1.5 text-[10.5px] leading-4 text-emerald-800">
+              Only needed if you've connected your WhatsApp Catalog (Settings → WhatsApp). This tells RMS exactly
+              which product a WhatsApp order line is for — find it in Meta Commerce Manager, open this exact
+              product, and copy its ID. Leave blank until then.
+            </p>
           </div>
           <div>
             <label className="text-xs font-bold text-slate-600 block mb-1">Description</label>

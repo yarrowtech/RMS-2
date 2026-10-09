@@ -46,20 +46,26 @@ export default function InternalChatPanel() {
   const root = useRef(null);
   const buttonRef = useRef(null);
   const panelRef = useRef(null);
+  const authFailed = useRef(false);
   const scrollRef = useRef(null);
   const inputRef = useRef(null);
   const fileRef = useRef(null);
 
-  const token = () => localStorage.getItem("admin_token") || localStorage.getItem("token");
-  const request = (path, options = {}) =>
-    fetch(`${API_BASE}/api/internal-chat${path}`, {
+  const token = () => localStorage.getItem("admin_token") || localStorage.getItem("access_token") || localStorage.getItem("token");
+  const request = async (path, options = {}) => {
+    const accessToken = token();
+    if (!accessToken || authFailed.current) throw new Error("Admin login required");
+    const response = await fetch(`${API_BASE}/api/internal-chat${path}`, {
       // Same reasoning as InternalNotificationBell.jsx: a background poll
       // shouldn't hang for tens of seconds when the backend is slow/down —
       // fail fast so requests don't stack up unbounded.
       signal: AbortSignal.timeout(12000),
       ...options,
-      headers: { Authorization: `Bearer ${token()}`, ...(options.headers || {}) },
+      headers: { Authorization: `Bearer ${accessToken}`, ...(options.headers || {}) },
     });
+    if (response.status === 401) authFailed.current = true;
+    return response;
+  };
 
   // Guards the 20s polling interval below — skip starting a new poll while
   // one is still in flight instead of piling requests on top of each other.
@@ -95,7 +101,7 @@ export default function InternalChatPanel() {
   useEffect(() => {
     // Safe polling fallback until a WebSocket service is introduced.
     const timer = window.setInterval(() => {
-      if (pollInFlight.current) return;
+      if (!token() || authFailed.current || pollInFlight.current) return;
       pollInFlight.current = true;
       loadConversations().finally(() => { pollInFlight.current = false; });
     }, 20000);

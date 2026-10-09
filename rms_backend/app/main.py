@@ -22,6 +22,7 @@ from .routes.inventory_import_routes import router as inventory_import_router
 from .routes.hq_store_routes import router as hq_store_router
 from .routes.superadmin_vendor_routes import router as superadmin_vendor_router
 from .routes.catalogue_routes import router as catalogue_router
+from .routes.whatsapp_routes import router as whatsapp_router
 from .routes.rfq_award_routes import router as rfq_award_router
 from .routes.procurement_notification_routes import router as procurement_notification_router
 from .routes.subscription_routes import router as subscription_router, razorpay_webhook_router
@@ -138,6 +139,12 @@ app.include_router(tenant_router)
 app.include_router(hq_store_router)
 app.include_router(superadmin_vendor_router)
 app.include_router(catalogue_router)
+# WhatsApp Catalog+Cart integration — safe to enable now even without real
+# Meta credentials yet: GET /webhook 503s until WHATSAPP_VERIFY_TOKEN is set,
+# POST /webhook always 401s until WHATSAPP_APP_SECRET is set (by design, see
+# whatsapp_routes.py). connect-catalog/register-number/my-numbers are real,
+# working, auth-gated endpoints independent of those two env vars.
+app.include_router(whatsapp_router)
 app.include_router(rfq_award_router)
 app.include_router(procurement_notification_router)
 app.include_router(subscription_router)

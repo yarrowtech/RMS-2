@@ -70,6 +70,11 @@ vendor_inventory_ledger_collection = db["vendor_inventory_ledger"]
 vendor_tenant_links_collection = db["vendor_tenant_links"]
 fabric_themes_collection = db["fabric_themes"]
 production_addon_requests_collection = db["production_addon_requests"]
+# Generic vendor-integration API key (see routes/whatsapp_routes.py's
+# "push order" endpoint) — lets a vendor's OWN system, BSP, or any WhatsApp
+# tool (not just a direct Meta Cloud API webhook) send RMS an order, keyed
+# by a vendor-specific API key rather than Meta's exact webhook format.
+vendor_integration_keys_collection = db["vendor_integration_keys"]
 
 # SUPERADMIN / PLATFORM COLLECTIONS 
 # =========================

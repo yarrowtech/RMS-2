@@ -1,8 +1,9 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { BarChart2, Building2, KeyRound, Loader2, Save, ShieldCheck, UserRound } from "lucide-react";
+import { BarChart2, Building2, KeyRound, Loader2, MessageCircle, Save, ShieldCheck, UserRound } from "lucide-react";
 import { API_BASE_URL } from "../../config/api.js";
 import RetailerVerification from "../shared/RetailerVerification.jsx";
 import TeamUsageAnalytics from "../shared/TeamUsageAnalytics.jsx";
+import WhatsAppNumbers from "../shared/WhatsAppNumbers.jsx";
 
 const token = () => localStorage.getItem("admin_token") || localStorage.getItem("token") || "";
 const jsonHeaders = () => ({ Authorization: `Bearer ${token()}`, "Content-Type": "application/json" });
@@ -20,7 +21,7 @@ const api = async (path, options = {}) => {
 const input = "mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 disabled:bg-slate-50 disabled:text-slate-500";
 const Label = ({ children, ...props }) => <label className="block text-xs font-bold text-slate-600">{children}<input {...props} className={input}/></label>;
 
-export default function AdminSettings({ departmentMode = false, initialTab = "account" }) {
+export default function AdminSettings({ departmentMode = false, initialTab = "account", showWhatsApp = false }) {
   const [data, setData] = useState(null);
   const [tab, setTab] = useState(initialTab);
   const [busy, setBusy] = useState(false);
@@ -53,7 +54,16 @@ export default function AdminSettings({ departmentMode = false, initialTab = "ac
   if (!data && !error) return <div className="grid min-h-[360px] place-items-center"><Loader2 className="h-7 w-7 animate-spin text-indigo-600"/></div>;
   const access = data?.access || {};
   const canManageOrg = !departmentMode && Boolean(data?.can_manage_organisation);
-  const tabs = [["account", UserRound, "My account"], ["access", ShieldCheck, "Access"], ["security", KeyRound, "Security"], ...(canManageOrg ? [["organisation", Building2, "Organisation"], ["verification", ShieldCheck, "Verification"], ["usage", BarChart2, "Usage Analytics"]] : [])];
+  // WhatsApp number registration is backend-gated only by scope === "hq"
+  // (see get_hq_tenant in whatsapp_routes.py) — NOT by department. So a
+  // department whose actual workflow includes vendor/fabric buying (e.g.
+  // Production & Job Work, for a manufacturer tenant that sources fabric
+  // from job-work vendors right there, not through a separate Merchandiser
+  // Buyer department) can be given this tab explicitly via showWhatsApp,
+  // independent of canManageOrg — it does not unlock Organisation,
+  // Verification or Usage Analytics, which stay HQ/Store-Owner-only.
+  const showWhatsAppTab = canManageOrg || (departmentMode && showWhatsApp);
+  const tabs = [["account", UserRound, "My account"], ["access", ShieldCheck, "Access"], ["security", KeyRound, "Security"], ...(canManageOrg ? [["organisation", Building2, "Organisation"], ["verification", ShieldCheck, "Verification"], ["usage", BarChart2, "Usage Analytics"]] : []), ...(showWhatsAppTab ? [["whatsapp", MessageCircle, "WhatsApp"]] : [])];
 
   return <div className="min-h-full bg-slate-50 p-4 sm:p-6 lg:p-8"><div className="mx-auto max-w-5xl space-y-5">
     <section className="rounded-3xl bg-gradient-to-br from-slate-950 via-indigo-950 to-violet-800 p-6 text-white shadow-xl"><p className="text-xs font-extrabold uppercase tracking-[.18em] text-indigo-200">Role-aware configuration</p><h1 className="mt-2 text-2xl font-black">Settings</h1><p className="mt-2 max-w-3xl text-sm leading-6 text-indigo-100">{departmentMode?"Manage your personal profile, notification preferences, assigned access and password. HQ administration is not available inside a department workspace.":"Your account settings are private. Organisation and verification settings apply to this retailer tenant, including Basic single-store tenants."}</p></section>
@@ -67,5 +77,6 @@ export default function AdminSettings({ departmentMode = false, initialTab = "ac
     {tab === "organisation" && <section className="mt-5 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"><h2 className="font-black text-slate-900">Organisation and document settings</h2><p className="mt-1 text-sm text-slate-500">HQ-only. Controls the legal/registered name used on document headers and default document labels; existing document numbers are not changed. Your store/business name above is separate and can differ from this.</p><div className="mt-5 grid gap-4 sm:grid-cols-2"><Label value={organisation.legal_name || ""} onChange={e => setOrganisation({ ...organisation, legal_name: e.target.value })}>Legal business name</Label><Label value={organisation.gstin || ""} onChange={e => setOrganisation({ ...organisation, gstin: e.target.value })}>GSTIN</Label><Label value={organisation.currency || "INR"} onChange={e => setOrganisation({ ...organisation, currency: e.target.value.toUpperCase() })}>Currency</Label><Label value={organisation.timezone || "Asia/Kolkata"} onChange={e => setOrganisation({ ...organisation, timezone: e.target.value })}>Timezone</Label><Label type="number" value={organisation.financial_year_start_month || 4} onChange={e => setOrganisation({ ...organisation, financial_year_start_month: Number(e.target.value) })}>Financial year starts (month 1-12)</Label><Label value={organisation.po_prefix || "PO"} onChange={e => setOrganisation({ ...organisation, po_prefix: e.target.value })}>PO prefix</Label><Label value={organisation.grn_prefix || "GRN"} onChange={e => setOrganisation({ ...organisation, grn_prefix: e.target.value })}>GRN prefix</Label><Label value={organisation.invoice_prefix || "PI"} onChange={e => setOrganisation({ ...organisation, invoice_prefix: e.target.value })}>Purchase invoice prefix</Label></div><label className="mt-4 block text-xs font-bold text-slate-600">Business address<textarea value={organisation.address || ""} onChange={e => setOrganisation({ ...organisation, address: e.target.value })} className={`${input} min-h-24`} /></label><button disabled={busy} onClick={saveOrganisation} className="mt-5 inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-black text-white disabled:opacity-60"><Building2 className="h-4 w-4"/>Save organisation settings</button></section>}
     {tab === "verification" && <RetailerVerification onSaved={setMessage} />}
     {tab === "usage" && <TeamUsageAnalytics />}
+    {tab === "whatsapp" && <WhatsAppNumbers />}
   </div></div>;
 }

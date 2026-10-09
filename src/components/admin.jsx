@@ -2137,6 +2137,13 @@ const renderInventoryAnalysis = () => {
               {showProfileDropdown && (
                 <div className="absolute right-0 mt-2 w-48 bg-white rounded-2xl shadow-xl border border-gray-200 py-2 z-[9999]">
                   <button
+                    onClick={() => { window.location.href = "/dashboard/hq/settings"; }}
+                    className="flex items-center w-full px-4 py-3 text-sm text-gray-800 hover:bg-gray-100 font-bold transition-colors"
+                  >
+                    <Settings className="h-4 w-4 mr-3" />
+                    Settings
+                  </button>
+                  <button
                     onClick={handleLogout}
                     className="flex items-center w-full px-4 py-3 text-sm text-gray-800 hover:bg-gray-100 font-bold transition-colors"
                   >
