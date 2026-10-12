@@ -13,6 +13,7 @@ against a bill) in its own collection.
 """
 import re
 from datetime import datetime
+from html import escape
 from typing import Any, List, Optional
 from urllib.parse import unquote
 
@@ -184,9 +185,10 @@ async def vendor_summary(ctx: dict = Depends(get_finance_context)):
     return {"rows": rows, "totals": totals}
 
 
-@router.get("/vendors/{vendor_key}/statement")
-async def vendor_statement(vendor_key: str, from_date: Optional[str] = None, to_date: Optional[str] = None,
-                           ctx: dict = Depends(get_finance_context)):
+async def _compute_statement(ctx: dict, vendor_key: str, from_date: Optional[str], to_date: Optional[str]) -> dict:
+    """Shared by the JSON statement route and the PDF/Excel download route,
+    so the downloaded file can never drift out of sync with what the screen
+    shows — both read off this exact same computation."""
     name = _vendor_name(vendor_key)
     if not name:
         raise HTTPException(status_code=400, detail="Vendor is required.")
@@ -213,6 +215,12 @@ async def vendor_statement(vendor_key: str, from_date: Optional[str] = None, to_
         "closing_balance": round(closing, 2), "lines": shown, "summary": {k: v for k, v in summary.items() if k != "open_bills"},
         "open_bills": summary["open_bills"],
     }
+
+
+@router.get("/vendors/{vendor_key}/statement")
+async def vendor_statement(vendor_key: str, from_date: Optional[str] = None, to_date: Optional[str] = None,
+                           ctx: dict = Depends(get_finance_context)):
+    return await _compute_statement(ctx, vendor_key, from_date, to_date)
 
 
 class Allocation(BaseModel):
@@ -361,3 +369,135 @@ async def apply_advance(vendor_key: str, ctx: dict = Depends(get_finance_context
         applied.append({"invoice_no": bill["invoice_no"], "amount": take, "balance_due": new_balance})
         left = round(left - take, 2)
     return {"message": f"Set ₹{summary['advance_available'] - left:,.2f} of advance against {len(applied)} bill(s).", "applied": applied}
+
+
+# ─────────────────────────────────────────────
+# DOWNLOAD STATEMENT (PDF / Excel) — same two-format pattern as the vendor
+# PO export (vendor_routes.py) and the GRC export (grc_routes.py). Built off
+# _compute_statement so the file always matches the on-screen statement.
+# ─────────────────────────────────────────────
+
+_LINE_TYPE_LABEL = {
+    "bill": "Bill", "payment": "Payment", "advance": "Advance paid", "advance_adjustment": "Advance set against bill",
+    "debit_note": "Debit note", "voucher_payment": "Payment voucher",
+}
+
+
+def _statement_export_response(statement: dict, fmt: str):
+    from fastapi.responses import StreamingResponse
+    from io import BytesIO
+
+    vendor = statement["vendor"]
+    safe_name = re.sub(r"[^A-Za-z0-9]+", "-", vendor).strip("-") or "vendor"
+    period = f"{statement['from_date'] or 'inception'} to {statement['to_date'] or 'date'}"
+    s = statement["summary"]
+    open_bills = statement["open_bills"]
+    lines = statement["lines"]
+
+    if fmt == "xlsx":
+        from openpyxl import Workbook
+        from openpyxl.styles import Alignment, Font, PatternFill
+        wb = Workbook(); ws = wb.active; ws.title = "Statement"
+        ws.append(["VENDOR LEDGER STATEMENT", vendor])
+        ws.append(["Period", period])
+        ws.append(["Total billed", s["total_billed"]]); ws.append(["Paid on bills", s["paid_on_bills"]])
+        ws.append(["Advance available", s["advance_available"]]); ws.append(["Outstanding", s["outstanding"]]); ws.append(["Overdue", s["overdue"]])
+        ws.append([])
+
+        if open_bills:
+            ws.append(["OPEN BILLS"])
+            ws.append(["Bill", "Bill date", "Due date", "Total", "Paid", "Balance due", "Days overdue"])
+            header_row = ws.max_row
+            for cell in ws[header_row]:
+                cell.font = Font(bold=True, color="FFFFFF"); cell.fill = PatternFill("solid", fgColor="0EA5E9")
+            for b in open_bills:
+                ws.append([b["invoice_no"], b["invoice_date"], b["due_date"] or "", b["invoice_total"], b["paid_amount"], b["balance_due"], b["days_overdue"]])
+            ws.append([])
+
+        ws.append(["STATEMENT"])
+        ws.append(["Date", "Entry", "Reference", "Description", "Bill (+)", "Paid / credit (-)", "Balance"])
+        header_row = ws.max_row
+        for cell in ws[header_row]:
+            cell.font = Font(bold=True, color="FFFFFF"); cell.fill = PatternFill("solid", fgColor="4F46E5"); cell.alignment = Alignment(horizontal="center")
+        ws.append(["", "Opening balance", "", "", "", "", statement["opening_balance"]])
+        ws.cell(ws.max_row, 2).font = Font(bold=True)
+        for l in lines:
+            ws.append([
+                l["date"], _LINE_TYPE_LABEL.get(l["type"], l["type"]), l.get("ref") or "", l.get("description") or "",
+                l["bill"] or "", (l.get("applied") if l["type"] == "advance_adjustment" else l["credit"]) or "", l["balance"],
+            ])
+        ws.append(["", "Closing balance", "", "", "", "", statement["closing_balance"]])
+        ws.cell(ws.max_row, 2).font = Font(bold=True); ws.cell(ws.max_row, 7).font = Font(bold=True)
+        for column in ws.columns:
+            ws.column_dimensions[column[0].column_letter].width = min(max(max(len(str(cell.value or "")) for cell in column) + 3, 12), 48)
+        buf = BytesIO(); wb.save(buf); buf.seek(0)
+        return StreamingResponse(buf, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers={"Content-Disposition": f'attachment; filename="{safe_name}-ledger.xlsx"'})
+
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.units import mm
+    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+    buf = BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=landscape(A4), leftMargin=15 * mm, rightMargin=15 * mm, topMargin=16 * mm, bottomMargin=16 * mm)
+    styles = getSampleStyleSheet()
+    title = ParagraphStyle("VendorLedgerTitle", parent=styles["Heading1"], textColor=colors.HexColor("#4F46E5"))
+    elements = [
+        Paragraph("Vendor Ledger Statement", title),
+        Paragraph(
+            f"Vendor: {vendor}<br/>Period: {period}<br/>"
+            f"Total billed: {s['total_billed']:,.2f} &nbsp;|&nbsp; Paid: {s['paid_on_bills']:,.2f} &nbsp;|&nbsp; "
+            f"Advance available: {s['advance_available']:,.2f} &nbsp;|&nbsp; Outstanding: {s['outstanding']:,.2f} &nbsp;|&nbsp; Overdue: {s['overdue']:,.2f}",
+            styles["Normal"],
+        ),
+        Spacer(1, 6 * mm),
+    ]
+
+    if open_bills:
+        elements.append(Paragraph("Open bills", styles["Heading3"]))
+        ob_data = [["Bill", "Bill date", "Due date", "Total", "Paid", "Balance due", "Overdue"]]
+        for b in open_bills:
+            ob_data.append([
+                b["invoice_no"], b["invoice_date"], b["due_date"] or "-", f"{b['invoice_total']:,.2f}",
+                f"{b['paid_amount']:,.2f}", f"{b['balance_due']:,.2f}", f"{b['days_overdue']}d" if b["days_overdue"] else "-",
+            ])
+        ob_table = Table(ob_data, repeatRows=1, colWidths=[35 * mm, 28 * mm, 28 * mm, 32 * mm, 32 * mm, 32 * mm, 25 * mm])
+        ob_table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0EA5E9")), ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"), ("GRID", (0, 0), (-1, -1), .35, colors.HexColor("#CBD5E1")),
+            ("ALIGN", (3, 1), (-1, -1), "RIGHT"), ("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("TOPPADDING", (0, 0), (-1, -1), 5), ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+        ]))
+        elements.extend([ob_table, Spacer(1, 8 * mm)])
+
+    elements.append(Paragraph("Statement", styles["Heading3"]))
+    st_data = [["Date", "Entry", "Reference", "Description", "Bill (+)", "Paid / credit (-)", "Balance"]]
+    st_data.append(["", "Opening balance", "", "", "", "", f"{statement['opening_balance']:,.2f}"])
+    for l in lines:
+        credit_value = l.get("applied") if l["type"] == "advance_adjustment" else l["credit"]
+        st_data.append([
+            l["date"], _LINE_TYPE_LABEL.get(l["type"], l["type"]), Paragraph(escape(str(l.get("ref") or "")), styles["BodyText"]),
+            Paragraph(escape(str(l.get("description") or "")), styles["BodyText"]),
+            f"{l['bill']:,.2f}" if l["bill"] else "", f"{credit_value:,.2f}" if credit_value else "", f"{l['balance']:,.2f}",
+        ])
+    st_data.append(["", "Closing balance", "", "", "", "", f"{statement['closing_balance']:,.2f}"])
+    st_table = Table(st_data, repeatRows=1, colWidths=[22 * mm, 30 * mm, 28 * mm, 90 * mm, 24 * mm, 28 * mm, 28 * mm])
+    st_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#4F46E5")), ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"), ("FONTNAME", (0, 1), (-1, 1), "Helvetica-Bold"), ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
+        ("GRID", (0, 0), (-1, -1), .35, colors.HexColor("#CBD5E1")), ("ALIGN", (4, 1), (-1, -1), "RIGHT"),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("TOPPADDING", (0, 0), (-1, -1), 5), ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+    ]))
+    elements.extend([st_table, Spacer(1, 6 * mm), Paragraph(f"Generated from RMS on {datetime.utcnow().strftime('%d %b %Y, %H:%M UTC')}.", styles["Normal"])])
+    doc.build(elements); buf.seek(0)
+    return StreamingResponse(buf, media_type="application/pdf", headers={"Content-Disposition": f'attachment; filename="{safe_name}-ledger.pdf"'})
+
+
+@router.get("/vendors/{vendor_key}/statement/download")
+async def download_vendor_statement(vendor_key: str, format: str = "pdf", from_date: Optional[str] = None,
+                                    to_date: Optional[str] = None, ctx: dict = Depends(get_finance_context)):
+    """Download a vendor's ledger statement as a printable PDF or an editable Excel sheet."""
+    fmt = format.lower()
+    if fmt not in {"pdf", "xlsx"}:
+        raise HTTPException(status_code=400, detail="format must be pdf or xlsx")
+    statement = await _compute_statement(ctx, vendor_key, from_date, to_date)
+    return _statement_export_response(statement, fmt)

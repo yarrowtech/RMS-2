@@ -151,6 +151,23 @@ function AdvanceModal({ vendor, onClose, onDone }) {
   </Modal>;
 }
 
+async function downloadStatementFile(vendor, range, format) {
+  const qs = new URLSearchParams(); if (range.from) qs.set("from_date", range.from); if (range.to) qs.set("to_date", range.to);
+  qs.set("format", format);
+  const response = await fetch(apiUrl(`/api/finance/vendor-ledger/vendors/${keyOf(vendor)}/statement/download?${qs}`), {
+    headers: { Authorization: `Bearer ${getToken()}` },
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new Error(body.detail || "Download failed.");
+  }
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = `${vendor.replace(/[^a-z0-9]+/gi, "-")}-ledger.${format}`; a.click();
+  URL.revokeObjectURL(url);
+}
+
 function exportCsv(statement) {
   const rows = [["Date", "Type", "Reference", "Description", "Bill (owed +)", "Payment / credit (−)", "Balance"]];
   rows.push(["", "Opening balance", "", "", "", "", statement.opening_balance]);
@@ -171,6 +188,7 @@ export default function FinanceVendorLedger() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [modal, setModal] = useState("");
+  const [downloading, setDownloading] = useState("");
 
   const loadSummary = useCallback(async () => {
     setLoading(true); setError("");
@@ -193,6 +211,12 @@ export default function FinanceVendorLedger() {
     setError("");
     try { const r = await ledgerFetch(`/vendors/${keyOf(vendor)}/apply-advance`, { method: "POST", body: "{}" }); setNotice(r.message); loadStatement(vendor); loadSummary(); }
     catch (err) { setError(err.message); }
+  };
+  const download = async (format) => {
+    setDownloading(format); setError("");
+    try { await downloadStatementFile(vendor, range, format); }
+    catch (err) { setError(err.message); }
+    finally { setDownloading(""); }
   };
 
   const rows = useMemo(() => summary.rows.filter((r) => r.vendor.toLowerCase().includes(search.toLowerCase())), [summary.rows, search]);
@@ -243,7 +267,11 @@ export default function FinanceVendorLedger() {
         <button onClick={() => setModal("pay")} className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-black text-white hover:bg-indigo-700"><Wallet size={16} /> Pay vendor</button>
         <button onClick={() => setModal("advance")} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-50"><PiggyBank size={16} /> Record advance</button>
         {s?.advance_available > 0 && statement.open_bills.length > 0 && <button onClick={setAdvanceAgainstBills} className="inline-flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-sm font-bold text-emerald-800 hover:bg-emerald-100"><HandCoins size={16} /> Set advance against bills</button>}
-        {statement && <button onClick={() => exportCsv(statement)} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-50"><Download size={16} /> Download statement</button>}
+        {statement && <>
+          <button onClick={() => download("pdf")} disabled={downloading === "pdf"} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-60"><Download size={16} /> {downloading === "pdf" ? "…" : "PDF"}</button>
+          <button onClick={() => download("xlsx")} disabled={downloading === "xlsx"} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-60"><Download size={16} /> {downloading === "xlsx" ? "…" : "Excel"}</button>
+          <button onClick={() => exportCsv(statement)} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-50"><Download size={16} /> CSV</button>
+        </>}
       </div>
     </div>
     {notice && <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-800">{notice}</div>}

@@ -1,8 +1,11 @@
 
-from fastapi import APIRouter, HTTPException, status, Depends
+from fastapi import APIRouter, HTTPException, status, Depends, Query
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from typing import List, Optional
 from datetime import datetime
+from io import BytesIO
+from html import escape
 import secrets
 from bson import ObjectId
 
@@ -524,6 +527,88 @@ async def get_grc(grc_id: str, ctx: dict = Depends(get_receiving_tenant)):
         raise HTTPException(status_code=404, detail="GRC not found")
     doc["id"] = objid(doc.pop("_id"))
     return doc
+
+
+# ─────────────────────────────────────────────
+# DOWNLOAD GRC (PDF / Excel) — mirrors the vendor PO export in
+# vendor_routes.py's _po_export_response, same two-format pattern.
+# ─────────────────────────────────────────────
+
+def _grc_export_response(doc: dict, fmt: str) -> StreamingResponse:
+    items = doc.get("items") or []
+    grc_no = str(doc.get("grcNo") or "grc").replace("/", "-").replace("\\", "-")
+    vendor_name = doc.get("vendorName") or "Vendor"
+    po_no = doc.get("poNo") or "—"
+    grc_date = doc.get("grcDate") or "—"
+    status_label = doc.get("status") or "Draft"
+    total_value = doc.get("totalValue") or 0
+
+    if fmt == "xlsx":
+        from openpyxl import Workbook
+        from openpyxl.styles import Alignment, Font, PatternFill
+        wb = Workbook(); ws = wb.active; ws.title = "GRC"
+        ws.append(["GOODS RECEIPT CERTIFICATE", grc_no])
+        ws.append(["PO No.", po_no]); ws.append(["Vendor", vendor_name])
+        ws.append(["GRC Date", str(grc_date)]); ws.append(["Status", status_label])
+        ws.append([]); ws.append(["#", "Barcode", "Description", "PO Qty", "Received Qty", "Accepted Qty", "Rejected Qty", "Rate (INR)", "Line Value (INR)"])
+        for cell in ws[7]:
+            cell.font = Font(bold=True, color="FFFFFF"); cell.fill = PatternFill("solid", fgColor="4F46E5"); cell.alignment = Alignment(horizontal="center")
+        for index, item in enumerate(items, 1):
+            accepted = float(item.get("acceptedQty") or 0); rate = float(item.get("rate") or 0)
+            ws.append([
+                index, item.get("barcode") or item.get("vendorBarcode") or "", item.get("description") or "",
+                item.get("poQty") or 0, item.get("receivedQty") or 0, accepted, item.get("rejectedQty") or 0,
+                rate, round(accepted * rate, 2),
+            ])
+        ws.append([]); ws.append(["", "", "", "", "", "", "", "Grand Total", total_value])
+        ws.cell(ws.max_row, 8).font = Font(bold=True); ws.cell(ws.max_row, 9).font = Font(bold=True)
+        for column in ws.columns:
+            ws.column_dimensions[column[0].column_letter].width = min(max(max(len(str(cell.value or "")) for cell in column) + 3, 12), 48)
+        buf = BytesIO(); wb.save(buf); buf.seek(0)
+        return StreamingResponse(buf, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers={"Content-Disposition": f'attachment; filename="{grc_no}.xlsx"'})
+
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.units import mm
+    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+    buf = BytesIO(); doc_pdf = SimpleDocTemplate(buf, pagesize=landscape(A4), leftMargin=15 * mm, rightMargin=15 * mm, topMargin=16 * mm, bottomMargin=16 * mm)
+    styles = getSampleStyleSheet(); title = ParagraphStyle("GRCExportTitle", parent=styles["Heading1"], textColor=colors.HexColor("#4F46E5"))
+    elements = [
+        Paragraph("Goods Receipt Certificate", title),
+        Paragraph(f"GRC: {grc_no}<br/>PO: {po_no}<br/>Vendor: {vendor_name}<br/>Status: {status_label} &nbsp; | &nbsp; Date: {grc_date}", styles["Normal"]),
+        Spacer(1, 8 * mm),
+    ]
+    table_data = [["#", "Barcode", "Description", "PO Qty", "Recd.", "Accepted", "Rejected", "Rate", "Value"]]
+    for index, item in enumerate(items, 1):
+        accepted = float(item.get("acceptedQty") or 0); rate = float(item.get("rate") or 0)
+        table_data.append([
+            str(index), Paragraph(escape(str(item.get("barcode") or item.get("vendorBarcode") or "")), styles["BodyText"]),
+            Paragraph(escape(str(item.get("description") or "")), styles["BodyText"]),
+            str(item.get("poQty") or 0), str(item.get("receivedQty") or 0), str(accepted), str(item.get("rejectedQty") or 0),
+            f"{rate:,.2f}", f"{accepted * rate:,.2f}",
+        ])
+    table_data.append(["", "", "", "", "", "", "", "Grand Total", f"{float(total_value):,.2f}"])
+    table = Table(table_data, repeatRows=1, colWidths=[10 * mm, 32 * mm, 85 * mm, 18 * mm, 18 * mm, 20 * mm, 20 * mm, 24 * mm, 28 * mm])
+    table.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#4F46E5")), ("TEXTCOLOR", (0, 0), (-1, 0), colors.white), ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"), ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"), ("GRID", (0, 0), (-1, -1), .35, colors.HexColor("#CBD5E1")), ("ALIGN", (3, 1), (-1, -1), "RIGHT"), ("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("TOPPADDING", (0, 0), (-1, -1), 6), ("BOTTOMPADDING", (0, 0), (-1, -1), 6)]))
+    elements.extend([table, Spacer(1, 6 * mm), Paragraph(f"Generated from RMS on {datetime.utcnow().strftime('%d %b %Y, %H:%M UTC')}.", styles["Normal"])])
+    doc_pdf.build(elements); buf.seek(0)
+    return StreamingResponse(buf, media_type="application/pdf", headers={"Content-Disposition": f'attachment; filename="{grc_no}.pdf"'})
+
+
+@router.get("/{grc_id}/download")
+async def download_grc(grc_id: str, format: str = Query("pdf"), ctx: dict = Depends(get_receiving_tenant)):
+    """Download a GRC as a printable PDF or an editable Excel sheet."""
+    try:
+        doc = await grc_collection.find_one({"_id": ObjectId(grc_id), "tenant_id": ctx["tenant_id"]})
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid GRC ID")
+    if not doc:
+        raise HTTPException(status_code=404, detail="GRC not found")
+    fmt = format.lower()
+    if fmt not in {"pdf", "xlsx"}:
+        raise HTTPException(status_code=400, detail="format must be pdf or xlsx")
+    return _grc_export_response(doc, fmt)
 
 
 # ─────────────────────────────────────────────

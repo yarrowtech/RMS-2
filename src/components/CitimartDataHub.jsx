@@ -45,6 +45,17 @@ async function apiGet(path) {
   if (!r.ok) throw new Error(d.detail || (r.status >= 500 ? SERVER_UNREACHABLE_MESSAGE : "Request failed."));
   return d;
 }
+async function apiDelete(path) {
+  let r;
+  try {
+    r = await fetch(`${API_BASE_URL}/api/citimart/data-hub${path}`, { method: "DELETE", headers: headers() });
+  } catch {
+    throw new Error(SERVER_UNREACHABLE_MESSAGE);
+  }
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(d.detail || (r.status >= 500 ? SERVER_UNREACHABLE_MESSAGE : "Request failed."));
+  return d;
+}
 async function apiPostJson(path, body) {
   let r;
   try {
@@ -159,17 +170,16 @@ function LiveStockSync({ kind = "stock", batchId, onClose, onChanged }) {
   };
 
   const createProducts = async () => {
-    const barcodes = [...new Set(
-      (preview.problems || [])
-        .filter((row) => row.errors.some((e) => e.includes("No Product Master match")))
-        .map((row) => row.source_barcode || row.source_item_code)
-        .filter(Boolean)
-    )];
-    if (!barcodes.length) return;
-    if (!window.confirm(`Create ${barcodes.length} new Citimart product(s) from this batch's own data (division/section/department/vendor/rates), using the imported barcode as-is?`)) return;
+    // Intentionally NOT pre-computing a barcode list (or a count) from
+    // preview.problems here — that array is only ever a truncated sample
+    // (PREVIEW_ROWS), so a batch with more mismatches than that sample
+    // would silently leave the rest unresolved. The backend now recomputes
+    // the full missing-product set itself from all staged rows, so this
+    // always resolves everything in one click regardless of batch size.
+    if (!window.confirm("Create every missing product found in this batch (using its own division/section/department/vendor/rate data, imported barcode as-is)? This covers the whole batch, not just what's shown above.")) return;
     setBusy(true); setError("");
     try {
-      const result = await apiPostJson(`/${kind}/${batchId}/create-products`, { barcodes });
+      const result = await apiPostJson(`/${kind}/${batchId}/create-products`, {});
       onChanged(result.message || "Products created.");
       await load();
     } catch (e) { setError(e.message); }
@@ -557,12 +567,25 @@ export default function CitimartDataHub() {
   const [blocked, setBlocked] = useState(false);
   const [reviewBatchId, setReviewBatchId] = useState("");
   const [reviewKind, setReviewKind] = useState("stock");
+  const [deletingId, setDeletingId] = useState("");
 
   const loadImports = useCallback(async () => {
     try { setImports((await apiGet("/imports")).data || []); setBlocked(false); }
     catch (e) { if (e.message?.includes("Citimart")) setBlocked(true); }
   }, []);
   useEffect(() => { loadImports(); }, [loadImports]);
+
+  const deleteImport = async (row) => {
+    if (!window.confirm(`Delete this ${row.kind} import (${row.row_count} row(s)${row.file_name ? `, "${row.file_name}"` : ""})? This cannot be undone.`)) return;
+    setDeletingId(row.batch_id);
+    try {
+      const result = await apiDelete(`/imports/${row.batch_id}`);
+      setNotice(result.message || "Deleted.");
+      if (reviewBatchId === row.batch_id) setReviewBatchId("");
+      await loadImports();
+    } catch (e) { setNotice(e.message); }
+    finally { setDeletingId(""); }
+  };
 
   if (blocked) {
     return <div className="p-8 text-center text-sm text-slate-500">The Citimart Data Hub is available only for the Citimart tenant.</div>;
@@ -581,7 +604,7 @@ export default function CitimartDataHub() {
       {reviewBatchId && <LiveStockSync kind={reviewKind} batchId={reviewBatchId} onClose={() => setReviewBatchId("")} onChanged={(message) => { setNotice(message); loadImports(); }} />}
 
       <div className="grid gap-5 lg:grid-cols-3">
-        <UploadCard title="Stock snapshot" hint="One row per product per store (Locname/Source Site + Barcode/Item Code)." kind="stock" accent={CARD_ACCENTS[0]} onCommitted={(result) => { setNotice(result.message || "Imported."); setReviewBatchId(result.batch_id || ""); loadImports(); }} />
+        <UploadCard title="Stock snapshot" hint="One row per product per store (Source Site + Barcode/Item Code)." kind="stock" accent={CARD_ACCENTS[0]} onCommitted={(result) => { setNotice(result.message || "Imported."); setReviewBatchId(result.batch_id || ""); loadImports(); }} />
         <UploadCard title="Day-wise sales" hint="Bill-line export — Bill Date, Bill No, Barcode/Item Code, Bill Qty, Net Amt. Voided rows are excluded automatically." kind="sales" accent={CARD_ACCENTS[1]} onCommitted={(result) => { setNotice(result.message || "Imported."); loadImports(); }} />
         <UploadCard title="Purchase / GRC" hint="Goods received — GRC No., Rec Dt, Rec Qty, Barcode/Item Code." kind="purchase" accent={CARD_ACCENTS[2]} onCommitted={(result) => { setNotice(result.message || "Imported."); setReviewKind("purchase"); setReviewBatchId(result.batch_id || ""); loadImports(); }} />
       </div>
@@ -595,8 +618,18 @@ export default function CitimartDataHub() {
         <div className="mt-3 divide-y divide-slate-100">
           {imports.length ? imports.map((row) => (
 <div key={row.batch_id} className="flex flex-wrap items-center justify-between gap-2 py-2 text-xs">
-              <div className="flex items-center gap-2"><span className="rounded-full bg-gradient-to-r from-violet-100 to-fuchsia-100 px-2.5 py-0.5 font-bold capitalize text-violet-800">{row.kind}</span>{(row.kind === "stock" || row.kind === "purchase") && <span className="rounded-full bg-slate-100 px-2 py-0.5 font-bold text-slate-600">{row.live_sync_status}</span>}</div>
-              <div className="flex flex-wrap items-center justify-end gap-2"><span className="text-slate-500">{row.row_count} row(s) · {row.imported_by} · {new Date(row.imported_at).toLocaleString()}</span>{(row.kind === "stock" || row.kind === "purchase") && <button onClick={() => { setReviewKind(row.kind); setReviewBatchId(row.batch_id); }} className="rounded-lg border border-violet-200 bg-violet-50 px-2 py-1 font-bold text-violet-700">Review{row.live_sync_status === "SYNCED" ? " / rollback" : " / sync"}</button>}</div>
+              <div className="flex min-w-0 items-center gap-2">
+                <span className="rounded-full bg-gradient-to-r from-violet-100 to-fuchsia-100 px-2.5 py-0.5 font-bold capitalize text-violet-800">{row.kind}</span>
+                {(row.kind === "stock" || row.kind === "purchase") && <span className="rounded-full bg-slate-100 px-2 py-0.5 font-bold text-slate-600">{row.live_sync_status}</span>}
+                {row.file_name && <span className="truncate font-bold text-slate-700" title={row.file_name}>{row.file_name}</span>}
+              </div>
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                <span className="text-slate-500">{row.row_count} row(s) · {row.imported_by} · {new Date(row.imported_at).toLocaleString()}</span>
+                {(row.kind === "stock" || row.kind === "purchase") && <button onClick={() => { setReviewKind(row.kind); setReviewBatchId(row.batch_id); }} className="rounded-lg border border-violet-200 bg-violet-50 px-2 py-1 font-bold text-violet-700">Review{row.live_sync_status === "SYNCED" ? " / rollback" : " / sync"}</button>}
+                <button onClick={() => deleteImport(row)} disabled={deletingId === row.batch_id} className="rounded-lg border border-rose-200 bg-rose-50 px-2 py-1 font-bold text-rose-700 disabled:opacity-50">
+                  {deletingId === row.batch_id ? "Deleting…" : "Delete"}
+                </button>
+              </div>
             </div>
           )) : <p className="py-4 text-center text-xs text-slate-400">No imports yet.</p>}
         </div>

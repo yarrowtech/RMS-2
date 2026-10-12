@@ -63,6 +63,7 @@ from typing import Optional
 from bson import ObjectId
 import hashlib
 import hmac
+import httpx
 import os
 import secrets
 import uuid
@@ -188,7 +189,125 @@ async def get_my_catalog_connection(authorization: str = Header(None)):
     doc = await vendor_whatsapp_catalogs_collection.find_one({"vendor_id": ObjectId(vendor_id)})
     if not doc:
         return {"status": "success", "connected": False}
-    return {"status": "success", "connected": True, "catalog_id": doc["catalog_id"], "connected_at": str(doc.get("connected_at", ""))}
+    return {
+        "status": "success", "connected": True, "catalog_id": doc["catalog_id"], "connected_at": str(doc.get("connected_at", "")),
+        "last_push_at": str(doc.get("last_push_at") or ""), "last_push_count": doc.get("last_push_count"),
+        "last_push_error": doc.get("last_push_error") or "",
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# PUSH CATALOG TO META — sends the vendor's own active, direct-purchase
+# catalogue items into their connected Meta Catalog via the Catalog Batch
+# API, so customers can actually browse them inside a WhatsApp chat (what
+# connect-catalog alone does NOT do — it only links the catalog_id, it
+# never moves product data). Manual, vendor-triggered — not automatic on
+# every catalogue edit; see this feature's own planning note for why.
+# ═══════════════════════════════════════════════════════════════════════════
+
+META_GRAPH_API_BASE = "https://graph.facebook.com/v19.0"
+_CATALOG_PUSH_CHUNK = 500  # Meta's items_batch cap is 5,000 requests per call; chunking well under that keeps each call fast and retry-friendly
+
+
+def _catalog_retailer_id(item: dict) -> str:
+    existing = str(item.get("whatsapp_retailer_id") or "").strip()
+    return existing or f"rms-{item['_id']}"
+
+
+def _catalog_item_payload(item: dict, retailer_id: str) -> dict:
+    """Maps an RMS catalogue item to Meta's Catalog item fields.
+    https://developers.facebook.com/docs/commerce-platform/catalog/fields
+    """
+    images = item.get("images") or []
+    price = float(item.get("price") or 0)
+    return {
+        "retailer_id": retailer_id,
+        "name": str(item.get("item_name") or "")[:200],
+        "description": str(item.get("description") or "")[:9999],
+        "availability": "in stock" if float(item.get("stock") or 0) > 0 else "out of stock",
+        "condition": "new",
+        "price": f"{int(round(price * 100))}",  # Meta wants minor units (paise) as a string
+        "currency": "INR",
+        "image_url": images[0] if images else "",
+        "additional_image_urls": images[1:10] if len(images) > 1 else [],
+        "brand": str(item.get("brand") or item.get("manufacturer") or "")[:100],
+        "category": str(item.get("category") or "")[:100],
+    }
+
+
+async def _push_items_to_meta(catalog_id: str, access_token: str, items: list) -> dict:
+    """One or more items_batch calls to Meta. Returns {pushed, failed, handles}.
+    Meta processes each batch asynchronously and returns a handle to poll —
+    we don't poll it here (keeps this endpoint fast); per-item validation
+    errors (bad image URL, missing price, etc.) only surface on Meta's side
+    when it processes the batch, not in this response."""
+    handles, failed = [], []
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        for start in range(0, len(items), _CATALOG_PUSH_CHUNK):
+            chunk = items[start:start + _CATALOG_PUSH_CHUNK]
+            requests_payload = [{"method": "UPDATE", "data": _catalog_item_payload(item, _catalog_retailer_id(item))} for item in chunk]
+            try:
+                response = await client.post(
+                    f"{META_GRAPH_API_BASE}/{catalog_id}/items_batch",
+                    json={"requests": requests_payload, "item_type": "PRODUCT_ITEM"},
+                    params={"access_token": access_token},
+                )
+                body = response.json()
+                if response.status_code >= 400:
+                    failed.append({"chunk_start": start, "count": len(chunk), "error": body.get("error", body)})
+                else:
+                    handles.append(body.get("handles", body))
+            except httpx.HTTPError as exc:
+                failed.append({"chunk_start": start, "count": len(chunk), "error": str(exc)})
+    return {"handles": handles, "failed": failed}
+
+
+@router.post("/push-catalog")
+async def push_vendor_catalog(authorization: str = Header(None)):
+    """Vendor-facing: push this vendor's active, direct-purchase catalogue
+    items into their connected Meta Catalog. Manual — vendor clicks this
+    after editing their catalogue, rather than every edit auto-syncing."""
+    vendor_id = _decode_vendor(authorization)
+    link = await vendor_whatsapp_catalogs_collection.find_one({"vendor_id": ObjectId(vendor_id)})
+    if not link or not link.get("catalog_id"):
+        raise HTTPException(status_code=400, detail="Connect your Meta WhatsApp Catalog ID first (see the setup guide above).")
+
+    access_token = os.environ.get("WHATSAPP_CATALOG_ACCESS_TOKEN")
+    if not access_token:
+        raise HTTPException(status_code=503, detail="WHATSAPP_CATALOG_ACCESS_TOKEN not configured — this platform-wide credential must be set up once before any vendor can push a catalog.")
+
+    items = await vendor_catalogue_collection.find({
+        "vendor_id": ObjectId(vendor_id), "active": True, "direct_purchase_enabled": True, "price": {"$gt": 0},
+    }).to_list(length=5000)
+    if not items:
+        raise HTTPException(status_code=400, detail="No active, direct-purchase-enabled items with a price to push. Add items to My Catalogue first.")
+
+    # Items with no whatsapp_retailer_id get one assigned here (stable,
+    # derived from the item's own _id) rather than requiring the vendor to
+    # manually copy an ID back from Meta — simpler than the original
+    # "set it after you see it in Meta" design this field's comment describes.
+    to_assign = [item for item in items if not str(item.get("whatsapp_retailer_id") or "").strip()]
+    for item in to_assign:
+        retailer_id = _catalog_retailer_id(item)
+        await vendor_catalogue_collection.update_one({"_id": item["_id"]}, {"$set": {"whatsapp_retailer_id": retailer_id}})
+        item["whatsapp_retailer_id"] = retailer_id
+
+    result = await _push_items_to_meta(link["catalog_id"], access_token, items)
+    now = datetime.utcnow()
+    pushed_count = len(items) - sum(f["count"] for f in result["failed"])
+    await vendor_whatsapp_catalogs_collection.update_one(
+        {"vendor_id": ObjectId(vendor_id)},
+        {"$set": {
+            "last_push_at": now, "last_push_count": pushed_count,
+            "last_push_error": "; ".join(str(f["error"]) for f in result["failed"]) if result["failed"] else "",
+        }},
+    )
+    if result["failed"] and pushed_count == 0:
+        raise HTTPException(status_code=502, detail=f"Meta rejected the catalog push: {result['failed'][0]['error']}")
+    message = f"Pushed {pushed_count} item(s) to your WhatsApp Catalog."
+    if result["failed"]:
+        message += f" {sum(f['count'] for f in result['failed'])} item(s) failed — see details."
+    return {"status": "success", "message": message, "pushed": pushed_count, "failed": result["failed"]}
 
 
 @router.post("/register-number")

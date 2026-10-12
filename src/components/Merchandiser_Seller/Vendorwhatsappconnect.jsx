@@ -9,12 +9,18 @@ import { MessageCircle, Check, ExternalLink, RefreshCw, AlertTriangle, Link2, Un
  * RMS vendor_id, via POST /api/whatsapp/connect-catalog.
  *
  * ⚠️ HONEST ABOUT WHAT THIS DOES AND DOESN'T DO:
- * Saving a catalog_id here only records a mapping in RMS's database. It
- * does NOT make WhatsApp orders start flowing in — that also requires:
+ * Saving a catalog_id here only records a mapping in RMS's database — it
+ * does not move any product data. The "Push your catalogue to WhatsApp"
+ * button below (POST /api/whatsapp/push-catalog) is what actually sends
+ * items into the vendor's Meta Catalog via Meta's Catalog Batch API, so
+ * customers can browse/order inside the chat itself. Neither saving the
+ * catalog_id nor pushing items makes WhatsApp *orders* start flowing in —
+ * that also requires:
  *   1. The retailer/RMS admin to have real Meta credentials configured
  *      server-side (WHATSAPP_APP_SECRET etc. — see whatsapp_routes.py).
- *   2. whatsapp_routes.py's router to actually be mounted in main.py,
- *      which it deliberately isn't yet.
+ *   2. WHATSAPP_CATALOG_ACCESS_TOKEN set server-side (separate credential,
+ *      needs Meta's catalog_management permission) for the push button
+ *      itself to work at all — it 503s with a clear message until then.
  * This component shows that status honestly rather than implying a
  * "Connected ✓" badge means orders are live — see the amber notice below.
  *
@@ -30,12 +36,13 @@ function WhatsAppGuide() {
   const steps = [
     ["1", "What this page is for", "Letting your retailer receive orders you get over WhatsApp, so they land in RMS automatically instead of being typed in by hand."],
     ["2", "Three ways to connect — pick ONE", "Meta Commerce Manager (if you manage WhatsApp directly), your own system/BSP with an API key (if you have a developer or automation tool), or Log an order manually (if you have neither — just read the WhatsApp message and type it in)."],
-    ["3", "Meta path — what you need", "A WhatsApp Business Catalog already set up in Meta Commerce Manager, plus each product's ID recorded against your RMS catalogue item (Catalogue tab → edit item → WhatsApp Catalog product ID)."],
-    ["4", "Generic path — what you need", "Nothing from Meta. Generate an API key below, then have your own system call RMS with the buyer's number, your product ID and quantity whenever an order comes in."],
-    ["5", "Manual path — what you need", "Nothing at all beyond your normal RMS login. Read the order off WhatsApp yourself, then use 'Log a WhatsApp order' below to type it in — no key, no Meta, no automation tool."],
-    ["6", "Either way, orders still need two things set up first", "Your retailer must have registered the buyer's WhatsApp number in their RMS settings, AND your vendor account must be Approved with that retailer — without both, an order correctly comes back unresolved rather than being guessed."],
-    ["7", "What happens to a successful order", "It becomes a normal Pending inquiry — the same place and process as any order placed inside RMS's own Catalogue tab. Nothing about negotiation, pricing or PO conversion changes."],
-    ["8", "What this does NOT do yet", "Size and color aren't carried by a WhatsApp order message — note them in the order's free-text note, or follow up with the buyer directly."],
+    ["3", "Meta path — what you need", "A WhatsApp Business Catalog already set up in Meta Commerce Manager, with its Catalog ID saved above. You do NOT need to manually copy each product's ID from Meta anymore — the Push button below (step 4) assigns and sends those automatically."],
+    ["4", "Push your catalogue — makes it actually browsable in WhatsApp", "Connecting a Catalog ID alone doesn't put your products inside WhatsApp — click 'Push now' above to send your active, priced, direct-purchase items into that catalog. Run it again any time you add, edit, re-price, or go out of stock on an item; it's manual, not automatic. Needs your retailer's platform-wide Meta credential set up first — if it's not, Push now will say so clearly rather than fail silently."],
+    ["5", "Generic path — what you need", "Nothing from Meta. Generate an API key below, then have your own system call RMS with the buyer's number, your product ID and quantity whenever an order comes in."],
+    ["6", "Manual path — what you need", "Nothing at all beyond your normal RMS login. Read the order off WhatsApp yourself, then use 'Log a WhatsApp order' below to type it in — no key, no Meta, no automation tool."],
+    ["7", "Either way, orders still need two things set up first", "Your retailer must have registered the buyer's WhatsApp number in their RMS settings, AND your vendor account must be Approved with that retailer — without both, an order correctly comes back unresolved rather than being guessed."],
+    ["8", "What happens to a successful order", "It becomes a normal Pending inquiry — the same place and process as any order placed inside RMS's own Catalogue tab. Nothing about negotiation, pricing or PO conversion changes."],
+    ["9", "What this does NOT do yet", "Size and color aren't carried by a WhatsApp order message — note them in the order's free-text note, or follow up with the buyer directly."],
   ];
   return (
     <details className="overflow-hidden rounded-2xl border border-indigo-100 bg-gradient-to-br from-white to-indigo-50 shadow-sm">
@@ -89,6 +96,12 @@ export default function VendorWhatsAppConnect() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
   const [saved, setSaved] = useState(false);
+  const [lastPushAt, setLastPushAt] = useState(null);
+  const [lastPushCount, setLastPushCount] = useState(null);
+  const [lastPushError, setLastPushError] = useState("");
+  const [pushBusy, setPushBusy] = useState(false);
+  const [pushResult, setPushResult] = useState(null);
+  const [pushErrorMsg, setPushErrorMsg] = useState("");
 
   // Generic (non-Meta) order-push API key — for vendors using their own
   // system or a BSP (Interakt, WATI, Gupshup, ...) instead of connecting
@@ -207,6 +220,9 @@ export default function VendorWhatsAppConnect() {
       setCatalogId(data.catalog_id || "");
       setConnectedAt(data.connected_at || null);
       setInputValue(data.catalog_id || "");
+      setLastPushAt(data.last_push_at || null);
+      setLastPushCount(typeof data.last_push_count === "number" ? data.last_push_count : null);
+      setLastPushError(data.last_push_error || "");
     } catch (err) {
       // This route doesn't exist until whatsapp_routes.py is mounted in
       // main.py — a fetch failure here most likely means that, not a
@@ -238,6 +254,21 @@ export default function VendorWhatsAppConnect() {
       setError(err.message);
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handlePushCatalog = async () => {
+    setPushBusy(true); setPushErrorMsg(""); setPushResult(null);
+    try {
+      const res = await vendorFetch("/api/whatsapp/push-catalog", { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "Push failed.");
+      setPushResult(data);
+      fetchStatus();
+    } catch (err) {
+      setPushErrorMsg(err.message);
+    } finally {
+      setPushBusy(false);
     }
   };
 
@@ -320,6 +351,38 @@ export default function VendorWhatsAppConnect() {
             </button>
           </div>
         </div>
+
+        {/* Push catalogue to Meta — only meaningful once a catalog_id is saved */}
+        {connected && (
+          <div className="bg-white rounded-2xl border border-slate-200 p-5">
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-sm font-black text-slate-900">Push your catalogue to WhatsApp</p>
+              <button onClick={handlePushCatalog} disabled={pushBusy}
+                className="h-9 px-4 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold disabled:opacity-50">
+                {pushBusy ? "Pushing…" : "Push now"}
+              </button>
+            </div>
+            <p className="text-xs text-slate-500 leading-relaxed">
+              Sends your active, direct-purchase items (with a price set) into your connected Meta Catalog, so
+              customers can browse and order them right inside WhatsApp. Run this again any time after you add,
+              edit, or price your catalogue items — it doesn't happen automatically.
+            </p>
+            {(lastPushAt || lastPushCount !== null) && (
+              <p className="text-[10px] text-slate-400 mt-2">
+                Last push: {lastPushCount ?? 0} item(s){lastPushAt ? ` on ${new Date(lastPushAt).toLocaleString()}` : ""}
+                {lastPushError && <span className="text-rose-500"> · {lastPushError}</span>}
+              </p>
+            )}
+            {pushErrorMsg && (
+              <div className="mt-3 bg-rose-50 border border-rose-200 text-rose-700 text-xs font-semibold px-4 py-3 rounded-xl">⚠ {pushErrorMsg}</div>
+            )}
+            {pushResult && (
+              <div className="mt-3 bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs font-semibold px-4 py-3 rounded-xl">
+                <Check className="w-4 h-4 inline mr-1" /> {pushResult.message}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Where to find the Catalog ID */}
         <div className="bg-white rounded-2xl border border-slate-200 p-5">

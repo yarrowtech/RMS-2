@@ -1,3 +1,13 @@
+import sys
+# Windows terminals often default stdout to cp1252, which can't encode the
+# emoji used in a few startup log lines (e.g. "✅ Super Admin..."),
+# crashing the whole app on startup with UnicodeEncodeError before it ever
+# binds a port. Forcing UTF-8 here makes startup reliable regardless of how
+# uvicorn is launched (reload vs. not, PowerShell vs. a tool runner).
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse

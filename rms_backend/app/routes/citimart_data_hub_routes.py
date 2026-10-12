@@ -2,7 +2,7 @@
 
 Three sheet types, each previewed then committed:
 
-  * STOCK    (one row per product per store — Locname/Source Site identifies
+  * STOCK    (one row per product per store — Source Site identifies
       the store; Barcode/Item Code identifies the product)
   * SALES    (day-wise bill lines — Bill Date, Store, Item Code/Barcode,
       Bill Qty, Net Amt, plus Cat-1..5 for design/brand/style/size reporting)
@@ -22,6 +22,7 @@ reusing the Raphaa Data Hub or any live route):
 import asyncio
 import hashlib
 import io
+import logging
 import re
 import uuid
 from datetime import datetime
@@ -33,7 +34,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFil
 from pymongo import InsertOne, UpdateOne
 
 from .deps import get_hq_tenant
-from .products import generate_base_sku
+from .products import generate_base_sku, generate_product_code
 from ..db import (
     citimart_data_hub_imports_collection,
     citimart_purchase_import_collection,
@@ -71,6 +72,17 @@ _CENTRAL_SEGMENTS = {
     "MAIN": {"label": "Main Warehouse", "aliases": ("warehouse", "central", "central inventory", "hq", "head office")},
     "SEMI_FRESH": {"label": "Semi Fresh Warehouse", "aliases": ("semi fresh warehouse", "semi fresh")},
     "PACKED": {"label": "Packed / Package", "aliases": ("package", "packed", "packed warehouse")},
+}
+
+# Citimart's own stock-export files use internal/legacy names for the
+# Locname/Source Site column that don't match the store's actual name or
+# code in RMS (e.g. "Megashop Stock" is CITIMART-CHOWRINGHEEE's stock, by
+# their own confirmation). Rather than asking them to edit every file before
+# upload, each quirky export name is aliased here, once, to the real store
+# code it means — add more entries as new mismatches turn up.
+_STORE_NAME_ALIASES = {
+    "megashop stock": "003",  # CITIMART-CHOWRINGHEEE (legacy Locname export)
+    "citimart - chowringhee": "003",  # CITIMART-CHOWRINGHEEE (Source Site export — one letter short of the real spelling)
 }
 
 def _key(value: Any) -> str:
@@ -281,6 +293,15 @@ def _build_location_lookup(stores: List[dict]) -> tuple:
         }
         for alias in config["aliases"]:
             mapping[_location_key(alias)] = resolved
+    by_code = {_text(store.get("code")): store for store in stores}
+    for alias, store_code in _STORE_NAME_ALIASES.items():
+        store = by_code.get(store_code)
+        if not store:
+            continue
+        key = _location_key(alias)
+        if key in ambiguous:
+            continue
+        mapping[key] = {"kind": "store", "store_id": str(store["_id"]), "store_name": _text(store.get("name")), "store_code": _text(store.get("code"))}
     return mapping, ambiguous
 
 
@@ -420,12 +441,15 @@ async def _reconcile_bulk(tenant_id: str, written: List[dict]) -> List[dict]:
 
 
 # ── STOCK ────────────────────────────────────────────────────────────────
-# One row per product × store. Locname/Source Site is the store; whichever
-# is present (Locname preferred) becomes store_name. The snapshot is
-# absolute ($set, never $inc) — re-uploading the same file twice leaves the
-# same end state, and a product absent from a later file simply keeps its
-# last-known snapshot rather than being zeroed out silently.
-_STOCK_LOC_ALIASES = ("locname", "loc name", "source site", "sourcesite", "store", "store name")
+# One row per product × store. Source Site identifies the store — Locname
+# is deliberately NOT read here: Citimart's own exports use internal/legacy
+# names in Locname that don't match real RMS store names (e.g. "Megashop
+# Stock" for CITIMART-CHOWRINGHEEE), while Source Site lines up with the
+# real store directly. The snapshot is absolute ($set, never $inc) —
+# re-uploading the same file twice leaves the same end state, and a product
+# absent from a later file simply keeps its last-known snapshot rather than
+# being zeroed out silently.
+_STOCK_LOC_ALIASES = ("source site", "sourcesite", "store", "store name")
 _STOCK_QTY_ALIASES = ("closing_qty", "closing qty", "closingqty", "qty", "quantity")
 _STOCK_AMT_ALIASES = ("closing_amt", "closing amt", "closingamt", "amount", "amt")
 
@@ -438,7 +462,7 @@ def _parse_stock_rows(rows: List[dict]) -> List[dict]:
         barcode = _column(row, "barcode")
         item_code = _column(row, "item_code", "itemcode")
         if not store_name:
-            errors.append("Store / Locname is required.")
+            errors.append("Store / Source Site is required.")
         if not barcode and not item_code:
             errors.append("Barcode or Item Code is required.")
         qty = _number(_column(row, *_STOCK_QTY_ALIASES))
@@ -493,6 +517,18 @@ async def commit_stock(file: UploadFile = File(...), ctx: TenantCtx = Depends(_c
     if duplicate:
         raise HTTPException(status_code=409, detail=f"This exact stock file was already imported as batch {duplicate.get('batch_id')}.")
 
+    # The snapshot is keyed by store identity so re-uploading the same store
+    # under a different raw spelling ("Megashop Stock" vs "CITIMART -
+    # CHOWRINGHEE" vs the canonical "CITIMART-CHOWRINGHEEE") updates the SAME
+    # snapshot entry instead of creating a new one next to it forever.
+    # Resolved through the exact same alias lookup _resolve_stock_batch uses
+    # for review, so "what this location means" is answered identically in
+    # both places. Falls back to the raw text only when the location can't
+    # be resolved yet — those rows will show up as mapping problems at
+    # review time anyway, same as today.
+    stores_live = await stores_collection.find({"tenant_id": ctx["tenant_id"], "active": True}).to_list(length=None)
+    location_lookup = _build_location_lookup(stores_live)
+
     stage_ops: List[Any] = []
     snapshot_ops: List[Any] = []
     skipped = []
@@ -500,13 +536,50 @@ async def commit_stock(file: UploadFile = File(...), ctx: TenantCtx = Depends(_c
         if row["errors"]:
             skipped.append({"row_no": row["row_no"], "errors": row["errors"]})
             continue
-        key = {"tenant_id": ctx["tenant_id"], "store_name": row["store_name"], "barcode": row["barcode"] or row["item_code"]}
-        staged = {**row, **key, "batch_id": batch_id, "updated_at": now}
-        stage_ops.append(InsertOne(staged))
-        snapshot_ops.append(UpdateOne(key, {"$set": staged}, upsert=True))
+        resolved_location, _location_errors = _resolve_location(row["store_name"], location_lookup)
+        snapshot_store_name = resolved_location["store_name"] if resolved_location else row["store_name"]
+        key = {"tenant_id": ctx["tenant_id"], "store_name": snapshot_store_name, "barcode": row["barcode"] or row["item_code"]}
+        staged = {**row, "tenant_id": ctx["tenant_id"], "barcode": row["barcode"] or row["item_code"], "batch_id": batch_id, "updated_at": now}
+        # The snapshot doc's own store_name is also set to the canonical
+        # name (not whichever raw spelling this particular upload used) —
+        # otherwise the display would keep flipping to whatever text the
+        # most recent file happened to use, even though the dedup key above
+        # already keeps it as one entry.
+        snapshot_doc = {**staged, "store_name": snapshot_store_name}
+        # Each op gets its OWN dict. InsertOne mutates its document in place
+        # (pymongo stamps an _id onto it) — sharing one dict between the
+        # InsertOne below and this $set would leak that _id into a later
+        # upsert on a different collection, which Mongo rejects (code 66:
+        # "would modify the immutable field '_id'").
+        stage_ops.append(InsertOne(dict(staged)))
+        snapshot_ops.append(UpdateOne(key, {"$set": snapshot_doc}, upsert=True))
     saved = len(stage_ops)
-    await _bulk_write_chunked(citimart_stock_stage_rows_collection, stage_ops, ordered=True)
-    await _bulk_write_chunked(citimart_stock_snapshot_collection, snapshot_ops, ordered=False)
+    try:
+        await _bulk_write_chunked(citimart_stock_stage_rows_collection, stage_ops, ordered=True)
+        await _bulk_write_chunked(citimart_stock_snapshot_collection, snapshot_ops, ordered=False)
+    except Exception as exc:
+        # Surfacing the real driver error here (instead of letting it bubble
+        # up as a bare 500) is what lets the frontend show an actual cause
+        # instead of mislabeling it "server unreachable" — see apiUpload()'s
+        # 5xx handling in CitimartDataHub.jsx.
+        logging.exception("Citimart stock commit failed writing batch %s (%s rows)", batch_id, saved)
+        # A failed commit never reaches _log_batch below, so this batch_id
+        # has no row in data_hub_imports — invisible in Import history, with
+        # no way to spot or delete it from the UI. stage_rows is append-only
+        # (every row this attempt inserted is uniquely its own), so deleting
+        # by batch_id there is always safe. citimart_stock_snapshot is NOT
+        # append-only — it's one doc per (store, barcode) that gets upserted
+        # in place, so a doc's batch_id just means "last touched by this
+        # batch," not "created by it". Deleting by batch_id there would also
+        # remove pre-existing docs this attempt merely touched before failing
+        # (confirmed: it once dropped total storage below the clean
+        # baseline). So it's left alone on failure — it's just a staging
+        # preview, and a successful retry overwrites it again anyway.
+        try:
+            await citimart_stock_stage_rows_collection.delete_many({"tenant_id": ctx["tenant_id"], "batch_id": batch_id})
+        except Exception:
+            logging.exception("Cleanup of failed stock commit batch %s also failed", batch_id)
+        raise HTTPException(status_code=500, detail=f"Import failed while saving rows: {exc}") from exc
     await _log_batch(
         ctx["tenant_id"], "stock", saved, ctx.get("admin_name") or ctx.get("admin_email") or "",
         batch_id=batch_id, file_name=file.filename or "", file_sha256=file_sha256,
@@ -739,16 +812,28 @@ async def commit_sales(file: UploadFile = File(...), ctx: TenantCtx = Depends(_c
     content = await file.read()
     rows = await _parse_in_thread(_parse_sales_rows, file.filename or "", content)
     now = datetime.utcnow()
+    batch_id = uuid.uuid4().hex[:12]
     docs, skipped = [], []
     for row in rows:
         if row["errors"] or row["is_void"]:
             if row["errors"]:
                 skipped.append({"row_no": row["row_no"], "errors": row["errors"]})
             continue
-        docs.append({"tenant_id": ctx["tenant_id"], **row, "imported_at": now})
+        docs.append({"tenant_id": ctx["tenant_id"], **row, "batch_id": batch_id, "imported_at": now})
     if docs:
-        await _bulk_write_chunked(citimart_sales_import_collection, [InsertOne(d) for d in docs])
-    batch_id = await _log_batch(ctx["tenant_id"], "sales", len(docs), ctx.get("admin_name") or ctx.get("admin_email") or "")
+        try:
+            await _bulk_write_chunked(citimart_sales_import_collection, [InsertOne(d) for d in docs])
+        except Exception as exc:
+            logging.exception("Citimart sales commit failed writing batch %s (%s rows)", batch_id, len(docs))
+            try:
+                await citimart_sales_import_collection.delete_many({"tenant_id": ctx["tenant_id"], "batch_id": batch_id})
+            except Exception:
+                logging.exception("Cleanup of failed sales commit batch %s also failed", batch_id)
+            raise HTTPException(status_code=500, detail=f"Import failed while saving rows: {exc}") from exc
+    batch_id = await _log_batch(
+        ctx["tenant_id"], "sales", len(docs), ctx.get("admin_name") or ctx.get("admin_email") or "",
+        batch_id=batch_id, file_name=file.filename or "",
+    )
     voided = sum(1 for r in rows if r["is_void"])
     return {
         "status": "success", "mode": "committed", "batch_id": batch_id,
@@ -818,12 +903,22 @@ async def commit_purchase(file: UploadFile = File(...), ctx: TenantCtx = Depends
             continue
         docs.append({"tenant_id": ctx["tenant_id"], **row, "batch_id": batch_id, "imported_at": now})
         staged.append({"tenant_id": ctx["tenant_id"], **row, "batch_id": batch_id, "updated_at": now})
-    if docs:
-        await _bulk_write_chunked(citimart_purchase_import_collection, [InsertOne(d) for d in docs])
-    if staged:
-        await _bulk_write_chunked(citimart_purchase_stage_rows_collection, [InsertOne(d) for d in staged])
+    try:
+        if docs:
+            await _bulk_write_chunked(citimart_purchase_import_collection, [InsertOne(d) for d in docs])
+        if staged:
+            await _bulk_write_chunked(citimart_purchase_stage_rows_collection, [InsertOne(d) for d in staged])
+    except Exception as exc:
+        logging.exception("Citimart purchase commit failed writing batch %s (%s rows)", batch_id, len(docs))
+        try:
+            await citimart_purchase_import_collection.delete_many({"tenant_id": ctx["tenant_id"], "batch_id": batch_id})
+            await citimart_purchase_stage_rows_collection.delete_many({"tenant_id": ctx["tenant_id"], "batch_id": batch_id})
+        except Exception:
+            logging.exception("Cleanup of failed purchase commit batch %s also failed", batch_id)
+        raise HTTPException(status_code=500, detail=f"Import failed while saving rows: {exc}") from exc
     await _log_batch(
-        ctx["tenant_id"], "purchase", len(docs), ctx.get("admin_name") or ctx.get("admin_email") or "", batch_id=batch_id,
+        ctx["tenant_id"], "purchase", len(docs), ctx.get("admin_name") or ctx.get("admin_email") or "",
+        batch_id=batch_id, file_name=file.filename or "",
     )
     return {
         "status": "success", "mode": "committed", "batch_id": batch_id,
@@ -840,11 +935,43 @@ async def list_imports(ctx: TenantCtx = Depends(_citimart_context)):
         rows.append({
             "batch_id": row["batch_id"], "kind": row["kind"], "row_count": row["row_count"],
             "imported_by": row.get("imported_by", ""), "imported_at": row["imported_at"].isoformat(),
+            "file_name": row.get("file_name", ""),
             "live_sync_status": row.get("live_sync_status", "NOT_SYNCED" if row.get("kind") == "stock" else "ANALYTICS_ONLY"),
             "synced_at": row.get("synced_at").isoformat() if row.get("synced_at") else None,
             "snapshot_mode": row.get("snapshot_mode"), "reconciliation_status": row.get("reconciliation_status"),
         })
     return {"status": "success", "data": rows}
+
+
+@router.delete("/imports/{batch_id}")
+async def delete_import(batch_id: str, ctx: TenantCtx = Depends(_citimart_context)):
+    """Delete an uploaded batch and its staged rows.
+
+    A stock/purchase batch that has already been SYNCED to live inventory
+    cannot be deleted directly — it must be rolled back first (via the
+    existing /sync-preview + rollback flow), so the delete can never leave
+    live store_stock/inventory pointing at a batch_id that no longer exists.
+    """
+    tenant_id = ctx["tenant_id"]
+    batch = await citimart_data_hub_imports_collection.find_one({"tenant_id": tenant_id, "batch_id": batch_id})
+    if not batch:
+        raise HTTPException(status_code=404, detail="Import batch not found.")
+    if batch.get("live_sync_status") == "SYNCED":
+        raise HTTPException(status_code=409, detail="This batch is synced to live inventory — roll it back first, then delete.")
+
+    kind = batch.get("kind")
+    if kind == "stock":
+        await citimart_stock_stage_rows_collection.delete_many({"tenant_id": tenant_id, "batch_id": batch_id})
+        await citimart_stock_sync_audit_collection.delete_many({"tenant_id": tenant_id, "batch_id": batch_id})
+    elif kind == "sales":
+        await citimart_sales_import_collection.delete_many({"tenant_id": tenant_id, "batch_id": batch_id})
+    elif kind == "purchase":
+        await citimart_purchase_import_collection.delete_many({"tenant_id": tenant_id, "batch_id": batch_id})
+        await citimart_purchase_stage_rows_collection.delete_many({"tenant_id": tenant_id, "batch_id": batch_id})
+        await citimart_purchase_sync_audit_collection.delete_many({"tenant_id": tenant_id, "batch_id": batch_id})
+
+    await citimart_data_hub_imports_collection.delete_one({"tenant_id": tenant_id, "batch_id": batch_id})
+    return {"status": "success", "message": f"Deleted {kind} batch ({batch.get('row_count', 0)} row(s))."}
 
 
 # ── Purchase Plan (forecasting) ──────────────────────────────────────────
@@ -1172,42 +1299,95 @@ async def onboard_import_vendors(payload: dict, ctx: TenantCtx = Depends(_citima
 async def create_products_from_stock_batch(batch_id: str, payload: dict, ctx: TenantCtx = Depends(_citimart_context)):
     _require_live_sync_permission(ctx)
     tenant_id = ctx["tenant_id"]
-    barcodes = payload.get("barcodes")
-    if not isinstance(barcodes, list) or not barcodes:
-        raise HTTPException(status_code=400, detail="barcodes must be a non-empty list.")
     batch = await citimart_data_hub_imports_collection.find_one({"tenant_id": tenant_id, "batch_id": batch_id, "kind": "stock"})
     if not batch:
         raise HTTPException(status_code=404, detail="Stock import batch not found.")
 
-    wanted = {_identity_key(b) for b in barcodes}
+    # The frontend's "barcodes" list (if sent) only ever reflects a sampled,
+    # truncated preview (PREVIEW_ROWS) — trusting it here meant a batch with
+    # more mismatches than that sample would silently leave the rest
+    # unresolved after "Create missing products" was clicked, with no
+    # indication more existed. Recomputing the full missing set straight
+    # from the batch's staged rows means this always resolves everything in
+    # one click, regardless of batch size.
+    requested = payload.get("barcodes")
+    resolution = await _resolve_stock_batch(tenant_id, batch_id)
+    missing_barcodes = {
+        (p["source_barcode"] or p["source_item_code"] or "").strip()
+        for p in resolution["problems"]
+        if any("No Product Master match" in e for e in p["errors"]) and (p["source_barcode"] or p["source_item_code"])
+    }
+    if isinstance(requested, list) and requested:
+        wanted = {_identity_key(b) for b in requested}
+        missing_barcodes = {b for b in missing_barcodes if _identity_key(b) in wanted}
+    if not missing_barcodes:
+        raise HTTPException(status_code=400, detail="No missing-product barcodes found in this batch.")
+
+    wanted = {_identity_key(b) for b in missing_barcodes}
     rows = await citimart_stock_stage_rows_collection.find({"tenant_id": tenant_id, "batch_id": batch_id}).to_list(length=MAX_ROWS + 1)
     by_key: Dict[str, dict] = {}
     for row in rows:
         key = _identity_key(row.get("barcode") or row.get("item_code"))
         if key in wanted and key not in by_key:
             by_key[key] = row
-    missing = wanted - set(by_key)
-    if missing:
-        raise HTTPException(status_code=400, detail=f"{len(missing)} barcode(s)/item code(s) not found among this batch's staged rows.")
 
     now = datetime.utcnow()
     by = ctx.get("admin_name") or ctx.get("admin_email") or ""
+
+    # Was previously 2-3 sequential DB round trips PER product (an existence
+    # check, generate_base_sku's own lookup, then the insert) — for a batch
+    # of tens of thousands of missing products that meant tens of thousands
+    # of round trips and a multi-minute-to-hour wait. Replaced with: one
+    # bulk existence check, one bulk prefetch of the current SKU sequence
+    # per (prefix, product_code) group, SKUs assigned in memory from there,
+    # then a single chunked bulk insert — same end result, no per-item
+    # DB round trips at all.
+    all_barcodes = [(row.get("barcode") or row.get("item_code") or "").strip() for row in by_key.values()]
+    all_barcodes = [b for b in all_barcodes if b]
+    existing_barcodes = set()
+    for start in range(0, len(all_barcodes), BULK_CHUNK):
+        chunk = all_barcodes[start:start + BULK_CHUNK]
+        async for doc in product_collection.find({"tenant_id": tenant_id, "barcode": {"$in": chunk}}, {"barcode": 1}):
+            existing_barcodes.add(doc.get("barcode"))
+
+    # SKU sequence is scoped per (division-prefix, product-code) just like
+    # generate_base_sku — prefetch the current max suffix for every group
+    # this batch will touch, in one query, then hand out numbers from there.
+    sku_next: Dict[tuple, int] = {}
+    async for doc in product_collection.find({"tenant_id": tenant_id, "base_sku": {"$exists": True}}, {"base_sku": 1}):
+        base_sku = doc.get("base_sku") or ""
+        parts = base_sku.split("-")
+        if len(parts) < 3:
+            continue
+        prefix, code, suffix_text = parts[0], parts[1], parts[-1]
+        try:
+            suffix = int(suffix_text)
+        except ValueError:
+            continue
+        key = (prefix, code)
+        sku_next[key] = max(sku_next.get(key, 0), suffix) + 1
+
     created, already_existed = [], []
+    insert_ops: List[Any] = []
     for row in by_key.values():
         barcode = (row.get("barcode") or row.get("item_code") or "").strip()
         if not barcode:
             continue
-        existing = await product_collection.find_one({"tenant_id": tenant_id, "barcode": barcode})
-        if existing:
+        if barcode in existing_barcodes:
             already_existed.append(barcode)
             continue
         name = " ".join(filter(None, [row.get("category1"), row.get("category2"), row.get("department")])) or barcode
-        sku = await generate_base_sku(row.get("division") or "GEN", name, tenant_id)
+        prefix = (row.get("division") or "GEN")[:3].upper()
+        code = generate_product_code(name)
+        key = (prefix, code)
+        next_no = sku_next.get(key, 1)
+        sku_next[key] = next_no + 1
+        sku = f"{prefix}-{code}-{str(next_no).zfill(4)}"
         mrp = _number(row.get("mrp"))
         selling_price = _number(row.get("rsp")) or mrp
         doc = {
             "tenant_id": tenant_id, "product_name": name, "product_type": "general",
-            "sku": sku, "barcode": barcode,
+            "sku": sku, "base_sku": sku, "barcode": barcode,
             "division": row.get("division", ""), "section": row.get("section", ""), "department": row.get("department", ""),
             "vendor_name": row.get("vendor", ""), "hsn_code": row.get("hsn_code", ""),
             "cost_price": _number(row.get("standard_rate")), "mrp": mrp, "selling_price": selling_price,
@@ -1216,8 +1396,10 @@ async def create_products_from_stock_batch(batch_id: str, payload: dict, ctx: Te
             "source": "citimart_data_hub_import", "import_batch_id": batch_id,
             "created_at": now, "created_by": by,
         }
-        await product_collection.insert_one(doc)
+        insert_ops.append(InsertOne(doc))
         created.append(barcode)
+    if insert_ops:
+        await _bulk_write_chunked(product_collection, insert_ops, ordered=False)
 
     resolution = await _resolve_stock_batch(tenant_id, batch_id)
     return {
@@ -1271,7 +1453,18 @@ async def store_inventory(
         has_live = barcode in synced_barcodes and live_key in live_qty_by_key
         qty = live_qty_by_key[live_key] if has_live else _number(row.get("closing_qty"))
         rate = _number(row.get("rsp")) or _number(row.get("mrp")) or _number(row.get("standard_rate"))
-        value = qty * rate if rate else _number(row.get("closing_amt"))
+        closing_amt = _number(row.get("closing_amt"))
+        if has_live:
+            # Once synced, qty is the live figure (can differ from the
+            # import snapshot's own closing_qty), so the file's closing_amt
+            # no longer applies — recompute from the live qty instead.
+            value = qty * rate
+        else:
+            # Trust the source file's own CLOSING_AMT outright rather than
+            # recomputing qty × RSP — the file's figure is whatever
+            # valuation basis (usually cost price) the source system
+            # actually used, and recomputing at RSP silently overstated it.
+            value = closing_amt or (qty * rate)
         items.append({
             "store_name": row.get("store_name") or "Unknown store", "barcode": row.get("barcode"), "item_code": row.get("item_code"),
             "division": row.get("division"), "section": row.get("section"), "department": row.get("department"),
@@ -1639,23 +1832,33 @@ async def rollback_purchase_sync(batch_id: str, payload: dict, ctx: TenantCtx = 
 async def create_products_from_purchase_batch(batch_id: str, payload: dict, ctx: TenantCtx = Depends(_citimart_context)):
     _require_live_sync_permission(ctx)
     tenant_id = ctx["tenant_id"]
-    barcodes = payload.get("barcodes")
-    if not isinstance(barcodes, list) or not barcodes:
-        raise HTTPException(status_code=400, detail="barcodes must be a non-empty list.")
     batch = await citimart_data_hub_imports_collection.find_one({"tenant_id": tenant_id, "batch_id": batch_id, "kind": "purchase"})
     if not batch:
         raise HTTPException(status_code=404, detail="Purchase/GRC import batch not found.")
 
-    wanted = {_identity_key(b) for b in barcodes}
+    # Same fix as create_products_from_stock_batch above: don't trust a
+    # frontend-supplied barcode list (it only ever reflects a truncated
+    # preview sample), recompute the full missing set from the batch itself.
+    requested = payload.get("barcodes")
+    resolution = await _resolve_purchase_batch(tenant_id, batch_id)
+    missing_barcodes = {
+        (p["source_barcode"] or p["source_item_code"] or "").strip()
+        for p in resolution["problems"]
+        if any("No Product Master match" in e for e in p["errors"]) and (p["source_barcode"] or p["source_item_code"])
+    }
+    if isinstance(requested, list) and requested:
+        wanted = {_identity_key(b) for b in requested}
+        missing_barcodes = {b for b in missing_barcodes if _identity_key(b) in wanted}
+    if not missing_barcodes:
+        raise HTTPException(status_code=400, detail="No missing-product barcodes found in this batch.")
+
+    wanted = {_identity_key(b) for b in missing_barcodes}
     rows = await citimart_purchase_stage_rows_collection.find({"tenant_id": tenant_id, "batch_id": batch_id}).to_list(length=MAX_ROWS + 1)
     by_key: Dict[str, dict] = {}
     for row in rows:
         key = _identity_key(row.get("barcode") or row.get("item_code"))
         if key in wanted and key not in by_key:
             by_key[key] = row
-    missing = wanted - set(by_key)
-    if missing:
-        raise HTTPException(status_code=400, detail=f"{len(missing)} barcode(s)/item code(s) not found among this batch's staged rows.")
 
     now = datetime.utcnow()
     by = ctx.get("admin_name") or ctx.get("admin_email") or ""

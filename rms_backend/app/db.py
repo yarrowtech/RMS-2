@@ -1,7 +1,18 @@
 from motor.motor_asyncio import AsyncIOMotorClient
 from .config import settings
 
-client = AsyncIOMotorClient(settings.mongodb_uri)
+# No socketTimeoutMS was set before, which defaults to unlimited — if a
+# single write lands on a connection that goes quiet mid-request (a flaky
+# network blip, an Atlas node mid-failover), the driver just waits forever
+# instead of erroring out. That's exactly what turned several large Citimart
+# imports into multi-minute hangs instead of a quick, retryable failure.
+# These bounds make a stuck request fail within ~45s instead of hanging.
+client = AsyncIOMotorClient(
+    settings.mongodb_uri,
+    connectTimeoutMS=20000,
+    serverSelectionTimeoutMS=20000,
+    socketTimeoutMS=45000,
+)
 db = client[settings.mongodb_db]
 
 admins_collection = db["admins"]

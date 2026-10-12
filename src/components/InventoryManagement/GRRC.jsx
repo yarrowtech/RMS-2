@@ -1282,6 +1282,32 @@ export default function GRCManager() {
     }
   };
 
+  /* ── Download (PDF / Excel) ── */
+  const [downloadingId, setDownloadingId] = useState("");
+  const handleDownload = async (grc, format) => {
+    setDownloadingId(`${grc.id}-${format}`);
+    try {
+      const res = await authFetch(`${GRC_API}/${grc.id}/download?format=${format}`);
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.detail || "Download failed");
+      }
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `${grc.grcNo || "grc"}.${format}`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (e) {
+      showToast(e.message, "error");
+    } finally {
+      setDownloadingId("");
+    }
+  };
+
   /* ── Approve ── */
   const handleApprove = async (grc) => {
     try {
@@ -1550,6 +1576,12 @@ export default function GRCManager() {
                     <td className="tbl-td" style={{ textAlign: "right" }}>
                       <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
                         <ActionBtn color="#0EA5E9" onClick={() => { setActive(g); setModal("view"); }}>View</ActionBtn>
+                        <ActionBtn color="#0D9488" onClick={() => handleDownload(g, "pdf")}>
+                          {downloadingId === `${g.id}-pdf` ? "…" : "PDF"}
+                        </ActionBtn>
+                        <ActionBtn color="#16A34A" onClick={() => handleDownload(g, "xlsx")}>
+                          {downloadingId === `${g.id}-xlsx` ? "…" : "Excel"}
+                        </ActionBtn>
                         {g.status !== "Approved" && g.status !== "Rejected" && (
                           <ActionBtn color="#6366F1" onClick={() => { setActive(g); setModal("form"); }}>Edit</ActionBtn>
                         )}
