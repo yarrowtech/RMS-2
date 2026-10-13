@@ -53,13 +53,14 @@ from ..raphaaa_purchase_plan import (
     promotion_label,
 )
 from ..db import (
-    admins_collection, grn_collection, inventory_collection, product_collection,
+    admins_collection, citimart_sales_import_collection, grn_collection, inventory_collection, product_collection,
     procurement_notifications_collection, purchaseorders_collection, sales_collection,
     stores_collection, store_stock_collection, tech_packs_collection, tenants_collection, unstitched_stock_collection,
     vendor_catalogue_collection, vendor_tenant_links_collection, vendors_collection,
     forecast_low_stock_alerts_collection, forecast_restock_drafts_collection,
     internal_notifications_collection,
 )
+from .citimart_data_hub_routes import _build_location_lookup, _resolve_location
 
 router = APIRouter(prefix="/api/forecast-analytics", tags=["Forecast & Analytics"])
 TenantCtx = Dict[str, Any]
@@ -151,7 +152,120 @@ def _raphaaa_master_context(master: dict) -> dict:
     }
 
 
+async def _compute_citimart_demand_forecast(tenant_id: str, store_id: Optional[str], lookback_days: int, limit: int) -> List[dict]:
+    """Citimart's real sales history lives in citimart_sales_import (one
+    flat row per bill line — Bill Date/Barcode/Bill Qty/Net Amt), imported
+    through the isolated Citimart Data Hub, not in sales_collection (which
+    only has real-time POS sales — effectively empty for a tenant that's
+    just gone live). Same moving-average method and the same return-row
+    shape as _compute_demand_forecast below, just sourced from this flat
+    schema and enriched from the real citimart product_collection (not
+    _raphaaa_product_metadata, which is gated to is_raphaaa_tenant)."""
+    since_date = (datetime.utcnow() - timedelta(days=max(1, lookback_days))).date().isoformat()
+    match: Dict[str, Any] = {"tenant_id": tenant_id, "bill_date": {"$gte": since_date}}
+
+    # Resolved through the exact same alias lookup the stock import uses
+    # (Source Site spellings like "CITIMART - CHOWRINGHEE" or legacy ones
+    # like "Megashop Stock" all need to match the one real store, same as
+    # for stock) — a naive raw-text compare here would silently exclude
+    # rows whose "store" text doesn't byte-match the Store document's name.
+    location_lookup = None
+    if store_id:
+        stores_live = await stores_collection.find({"tenant_id": tenant_id, "active": True}).to_list(length=None)
+        location_lookup = _build_location_lookup(stores_live)
+
+    product_metadata: Dict[str, dict] = {}
+    async for product in product_collection.find(
+        {"tenant_id": tenant_id},
+        {"barcode": 1, "sku": 1, "product_name": 1, "division": 1, "section": 1, "department": 1, "vendor_name": 1, "cost_price": 1},
+    ):
+        bc = (product.get("barcode") or "").strip()
+        if bc:
+            product_metadata[bc] = product
+
+    weekly: Dict[str, Dict[tuple, float]] = defaultdict(lambda: defaultdict(float))
+    meta: Dict[str, Dict[str, Any]] = {}
+
+    cursor = citimart_sales_import_collection.find(match, {
+        "barcode": 1, "item_code": 1, "bill_date": 1, "bill_qty": 1, "net_amt": 1, "store": 1,
+        "division": 1, "section": 1, "department": 1, "vendor": 1, "design_no": 1, "size": 1,
+    })
+    async for row in cursor:
+        if location_lookup is not None:
+            resolved, _errors = _resolve_location(row.get("store"), location_lookup)
+            if not resolved or resolved.get("store_id") != store_id:
+                continue
+        bc = (row.get("barcode") or row.get("item_code") or "").strip()
+        qty = float(row.get("bill_qty") or 0)
+        if not bc or qty <= 0:
+            continue
+        bill_date = row.get("bill_date") or ""
+        try:
+            created = datetime.strptime(bill_date, "%Y-%m-%d")
+        except ValueError:
+            continue
+        week_key = created.isocalendar()[:2]
+        weekly[bc][week_key] += qty
+        m = meta.setdefault(bc, {
+            "barcode": bc, "design_no": row.get("design_no", ""), "size": row.get("size", ""),
+            "division": row.get("division", ""), "section": row.get("section", ""), "department": row.get("department", ""),
+            "vendor_name": row.get("vendor", ""), "total_qty": 0.0, "total_revenue": 0.0,
+        })
+        m["total_qty"] += qty
+        m["total_revenue"] += float(row.get("net_amt") or 0)
+
+    rows: List[dict] = []
+    for bc, weeks in weekly.items():
+        m = meta[bc]
+        master = product_metadata.get(bc) or {}
+        ordered = [weeks[k] for k in sorted(weeks.keys())]
+        weeks_active = len(ordered)
+        avg_weekly_qty = m["total_qty"] / weeks_active if weeks_active else 0.0
+        recent = ordered[-3:]
+        forecast_next_period_qty = sum(recent) / len(recent) if recent else 0.0
+
+        trend = "stable"
+        if weeks_active >= 4:
+            half = weeks_active // 2
+            earlier_avg = sum(ordered[:half]) / half if half else 0.0
+            later_avg = sum(ordered[half:]) / (weeks_active - half) if (weeks_active - half) else 0.0
+            if later_avg > earlier_avg * 1.15:
+                trend = "rising"
+            elif later_avg < earlier_avg * 0.85:
+                trend = "falling"
+
+        avg_price = m["total_revenue"] / m["total_qty"] if m["total_qty"] else 0.0
+        avg_cost = float(master.get("cost_price") or 0)
+        display_name = master.get("product_name") or m["design_no"] or bc
+
+        rows.append({
+            "barcode": bc, "stock_identity": bc,
+            "name": display_name, "source_name": m["design_no"],
+            "sku": master.get("sku") or "",
+            "division": master.get("division") or m["division"],
+            "section": master.get("section") or m["section"],
+            "department": master.get("department") or m["department"],
+            "design_no": m["design_no"], "brand": "", "style": "", "product_type": "",
+            "size": m["size"],
+            "vendor_name": master.get("vendor_name") or m["vendor_name"],
+            "vendor_linked": False,
+            "weeks_active": weeks_active,
+            "total_qty_sold": round(m["total_qty"], 2),
+            "avg_weekly_qty": round(avg_weekly_qty, 2),
+            "forecast_next_period_qty": round(forecast_next_period_qty, 2),
+            "trend": trend,
+            "avg_selling_price": round(avg_price, 2),
+            "avg_cost_price": round(avg_cost, 2),
+            "margin_per_unit": round(avg_price - avg_cost, 2),
+        })
+
+    rows.sort(key=lambda r: r["total_qty_sold"], reverse=True)
+    return rows[:limit]
+
+
 async def _compute_demand_forecast(tenant_id: str, store_id: Optional[str], lookback_days: int, limit: int) -> List[dict]:
+    if tenant_id == "citimart":
+        return await _compute_citimart_demand_forecast(tenant_id, store_id, lookback_days, limit)
     since = datetime.utcnow() - timedelta(days=max(1, lookback_days))
     match: Dict[str, Any] = {"tenant_id": tenant_id, "type": "sale", "created_at": {"$gte": since}}
     if store_id:

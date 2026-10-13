@@ -1454,17 +1454,19 @@ async def store_inventory(
         qty = live_qty_by_key[live_key] if has_live else _number(row.get("closing_qty"))
         rate = _number(row.get("rsp")) or _number(row.get("mrp")) or _number(row.get("standard_rate"))
         closing_amt = _number(row.get("closing_amt"))
-        if has_live:
-            # Once synced, qty is the live figure (can differ from the
-            # import snapshot's own closing_qty), so the file's closing_amt
-            # no longer applies — recompute from the live qty instead.
-            value = qty * rate
-        else:
-            # Trust the source file's own CLOSING_AMT outright rather than
-            # recomputing qty × RSP — the file's figure is whatever
-            # valuation basis (usually cost price) the source system
-            # actually used, and recomputing at RSP silently overstated it.
-            value = closing_amt or (qty * rate)
+        # Trust the source file's own CLOSING_AMT outright rather than
+        # recomputing qty × RSP — the file's figure is whatever valuation
+        # basis (often cost price, not RSP) the source system actually
+        # used, and recomputing at RSP silently overstated it. This applies
+        # whether or not the batch has since synced to live inventory — a
+        # batch being SYNCED doesn't mean every row's qty actually changed,
+        # so there's no reason to drop the file's own figure for rows that
+        # never moved just because the batch as a whole is marked synced.
+        # Only recompute from qty × rate when CLOSING_AMT is missing/zero,
+        # or when live qty has drifted from the imported closing_qty (a
+        # real post-sync change, where the file's amount is now stale).
+        qty_drifted = has_live and qty != _number(row.get("closing_qty"))
+        value = (qty * rate) if (qty_drifted or not closing_amt) else closing_amt
         items.append({
             "store_name": row.get("store_name") or "Unknown store", "barcode": row.get("barcode"), "item_code": row.get("item_code"),
             "division": row.get("division"), "section": row.get("section"), "department": row.get("department"),
