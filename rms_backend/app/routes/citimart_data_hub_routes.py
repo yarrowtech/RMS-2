@@ -538,14 +538,21 @@ async def commit_stock(file: UploadFile = File(...), ctx: TenantCtx = Depends(_c
             continue
         resolved_location, _location_errors = _resolve_location(row["store_name"], location_lookup)
         snapshot_store_name = resolved_location["store_name"] if resolved_location else row["store_name"]
-        key = {"tenant_id": ctx["tenant_id"], "store_name": snapshot_store_name, "barcode": row["barcode"] or row["item_code"]}
+        # Central stock has multiple physical segments (MAIN, PACKED, etc.).
+        # Keep the segment in the snapshot key so the same barcode in Package
+        # and Warehouse is not overwritten before the analytics view can sum it.
+        central_segment = resolved_location.get("central_segment") if resolved_location else None
+        key = {
+            "tenant_id": ctx["tenant_id"], "store_name": snapshot_store_name,
+            "central_segment": central_segment, "barcode": row["barcode"] or row["item_code"],
+        }
         staged = {**row, "tenant_id": ctx["tenant_id"], "barcode": row["barcode"] or row["item_code"], "batch_id": batch_id, "updated_at": now}
         # The snapshot doc's own store_name is also set to the canonical
         # name (not whichever raw spelling this particular upload used) —
         # otherwise the display would keep flipping to whatever text the
         # most recent file happened to use, even though the dedup key above
         # already keeps it as one entry.
-        snapshot_doc = {**staged, "store_name": snapshot_store_name}
+        snapshot_doc = {**staged, "store_name": snapshot_store_name, "central_segment": central_segment}
         # Each op gets its OWN dict. InsertOne mutates its document in place
         # (pymongo stamps an _id onto it) — sharing one dict between the
         # InsertOne below and this $set would leak that _id into a later
@@ -1434,13 +1441,23 @@ async def store_inventory(
     stores_live = await stores_collection.find({"tenant_id": tenant_id, "active": True}).to_list(length=None)
     location_lookup = _build_location_lookup(stores_live)
 
+    # Key live quantities by physical location. Central Inventory is split
+    # into named segments so Package/Packed remains visible instead of being
+    # collapsed into (and potentially overwritten by) Main Warehouse.
     live_qty_by_key: Dict[tuple, float] = {}
     if synced_barcodes:
         async for row in store_stock_collection.find(
             {"tenant_id": tenant_id, "barcode": {"$in": list(synced_barcodes)}}, {"barcode": 1, "store_id": 1, "stockQty": 1}
         ):
-            key = (row.get("store_id"), row["barcode"])
+            key = (row.get("store_id"), None, row["barcode"])
             live_qty_by_key[key] = live_qty_by_key.get(key, 0.0) + _number(row.get("stockQty"))
+        async for row in inventory_collection.find(
+            {"tenant_id": tenant_id, "barcode": {"$in": list(synced_barcodes)}},
+            {"barcode": 1, "stockQty": 1, "central_segments": 1},
+        ):
+            segments = _central_segments(row)
+            for segment, segment_qty in segments.items():
+                live_qty_by_key[(None, segment, row["barcode"])] = segment_qty
 
     items = []
     for row in snapshot_rows:
@@ -1449,29 +1466,27 @@ async def store_inventory(
             continue
         location, _errors = _resolve_location(row.get("store_name"), location_lookup)
         store_id = location["store_id"] if location else None
-        live_key = (store_id, barcode)
+        # Snapshot rows retain their original central segment. Re-resolving
+        # the canonical name "Central Inventory" alone would otherwise map
+        # every central row back to MAIN and hide PACKED/Package again.
+        central_segment = row.get("central_segment") or (location.get("central_segment") if location else None)
+        location_label = location.get("location_label") if location else None
+        if store_id is None and central_segment in _CENTRAL_SEGMENTS:
+            location_label = f"Central Inventory / {_CENTRAL_SEGMENTS[central_segment]['label']}"
+        live_key = (store_id, central_segment, barcode)
         has_live = barcode in synced_barcodes and live_key in live_qty_by_key
         qty = live_qty_by_key[live_key] if has_live else _number(row.get("closing_qty"))
         rate = _number(row.get("rsp")) or _number(row.get("mrp")) or _number(row.get("standard_rate"))
         closing_amt = _number(row.get("closing_amt"))
-        # Trust the source file's own CLOSING_AMT outright rather than
-        # recomputing qty × RSP — the file's figure is whatever valuation
-        # basis (often cost price, not RSP) the source system actually
-        # used, and recomputing at RSP silently overstated it. This applies
-        # whether or not the batch has since synced to live inventory — a
-        # batch being SYNCED doesn't mean every row's qty actually changed,
-        # so there's no reason to drop the file's own figure for rows that
-        # never moved just because the batch as a whole is marked synced.
-        # Only recompute from qty × rate when CLOSING_AMT is missing/zero,
-        # or when live qty has drifted from the imported closing_qty (a
-        # real post-sync change, where the file's amount is now stale).
-        qty_drifted = has_live and qty != _number(row.get("closing_qty"))
-        value = (qty * rate) if (qty_drifted or not closing_amt) else closing_amt
+        # Stock Value is always the uploaded CLOSING_AMT. Never derive it
+        # from quantity, RSP, MRP, or rate; that creates valuation mismatches.
+        value = closing_amt
         items.append({
-            "store_name": row.get("store_name") or "Unknown store", "barcode": row.get("barcode"), "item_code": row.get("item_code"),
+            "store_name": location_label or row.get("store_name") or "Unknown store",
+            "central_segment": central_segment, "barcode": row.get("barcode"), "item_code": row.get("item_code"),
             "division": row.get("division"), "section": row.get("section"), "department": row.get("department"),
             "vendor": row.get("vendor"), "category1": row.get("category1"), "uom": row.get("uom"),
-            "qty": round(qty, 2), "rate": round(rate, 2), "value": round(value, 2),
+            "qty": round(qty, 2), "rate": round(rate, 2), "value": value,
             "stock_source": "live" if has_live else "import_snapshot",
         })
 
