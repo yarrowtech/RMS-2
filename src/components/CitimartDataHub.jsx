@@ -225,7 +225,14 @@ function LiveStockSync({ kind = "stock", batchId, onClose, onChanged }) {
           <p className="mt-2 text-[11px] text-amber-800">{isPurchase ? "These Rec Qty amounts are added to whatever's already there." : "Only supplied products, stores, and Central Inventory segments change. Omitted stock is preserved."}</p>
           <button onClick={sync} disabled={busy} className={`${BTN_PRIMARY} mt-3 w-full`}>{busy ? "Reconciling…" : isPurchase ? "Add these receipts to live stock" : "Approve and sync to live POS & Inventory"}</button>
         </div>}
-        {preview.live_sync_status === "SYNCED" && <button onClick={rollback} disabled={busy} className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-2 text-sm font-bold text-rose-700 disabled:opacity-50">Guarded rollback</button>}
+        {preview.live_sync_status === "SYNCED" && <div>
+          <button onClick={rollback} disabled={busy} className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-2 text-sm font-bold text-rose-700 disabled:opacity-50">{busy ? "Rolling back…" : "Guarded rollback"}</button>
+          {busy ? (
+            <p className="mt-2 text-[11px] font-bold text-amber-700">Rolling back is running on the server — for a large batch (tens of thousands of rows) this can take several minutes. Please wait: do not refresh this page, close this tab, or click the button again. Clicking again won't speed it up and may just get blocked until the first run finishes.</p>
+          ) : (
+            <p className="mt-2 text-[11px] text-slate-500">For large batches, rollback can take a few minutes to restore every row. Once started, let it finish on its own — closing the tab doesn't stop it, and clicking again before it's done will be blocked.</p>
+          )}
+        </div>}
       </div>}
     </section>
   );
@@ -615,6 +622,7 @@ export default function CitimartDataHub() {
 
       <section className="rounded-2xl border-t-4 border-sky-400 bg-gradient-to-br from-white to-sky-50/60 p-5 shadow-md">
         <h3 className="text-sm font-black text-slate-900">Import history</h3>
+        <p className="mt-1 text-[11px] text-slate-500">A <span className="font-bold text-rose-600">SYNCED</span> batch can't be deleted directly — roll it back first, then delete. Rollback and delete both run on the server and can take a few minutes for a large batch: once started, wait for it to finish on its own rather than clicking again or refreshing.</p>
         <div className="mt-3 divide-y divide-slate-100">
           {imports.length ? imports.map((row) => (
 <div key={row.batch_id} className="flex flex-wrap items-center justify-between gap-2 py-2 text-xs">
@@ -626,8 +634,13 @@ export default function CitimartDataHub() {
               <div className="flex flex-wrap items-center justify-end gap-2">
                 <span className="text-slate-500">{row.row_count} row(s) · {row.imported_by} · {new Date(row.imported_at).toLocaleString()}</span>
                 {(row.kind === "stock" || row.kind === "purchase") && <button onClick={() => { setReviewKind(row.kind); setReviewBatchId(row.batch_id); }} className="rounded-lg border border-violet-200 bg-violet-50 px-2 py-1 font-bold text-violet-700">Review{row.live_sync_status === "SYNCED" ? " / rollback" : " / sync"}</button>}
-                <button onClick={() => deleteImport(row)} disabled={deletingId === row.batch_id} className="rounded-lg border border-rose-200 bg-rose-50 px-2 py-1 font-bold text-rose-700 disabled:opacity-50">
-                  {deletingId === row.batch_id ? "Deleting…" : "Delete"}
+                <button
+                  onClick={() => deleteImport(row)}
+                  disabled={deletingId === row.batch_id || row.live_sync_status === "SYNCED"}
+                  title={row.live_sync_status === "SYNCED" ? "Roll back this batch first — a synced batch can't be deleted directly." : undefined}
+                  className="rounded-lg border border-rose-200 bg-rose-50 px-2 py-1 font-bold text-rose-700 disabled:opacity-50"
+                >
+                  {deletingId === row.batch_id ? "Deleting… please wait" : "Delete"}
                 </button>
               </div>
             </div>

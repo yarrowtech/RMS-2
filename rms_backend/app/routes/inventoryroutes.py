@@ -146,8 +146,21 @@ async def build_product_master(tenant_id: str) -> dict:
     """
     vendor_name_map = await build_vendor_name_map(tenant_id)
 
+    # Projected to only the fields actually read below (smaller documents
+    # over the wire), and a large batch_size — on a big catalog (Citimart's
+    # 34k+ products) the dominant cost wasn't data volume or the per-row
+    # Python work, it was round-trip count: Motor's default batch size meant
+    # dozens of separate network round-trips to Atlas. One big batch cut this
+    # from ~10s to ~1.7s in testing.
+    projection = {field: 1 for field in (
+        "has_variants", "barcode", "product_name", "sku", "design_no", "category1",
+        "brand", "category2", "division", "section", "department", "hsn_code",
+        "source", "created_by", "vendor_id", "vendor_name", "quantity", "cost_price",
+        "mrp", "grn_no", "variants",
+    )}
     master = {}
-    async for p in product_collection.find({"tenant_id": tenant_id}):
+    cursor = product_collection.find({"tenant_id": tenant_id}, projection).batch_size(10000)
+    async for p in cursor:
         source    = resolve_source(p)
         vname     = get_vendor_name(p, vendor_name_map)
         vendor_id = str(p.get("vendor_id") or "")
