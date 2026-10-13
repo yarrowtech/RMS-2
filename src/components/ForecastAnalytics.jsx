@@ -969,6 +969,7 @@ function GenericPurchasePlanView({ raphaaaMode = false }) {
   const [draftLoading, setDraftLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [filters, setFilters] = useState({});
+  const [downloading, setDownloading] = useState("");
 
   useEffect(() => {
     faFetch("/api/forecast-analytics/restock-draft")
@@ -988,6 +989,18 @@ function GenericPurchasePlanView({ raphaaaMode = false }) {
       });
       setPlan(r);
     } catch (e) { setError(e.message); } finally { setLoading(false); }
+  };
+
+  const downloadPlan = async (format) => {
+    const budgetNum = Number(budget);
+    if (!budgetNum || budgetNum <= 0) { setError("Enter a budget greater than 0."); return; }
+    setDownloading(format); setError(null);
+    try {
+      await faDownload(
+        `/api/forecast-analytics/purchase-plan/download?budget_inr=${budgetNum}&lookback_days=${lookbackDays}&format=${format}`,
+        `purchase-plan.${format}`,
+      );
+    } catch (e) { setError(e.message); } finally { setDownloading(""); }
   };
 
   const planFields = React.useMemo(() => raphaaaMode ? [...PLAN_BASE_FILTERS, ...BASIC_PRODUCT_FILTERS] : PLAN_BASE_FILTERS, [raphaaaMode]);
@@ -1058,28 +1071,46 @@ function GenericPurchasePlanView({ raphaaaMode = false }) {
 
       {plan && (
         <>
-          <div className="grid gap-4 sm:grid-cols-3">
-            {[
-              ["Budget", `₹${plan.budget_inr.toLocaleString("en-IN")}`],
-              ["Allocated", `₹${plan.allocated_total.toLocaleString("en-IN")}`],
-              ["Remaining", `₹${plan.remaining_budget.toLocaleString("en-IN")}`],
-            ].map(([label, value]) => (
-              <div key={label} className="fa-stat-card p-4">
-                <p className="text-xs font-bold uppercase tracking-wide text-slate-400">{label}</p>
-                <p className="mt-1 text-xl font-black text-slate-900">{value}</p>
-              </div>
-            ))}
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="grid flex-1 gap-4 sm:grid-cols-3">
+              {[
+                ["Budget", `₹${plan.budget_inr.toLocaleString("en-IN")}`],
+                ["Allocated", `₹${plan.allocated_total.toLocaleString("en-IN")}`],
+                ["Remaining", `₹${plan.remaining_budget.toLocaleString("en-IN")}`],
+              ].map(([label, value]) => (
+                <div key={label} className="fa-stat-card p-4">
+                  <p className="text-xs font-bold uppercase tracking-wide text-slate-400">{label}</p>
+                  <p className="mt-1 text-xl font-black text-slate-900">{value}</p>
+                </div>
+              ))}
+            </div>
+            <div className="flex gap-2">
+              <button onClick={() => downloadPlan("xlsx")} disabled={!!downloading} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-60">
+                <Download size={14} /> {downloading === "xlsx" ? "Preparing…" : "Excel"}
+              </button>
+              <button onClick={() => downloadPlan("pdf")} disabled={!!downloading} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-60">
+                <Download size={14} /> {downloading === "pdf" ? "Preparing…" : "PDF"}
+              </button>
+            </div>
           </div>
           <div className="fa-panel overflow-hidden">
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
-                <thead><tr>{["Item", "SKU", "Qty", "Unit cost", "Line cost", "Expected profit", "ROI", "Trend"].map((h) => <th key={h} className="whitespace-nowrap px-4 py-2.5 text-left font-bold uppercase">{h}</th>)}</tr></thead>
+                <thead><tr>{["Item", "Vendor to contact", "SKU", "Qty", "Unit cost", "Line cost", "Expected profit", "ROI", "Trend"].map((h) => <th key={h} className="whitespace-nowrap px-4 py-2.5 text-left font-bold uppercase">{h}</th>)}</tr></thead>
                 <tbody className="divide-y divide-slate-100">
-                  {plan.lines.length === 0 ? <tr><td colSpan={8} className="px-4 py-8 text-center text-slate-400">Budget too small for any forecasted item, or no demand history yet.</td></tr>
-                    : visiblePlanLines.length === 0 ? <tr><td colSpan={8} className="px-4 py-8 text-center text-slate-400">No purchase-plan lines match the selected filters.</td></tr>
+                  {plan.lines.length === 0 ? <tr><td colSpan={9} className="px-4 py-8 text-center text-slate-400">Budget too small for any forecasted item, or no demand history yet.</td></tr>
+                    : visiblePlanLines.length === 0 ? <tr><td colSpan={9} className="px-4 py-8 text-center text-slate-400">No purchase-plan lines match the selected filters.</td></tr>
                     : visiblePlanLines.map((line) => (
                       <tr key={line.barcode}>
-                        <td className="px-4 py-2.5 font-semibold text-slate-800">{line.name || line.barcode}{line.partial && <span className="ml-1.5 rounded-full bg-amber-50 px-1.5 py-0.5 text-[10px] font-bold text-amber-700">partial</span>}{raphaaaMode && <><span className="mt-0.5 block text-[10px] font-normal text-slate-400">{[line.section, line.department, line.design_no, line.brand, line.size].filter(Boolean).join(" / ")}</span>{line.vendor_name && <span className="block text-[10px] font-semibold text-blue-600">Supplier: {line.vendor_name}</span>}</>}</td>
+                        <td className="px-4 py-2.5 font-semibold text-slate-800">{line.name || line.barcode}{line.partial && <span className="ml-1.5 rounded-full bg-amber-50 px-1.5 py-0.5 text-[10px] font-bold text-amber-700">partial</span>}{raphaaaMode && <><span className="mt-0.5 block text-[10px] font-normal text-slate-400">{[line.section, line.department, line.design_no, line.brand, line.size].filter(Boolean).join(" / ")}</span></>}</td>
+                        <td className="px-4 py-2.5">
+                          <span className="block text-xs font-bold text-slate-700">{line.vendor_name || "—"}</span>
+                          {line.vendor_contact_on_file ? (
+                            <span className="mt-0.5 block text-[10px] text-slate-500">{line.vendor_phone || line.vendor_contact_name || line.vendor_email || ""}</span>
+                          ) : (
+                            <span className="mt-0.5 block text-[10px] font-semibold text-rose-500">No contact on file</span>
+                          )}
+                        </td>
                         <td className="px-4 py-2.5 font-mono text-xs">{line.sku}</td>
                         <td className="px-4 py-2.5">{line.recommended_qty}</td>
                         <td className="px-4 py-2.5">₹{line.unit_cost}</td>

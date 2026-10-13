@@ -539,16 +539,43 @@ class RaphaaaPurchasePlanRequest(BaseModel):
     season_end_month: int = Field(2, ge=1, le=12)
 
 
-def _lines_from_forecast(rows: List[dict]) -> List[dict]:
+async def _barcode_stock_map(tenant_id: str, store_id: Optional[str]) -> Dict[str, float]:
+    """Current on-hand qty per barcode (not stock_identity) — used to net
+    forecasted demand against what's already in stock before recommending a
+    purchase quantity, so the plan doesn't tell you to buy something that's
+    already sitting on the shelf/warehouse."""
+    stock: Dict[str, float] = defaultdict(float)
+    if store_id:
+        async for doc in store_stock_collection.find({"tenant_id": tenant_id, "store_id": store_id}, {"barcode": 1, "stockQty": 1}):
+            bc = (doc.get("barcode") or "").strip()
+            if bc:
+                stock[bc] += float(doc.get("stockQty") or 0)
+    else:
+        for collection in (inventory_collection, store_stock_collection):
+            async for doc in collection.find({"tenant_id": tenant_id}, {"barcode": 1, "stockQty": 1}):
+                bc = (doc.get("barcode") or "").strip()
+                if bc:
+                    stock[bc] += float(doc.get("stockQty") or 0)
+    return dict(stock)
+
+
+def _lines_from_forecast(rows: List[dict], stock_map: Optional[Dict[str, float]] = None) -> List[dict]:
     """Shared by the interactive /purchase-plan endpoint and the automated
     restock draft below — same ROI-ranked line shape either way, the only
-    difference is whether a budget then constrains it."""
+    difference is whether a budget then constrains it. stock_map nets off
+    current on-hand qty (by barcode) from the forecasted demand first, so an
+    item that's already fully stocked doesn't get recommended for purchase."""
+    stock_map = stock_map or {}
     lines = []
     for row in rows:
         unit_cost = row["avg_cost_price"]
         if unit_cost <= 0 or row["forecast_next_period_qty"] <= 0:
             continue
-        recommended_qty = max(1, math.ceil(row["forecast_next_period_qty"]))
+        on_hand_qty = stock_map.get(row["barcode"], 0.0)
+        net_demand_qty = row["forecast_next_period_qty"] - on_hand_qty
+        if net_demand_qty <= 0:
+            continue
+        recommended_qty = max(1, math.ceil(net_demand_qty))
         line_cost = round(recommended_qty * unit_cost, 2)
         expected_profit = round(recommended_qty * row["margin_per_unit"], 2)
         roi = round(expected_profit / line_cost, 3) if line_cost else 0.0
@@ -560,6 +587,7 @@ def _lines_from_forecast(rows: List[dict]) -> List[dict]:
             "brand": row.get("brand", ""), "style": row.get("style", ""),
             "product_type": row.get("product_type", ""), "size": row.get("size", ""),
             "vendor_name": row.get("vendor_name", ""), "vendor_linked": row.get("vendor_linked", False),
+            "on_hand_qty": round(on_hand_qty, 2),
             "recommended_qty": recommended_qty, "unit_cost": unit_cost,
             "line_cost": line_cost, "expected_profit": expected_profit, "roi": roi,
             "trend": row["trend"],
@@ -568,10 +596,41 @@ def _lines_from_forecast(rows: List[dict]) -> List[dict]:
     return lines
 
 
+async def _vendor_contact_map(vendor_names: List[str]) -> Dict[str, dict]:
+    """vendor_name on a Citimart/stock-imported product is free text from the
+    uploaded file, not a vendor_id link — so the only way to find a phone/
+    email for the purchaser to actually call is a name match against
+    vendors_collection (the real onboarded-vendor identities). A vendor that
+    was never onboarded to RMS simply has no contact on file; callers show
+    that plainly rather than guessing."""
+    names = {n.strip() for n in vendor_names if n and n.strip()}
+    if not names:
+        return {}
+    docs = await vendors_collection.find(
+        {"$or": [{"name": {"$in": list(names)}}, {"brandName": {"$in": list(names)}}]},
+        {"name": 1, "brandName": 1, "contactName": 1, "contactMobile": 1, "email": 1},
+    ).to_list(length=len(names) * 2)
+    out: Dict[str, dict] = {}
+    for d in docs:
+        contact = {"contact_name": d.get("contactName", ""), "phone": d.get("contactMobile", ""), "email": d.get("email", "")}
+        for key in (d.get("name"), d.get("brandName")):
+            if key:
+                out[key.strip().lower()] = contact
+    return out
+
+
 @router.post("/purchase-plan")
 async def build_purchase_plan(payload: PurchasePlanRequest, ctx: TenantCtx = Depends(_require_forecast_context)):
     forecast_rows = await _compute_demand_forecast(ctx["tenant_id"], payload.store_id, payload.lookback_days, limit=200)
-    lines = _lines_from_forecast(forecast_rows)
+    stock_map = await _barcode_stock_map(ctx["tenant_id"], payload.store_id)
+    lines = _lines_from_forecast(forecast_rows, stock_map)
+    contact_map = await _vendor_contact_map([line["vendor_name"] for line in lines])
+    for line in lines:
+        contact = contact_map.get((line["vendor_name"] or "").strip().lower())
+        line["vendor_contact_name"] = contact["contact_name"] if contact else ""
+        line["vendor_phone"] = contact["phone"] if contact else ""
+        line["vendor_email"] = contact["email"] if contact else ""
+        line["vendor_contact_on_file"] = bool(contact)
 
     plan, running_total, skipped = [], 0.0, 0
     for line in lines:
@@ -604,6 +663,111 @@ async def build_purchase_plan(payload: PurchasePlanRequest, ctx: TenantCtx = Dep
         "skipped_count": skipped,
         "lines": plan,
     }
+
+
+def _purchase_plan_export_response(plan: dict, fmt: str):
+    """Excel/PDF handoff for the purchaser — lines grouped by vendor (with
+    whatever contact info RMS has on file for that vendor name) so the
+    purchaser can go vendor-by-vendor placing orders, plus the budget summary
+    at the top. Same two-format pattern as PO/GRC/vendor-ledger exports."""
+    from fastapi.responses import StreamingResponse
+    from io import BytesIO
+
+    by_vendor: Dict[str, List[dict]] = defaultdict(list)
+    for line in plan["lines"]:
+        by_vendor[line["vendor_name"] or "Unknown / not on file"].append(line)
+    vendor_groups = sorted(by_vendor.items(), key=lambda kv: sum(l["line_cost"] for l in kv[1]), reverse=True)
+
+    if fmt == "xlsx":
+        from openpyxl import Workbook
+        from openpyxl.styles import Alignment, Font, PatternFill
+        wb = Workbook(); ws = wb.active; ws.title = "Purchase Plan"
+        ws.append(["PURCHASE PLAN"])
+        ws.append(["Budget", plan["budget_inr"]])
+        ws.append(["Allocated", plan["allocated_total"]])
+        ws.append(["Remaining", plan["remaining_budget"]])
+        ws.append(["Lines", plan["line_count"], "Skipped (budget exhausted)", plan["skipped_count"]])
+        ws.append([])
+
+        header = ["Vendor", "Contact name", "Phone", "Email", "Product", "SKU", "Design No", "On hand", "Qty to buy", "Unit cost", "Line cost", "Expected profit", "ROI", "Trend"]
+        for vendor_name, vendor_lines in vendor_groups:
+            on_file = vendor_lines[0]["vendor_contact_on_file"]
+            vendor_total = sum(l["line_cost"] for l in vendor_lines)
+            ws.append([f"VENDOR: {vendor_name}", "" if on_file else "No contact on file — vendor not onboarded to RMS yet", "", "", "", "", "", "", "", "", "Total:", round(vendor_total, 2)])
+            vendor_row = ws.max_row
+            ws.cell(vendor_row, 1).font = Font(bold=True, color="FFFFFF"); ws.cell(vendor_row, 1).fill = PatternFill("solid", fgColor="4F46E5")
+            if not on_file:
+                ws.cell(vendor_row, 2).font = Font(italic=True, color="B91C1C")
+            ws.append(header)
+            header_row = ws.max_row
+            for cell in ws[header_row]:
+                cell.font = Font(bold=True); cell.fill = PatternFill("solid", fgColor="E0E7FF")
+            for l in vendor_lines:
+                ws.append([
+                    vendor_name, l["vendor_contact_name"], l["vendor_phone"], l["vendor_email"],
+                    l["name"], l["sku"], l.get("design_no", ""), l["on_hand_qty"], l["recommended_qty"],
+                    l["unit_cost"], l["line_cost"], l["expected_profit"], l["roi"], l["trend"],
+                ])
+            ws.append([])
+        for column in ws.columns:
+            ws.column_dimensions[column[0].column_letter].width = min(max((len(str(c.value or "")) for c in column), default=10) + 3, 42)
+        buf = BytesIO(); wb.save(buf); buf.seek(0)
+        return StreamingResponse(buf, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers={"Content-Disposition": 'attachment; filename="purchase-plan.xlsx"'})
+
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.units import mm
+    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+    buf = BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=landscape(A4), leftMargin=15 * mm, rightMargin=15 * mm, topMargin=16 * mm, bottomMargin=16 * mm)
+    styles = getSampleStyleSheet()
+    title = ParagraphStyle("PurchasePlanTitle", parent=styles["Heading1"], textColor=colors.HexColor("#4F46E5"))
+    elements = [
+        Paragraph("Purchase Plan", title),
+        Paragraph(
+            f"Budget: {plan['budget_inr']:,.2f} &nbsp;|&nbsp; Allocated: {plan['allocated_total']:,.2f} &nbsp;|&nbsp; "
+            f"Remaining: {plan['remaining_budget']:,.2f} &nbsp;|&nbsp; Lines: {plan['line_count']} &nbsp;|&nbsp; Skipped: {plan['skipped_count']}",
+            styles["Normal"],
+        ),
+        Spacer(1, 6 * mm),
+    ]
+    for vendor_name, vendor_lines in vendor_groups:
+        on_file = vendor_lines[0]["vendor_contact_on_file"]
+        contact_bits = vendor_lines[0]
+        contact_line = (
+            f"Contact: {contact_bits['vendor_contact_name'] or '-'} &nbsp;|&nbsp; Phone: {contact_bits['vendor_phone'] or '-'} "
+            f"&nbsp;|&nbsp; Email: {contact_bits['vendor_email'] or '-'}"
+        ) if on_file else "No contact on file — this vendor has not been onboarded to RMS yet."
+        elements.append(Paragraph(f"Vendor: {vendor_name}", styles["Heading3"]))
+        elements.append(Paragraph(contact_line, styles["Normal"]))
+        data = [["Product", "SKU", "On hand", "Qty", "Unit cost", "Line cost", "ROI", "Trend"]]
+        for l in vendor_lines:
+            data.append([l["name"][:40], l["sku"], l["on_hand_qty"], l["recommended_qty"], f"{l['unit_cost']:,.2f}", f"{l['line_cost']:,.2f}", l["roi"], l["trend"]])
+        table = Table(data, repeatRows=1)
+        table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#4F46E5")), ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("FONTSIZE", (0, 0), (-1, -1), 8), ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#CBD5E1")),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F8FAFC")]),
+        ]))
+        elements.append(table)
+        elements.append(Spacer(1, 6 * mm))
+    doc.build(elements)
+    buf.seek(0)
+    return StreamingResponse(buf, media_type="application/pdf", headers={"Content-Disposition": 'attachment; filename="purchase-plan.pdf"'})
+
+
+@router.get("/purchase-plan/download")
+async def download_purchase_plan(
+    budget_inr: float = Query(..., gt=0),
+    store_id: Optional[str] = Query(None),
+    lookback_days: int = Query(90, ge=7, le=365),
+    format: str = Query("xlsx", pattern="^(xlsx|pdf)$"),
+    ctx: TenantCtx = Depends(_require_forecast_context),
+):
+    payload = PurchasePlanRequest(budget_inr=budget_inr, store_id=store_id, lookback_days=lookback_days)
+    plan = await build_purchase_plan(payload, ctx)
+    return _purchase_plan_export_response(plan, format)
 
 
 def _number(value: Any) -> float:
@@ -1730,7 +1894,8 @@ async def _run_forecast_automation_for_tenant(tenant_id: str) -> dict:
 
     alerts.sort(key=lambda a: a["days_remaining"])
 
-    restock_lines = _lines_from_forecast(hq_forecast_rows)[:100]
+    hq_barcode_stock = await _barcode_stock_map(tenant_id, None)
+    restock_lines = _lines_from_forecast(hq_forecast_rows, hq_barcode_stock)[:100]
 
     await forecast_low_stock_alerts_collection.delete_many({"tenant_id": tenant_id})
     if alerts:
