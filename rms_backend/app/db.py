@@ -383,6 +383,7 @@ async def ensure_procurement_indexes():
     await product_collection.create_index([("tenant_id", 1), ("vendor_barcode", 1)], name="product_tenant_vendor_gtin")
     await store_stock_collection.create_index([("tenant_id", 1), ("store_id", 1), ("stock_identity", 1)], name="store_stock_tenant_identity")
     await citimart_stock_stage_rows_collection.create_index([("tenant_id", 1), ("batch_id", 1)], name="citimart_stock_stage_batch")
+    await citimart_stock_snapshot_collection.create_index([("tenant_id", 1)], name="citimart_stock_snapshot_tenant")
     await citimart_stock_sync_audit_collection.create_index([("tenant_id", 1), ("batch_id", 1)], name="citimart_stock_sync_audit_batch")
     await citimart_purchase_stage_rows_collection.create_index([("tenant_id", 1), ("batch_id", 1)], name="citimart_purchase_stage_batch")
     await citimart_purchase_sync_audit_collection.create_index([("tenant_id", 1), ("batch_id", 1)], name="citimart_purchase_sync_audit_batch")

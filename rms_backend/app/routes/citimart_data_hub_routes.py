@@ -1430,13 +1430,14 @@ async def store_inventory(
     ctx: TenantCtx = Depends(_citimart_context),
 ):
     tenant_id = ctx["tenant_id"]
-    snapshot_rows = await citimart_stock_snapshot_collection.find({"tenant_id": tenant_id}).to_list(length=MAX_ROWS)
-
-    barcodes = list({(r.get("barcode") or r.get("item_code") or "").strip() for r in snapshot_rows if (r.get("barcode") or r.get("item_code"))})
-    synced_barcodes = set()
-    if barcodes:
-        async for p in product_collection.find({"tenant_id": tenant_id, "barcode": {"$in": barcodes}}, {"barcode": 1}):
-            synced_barcodes.add(p["barcode"])
+    snapshot_projection = {
+        "_id": 0, "store_name": 1, "central_segment": 1, "barcode": 1, "item_code": 1,
+        "division": 1, "section": 1, "department": 1, "vendor": 1, "category1": 1,
+        "uom": 1, "closing_qty": 1, "closing_amt": 1, "rsp": 1, "mrp": 1, "standard_rate": 1,
+    }
+    snapshot_rows = await citimart_stock_snapshot_collection.find(
+        {"tenant_id": tenant_id}, snapshot_projection
+    ).batch_size(10_000).to_list(length=MAX_ROWS)
 
     stores_live = await stores_collection.find({"tenant_id": tenant_id, "active": True}).to_list(length=None)
     location_lookup = _build_location_lookup(stores_live)
@@ -1445,19 +1446,17 @@ async def store_inventory(
     # into named segments so Package/Packed remains visible instead of being
     # collapsed into (and potentially overwritten by) Main Warehouse.
     live_qty_by_key: Dict[tuple, float] = {}
-    if synced_barcodes:
-        async for row in store_stock_collection.find(
-            {"tenant_id": tenant_id, "barcode": {"$in": list(synced_barcodes)}}, {"barcode": 1, "store_id": 1, "stockQty": 1}
-        ):
-            key = (row.get("store_id"), None, row["barcode"])
-            live_qty_by_key[key] = live_qty_by_key.get(key, 0.0) + _number(row.get("stockQty"))
-        async for row in inventory_collection.find(
-            {"tenant_id": tenant_id, "barcode": {"$in": list(synced_barcodes)}},
-            {"barcode": 1, "stockQty": 1, "central_segments": 1},
-        ):
-            segments = _central_segments(row)
-            for segment, segment_qty in segments.items():
-                live_qty_by_key[(None, segment, row["barcode"])] = segment_qty
+    async for row in store_stock_collection.find(
+        {"tenant_id": tenant_id}, {"_id": 0, "barcode": 1, "store_id": 1, "stockQty": 1}
+    ).batch_size(10_000):
+        key = (row.get("store_id"), None, row["barcode"])
+        live_qty_by_key[key] = live_qty_by_key.get(key, 0.0) + _number(row.get("stockQty"))
+    async for row in inventory_collection.find(
+        {"tenant_id": tenant_id}, {"_id": 0, "barcode": 1, "stockQty": 1, "central_segments": 1}
+    ).batch_size(10_000):
+        segments = _central_segments(row)
+        for segment, segment_qty in segments.items():
+            live_qty_by_key[(None, segment, row["barcode"])] = segment_qty
 
     items = []
     for row in snapshot_rows:
@@ -1474,7 +1473,7 @@ async def store_inventory(
         if store_id is None and central_segment in _CENTRAL_SEGMENTS:
             location_label = f"Central Inventory / {_CENTRAL_SEGMENTS[central_segment]['label']}"
         live_key = (store_id, central_segment, barcode)
-        has_live = barcode in synced_barcodes and live_key in live_qty_by_key
+        has_live = live_key in live_qty_by_key
         qty = live_qty_by_key[live_key] if has_live else _number(row.get("closing_qty"))
         rate = _number(row.get("rsp")) or _number(row.get("mrp")) or _number(row.get("standard_rate"))
         closing_amt = _number(row.get("closing_amt"))
