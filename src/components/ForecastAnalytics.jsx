@@ -149,6 +149,7 @@ const BUTTON_GUIDES_FA = {
     ["Product filters (Raphaaa)", "Narrows the vendor ranking to one hierarchy group.", "Use to rank vendors within just one department, for example.", ""],
   ],
   purchase: [
+    ["What this plan needs (non-Raphaaa)", "Built from Day-wise sales (demand signal) + a synced Stock snapshot (what's on hand) + cost price on the Product Master (for ROI). Purchase/GRC import is NOT used here — it's receiving history only.", "Check this first if the plan looks empty or quantities look too high — usually a missing sales upload or an un-synced stock batch.", "A barcode with no cost price is silently skipped, not shown as an error — check Product Master if an item you expect is missing."],
     ["Build plan (non-Raphaaa)", "Builds a budget-constrained purchase list for the entered ₹ budget and lookback.", "Enter a budget greater than 0 first.", "Doesn't create a PO — it's a recommendation for Procurement to act on."],
     ["Comparison / Periods (Raphaaa)", "Chooses which completed years or winter seasons the plan compares.", "Use at least 2 periods.", ""],
     ["Recalculate (Raphaaa)", "Re-runs the whole purchase plan for the chosen periods.", "Use after changing Comparison/Periods.", ""],
@@ -1011,6 +1012,35 @@ function GenericPurchasePlanView({ raphaaaMode = false }) {
   return (
     <div className="space-y-5">
       <ErrorBanner message={error} />
+
+      {!raphaaaMode && (
+        <details className="overflow-hidden rounded-2xl border border-indigo-100 bg-indigo-50/60">
+          <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-5 py-3">
+            <span className="text-sm font-black text-indigo-900">What a proper Purchase Plan actually needs</span>
+            <span className="rounded-full border border-indigo-200 bg-white px-3 py-1 text-[11px] font-bold text-indigo-700">Show</span>
+          </summary>
+          <div className="space-y-3 border-t border-indigo-100 px-5 py-4 text-xs leading-5 text-indigo-950">
+            <p>This plan is built from two things, both uploaded in <b>Citimart Data Hub</b> — not all three cards there matter equally:</p>
+            <div className="grid gap-2 sm:grid-cols-2">
+              <div className="rounded-xl border border-emerald-200 bg-white p-3">
+                <p className="font-black text-emerald-700">✓ Required</p>
+                <ul className="mt-1.5 list-disc space-y-1 pl-4">
+                  <li><b>Day-wise sales</b> — this is the only source of demand signal (weekly velocity, trend, next-period forecast). No sales import, no plan.</li>
+                  <li><b>Stock snapshot, reviewed and synced to live</b> — tells the plan what's already on hand, so it nets that off before recommending a buy quantity. An unsynced batch means every item looks fully needed.</li>
+                  <li><b>Cost price on the Product Master</b> — created automatically from the Stock batch ("Create missing products"). A barcode with no cost price is silently skipped — it can't be ranked by ROI without one.</li>
+                </ul>
+              </div>
+              <div className="rounded-xl border border-slate-200 bg-white p-3">
+                <p className="font-black text-slate-600">Not required for this plan</p>
+                <ul className="mt-1.5 list-disc space-y-1 pl-4">
+                  <li><b>Purchase / GRC import</b> — this is receiving/analytics history only. It never feeds the purchase-plan calculation; it's used separately for vendor lead-time scoring in Vendor Ranking.</li>
+                </ul>
+              </div>
+            </div>
+            <p className="text-indigo-700">Bottom line: upload Day-wise sales regularly, and make sure your latest Stock batch is actually <b>synced</b> (not just staged) before trusting the quantities below.</p>
+          </div>
+        </details>
+      )}
 
       <ProductFilterPanel
         rows={filterSourceRows} search={search} setSearch={setSearch} filters={filters} setFilters={setFilters}
