@@ -161,8 +161,9 @@ async def _compute_citimart_demand_forecast(tenant_id: str, store_id: Optional[s
     shape as _compute_demand_forecast below, just sourced from this flat
     schema and enriched from the real citimart product_collection (not
     _raphaaa_product_metadata, which is gated to is_raphaaa_tenant)."""
+    today = datetime.utcnow().date().isoformat()
     since_date = (datetime.utcnow() - timedelta(days=max(1, lookback_days))).date().isoformat()
-    match: Dict[str, Any] = {"tenant_id": tenant_id, "bill_date": {"$gte": since_date}}
+    match: Dict[str, Any] = {"tenant_id": tenant_id, "bill_date": {"$gte": since_date, "$lte": today}}
 
     # Resolved through the exact same alias lookup the stock import uses
     # (Source Site spellings like "CITIMART - CHOWRINGHEE" or legacy ones
@@ -173,15 +174,6 @@ async def _compute_citimart_demand_forecast(tenant_id: str, store_id: Optional[s
     if store_id:
         stores_live = await stores_collection.find({"tenant_id": tenant_id, "active": True}).to_list(length=None)
         location_lookup = _build_location_lookup(stores_live)
-
-    product_metadata: Dict[str, dict] = {}
-    async for product in product_collection.find(
-        {"tenant_id": tenant_id},
-        {"barcode": 1, "sku": 1, "product_name": 1, "division": 1, "section": 1, "department": 1, "vendor_name": 1, "cost_price": 1},
-    ):
-        bc = (product.get("barcode") or "").strip()
-        if bc:
-            product_metadata[bc] = product
 
     weekly: Dict[str, Dict[tuple, float]] = defaultdict(lambda: defaultdict(float))
     meta: Dict[str, Dict[str, Any]] = {}
@@ -214,8 +206,25 @@ async def _compute_citimart_demand_forecast(tenant_id: str, store_id: Optional[s
         m["total_qty"] += qty
         m["total_revenue"] += float(row.get("net_amt") or 0)
 
+    # The endpoint returns only the requested best sellers. Fetching all
+    # Product Master rows and constructing every forecast row before slicing
+    # made Purchase Plan time out on Citimart's one-vCPU server.
+    selected_barcodes = sorted(
+        weekly.keys(), key=lambda bc: meta[bc]["total_qty"], reverse=True
+    )[:limit]
+    product_metadata: Dict[str, dict] = {}
+    if selected_barcodes:
+        async for product in product_collection.find(
+            {"tenant_id": tenant_id, "barcode": {"$in": selected_barcodes}},
+            {"barcode": 1, "sku": 1, "product_name": 1, "division": 1, "section": 1, "department": 1, "vendor_name": 1, "cost_price": 1},
+        ):
+            bc = (product.get("barcode") or "").strip()
+            if bc:
+                product_metadata[bc] = product
+
     rows: List[dict] = []
-    for bc, weeks in weekly.items():
+    for bc in selected_barcodes:
+        weeks = weekly[bc]
         m = meta[bc]
         master = product_metadata.get(bc) or {}
         ordered = [weeks[k] for k in sorted(weeks.keys())]
@@ -259,8 +268,7 @@ async def _compute_citimart_demand_forecast(tenant_id: str, store_id: Optional[s
             "margin_per_unit": round(avg_price - avg_cost, 2),
         })
 
-    rows.sort(key=lambda r: r["total_qty_sold"], reverse=True)
-    return rows[:limit]
+    return rows
 
 
 async def _compute_demand_forecast(tenant_id: str, store_id: Optional[str], lookback_days: int, limit: int) -> List[dict]:
@@ -539,20 +547,29 @@ class RaphaaaPurchasePlanRequest(BaseModel):
     season_end_month: int = Field(2, ge=1, le=12)
 
 
-async def _barcode_stock_map(tenant_id: str, store_id: Optional[str]) -> Dict[str, float]:
+async def _barcode_stock_map(
+    tenant_id: str, store_id: Optional[str], barcodes: Optional[List[str]] = None
+) -> Dict[str, float]:
     """Current on-hand qty per barcode (not stock_identity) — used to net
     forecasted demand against what's already in stock before recommending a
     purchase quantity, so the plan doesn't tell you to buy something that's
     already sitting on the shelf/warehouse."""
     stock: Dict[str, float] = defaultdict(float)
+    barcode_filter = {"$in": list({bc for bc in (barcodes or []) if bc})} if barcodes is not None else None
     if store_id:
-        async for doc in store_stock_collection.find({"tenant_id": tenant_id, "store_id": store_id}, {"barcode": 1, "stockQty": 1}):
+        match: Dict[str, Any] = {"tenant_id": tenant_id, "store_id": store_id}
+        if barcode_filter is not None:
+            match["barcode"] = barcode_filter
+        async for doc in store_stock_collection.find(match, {"barcode": 1, "stockQty": 1}):
             bc = (doc.get("barcode") or "").strip()
             if bc:
                 stock[bc] += float(doc.get("stockQty") or 0)
     else:
         for collection in (inventory_collection, store_stock_collection):
-            async for doc in collection.find({"tenant_id": tenant_id}, {"barcode": 1, "stockQty": 1}):
+            match = {"tenant_id": tenant_id}
+            if barcode_filter is not None:
+                match["barcode"] = barcode_filter
+            async for doc in collection.find(match, {"barcode": 1, "stockQty": 1}):
                 bc = (doc.get("barcode") or "").strip()
                 if bc:
                     stock[bc] += float(doc.get("stockQty") or 0)
@@ -622,7 +639,9 @@ async def _vendor_contact_map(vendor_names: List[str]) -> Dict[str, dict]:
 @router.post("/purchase-plan")
 async def build_purchase_plan(payload: PurchasePlanRequest, ctx: TenantCtx = Depends(_require_forecast_context)):
     forecast_rows = await _compute_demand_forecast(ctx["tenant_id"], payload.store_id, payload.lookback_days, limit=200)
-    stock_map = await _barcode_stock_map(ctx["tenant_id"], payload.store_id)
+    stock_map = await _barcode_stock_map(
+        ctx["tenant_id"], payload.store_id, [row["barcode"] for row in forecast_rows]
+    )
     lines = _lines_from_forecast(forecast_rows, stock_map)
     contact_map = await _vendor_contact_map([line["vendor_name"] for line in lines])
     for line in lines:

@@ -149,8 +149,12 @@ const BUTTON_GUIDES_FA = {
     ["Product filters (Raphaaa)", "Narrows the vendor ranking to one hierarchy group.", "Use to rank vendors within just one department, for example.", ""],
   ],
   purchase: [
-    ["What this plan needs (non-Raphaaa)", "Built from Day-wise sales (demand signal) + a synced Stock snapshot (what's on hand) + cost price on the Product Master (for ROI). Purchase/GRC import is NOT used here — it's receiving history only.", "Check this first if the plan looks empty or quantities look too high — usually a missing sales upload or an un-synced stock batch.", "A barcode with no cost price is silently skipped, not shown as an error — check Product Master if an item you expect is missing."],
-    ["Build plan (non-Raphaaa)", "Builds a budget-constrained purchase list for the entered ₹ budget and lookback.", "Enter a budget greater than 0 first.", "Doesn't create a PO — it's a recommendation for Procurement to act on."],
+    ["Citimart data used", "Uses Citimart Day-wise sales inside the selected lookback, current synced stock by barcode, and Product Master cost price. The uploaded closing amount is not used to calculate purchase quantity, and Purchase/GRC history is not used.", "Check these three sources first when an item or quantity looks wrong.", "Do not expect an item with no positive sales, no shortage, or no positive cost price to appear."],
+    ["Citimart demand forecast", "For each barcode, RMS totals units sold by active sales week. Next-week demand is the average of its latest 3 active sales weeks (or all available active weeks when fewer than 3 exist). Selling price is Net Amount divided by sold quantity.", "Choose a lookback that represents current demand; a shorter window reacts faster and a longer one includes older selling patterns.", "Weeks with no recorded sale are not inserted as zero weeks. The calculation considers only the top 200 barcodes by units sold in the lookback."],
+    ["Citimart quantity to buy", "Recommended quantity = round up (next-week demand - current on-hand stock). When Store is All, on-hand includes Central Inventory plus every store; when one store is selected, only that store's stock is subtracted.", "Use the store selector when preparing a location-specific order.", "The result is a one-next-week shortage recommendation, not a safety-stock, lead-time, MOQ, pack-size or closing-amount formula."],
+    ["Citimart ROI ranking", "Unit margin = average selling price - Product Master cost. Expected profit = recommended quantity × unit margin. ROI = expected profit ÷ line cost, where line cost = quantity × cost. Lines are ranked from highest ROI to lowest.", "Use the ranking to spend a limited budget on higher-return shortages first.", "A negative margin can produce a negative ROI; review the result before ordering."],
+    ["How the budget is filled", "RMS takes ranked lines in order until the entered budget is used. If the next full line does not fit, it buys the largest whole quantity that fits and marks that line Partial; cheaper later lines are not searched first.", "Enter a budget greater than 0, then select Build plan.", "This creates a recommendation only. It does not create a PO or change stock."],
+    ["Why an item may be missing", "An item is excluded when it is outside the lookback/top-200 scope, has no positive forecast, current stock already covers forecast demand, or Product Master cost is zero/missing.", "Compare its barcode across Day-wise Sales, synced Stock and Product Master.", "Do not fix a missing item by changing the uploaded closing amount; closing amount is not an input to this plan."],
     ["Comparison / Periods (Raphaaa)", "Chooses which completed years or winter seasons the plan compares.", "Use at least 2 periods.", ""],
     ["Recalculate (Raphaaa)", "Re-runs the whole purchase plan for the chosen periods.", "Use after changing Comparison/Periods.", ""],
     ["Purchase-plan filters", "Narrows every card, chart, table and CSV export below to one hierarchy/vendor/promotion/confidence group.", "Use before exporting, so the CSV matches what you're reviewing.", "This is the one screen where filters DO change the export — unlike most other filters in this department, which are display-only."],
@@ -195,8 +199,12 @@ const BUTTON_GUIDES_FA = {
   ],
 };
 
-function SectionButtonGuide({ id }) {
-  const rows = BUTTON_GUIDES_FA[id];
+function SectionButtonGuide({ id, isCitimart = false, raphaaaMode = false }) {
+  const rows = BUTTON_GUIDES_FA[id]?.filter(([name]) => {
+    if (isCitimart) return !name.includes("(Raphaaa)");
+    if (raphaaaMode) return !name.includes("(non-Raphaaa)") && !name.startsWith("Citimart ");
+    return !name.includes("(Raphaaa)") && !name.startsWith("Citimart ");
+  });
   if (!rows) return null;
   return (
     <details className="mb-5 overflow-hidden rounded-2xl border border-slate-200 bg-white">
@@ -2775,7 +2783,7 @@ export default function ForecastAnalytics() {
             <InternalChatPanel />
           </div>
         </header>
-        <div className="mx-auto w-full max-w-[1540px] p-5 sm:p-7 lg:p-9"><SectionButtonGuide id={activeSection} />{renderContent()}</div>
+        <div className="mx-auto w-full max-w-[1540px] p-5 sm:p-7 lg:p-9"><SectionButtonGuide id={activeSection} isCitimart={isCitimart} raphaaaMode={productEnrichmentEnabled} />{renderContent()}</div>
       </main>
     </div>
   );

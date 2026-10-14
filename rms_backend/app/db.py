@@ -381,13 +381,25 @@ async def ensure_procurement_indexes():
     await barcode_label_settings_collection.create_index("tenant_id", unique=True, name="barcode_label_settings_tenant")
     await inventory_collection.create_index([("tenant_id", 1), ("stock_identity", 1)], name="inventory_tenant_stock_identity")
     await product_collection.create_index([("tenant_id", 1), ("vendor_barcode", 1)], name="product_tenant_vendor_gtin")
+    await product_collection.create_index([("tenant_id", 1), ("barcode", 1)], name="product_tenant_barcode")
     await store_stock_collection.create_index([("tenant_id", 1), ("store_id", 1), ("stock_identity", 1)], name="store_stock_tenant_identity")
+    await inventory_collection.create_index([("tenant_id", 1), ("barcode", 1)], name="inventory_tenant_barcode")
+    await store_stock_collection.create_index([("tenant_id", 1), ("barcode", 1)], name="store_stock_tenant_barcode")
     await citimart_stock_stage_rows_collection.create_index([("tenant_id", 1), ("batch_id", 1)], name="citimart_stock_stage_batch")
     await citimart_stock_snapshot_collection.create_index([("tenant_id", 1)], name="citimart_stock_snapshot_tenant")
     await citimart_stock_sync_audit_collection.create_index([("tenant_id", 1), ("batch_id", 1)], name="citimart_stock_sync_audit_batch")
     await citimart_purchase_stage_rows_collection.create_index([("tenant_id", 1), ("batch_id", 1)], name="citimart_purchase_stage_batch")
     await citimart_purchase_sync_audit_collection.create_index([("tenant_id", 1), ("batch_id", 1)], name="citimart_purchase_sync_audit_batch")
     await citimart_data_hub_imports_collection.create_index([("tenant_id", 1), ("kind", 1), ("file_sha256", 1)], name="citimart_import_file_dedup")
+    await citimart_data_hub_imports_collection.create_index(
+        "dedup_key", unique=True, sparse=True, name="citimart_import_atomic_dedup"
+    )
+    await citimart_sales_import_collection.create_index(
+        [("tenant_id", 1), ("bill_no", 1)], name="citimart_sales_tenant_bill"
+    )
+    await citimart_sales_import_collection.create_index(
+        [("tenant_id", 1), ("bill_date", 1)], name="citimart_sales_tenant_date"
+    )
     await reorder_rules_collection.create_index([("tenant_id", 1), ("stock_identity", 1), ("warehouse", 1)], name="reorder_rule_tenant_identity")
     await supplier_returns_collection.create_index([('tenant_id', 1), ('created_at', -1)], name='supplier_returns_tenant_created')
     await supplier_returns_collection.create_index([('vendor_id', 1), ('created_at', -1)], name='supplier_returns_vendor_created')

@@ -31,6 +31,7 @@ from typing import Any, Dict, List
 import pandas as pd
 from bson import ObjectId
 from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile, status
+from pymongo.errors import DuplicateKeyError
 from pymongo import InsertOne, UpdateOne
 
 from .deps import get_hq_tenant
@@ -817,14 +818,73 @@ async def preview_sales(file: UploadFile = File(...), ctx: TenantCtx = Depends(_
 @router.post("/sales/commit")
 async def commit_sales(file: UploadFile = File(...), ctx: TenantCtx = Depends(_citimart_context)):
     content = await file.read()
-    rows = await _parse_in_thread(_parse_sales_rows, file.filename or "", content)
     now = datetime.utcnow()
     batch_id = uuid.uuid4().hex[:12]
+    file_sha256 = hashlib.sha256(content).hexdigest()
+    dedup_key = f"{ctx['tenant_id']}:sales:{file_sha256}"
+
+    # Claim the file before doing CPU-heavy parsing or inserting any rows.
+    # dedup_key has a sparse unique index, making this atomic even when a
+    # double-click or two browser requests reach different API workers at
+    # the same time. Previously every request inserted all sales rows again.
+    try:
+        await citimart_data_hub_imports_collection.insert_one({
+            "tenant_id": ctx["tenant_id"], "batch_id": batch_id, "kind": "sales",
+            "row_count": 0, "imported_by": ctx.get("admin_name") or ctx.get("admin_email") or "",
+            "imported_at": now, "file_name": file.filename or "",
+            "file_sha256": file_sha256, "dedup_key": dedup_key,
+            "live_sync_status": "IMPORTING",
+        })
+    except DuplicateKeyError:
+        duplicate = await citimart_data_hub_imports_collection.find_one(
+            {"dedup_key": dedup_key}, {"batch_id": 1},
+        )
+        raise HTTPException(
+            status_code=409,
+            detail=f"This exact sales file was already imported as batch {(duplicate or {}).get('batch_id', 'unknown')}. No rows were added.",
+        )
+
+    try:
+        rows = await _parse_in_thread(_parse_sales_rows, file.filename or "", content)
+    except Exception:
+        await citimart_data_hub_imports_collection.update_one(
+            {"tenant_id": ctx["tenant_id"], "batch_id": batch_id},
+            {"$set": {"live_sync_status": "FAILED", "failed_at": datetime.utcnow()}, "$unset": {"dedup_key": ""}},
+        )
+        raise
+
+    # Older successful Citimart sales batches predate file_sha256/dedup_key,
+    # so hash protection alone cannot recognise a re-upload of one of those
+    # files. Treat (Bill No, Bill Date, Store) as the imported bill identity
+    # and skip the whole bill when it already exists. Query in chunks to keep
+    # Mongo's $in payload bounded for large exports.
+    candidate_bill_nos = sorted({
+        row["bill_no"] for row in rows
+        if not row["errors"] and not row["is_void"] and row["bill_no"]
+    })
+    existing_bills = set()
+    for start in range(0, len(candidate_bill_nos), BULK_CHUNK):
+        bill_chunk = candidate_bill_nos[start:start + BULK_CHUNK]
+        async for existing in citimart_sales_import_collection.find(
+            {"tenant_id": ctx["tenant_id"], "bill_no": {"$in": bill_chunk}},
+            {"bill_no": 1, "bill_date": 1, "store": 1},
+        ):
+            existing_bills.add((
+                _key(existing.get("bill_no")),
+                _text(existing.get("bill_date")),
+                _key(existing.get("store")),
+            ))
+
     docs, skipped = [], []
+    duplicate_rows_skipped = 0
     for row in rows:
         if row["errors"] or row["is_void"]:
             if row["errors"]:
                 skipped.append({"row_no": row["row_no"], "errors": row["errors"]})
+            continue
+        bill_key = (_key(row["bill_no"]), _text(row["bill_date"]), _key(row["store"]))
+        if bill_key in existing_bills:
+            duplicate_rows_skipped += 1
             continue
         docs.append({"tenant_id": ctx["tenant_id"], **row, "batch_id": batch_id, "imported_at": now})
     if docs:
@@ -836,16 +896,28 @@ async def commit_sales(file: UploadFile = File(...), ctx: TenantCtx = Depends(_c
                 await citimart_sales_import_collection.delete_many({"tenant_id": ctx["tenant_id"], "batch_id": batch_id})
             except Exception:
                 logging.exception("Cleanup of failed sales commit batch %s also failed", batch_id)
+            await citimart_data_hub_imports_collection.update_one(
+                {"tenant_id": ctx["tenant_id"], "batch_id": batch_id},
+                {"$set": {"live_sync_status": "FAILED", "failed_at": datetime.utcnow(), "failure": str(exc)}, "$unset": {"dedup_key": ""}},
+            )
             raise HTTPException(status_code=500, detail=f"Import failed while saving rows: {exc}") from exc
-    batch_id = await _log_batch(
-        ctx["tenant_id"], "sales", len(docs), ctx.get("admin_name") or ctx.get("admin_email") or "",
-        batch_id=batch_id, file_name=file.filename or "",
+    await citimart_data_hub_imports_collection.update_one(
+        {"tenant_id": ctx["tenant_id"], "batch_id": batch_id},
+        {"$set": {
+            "row_count": len(docs), "live_sync_status": "ANALYTICS_ONLY",
+            "completed_at": datetime.utcnow(), "rows_skipped": len(skipped),
+            "duplicate_rows_skipped": duplicate_rows_skipped,
+        }},
     )
     voided = sum(1 for r in rows if r["is_void"])
     return {
         "status": "success", "mode": "committed", "batch_id": batch_id,
-        "saved": len(docs), "rows_skipped": len(skipped), "skipped_rows": skipped[:200], "voided_rows_excluded": voided,
-        "message": f"{len(docs)} sales row(s) imported" + (f", {len(skipped)} skipped" if skipped else "") + (f", {voided} voided row(s) excluded" if voided else "") + ".",
+        "saved": len(docs), "rows_skipped": len(skipped), "skipped_rows": skipped[:200],
+        "duplicate_rows_skipped": duplicate_rows_skipped, "voided_rows_excluded": voided,
+        "message": f"{len(docs)} sales row(s) imported"
+        + (f", {duplicate_rows_skipped} previously imported row(s) skipped" if duplicate_rows_skipped else "")
+        + (f", {len(skipped)} invalid row(s) skipped" if skipped else "")
+        + (f", {voided} voided row(s) excluded" if voided else "") + ".",
     }
 
 
