@@ -10,17 +10,23 @@ can see and manage every store's campaigns and entries, while a store-scoped
 login only ever sees its own store's entries. Only HQ Admin (scope == "hq",
 never a department-level admin) can create or close a campaign.
 """
+import asyncio
 import random
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import cloudinary
 import cloudinary.uploader
 from bson import ObjectId
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, UploadFile, status
 from pydantic import BaseModel
+from pymongo import InsertOne
 
-from ..config import settings
-from ..db import lucky_draw_campaigns_collection, lucky_draw_entries_collection, lucky_draw_results_collection
+from ..config import frontend_url, settings
+from ..db import (
+    lucky_draw_campaigns_collection, lucky_draw_entries_collection,
+    lucky_draw_reminders_collection, lucky_draw_results_collection,
+)
+from ..email_utils import send_newsletter_email
 from .customer_crm_routes import clean, now_utc, require_crm_tab, scoped_query, serialize_doc
 from .deps import get_tenant
 
@@ -55,6 +61,30 @@ class EntryPayload(BaseModel):
     contact_no: str = ""
     profession: str = ""
     bill_no: str
+
+
+class EntryBulkRow(BaseModel):
+    customer_name: str = ""
+    email: str = ""
+    address: str = ""
+    contact_no: str = ""
+    profession: str = ""
+    bill_no: str = ""
+
+
+class EntryBulkPayload(BaseModel):
+    campaign_id: str
+    rows: List[EntryBulkRow] = []
+    # HQ only — which physical store this batch of slips belongs to. A
+    # store-scoped login ignores this; it's always forced to its own store,
+    # same as a single counter entry.
+    store_id: str = ""
+    store_name: str = ""
+
+
+class ReminderPayload(BaseModel):
+    message: str = ""
+    test_email: str = ""
 
 
 class DrawPayload(BaseModel):
@@ -333,6 +363,125 @@ async def create_entry(payload: EntryPayload, ctx: Dict[str, Any] = Depends(get_
     return serialize_doc(saved)
 
 
+MAX_BULK_ENTRY_ROWS = 2000
+BULK_WRITE_CHUNK = 300
+
+
+@router.post("/entries/bulk", status_code=status.HTTP_201_CREATED)
+async def create_entries_bulk(payload: EntryBulkPayload, ctx: Dict[str, Any] = Depends(get_tenant)):
+    """Counter staff collected a pile of pen-and-paper slips (alongside the
+    QR scanner, which self-enters customers directly) — this lets them
+    upload one sheet instead of re-typing each slip through the single-entry
+    form. Same validation and per-store duplicate-bill check as a single
+    entry, just batched: one bulk existence check instead of a find_one per
+    row, and inserts go through bulk_write in bounded chunks instead of one
+    insert_one per row — a large sheet can't turn into thousands of
+    sequential DB round-trips and hang the request. The frontend additionally
+    splits a very large file into several of these calls (see the bulk
+    import modal), so even a single request here stays bounded."""
+    ctx = require_crm_tab(ctx, "luckydraw")
+    if not ObjectId.is_valid(payload.campaign_id):
+        raise HTTPException(status_code=400, detail="Invalid campaign ID.")
+    campaign = await lucky_draw_campaigns_collection.find_one({"_id": ObjectId(payload.campaign_id), "tenant_id": ctx["tenant_id"]})
+    if not campaign:
+        raise HTTPException(status_code=404, detail="Campaign not found.")
+    if campaign.get("status") != "ACTIVE":
+        raise HTTPException(status_code=409, detail="This campaign is closed for new entries.")
+    if not payload.rows:
+        raise HTTPException(status_code=400, detail="No rows provided.")
+    if len(payload.rows) > MAX_BULK_ENTRY_ROWS:
+        raise HTTPException(status_code=400, detail=f"Bulk import is limited to {MAX_BULK_ENTRY_ROWS} rows per request — split a larger file into smaller uploads.")
+
+    # A store-scoped login is always forced to its own store (scoped_query
+    # already does this). HQ has no store of its own, so without an explicit
+    # choice these rows would carry no store_id at all — unattributed,
+    # invisible to that store's own staff. HQ must say which store this
+    # batch of physical slips actually came from.
+    if ctx.get("scope") == "hq":
+        store_id = clean(payload.store_id)
+        if not store_id:
+            raise HTTPException(status_code=400, detail="Choose which store these slip entries belong to.")
+        scope = {"tenant_id": ctx["tenant_id"], "store_id": store_id}
+        store_name = clean(payload.store_name)
+    else:
+        scope = scoped_query(ctx)
+        store_name = ctx.get("store_name") or ""
+
+    # Pass 1 (in memory): clean every row, catch missing-field errors and
+    # duplicate bill numbers WITHIN this same upload, without touching the DB.
+    now = now_utc()
+    results: List[Optional[dict]] = [None] * len(payload.rows)
+    candidates: List[dict] = []
+    seen_bill_nos: set = set()
+    for i, row in enumerate(payload.rows):
+        customer_name = clean(row.customer_name)
+        bill_no = clean(row.bill_no)
+        if not customer_name or not bill_no:
+            results[i] = {"customer_name": customer_name or "(blank)", "bill_no": bill_no, "status": "error", "reason": "Customer name and Bill No. are both required."}
+            continue
+        if bill_no in seen_bill_nos:
+            results[i] = {"customer_name": customer_name, "bill_no": bill_no, "status": "error", "reason": f"Bill No. {bill_no} appears more than once in this upload."}
+            continue
+        seen_bill_nos.add(bill_no)
+        candidates.append({
+            "i": i, "customer_name": customer_name, "bill_no": bill_no,
+            "email": clean(row.email), "address": clean(row.address),
+            "contact_no": clean(row.contact_no), "profession": clean(row.profession),
+        })
+
+    # Pass 2: ONE query for every bill_no already on file for this
+    # campaign/store, instead of one find_one per row.
+    if candidates:
+        existing_cursor = lucky_draw_entries_collection.find(
+            {**scope, "campaign_id": payload.campaign_id, "bill_no": {"$in": [c["bill_no"] for c in candidates]}},
+            {"bill_no": 1},
+        )
+        existing_bill_nos = {doc["bill_no"] async for doc in existing_cursor}
+    else:
+        existing_bill_nos = set()
+
+    insert_ops: List[InsertOne] = []
+    pending_rows: List[dict] = []
+    for c in candidates:
+        if c["bill_no"] in existing_bill_nos:
+            results[c["i"]] = {"customer_name": c["customer_name"], "bill_no": c["bill_no"], "status": "error", "reason": f"Bill No. {c['bill_no']} has already been entered for this store's draw."}
+            continue
+        doc = {
+            **scope,
+            "store_name": store_name,
+            "campaign_id": payload.campaign_id,
+            "campaign_name": campaign.get("campaign_name"),
+            "customer_name": c["customer_name"],
+            "email": c["email"],
+            "address": c["address"],
+            "contact_no": c["contact_no"],
+            "profession": c["profession"],
+            "bill_no": c["bill_no"],
+            "entered_by": ctx.get("admin_id"),
+            "entered_by_name": ctx.get("admin_name"),
+            "source": "COUNTER_STAFF_BULK",
+            "printed": True,
+            "created_at": now,
+            "updated_at": now,
+        }
+        insert_ops.append(InsertOne(doc))
+        pending_rows.append(c)
+
+    # Pass 3: write in bounded chunks rather than one giant bulk_write (or,
+    # worse, one insert_one per row) — keeps each DB round-trip small and
+    # predictable regardless of how large the sheet is.
+    for start in range(0, len(insert_ops), BULK_WRITE_CHUNK):
+        chunk = insert_ops[start:start + BULK_WRITE_CHUNK]
+        if chunk:
+            await lucky_draw_entries_collection.bulk_write(chunk, ordered=False)
+        for c in pending_rows[start:start + BULK_WRITE_CHUNK]:
+            results[c["i"]] = {"customer_name": c["customer_name"], "bill_no": c["bill_no"], "status": "created"}
+
+    final_results = [r for r in results if r is not None]
+    created = sum(1 for r in final_results if r["status"] == "created")
+    return {"message": f"{created} of {len(payload.rows)} entries created.", "created_count": created, "results": final_results}
+
+
 @router.delete("/entries/{entry_id}")
 async def delete_entry(entry_id: str, ctx: Dict[str, Any] = Depends(get_tenant)):
     ctx = require_crm_tab(ctx, "luckydraw")
@@ -455,3 +604,100 @@ async def lookup_by_phone(contact_no: str = Query(...), ctx: Dict[str, Any] = De
                     "bill_no": winner.get("bill_no"),
                 })
     return {"found": True, "entries": [serialize_doc(e) for e in entries], "wins": wins}
+
+
+# ─────────────────────────────────────────────
+# COUNTDOWN REMINDER — email every entrant of one campaign (not the whole
+# Newsletter audience) that the draw date is coming up. Reuses the same
+# per-recipient send_newsletter_email the Customer CRM Newsletter tab already
+# uses — only the audience and the message differ. WhatsApp reminders are
+# deliberately not attempted here: there's no customer-facing WhatsApp
+# sender wired up in RMS yet (only the separate vendor-catalog push), so an
+# "email only for now" note is in the response rather than silently no-op.
+# ─────────────────────────────────────────────
+
+async def _reminder_audience(tenant_id: str, campaign_id: str) -> List[dict]:
+    """Every entrant of this campaign with an email on file, de-duplicated —
+    one customer with several slips only gets one reminder."""
+    seen, out = set(), []
+    async for e in lucky_draw_entries_collection.find({"tenant_id": tenant_id, "campaign_id": campaign_id, "email": {"$nin": ["", None]}}):
+        key = (e.get("email") or "").strip().lower()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        out.append(e)
+    return out
+
+
+async def _run_reminder_send(send_id: ObjectId, tenant_id: str, campaign: dict, message: str) -> None:
+    sent = failed = 0
+    people = await _reminder_audience(tenant_id, str(campaign["_id"]))
+    subject = f"Countdown: {campaign.get('campaign_name')} draw is coming up!"
+    for p in people:
+        try:
+            ok = await send_newsletter_email(
+                p["email"], p.get("customer_name") or "", subject, message,
+                frontend_url("/"), link=campaign.get("website_link") or "",
+            )
+        except Exception:
+            ok = False
+        sent += 1 if ok else 0
+        failed += 0 if ok else 1
+        await lucky_draw_reminders_collection.update_one({"_id": send_id}, {"$set": {"sent_count": sent, "failed_count": failed}})
+        await asyncio.sleep(0.05)
+    await lucky_draw_reminders_collection.update_one(
+        {"_id": send_id}, {"$set": {"status": "DONE", "sent_count": sent, "failed_count": failed, "finished_at": now_utc()}}
+    )
+
+
+@router.post("/campaigns/{campaign_id}/send-reminder")
+async def send_campaign_reminder(campaign_id: str, payload: ReminderPayload, background: BackgroundTasks, ctx: Dict[str, Any] = Depends(get_tenant)):
+    ctx = require_hq(require_crm_tab(ctx, "luckydraw"))
+    if not ObjectId.is_valid(campaign_id):
+        raise HTTPException(status_code=400, detail="Invalid campaign ID.")
+    campaign = await lucky_draw_campaigns_collection.find_one({"_id": ObjectId(campaign_id), "tenant_id": ctx["tenant_id"]})
+    if not campaign:
+        raise HTTPException(status_code=404, detail="Campaign not found.")
+    draw_date = campaign.get("ends_on") or ""
+    message = (payload.message or "").strip() or (
+        f"The {campaign.get('campaign_name')} lucky draw"
+        + (f" will be held on {draw_date}." if draw_date else " will be held soon.")
+        + " Thank you for entering — good luck!"
+    )
+
+    test_email = clean(payload.test_email)
+    if test_email:
+        ok = await send_newsletter_email(
+            test_email, "there", f"[Test] Countdown: {campaign.get('campaign_name')} draw is coming up!", message,
+            frontend_url("/"), link=campaign.get("website_link") or "",
+        )
+        if not ok:
+            raise HTTPException(status_code=502, detail="Test email could not be sent — check the email settings.")
+        return {"test": True, "message": f"Test reminder sent to {test_email}."}
+
+    people = await _reminder_audience(ctx["tenant_id"], campaign_id)
+    if not people:
+        raise HTTPException(status_code=400, detail="No entrants with an email on file for this campaign yet.")
+    doc = {
+        "tenant_id": ctx["tenant_id"], "campaign_id": campaign_id, "campaign_name": campaign.get("campaign_name"),
+        "message": message, "recipient_count": len(people), "sent_count": 0, "failed_count": 0,
+        "status": "SENDING", "sent_by_name": ctx.get("admin_name") or "", "created_at": now_utc(),
+    }
+    result = await lucky_draw_reminders_collection.insert_one(doc)
+    background.add_task(_run_reminder_send, result.inserted_id, ctx["tenant_id"], campaign, message)
+    return {
+        "test": False, "id": str(result.inserted_id), "recipient_count": len(people),
+        "message": f"Sending reminder to {len(people)} entrant(s) with an email on file.",
+        "note": "Email only — WhatsApp reminders need a customer-facing WhatsApp sender, which isn't set up yet.",
+    }
+
+
+@router.get("/campaigns/{campaign_id}/reminders")
+async def list_campaign_reminders(campaign_id: str, ctx: Dict[str, Any] = Depends(get_tenant)):
+    ctx = require_crm_tab(ctx, "luckydraw")
+    if not ObjectId.is_valid(campaign_id):
+        raise HTTPException(status_code=400, detail="Invalid campaign ID.")
+    rows = await lucky_draw_reminders_collection.find(
+        {"tenant_id": ctx["tenant_id"], "campaign_id": campaign_id}
+    ).sort("created_at", -1).to_list(50)
+    return [serialize_doc(r) for r in rows]

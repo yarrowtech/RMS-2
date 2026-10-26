@@ -443,6 +443,82 @@ def _normalize_low_is_better(value: float, values: List[float]) -> float:
     return 100.0 * (hi - value) / (hi - lo)
 
 
+@router.get("/vendor-ranking/citimart")
+async def get_citimart_vendor_ranking(
+    days: int = Query(90, ge=7, le=365),
+    limit: int = Query(100, ge=1, le=500),
+    ctx: TenantCtx = Depends(_require_forecast_context),
+):
+    """Rank Citimart's imported vendors by actual full-price sell-through.
+
+    Citimart's vendor names come from its Day-wise Sales file; they are not
+    vendor catalogue listings. Sending Citimart through the generic catalogue
+    search therefore returned nothing even with tens of thousands of sales.
+    """
+    if ctx["tenant_id"] != "citimart":
+        raise HTTPException(status_code=404, detail="This sales ranking is available only for the Citimart tenant.")
+
+    today = datetime.utcnow().date().isoformat()
+    cutoff = (datetime.utcnow() - timedelta(days=days)).date().isoformat()
+    by_vendor: Dict[str, dict] = {}
+    cursor = citimart_sales_import_collection.find(
+        {
+            "tenant_id": "citimart",
+            "bill_date": {"$gte": cutoff, "$lte": today},
+            "bill_qty": {"$gt": 0},
+            "vendor": {"$nin": ["", None]},
+        },
+        {"vendor": 1, "bill_qty": 1, "gr_amt": 1, "net_amt": 1, "barcode": 1, "item_code": 1, "design_no": 1},
+    )
+    async for sale in cursor:
+        vendor_name = (sale.get("vendor") or "").strip()
+        if not vendor_name:
+            continue
+        qty = float(sale.get("bill_qty") or 0)
+        gross = float(sale.get("gr_amt") or 0)
+        net = float(sale.get("net_amt") or 0)
+        is_promo = gross > 0 and max(0.0, gross - net) > 0.5
+        row = by_vendor.setdefault(vendor_name, {
+            "vendor_name": vendor_name, "full_price_qty": 0.0, "full_price_sales": 0.0,
+            "promo_qty": 0.0, "promo_sales": 0.0, "items": set(), "designs": set(),
+        })
+        if is_promo:
+            row["promo_qty"] += qty
+            row["promo_sales"] += net
+        else:
+            row["full_price_qty"] += qty
+            row["full_price_sales"] += net
+        identity = (sale.get("barcode") or sale.get("item_code") or "").strip()
+        if identity:
+            row["items"].add(identity)
+        design = (sale.get("design_no") or "").strip()
+        if design:
+            row["designs"].add(design)
+
+    ranked = []
+    for row in by_vendor.values():
+        total_qty = row["full_price_qty"] + row["promo_qty"]
+        ranked.append({
+            "vendor_name": row["vendor_name"],
+            "full_price_qty": round(row["full_price_qty"], 2),
+            "full_price_sales": round(row["full_price_sales"], 2),
+            "promo_qty": round(row["promo_qty"], 2),
+            "promo_sales": round(row["promo_sales"], 2),
+            "total_qty": round(total_qty, 2),
+            "total_sales": round(row["full_price_sales"] + row["promo_sales"], 2),
+            "promo_share_pct": round(row["promo_qty"] / total_qty * 100, 1) if total_qty else 0.0,
+            "item_count": len(row["items"]), "design_count": len(row["designs"]),
+        })
+    ranked.sort(key=lambda row: (-row["full_price_qty"], -row["full_price_sales"], row["vendor_name"].lower()))
+    for index, row in enumerate(ranked[:limit], start=1):
+        row["rank"] = index
+    return {
+        "status": "success", "days": days, "from_date": cutoff, "to_date": today,
+        "count": min(len(ranked), limit), "total_vendors": len(ranked), "data": ranked[:limit],
+        "ranking_basis": "Full-price quantity sold; promotion quantity is displayed but excluded from rank.",
+    }
+
+
 @router.get("/vendor-ranking")
 async def get_vendor_ranking(
     q: Optional[str] = Query(None, description="Match against item_name or category"),

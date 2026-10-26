@@ -141,6 +141,8 @@ const BUTTON_GUIDES_FA = {
     ["Clear filters", "Resets search and every filter dropdown.", "Use to get back to the full list.", ""],
   ],
   vendors: [
+    ["Citimart period", "Chooses how many days of imported Day-wise Sales are included in the vendor ranking.", "Use 30 days for recent movement or 90–365 days for a more stable comparison.", "Future-dated sales and rows without a vendor are excluded."],
+    ["Citimart ranking", "Ranks vendors by full-price quantity sold. Promotion quantity, sales value, item count and design count are shown as evidence but promotion units do not improve rank.", "Use it to identify vendors whose products sell without relying on discounting.", "This is sales performance, not an approved-vendor, delivery-time or catalogue-price score."],
     ["Search (non-Raphaaa)", "Looks up approved vendors selling a matching product/category.", "Type a product name or category first, then search.", "Only vendors with an Approved relationship to you appear — this isn't a general vendor directory."],
     ["Result filters (non-Raphaaa)", "Narrows the search results by vendor or catalogue category.", "Use after searching.", "Changes nothing about the ranking score."],
     ["Comparison / Periods (Raphaaa)", "Chooses which completed years or seasons the ranking is built from.", "Use at least 2 periods for a fair comparison.", ""],
@@ -201,7 +203,7 @@ const BUTTON_GUIDES_FA = {
 
 function SectionButtonGuide({ id, isCitimart = false, raphaaaMode = false }) {
   const rows = BUTTON_GUIDES_FA[id]?.filter(([name]) => {
-    if (isCitimart) return !name.includes("(Raphaaa)");
+    if (isCitimart) return !name.includes("(Raphaaa)") && !name.includes("(non-Raphaaa)");
     if (raphaaaMode) return !name.includes("(non-Raphaaa)") && !name.startsWith("Citimart ");
     return !name.includes("(Raphaaa)") && !name.startsWith("Citimart ");
   });
@@ -573,6 +575,70 @@ function GenericVendorRankingView() {
   );
 }
 
+function CitimartVendorRankingView() {
+  const [days, setDays] = useState(90);
+  const [rows, setRows] = useState([]);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [search, setSearch] = useState("");
+
+  const load = useCallback(async () => {
+    setLoading(true); setError("");
+    try {
+      const result = await faFetch(`/api/forecast-analytics/vendor-ranking/citimart?days=${days}&limit=500`);
+      setRows(result.data || []);
+    } catch (e) { setRows([]); setError(e.message); }
+    finally { setLoading(false); }
+  }, [days]);
+
+  useEffect(() => { load(); }, [load]);
+  const visible = rows.filter((row) => !search.trim() || row.vendor_name.toLowerCase().includes(search.trim().toLowerCase()));
+  const money = (value) => `₹${Math.round(value || 0).toLocaleString("en-IN")}`;
+
+  return (
+    <div className="space-y-5">
+      <ErrorBanner message={error} />
+      <div className="fa-panel flex flex-wrap items-end justify-between gap-3 p-5">
+        <div>
+          <h4 className="text-sm font-bold text-slate-900">Citimart vendor sales ranking</h4>
+          <p className="mt-1 text-xs text-slate-500">Ranked by full-price units sold from imported Day-wise Sales. Promotion units are shown separately and never improve rank.</p>
+        </div>
+        <div className="flex flex-wrap items-end gap-2">
+          <label className="text-xs font-bold text-slate-500">Period
+            <select value={days} onChange={(e) => setDays(Number(e.target.value))} className="mt-1 block rounded-lg border border-slate-200 px-2 py-2 text-sm">
+              <option value={30}>Last 30 days</option><option value={90}>Last 90 days</option>
+              <option value={180}>Last 180 days</option><option value={365}>Last 365 days</option>
+            </select>
+          </label>
+          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Filter vendor…" className="rounded-lg border border-slate-200 px-3 py-2 text-sm" />
+          <button onClick={load} disabled={loading} className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-bold text-white disabled:opacity-50">{loading ? "Loading…" : "Refresh"}</button>
+        </div>
+      </div>
+      <div className="fa-panel overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead><tr>{["Rank", "Vendor", "Full-price qty", "Full-price sales", "Promo qty", "Promo share", "Items", "Designs", "Total sales"].map((h) => <th key={h} className="whitespace-nowrap px-4 py-2.5 text-left font-bold uppercase">{h}</th>)}</tr></thead>
+            <tbody className="divide-y divide-slate-100">
+              {loading ? <tr><td colSpan={9} className="px-4 py-8 text-center text-slate-400">Loading vendor sales…</td></tr>
+                : visible.length === 0 ? <tr><td colSpan={9} className="px-4 py-8 text-center text-slate-400">No vendor sales found for this period.</td></tr>
+                : visible.map((row) => <tr key={row.vendor_name}>
+                  <td className="px-4 py-2.5 font-black text-indigo-700">#{row.rank}</td>
+                  <td className="px-4 py-2.5 font-semibold text-slate-800">{row.vendor_name}</td>
+                  <td className="px-4 py-2.5 font-bold">{row.full_price_qty}</td>
+                  <td className="px-4 py-2.5">{money(row.full_price_sales)}</td>
+                  <td className="px-4 py-2.5 text-amber-700">{row.promo_qty}</td>
+                  <td className="px-4 py-2.5 text-amber-700">{row.promo_share_pct}%</td>
+                  <td className="px-4 py-2.5">{row.item_count}</td><td className="px-4 py-2.5">{row.design_count}</td>
+                  <td className="px-4 py-2.5 font-semibold">{money(row.total_sales)}</td>
+                </tr>)}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function VendorSalesRankingView() {
   const [days, setDays] = useState(90);
   const [data, setData] = useState(null);
@@ -695,7 +761,8 @@ function VendorSalesRankingView() {
   );
 }
 
-function VendorRankingView({ raphaaaMode = false }) {
+function VendorRankingView({ raphaaaMode = false, citimartMode = false }) {
+  if (citimartMode) return <CitimartVendorRankingView />;
   return raphaaaMode ? <RaphaaaVendorRankingView /> : <GenericVendorRankingView />;
 }
 
@@ -2714,7 +2781,7 @@ export default function ForecastAnalytics() {
     switch (activeSection) {
       case "dashboard": return <DashboardView onNavigate={setActiveSection} raphaaaMode={productEnrichmentEnabled} />;
       case "demand": return <DemandForecastView raphaaaMode={productEnrichmentEnabled} />;
-      case "vendors": return <VendorRankingView raphaaaMode={productEnrichmentEnabled} />;
+      case "vendors": return <VendorRankingView raphaaaMode={productEnrichmentEnabled} citimartMode={isCitimart} />;
       case "purchase": return <PurchasePlanView raphaaaMode={productEnrichmentEnabled} />;
       case "alerts": return <AlertsView raphaaaMode={productEnrichmentEnabled} />;
       case "vendor-sales": return productEnrichmentEnabled ? <VendorSalesRankingView /> : <DashboardView onNavigate={setActiveSection} raphaaaMode={productEnrichmentEnabled} />;

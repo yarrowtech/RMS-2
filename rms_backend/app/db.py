@@ -301,6 +301,9 @@ customer_crm_feedback_collection  = db["customer_crm_feedback"]
 lucky_draw_campaigns_collection = db["lucky_draw_campaigns"]
 lucky_draw_entries_collection = db["lucky_draw_entries"]
 lucky_draw_results_collection = db["lucky_draw_results"]
+# One row per reminder-email send run for a campaign (T-3/T-1/day-of), so HQ
+# can see what went out and when without re-triggering a duplicate send.
+lucky_draw_reminders_collection = db["lucky_draw_reminders"]
 
 # Customer CRM coupons — its own tab, its own collection. A coupon isn't
 # tied to Lucky Draw specifically (HQ can hand one to any customer), but

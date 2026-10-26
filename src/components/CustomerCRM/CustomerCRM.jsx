@@ -360,6 +360,290 @@ function LuckyDrawEntryModal({ campaigns, defaultCampaignId, onClose, onSave }) 
   );
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// BULK IMPORT — CSV or Excel of pen-and-paper slips, instead of re-typing
+// each one through the single-entry modal. Same tenant-scoped
+// POST /lucky-draw/entries/bulk every store's counter staff can already
+// reach through Add entry, just batched.
+// ─────────────────────────────────────────────────────────────────────────
+const LD_CSV_COLUMN_ALIASES = {
+  customer_name: ["customer_name", "name", "customer"],
+  contact_no:    ["contact_no", "phone", "mobile", "contact", "mobile_number"],
+  email:         ["email", "email_address"],
+  address:       ["address"],
+  profession:    ["profession", "occupation"],
+  bill_no:       ["bill_no", "bill", "bill_number", "billno"],
+};
+
+function splitLdCsvLine(line) {
+  const out = [];
+  let cur = "";
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"') { inQuotes = !inQuotes; continue; }
+    if (ch === "," && !inQuotes) { out.push(cur.trim()); cur = ""; continue; }
+    cur += ch;
+  }
+  out.push(cur.trim());
+  return out;
+}
+
+function normalizeLdRow(raw) {
+  const row = {};
+  for (const [key, aliases] of Object.entries(LD_CSV_COLUMN_ALIASES)) {
+    for (const alias of aliases) {
+      if (raw[alias]) { row[key] = String(raw[alias]).trim(); break; }
+    }
+  }
+  return row;
+}
+
+function parseLdCsv(text) {
+  const lines = text.split(/\r\n|\n|\r/).map((l) => l.trim()).filter(Boolean);
+  if (!lines.length) return [];
+  const headers = splitLdCsvLine(lines[0]).map((h) => h.toLowerCase().replace(/\s+/g, "_"));
+  return lines.slice(1).map((line) => {
+    const cells = splitLdCsvLine(line);
+    const raw = {};
+    headers.forEach((h, i) => { raw[h] = cells[i] || ""; });
+    return normalizeLdRow(raw);
+  }).filter((row) => row.customer_name || row.bill_no);
+}
+
+async function parseLdXlsx(file) {
+  const XLSX = await import("xlsx");
+  const buf = await file.arrayBuffer();
+  const workbook = XLSX.read(buf, { type: "array" });
+  const sheet = workbook.Sheets[workbook.SheetNames[0]];
+  const sheetRows = XLSX.utils.sheet_to_json(sheet, { defval: "" });
+  return sheetRows.map((sheetRow) => {
+    const raw = {};
+    Object.entries(sheetRow).forEach(([header, value]) => {
+      raw[String(header).toLowerCase().trim().replace(/\s+/g, "_")] = String(value ?? "").trim();
+    });
+    return normalizeLdRow(raw);
+  }).filter((row) => row.customer_name || row.bill_no);
+}
+
+function LuckyDrawBulkImportModal({ campaigns, defaultCampaignId, isHq, hqStores, onClose, onDone }) {
+  const [campaignId, setCampaignId] = useState(defaultCampaignId || campaigns[0]?.id || "");
+  const [storeId, setStoreId] = useState(hqStores?.[0]?.id || "");
+  const [rawText, setRawText] = useState("");
+  const [parsedRows, setParsedRows] = useState([]);
+  const [submitting, setSubmitting] = useState(false);
+  const [progress, setProgress] = useState(null);
+  const [results, setResults] = useState(null);
+  const [error, setError] = useState("");
+
+  // Chunked so a large sheet (hundreds/thousands of slips) never becomes one
+  // giant request — each chunk is its own request, sent one after another,
+  // with progress shown between them instead of one long silent wait.
+  const CHUNK_SIZE = 300;
+
+  const handleText = (text) => { setRawText(text); setParsedRows(parseLdCsv(text)); setError(""); };
+
+  const handleFile = async (file) => {
+    setError("");
+    const isExcel = /\.xlsx?$/i.test(file.name) || file.type.includes("spreadsheet") || file.type.includes("excel");
+    if (isExcel) {
+      setRawText("");
+      try { setParsedRows(await parseLdXlsx(file)); }
+      catch { setError("Could not read that Excel file. Make sure it's a valid .xlsx/.xls workbook."); }
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => handleText(String(reader.result || ""));
+    reader.readAsText(file);
+  };
+
+  const submit = async () => {
+    if (!campaignId) { setError("Choose a campaign first."); return; }
+    if (isHq && !storeId) { setError("Choose which store these slips belong to."); return; }
+    if (!parsedRows.length) { setError("No valid rows to import. Each row needs at least a customer name and Bill No."); return; }
+    setSubmitting(true); setError(""); setProgress(null);
+    const storeName = hqStores?.find((s) => s.id === storeId)?.name || "";
+    const chunks = [];
+    for (let start = 0; start < parsedRows.length; start += CHUNK_SIZE) chunks.push(parsedRows.slice(start, start + CHUNK_SIZE));
+
+    const combined = { message: "", created_count: 0, results: [] };
+    try {
+      for (let i = 0; i < chunks.length; i++) {
+        setProgress({ done: i, total: chunks.length });
+        const json = await crmFetch("/api/customer-crm/lucky-draw/entries/bulk", {
+          method: "POST",
+          body: JSON.stringify({ campaign_id: campaignId, rows: chunks[i], ...(isHq ? { store_id: storeId, store_name: storeName } : {}) }),
+        });
+        combined.created_count += json.created_count || 0;
+        combined.results.push(...(json.results || []));
+      }
+      combined.message = `${combined.created_count} of ${parsedRows.length} entries created.`;
+      setResults(combined);
+    } catch (err) {
+      // Whatever finished in earlier chunks is already saved — show it
+      // alongside the error instead of hiding that partial progress.
+      if (combined.results.length) {
+        combined.message = `${combined.created_count} of ${parsedRows.length} entries created before this error.`;
+        setResults(combined);
+      }
+      setError(err.message || "Bulk import failed partway through — see what was saved below.");
+    } finally { setSubmitting(false); setProgress(null); }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[1000] grid place-items-center overflow-y-auto bg-slate-950/50 p-4 backdrop-blur-sm">
+      <div className="flex max-h-[94dvh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+        <ModalHeader eyebrow="Lucky Draw" title="Bulk import slip entries" onClose={onClose} />
+        <div className="space-y-4 overflow-y-auto p-6">
+          {!results ? (
+            <>
+              <div>
+                <label className="crm-label">Campaign</label>
+                <select className="crm-input" value={campaignId} onChange={(e) => setCampaignId(e.target.value)}>
+                  {campaigns.map((c) => <option key={c.id} value={c.id}>{c.campaign_name}{c.status === "CLOSED" ? " (closed)" : ""}</option>)}
+                </select>
+              </div>
+              {isHq && (
+                <div>
+                  <label className="crm-label">Store (which store collected these physical slips)</label>
+                  {hqStores?.length ? (
+                    <select className="crm-input" value={storeId} onChange={(e) => setStoreId(e.target.value)}>
+                      {hqStores.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                    </select>
+                  ) : <p className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs font-semibold text-amber-800">No stores set up yet — can't attribute this import to a store.</p>}
+                  <p className="mt-1 text-[11px] text-slate-500">Every row in this upload is recorded under this one store — so if slips came from different stores, import each store's sheet separately.</p>
+                </div>
+              )}
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-xs text-slate-600">
+                <p className="font-bold text-slate-700">Expected columns (header row required):</p>
+                <p className="mt-1 font-mono text-[11px] text-slate-500">customer_name, contact_no, email, address, profession, bill_no</p>
+                <p className="mt-2">Only <strong>customer_name</strong> and <strong>bill_no</strong> are required per row. A duplicate Bill No. for this campaign/store is skipped, not overwritten.</p>
+              </div>
+              <label className="block">
+                <span className="text-sm font-bold text-slate-700">Upload CSV or Excel file</span>
+                <input type="file" accept=".csv,text/csv,.xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
+                  onChange={(e) => e.target.files[0] && handleFile(e.target.files[0])}
+                  className="mt-1.5 block w-full text-sm text-slate-600 file:mr-3 file:rounded-lg file:border-0 file:bg-indigo-50 file:px-3 file:py-2 file:text-xs file:font-bold file:text-indigo-700 hover:file:bg-indigo-100" />
+              </label>
+              <div className="text-center text-xs font-bold text-slate-400">— or paste CSV text —</div>
+              <textarea value={rawText} onChange={(e) => handleText(e.target.value)} rows={5}
+                placeholder="customer_name,contact_no,email,address,profession,bill_no"
+                className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-xs font-mono focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100" />
+              {error && <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600">⚠️ {error}</div>}
+              {parsedRows.length > 0 && (
+                <div className="max-h-56 overflow-y-auto rounded-xl border border-slate-200">
+                  <table className="w-full text-xs">
+                    <thead className="sticky top-0 bg-slate-50 text-left font-bold uppercase text-slate-500">
+                      <tr>{["Name", "Contact", "Email", "Bill No."].map((h) => <th key={h} className="whitespace-nowrap px-3 py-2">{h}</th>)}</tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {parsedRows.map((r, i) => (
+                        <tr key={i} className={!r.customer_name || !r.bill_no ? "bg-red-50" : ""}>
+                          <td className="px-3 py-1.5">{r.customer_name || "—"}</td>
+                          <td className="px-3 py-1.5">{r.contact_no || "—"}</td>
+                          <td className="px-3 py-1.5">{r.email || "—"}</td>
+                          <td className="px-3 py-1.5">{r.bill_no || "—"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </>
+          ) : (
+            <>
+              <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-700">{results.message}</div>
+              <div className="max-h-64 overflow-y-auto rounded-xl border border-slate-200">
+                <table className="w-full text-xs">
+                  <thead className="sticky top-0 bg-slate-50 text-left font-bold uppercase text-slate-500">
+                    <tr>{["Name", "Bill No.", "Status", "Reason"].map((h) => <th key={h} className="whitespace-nowrap px-3 py-2">{h}</th>)}</tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {results.results.map((r, i) => (
+                      <tr key={i}>
+                        <td className="px-3 py-1.5">{r.customer_name}</td>
+                        <td className="px-3 py-1.5">{r.bill_no}</td>
+                        <td className="px-3 py-1.5"><span className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${r.status === "created" ? "bg-emerald-100 text-emerald-700" : "bg-red-100 text-red-700"}`}>{r.status}</span></td>
+                        <td className="px-3 py-1.5 text-slate-500">{r.reason || "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+        </div>
+        <div className="flex items-center justify-end gap-2 border-t border-slate-100 p-4">
+          {!results ? (
+            <>
+              {progress && <p className="mr-auto text-xs font-bold text-slate-500">Importing batch {progress.done + 1} of {progress.total}… please don't close this window.</p>}
+              <button onClick={onClose} disabled={submitting} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-50">Cancel</button>
+              <button onClick={submit} disabled={submitting || !parsedRows.length} className="rounded-xl bg-indigo-600 px-5 py-2 text-sm font-bold text-white hover:bg-indigo-700 disabled:opacity-50">{submitting ? (progress ? `Importing ${progress.done}/${progress.total}…` : "Importing…") : `Import ${parsedRows.length} entr${parsedRows.length === 1 ? "y" : "ies"}${parsedRows.length > CHUNK_SIZE ? ` (in ${Math.ceil(parsedRows.length / CHUNK_SIZE)} batches)` : ""}`}</button>
+            </>
+          ) : (
+            <button onClick={() => { onDone?.(); onClose(); }} className="rounded-xl bg-indigo-600 px-5 py-2 text-sm font-bold text-white hover:bg-indigo-700">Done</button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// COUNTDOWN REMINDER — email every entrant of one campaign that the draw
+// date is coming up. HQ only (same as creating a campaign).
+// ─────────────────────────────────────────────────────────────────────────
+function LuckyDrawReminderModal({ campaign, onClose }) {
+  const [message, setMessage] = useState("");
+  const [testEmail, setTestEmail] = useState("");
+  const [sending, setSending] = useState(false);
+  const [result, setResult] = useState(null);
+  const [error, setError] = useState("");
+
+  const send = async (asTest) => {
+    setSending(true); setError("");
+    try {
+      const json = await crmFetch(`/api/customer-crm/lucky-draw/campaigns/${campaign.id}/send-reminder`, {
+        method: "POST", body: JSON.stringify({ message, test_email: asTest ? testEmail : "" }),
+      });
+      setResult(json);
+    } catch (e) { setError(e.message || "Could not send the reminder."); }
+    finally { setSending(false); }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[1000] grid place-items-center overflow-y-auto bg-slate-950/50 p-4 backdrop-blur-sm">
+      <div className="flex max-h-[94dvh] w-full max-w-xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+        <ModalHeader eyebrow="Lucky Draw" title={`Send countdown reminder — ${campaign.campaign_name}`} onClose={onClose} />
+        <div className="space-y-4 overflow-y-auto p-6">
+          <div className="rounded-xl border border-indigo-100 bg-indigo-50 px-4 py-3 text-xs leading-5 text-indigo-900">
+            Sends by <b>email</b> to every entrant of this campaign who has an email on file (whether they scanned the QR or were entered from a paper slip). Draw date on record: <b>{campaign.ends_on || "not set"}</b>. WhatsApp reminders aren't available yet — RMS has no customer-facing WhatsApp sender set up.
+          </div>
+          <div>
+            <label className="crm-label">Message (optional — a default countdown message is used if left blank)</label>
+            <textarea className="crm-input min-h-28" value={message} onChange={(e) => setMessage(e.target.value)} placeholder={`The ${campaign.campaign_name} lucky draw will be held on ${campaign.ends_on || "[date]"}. Thank you for entering — good luck!`} />
+          </div>
+          <div className="flex items-end gap-2">
+            <div className="flex-1"><label className="crm-label">Send a test first (optional)</label><input type="email" className="crm-input" value={testEmail} onChange={(e) => setTestEmail(e.target.value)} placeholder="your@email.com" /></div>
+            <button onClick={() => send(true)} disabled={sending || !testEmail.trim()} className="whitespace-nowrap rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-50">{sending ? "Sending…" : "Send test"}</button>
+          </div>
+          {error && <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600">⚠️ {error}</div>}
+          {result && !result.test && (
+            <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-700">{result.message}</div>
+          )}
+          {result && result.test && (
+            <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-700">{result.message}</div>
+          )}
+        </div>
+        <div className="flex justify-end gap-2 border-t border-slate-100 p-4">
+          <button onClick={onClose} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-bold text-slate-600 hover:bg-slate-50">{result && !result.test ? "Close" : "Cancel"}</button>
+          {!(result && !result.test) && <button onClick={() => send(false)} disabled={sending} className="rounded-xl bg-indigo-600 px-5 py-2 text-sm font-bold text-white hover:bg-indigo-700 disabled:opacity-50">{sending ? "Sending…" : "Send to all entrants"}</button>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function DrawModal({ campaign, isHq, defaultRedo, onClose, onSave }) {
   const [form, setForm] = useState({ store_id: "", winner_count: 1, reason: "", redo: Boolean(defaultRedo) });
   const set = (key, value) => setForm((f) => ({ ...f, [key]: value }));
@@ -547,6 +831,8 @@ export default function CustomerCRM() {
   const [campaignModal, setCampaignModal] = useState(null);
   const [entryModal, setEntryModal] = useState(null);
   const [drawModal, setDrawModal] = useState(null);
+  const [bulkImportModal, setBulkImportModal] = useState(null);
+  const [reminderModal, setReminderModal] = useState(null);
   const [lookupPhone, setLookupPhone] = useState("");
   const [lookupResult, setLookupResult] = useState(null);
   const [lookupBusy, setLookupBusy] = useState(false);
@@ -1119,6 +1405,7 @@ export default function CustomerCRM() {
                   <button onClick={() => setLdCampaignFilter(ldCampaignFilter === c.id ? "" : c.id)} className="flex-1 rounded-lg bg-slate-900 px-3 py-2 text-xs font-bold text-white hover:bg-slate-800">{ldCampaignFilter === c.id ? "Clear filter" : "View entries"}</button>
                   {c.status === "CLOSED" && <button onClick={() => setDrawModal({ campaign: c, defaultRedo: hasOwnDraw(c.id) })} className="flex-1 rounded-lg bg-indigo-600 px-3 py-2 text-xs font-bold text-white hover:bg-indigo-700"><Trophy size={14} className="inline"/> {hasOwnDraw(c.id) ? "Redo draw" : "Run draw"}</button>}
                 </div>
+                {isHq && <button onClick={() => setReminderModal(c)} className="mt-2 w-full rounded-lg border border-indigo-200 px-3 py-2 text-xs font-bold text-indigo-700 hover:bg-indigo-50">Send countdown reminder</button>}
               </div>
             ))}
             {!(luckyDraw.campaigns || []).length && <p className="text-sm text-slate-500">No campaign yet.{isHq ? " Create one to start collecting slip entries." : " Ask HQ Admin to create one."}</p>}
@@ -1145,7 +1432,7 @@ export default function CustomerCRM() {
         <div className="crm-card overflow-hidden">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 p-5">
             <div><h2 className="text-lg font-bold text-slate-900">Slip entries{isHq ? " (all stores)" : ""}</h2><p className="text-sm text-slate-500">One row per customer slip entered at the counter.</p></div>
-            <div className="flex flex-wrap gap-2"><button disabled={!filteredEntries.length || exportingEntries} onClick={() => exportLuckyDrawEntries(filteredEntries)} className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-bold text-emerald-700 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-40"><FileSpreadsheet size={16} className="mr-1 inline"/>{exportingEntries ? "Preparing..." : "Export Excel"}</button><button disabled={!activeCampaigns.length} onClick={() => setEntryModal({})} className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-bold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-40"><Plus size={16} className="inline"/> Add entry</button></div>
+            <div className="flex flex-wrap gap-2"><button disabled={!filteredEntries.length || exportingEntries} onClick={() => exportLuckyDrawEntries(filteredEntries)} className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-bold text-emerald-700 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-40"><FileSpreadsheet size={16} className="mr-1 inline"/>{exportingEntries ? "Preparing..." : "Export Excel"}</button><button disabled={!activeCampaigns.length} onClick={() => setBulkImportModal({})} className="rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-2 text-sm font-bold text-indigo-700 hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-40"><FileSpreadsheet size={16} className="mr-1 inline"/>Bulk import (CSV/Excel)</button><button disabled={!activeCampaigns.length} onClick={() => setEntryModal({})} className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-bold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-40"><Plus size={16} className="inline"/> Add entry</button></div>
           </div>
           <div className="flex flex-wrap items-center gap-2 border-b border-slate-100 px-5 py-3">
             <span className="text-xs font-bold uppercase tracking-wide text-slate-400">Filter by</span>
@@ -1365,6 +1652,8 @@ export default function CustomerCRM() {
       {campaignModal && <CampaignModal initial={campaignModal.id ? campaignModal : null} onClose={() => setCampaignModal(null)} onSave={saveCampaign} />}
       {entryModal && <LuckyDrawEntryModal campaigns={luckyDraw.campaigns || []} defaultCampaignId={ldCampaignFilter} onClose={() => setEntryModal(null)} onSave={saveEntry} />}
       {drawModal && <DrawModal campaign={drawModal.campaign} isHq={data.scope?.scope === "hq"} defaultRedo={drawModal.defaultRedo} onClose={() => setDrawModal(null)} onSave={runDraw} />}
+      {bulkImportModal && <LuckyDrawBulkImportModal campaigns={(luckyDraw.campaigns || []).filter((c) => c.status === "ACTIVE")} defaultCampaignId={ldCampaignFilter} isHq={data.scope?.scope === "hq"} hqStores={hqStores} onClose={() => setBulkImportModal(null)} onDone={loadLuckyDraw} />}
+      {reminderModal && <LuckyDrawReminderModal campaign={reminderModal} onClose={() => setReminderModal(null)} />}
       {printSlip && <PrintSlipModal entry={printSlip} onClose={() => setPrintSlip(null)} onPrinted={markPrinted} />}
       {couponModal && <CouponModal initial={couponModal.id ? couponModal : null} campaigns={luckyDraw.campaigns} onClose={() => setCouponModal(null)} onSave={saveCoupon} />}
     </div>
