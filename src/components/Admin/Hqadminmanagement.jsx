@@ -71,6 +71,7 @@ const DEPT_COLOR_BY_ID = {
   "Production & Job Work":        "fuchsia",
   "Marketing":                    "teal",
   "Customer CRM":                 "cyan",
+  "Visual Merchandising":         "fuchsia",
   "Cashier":                      "orange",
   "Inventory (Store)":            "indigo",
   "Finance (Store)":              "emerald",
@@ -115,6 +116,7 @@ const PERMISSIONS = [
   { id:"assign_tasks",    label:"Assign Tasks to Team", group:"Admin"  },
   { id:"marketing",       label:"Marketing",         group:"Growth"     },
   { id:"customer_crm",    label:"Customer CRM",      group:"Growth"     },
+  { id:"visual_merchandising", label:"Visual Merchandising", group:"Growth" },
 ];
 
 // Customer CRM's own internal tabs — shown as a separate checklist (not part

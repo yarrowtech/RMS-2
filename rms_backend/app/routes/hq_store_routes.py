@@ -591,6 +591,9 @@ HQ_ONLY_DEPARTMENTS = [
     "Forecast & Analytics", "Marketing",
 ]
 
+# Visual Merchandising is HQ + store, same as Customer CRM below — HQ plans
+# and publishes layouts, stores execute and photograph the result.
+
 # Departments that ONLY make sense at a single store (no HQ equivalent).
 STORE_ONLY_DEPARTMENTS = [
     "Cashier",   # POS / sales transactions at that store
@@ -614,7 +617,7 @@ STORE_ONLY_DEPARTMENTS = [
 # numbers by citimart_store_ops_routes.py's own scoping, while an HQ-level
 # "Store Ops" admin can see every store plus the blended Overall Summary.
 SHARED_DEPARTMENTS = [
-    "Inventory", "Finance", "HR", "Customer CRM", "Store Ops",
+    "Inventory", "Finance", "HR", "Customer CRM", "Store Ops", "Visual Merchandising",
 ]
 
 HQ_DEPARTMENTS    = HQ_ONLY_DEPARTMENTS + SHARED_DEPARTMENTS
@@ -631,7 +634,7 @@ HQ_PERMISSIONS = [
     "job_work",
     "cashier", "store_stock", "sales",
     "hr", "finance", "logistics", "reports",
-    "user_management", "forecast_analytics", "marketing", "customer_crm",
+    "user_management", "forecast_analytics", "marketing", "customer_crm", "visual_merchandising",
     # Customer CRM tab-level narrowing — an admin with none of these ticked
     # gets every CRM tab (unchanged legacy behaviour); ticking one or more
     # limits them to exactly those tabs. See customer_crm_routes.py's
@@ -654,6 +657,7 @@ STORE_DEPARTMENT_DEFAULT_PERMISSIONS = {
     # "sees every tab" behaviour; HQ unchecks specific ones afterward (via
     # Edit Admin Access) only if they want to narrow a particular admin down.
     "Customer CRM": ["customer_crm", "crm_customers", "crm_followups", "crm_feedback", "crm_segments", "crm_lucky_draw", "crm_coupons"],
+    "Visual Merchandising": ["visual_merchandising"],
 }
 
 

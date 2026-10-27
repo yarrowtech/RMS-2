@@ -29,6 +29,7 @@ import { PublicWorkstationDisplay } from "./components/Production/HybridProducti
 import FloorLogKiosk from "./components/FloorLogKiosk.jsx";
 import Marketing from "./components/Marketing/Marketing.jsx";
 import CustomerCRM from "./components/CustomerCRM/CustomerCRM.jsx";
+import VisualMerchandising from "./components/VisualMerchandising/VisualMerchandising.jsx";
 import Admin from "./components/Admin/Admin";
 import GRRC from "./components/InventoryManagement/GRRC.jsx";
 import GRN from "./components/InventoryManagement/GRN.jsx";
@@ -137,6 +138,7 @@ export default function App() {
         <Route path="/dashboard/merchandiser-buyer" element={<DepartmentRouteGuard department="Merchandiser Buyer"><Mbuyer /></DepartmentRouteGuard>} />
         <Route path="/dashboard/marketing"          element={<DepartmentRouteGuard department="Marketing"><Marketing /></DepartmentRouteGuard>} />
         <Route path="/dashboard/customer-crm"      element={<DepartmentRouteGuard department={["HQ", "Marketing", "Cashier", "Store Owner", "Customer CRM"]}><CustomerCRM /></DepartmentRouteGuard>} />
+        <Route path="/dashboard/visual-merchandising" element={<DepartmentRouteGuard department={["HQ", "Store Owner", "Visual Merchandising"]}><VisualMerchandising /></DepartmentRouteGuard>} />
         <Route path="/dashboard/vendor"             element={<VendorRouteGuard><MSeller /></VendorRouteGuard>} />
         <Route path="/dashboard/store-owner"        element={<DepartmentRouteGuard department="Store Owner"><StoreOwnerDashboard /></DepartmentRouteGuard>} />
         <Route path="/dashboard/store-owner/purchasing" element={<DepartmentRouteGuard department="Store Owner"><StorePurchasing /></DepartmentRouteGuard>} />
@@ -165,6 +167,7 @@ export default function App() {
         <Route path="/production"         element={<DepartmentRouteGuard department="Production & Job Work"><ProductionJobWork /></DepartmentRouteGuard>} />
         <Route path="/marketing"          element={<DepartmentRouteGuard department="Marketing"><Marketing /></DepartmentRouteGuard>} />
         <Route path="/customer-crm"       element={<DepartmentRouteGuard department={["HQ", "Marketing", "Cashier", "Store Owner", "Customer CRM"]}><CustomerCRM /></DepartmentRouteGuard>} />
+        <Route path="/visual-merchandising" element={<DepartmentRouteGuard department={["HQ", "Store Owner", "Visual Merchandising"]}><VisualMerchandising /></DepartmentRouteGuard>} />
 
         {/* Merchandiser-Seller */}
         <Route path="/merchandiser-seller/login"          element={<MSellerLogin />} />

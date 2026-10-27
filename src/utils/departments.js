@@ -6,4 +6,5 @@ export const DEPARTMENT_NAMES = [
   "HQ", "IT", "Merchandiser Buyer", "Inventory", "Cashier", "Finance", "HR",
   "Logistics", "Design & Pattern", "Production & Job Work", "Forecast & Analytics",
   "Third Party", "Marketing", "Customer CRM", "Store Owner", "Store Ops",
+  "Visual Merchandising",
 ];

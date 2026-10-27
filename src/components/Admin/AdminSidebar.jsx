@@ -323,7 +323,7 @@ import {
   FaShoppingCart,
   FaIdBadge,
 } from "react-icons/fa";
-import { PanelLeft, PanelRight, PackageCheck, Building2, Wrench, Shield, DollarSign, Palette, TrendingUp, Network, Factory, Package, LineChart, Megaphone, HeartHandshake, Ruler } from "lucide-react";
+import { PanelLeft, PanelRight, PackageCheck, Building2, Wrench, Shield, DollarSign, Palette, TrendingUp, Network, Factory, Package, LineChart, Megaphone, HeartHandshake, Ruler, LayoutGrid } from "lucide-react";
 import { FaSitemap } from "react-icons/fa";
 import { useNavigate } from "react-router-dom";
 import { getTenantId } from "../../utils/authRedirect.js";
@@ -354,6 +354,7 @@ const DEPARTMENT_WORKSPACES = [
   { department: "Production & Job Work",        path: "/production",          icon: Factory,     label: "Production & Job Work" },
   { department: "Marketing",                    path: "/marketing",           icon: Megaphone,   label: "Marketing" },
   { department: "Customer CRM",                 path: "/customer-crm",       icon: HeartHandshake, label: "Customer CRM" },
+  { department: "Visual Merchandising",         path: "/visual-merchandising", icon: LayoutGrid, label: "Visual Merchandising" },
 ];
 
 const cn = (...a) => a.filter(Boolean).join(" ");

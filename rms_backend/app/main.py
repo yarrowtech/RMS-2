@@ -65,6 +65,7 @@ from .routes.customer_crm_routes import router as customer_crm_router
 from .routes.lucky_draw_routes import router as lucky_draw_router
 from .routes.lucky_draw_public_routes import router as lucky_draw_public_router
 from .routes.coupon_routes import router as coupon_router
+from .routes.vm_routes import router as vm_router
 from .routes.newsletter_routes import router as newsletter_router
 from .routes.staff_task_routes import router as staff_task_router
 from .routes.internal_notification_routes import router as internal_notification_router
@@ -194,6 +195,7 @@ app.include_router(customer_crm_router)
 app.include_router(lucky_draw_router)
 app.include_router(lucky_draw_public_router)
 app.include_router(coupon_router)
+app.include_router(vm_router)
 app.include_router(newsletter_router)
 app.include_router(staff_task_router)
 app.include_router(internal_notification_router)

@@ -313,6 +313,23 @@ coupons_collection = db["customer_crm_coupons"]
 # Customer CRM newsletter: one row per announcement HQ sends to opted-in customers.
 newsletter_sends_collection = db["customer_crm_newsletter_sends"]
 
+# Visual Merchandising — HQ plans product placement (floor/zone/rack/shelf,
+# free-text rather than a separate managed hierarchy for Phase 1) inside a
+# named "layout", publishes it to one or more stores, and each store
+# executes + photographs the result. Three collections: the layout itself,
+# its line-item placements, and the per-store task generated from each
+# placement at publish time (task = the actual unit of work/compliance).
+vm_layouts_collection = db["vm_layouts"]
+vm_placements_collection = db["vm_placements"]
+vm_tasks_collection = db["vm_tasks"]
+# Phase 2: which admin covers which floor/zone at a store.
+vm_staff_assignments_collection = db["vm_staff_assignments"]
+# Phase 3 scaffold ONLY — no sensor/camera integration exists yet, so this
+# collection stays empty in practice. The shape is here so a future
+# integration has somewhere to write daily counts without a schema change;
+# the API reports every zone as "no data yet" until something populates it.
+vm_zone_traffic_collection = db["vm_zone_traffic"]
+
 async def ensure_procurement_indexes():
     """Create the indexes required by catalogue/RFQ hot paths and idempotency."""
     await purchaseorders_collection.create_index([("tenant_id", 1), ("orderNo", 1)], name="po_tenant_number")
