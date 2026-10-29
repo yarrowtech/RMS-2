@@ -121,6 +121,7 @@ retailer_store_addon_payments_collection = db["retailer_store_addon_payments"]
 # got the email" — print() output is easy to lose once stdout isn't a
 # terminal someone is watching.
 email_failures_collection = db["email_failures"]
+sms_failures_collection = db["sms_failures"]
 # System-level failures — unhandled exceptions caught by main.py's global
 # handler, plus specific spots worth logging even when the exception itself
 # is swallowed for the caller (e.g. a webhook retry, a background cron
@@ -304,6 +305,7 @@ lucky_draw_results_collection = db["lucky_draw_results"]
 # One row per reminder-email send run for a campaign (T-3/T-1/day-of), so HQ
 # can see what went out and when without re-triggering a duplicate send.
 lucky_draw_reminders_collection = db["lucky_draw_reminders"]
+lucky_draw_import_batches_collection = db["lucky_draw_import_batches"]
 
 # Customer CRM coupons — its own tab, its own collection. A coupon isn't
 # tied to Lucky Draw specifically (HQ can hand one to any customer), but
@@ -322,6 +324,8 @@ newsletter_sends_collection = db["customer_crm_newsletter_sends"]
 vm_layouts_collection = db["vm_layouts"]
 vm_placements_collection = db["vm_placements"]
 vm_tasks_collection = db["vm_tasks"]
+vm_experiments_collection = db["vm_experiments"]
+vm_location_nodes_collection = db["vm_location_nodes"]
 # Phase 2: which admin covers which floor/zone at a store.
 vm_staff_assignments_collection = db["vm_staff_assignments"]
 # Phase 3 scaffold ONLY — no sensor/camera integration exists yet, so this
@@ -333,6 +337,17 @@ vm_zone_traffic_collection = db["vm_zone_traffic"]
 async def ensure_procurement_indexes():
     """Create the indexes required by catalogue/RFQ hot paths and idempotency."""
     await purchaseorders_collection.create_index([("tenant_id", 1), ("orderNo", 1)], name="po_tenant_number")
+    await vm_location_nodes_collection.create_index([("tenant_id", 1), ("store_id", 1), ("parent_id", 1), ("type", 1), ("code", 1)], unique=True, name="vm_location_sibling_code_unique")
+    await vm_location_nodes_collection.create_index([("tenant_id", 1), ("store_id", 1), ("active", 1), ("sort_order", 1)], name="vm_location_store_tree")
+    await vm_layouts_collection.create_index([("tenant_id", 1), ("status", 1), ("created_at", -1)], name="vm_layout_tenant_status")
+    await vm_placements_collection.create_index([("tenant_id", 1), ("layout_id", 1), ("created_at", 1)], name="vm_placement_layout")
+    await vm_placements_collection.create_index([("tenant_id", 1), ("layout_id", 1), ("location_leaf_id", 1), ("barcode", 1)], name="vm_placement_location_product")
+    await vm_tasks_collection.create_index([("tenant_id", 1), ("store_id", 1), ("status", 1), ("created_at", -1)], name="vm_task_store_status")
+    await vm_tasks_collection.create_index([("tenant_id", 1), ("layout_id", 1)], name="vm_task_layout")
+    await vm_tasks_collection.create_index([("tenant_id", 1), ("due_date", 1), ("status", 1), ("priority", 1)], name="vm_task_due_status_priority")
+    await vm_tasks_collection.create_index([("tenant_id", 1), ("assigned_to", 1), ("status", 1)], name="vm_task_assignee_status")
+    await vm_experiments_collection.create_index([("tenant_id", 1), ("layout_id", 1), ("status", 1), ("created_at", -1)], name="vm_experiment_layout_status")
+    await sales_collection.create_index([("tenant_id", 1), ("store_id", 1), ("created_at", 1), ("type", 1)], name="sales_tenant_store_date_type")
     await catalogue_inquiries_collection.create_index([("tenant_id", 1), ("status", 1), ("created_at", -1)], name="inq_tenant_status_created")
     await catalogue_inquiries_collection.create_index([("vendor_id", 1), ("status", 1), ("created_at", -1)], name="inq_vendor_status_created")
     await catalogue_inquiries_collection.create_index([("tenant_id", 1), ("comparison_group_id", 1)], name="inq_tenant_comparison")
@@ -464,6 +479,9 @@ async def ensure_procurement_indexes():
     await lucky_draw_entries_collection.create_index([("tenant_id", 1), ("campaign_id", 1), ("created_at", -1)], name="lucky_draw_entry_campaign_created")
     await lucky_draw_entries_collection.create_index([("tenant_id", 1), ("store_id", 1), ("campaign_id", 1), ("bill_no", 1)], unique=True, name="lucky_draw_entry_bill_unique")
     await lucky_draw_entries_collection.create_index([("tenant_id", 1), ("store_id", 1), ("printed", 1)], name="lucky_draw_entry_print_queue")
+    await lucky_draw_entries_collection.create_index([("tenant_id", 1), ("batch_id", 1)], name="lucky_draw_entry_batch")
+    await lucky_draw_import_batches_collection.create_index([("tenant_id", 1), ("created_at", -1)], name="lucky_draw_batch_tenant_created")
+    await lucky_draw_import_batches_collection.create_index([("tenant_id", 1), ("store_id", 1), ("created_at", -1)], name="lucky_draw_batch_store_created")
     # Only one *active* (non-redone) result per campaign+store scope; a redo
     # marks the old one superseded rather than deleting it, so the audit
     # trail of who drew what, and why it was redone, is never lost.

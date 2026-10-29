@@ -41,6 +41,17 @@ class Settings(BaseSettings):
     google_client_id: Optional[str] = Field(None, env='GOOGLE_CLIENT_ID')
     anthropic_api_key: Optional[str] = Field(None, env='ANTHROPIC_API_KEY')
 
+    # Twilio SMS — fallback channel for customers with no email on file.
+    # Unset means SMS sending is simply skipped (not an error); the reminder
+    # flow only uses it once all three are present. twilio_from_number is a
+    # real SMS-capable Twilio number; set twilio_messaging_service_sid
+    # instead if you're sending through a Messaging Service (recommended for
+    # India, where DLT template routing is handled by the service).
+    twilio_account_sid: Optional[str] = Field(None, env='TWILIO_ACCOUNT_SID')
+    twilio_auth_token: Optional[str] = Field(None, env='TWILIO_AUTH_TOKEN')
+    twilio_from_number: Optional[str] = Field(None, env='TWILIO_FROM_NUMBER')
+    twilio_messaging_service_sid: Optional[str] = Field(None, env='TWILIO_MESSAGING_SERVICE_SID')
+
 
     cloudinary_cloud_name: str
     cloudinary_api_key: str

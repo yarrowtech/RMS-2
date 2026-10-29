@@ -7,6 +7,8 @@ import {
   FileSpreadsheet,
   Gift,
   HeartHandshake,
+  History,
+  Pencil,
   Mail,
   Phone,
   Plus,
@@ -333,25 +335,35 @@ function CampaignModal({ initial, onClose, onSave }) {
   );
 }
 
-function LuckyDrawEntryModal({ campaigns, defaultCampaignId, isHq, hqStores, onClose, onSave }) {
-  const [form, setForm] = useState({ campaign_id: defaultCampaignId || (campaigns[0]?.id || ""), customer_name: "", email: "", address: "", contact_no: "", profession: "", bill_no: "", store_id: hqStores?.[0]?.id || "" });
+function LuckyDrawEntryModal({ campaigns, defaultCampaignId, isHq, hqStores, editEntry, onClose, onSave }) {
+  const isEdit = Boolean(editEntry);
+  const [form, setForm] = useState(isEdit
+    ? { id: editEntry.id, customer_name: editEntry.customer_name || "", email: editEntry.email || "", address: editEntry.address || "", contact_no: editEntry.contact_no || "", profession: editEntry.profession || "", bill_no: editEntry.bill_no || "" }
+    : { campaign_id: defaultCampaignId || (campaigns[0]?.id || ""), customer_name: "", email: "", address: "", contact_no: "", profession: "", bill_no: "", store_id: hqStores?.[0]?.id || "" });
   const set = (key, value) => setForm((f) => ({ ...f, [key]: value }));
   const submit = () => {
+    if (isEdit) { onSave(form); return; }
     const storeName = hqStores?.find((s) => s.id === form.store_id)?.name || "";
     onSave({ ...form, store_name: storeName });
   };
   return (
     <div className="fixed inset-0 z-[1000] grid place-items-center overflow-y-auto bg-slate-950/50 p-4 backdrop-blur-sm">
       <div className="flex max-h-[94dvh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
-        <ModalHeader eyebrow="Lucky Draw" title="Add slip entry" onClose={onClose} />
+        <ModalHeader eyebrow="Lucky Draw" title={isEdit ? "Edit slip entry" : "Add slip entry"} onClose={onClose} />
         <div className="grid gap-4 overflow-y-auto p-6 md:grid-cols-2">
-          <div className="md:col-span-2">
-            <label className="crm-label">Campaign</label>
-            <select className="crm-input" value={form.campaign_id} onChange={(e) => set("campaign_id", e.target.value)}>
-              {campaigns.map((c) => <option key={c.id} value={c.id}>{c.campaign_name}{c.status === "CLOSED" ? " (closed)" : ""}</option>)}
-            </select>
-          </div>
-          {isHq && (
+          {isEdit ? (
+            <div className="md:col-span-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs font-semibold text-slate-600">
+              {editEntry.campaign_name}{isHq && editEntry.store_name ? ` · ${editEntry.store_name}` : ""} — campaign and store can't be changed here; remove and re-add the entry if it was logged under the wrong one.
+            </div>
+          ) : (
+            <div className="md:col-span-2">
+              <label className="crm-label">Campaign</label>
+              <select className="crm-input" value={form.campaign_id} onChange={(e) => set("campaign_id", e.target.value)}>
+                {campaigns.map((c) => <option key={c.id} value={c.id}>{c.campaign_name}{c.status === "CLOSED" ? " (closed)" : ""}</option>)}
+              </select>
+            </div>
+          )}
+          {!isEdit && isHq && (
             <div className="md:col-span-2">
               <label className="crm-label">Store (which store collected this physical slip)</label>
               {hqStores?.length ? (
@@ -368,7 +380,7 @@ function LuckyDrawEntryModal({ campaigns, defaultCampaignId, isHq, hqStores, onC
           <div><label className="crm-label">Profession</label><input className="crm-input" value={form.profession} onChange={(e) => set("profession", e.target.value)} placeholder="e.g. Teacher, Business" /></div>
           <div><label className="crm-label">Bill no.</label><input className="crm-input" value={form.bill_no} onChange={(e) => set("bill_no", e.target.value)} placeholder="From the purchase bill" /></div>
         </div>
-        <ModalFooter onClose={onClose} onSave={submit} disabled={isHq && !form.store_id} saveLabel="Save entry" />
+        <ModalFooter onClose={onClose} onSave={submit} disabled={!isEdit && isHq && !form.store_id} saveLabel={isEdit ? "Save changes" : "Save entry"} />
       </div>
     </div>
   );
@@ -445,6 +457,7 @@ function LuckyDrawBulkImportModal({ campaigns, defaultCampaignId, isHq, hqStores
   const [storeId, setStoreId] = useState(hqStores?.[0]?.id || "");
   const [rawText, setRawText] = useState("");
   const [parsedRows, setParsedRows] = useState([]);
+  const [fileName, setFileName] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [progress, setProgress] = useState(null);
   const [results, setResults] = useState(null);
@@ -459,6 +472,7 @@ function LuckyDrawBulkImportModal({ campaigns, defaultCampaignId, isHq, hqStores
 
   const handleFile = async (file) => {
     setError("");
+    setFileName(file.name || "");
     const isExcel = /\.xlsx?$/i.test(file.name) || file.type.includes("spreadsheet") || file.type.includes("excel");
     if (isExcel) {
       setRawText("");
@@ -479,6 +493,9 @@ function LuckyDrawBulkImportModal({ campaigns, defaultCampaignId, isHq, hqStores
     const storeName = hqStores?.find((s) => s.id === storeId)?.name || "";
     const chunks = [];
     for (let start = 0; start < parsedRows.length; start += CHUNK_SIZE) chunks.push(parsedRows.slice(start, start + CHUNK_SIZE));
+    // One batch_id shared by every chunk of this upload, so the whole file
+    // can be listed and undone as a single unit afterwards (Import history).
+    const batchId = (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`).replace(/-/g, "");
 
     const combined = { message: "", created_count: 0, results: [] };
     try {
@@ -486,7 +503,7 @@ function LuckyDrawBulkImportModal({ campaigns, defaultCampaignId, isHq, hqStores
         setProgress({ done: i, total: chunks.length });
         const json = await crmFetch("/api/customer-crm/lucky-draw/entries/bulk", {
           method: "POST",
-          body: JSON.stringify({ campaign_id: campaignId, rows: chunks[i], ...(isHq ? { store_id: storeId, store_name: storeName } : {}) }),
+          body: JSON.stringify({ campaign_id: campaignId, rows: chunks[i], batch_id: batchId, source_label: fileName, ...(isHq ? { store_id: storeId, store_name: storeName } : {}) }),
         });
         combined.created_count += json.created_count || 0;
         combined.results.push(...(json.results || []));
@@ -610,15 +627,16 @@ function LuckyDrawBulkImportModal({ campaigns, defaultCampaignId, isHq, hqStores
 function LuckyDrawReminderModal({ campaign, onClose }) {
   const [message, setMessage] = useState("");
   const [testEmail, setTestEmail] = useState("");
+  const [testPhone, setTestPhone] = useState("");
   const [sending, setSending] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState("");
 
-  const send = async (asTest) => {
+  const send = async (mode) => {
     setSending(true); setError("");
     try {
       const json = await crmFetch(`/api/customer-crm/lucky-draw/campaigns/${campaign.id}/send-reminder`, {
-        method: "POST", body: JSON.stringify({ message, test_email: asTest ? testEmail : "" }),
+        method: "POST", body: JSON.stringify({ message, test_email: mode === "test_email" ? testEmail : "", test_phone: mode === "test_sms" ? testPhone : "" }),
       });
       setResult(json);
     } catch (e) { setError(e.message || "Could not send the reminder."); }
@@ -631,27 +649,33 @@ function LuckyDrawReminderModal({ campaign, onClose }) {
         <ModalHeader eyebrow="Lucky Draw" title={`Send countdown reminder — ${campaign.campaign_name}`} onClose={onClose} />
         <div className="space-y-4 overflow-y-auto p-6">
           <div className="rounded-xl border border-indigo-100 bg-indigo-50 px-4 py-3 text-xs leading-5 text-indigo-900">
-            Sends by <b>email</b> to every entrant of this campaign who has an email on file (whether they scanned the QR or were entered from a paper slip). Draw date on record: <b>{campaign.ends_on || "not set"}</b>. WhatsApp reminders aren't available yet — RMS has no customer-facing WhatsApp sender set up.
+            Sends by <b>email</b> to every entrant with an email on file; anyone with no email but a phone number gets it by <b>SMS</b> instead (if SMS is configured — see test below). Draw date on record: <b>{campaign.ends_on || "not set"}</b>. WhatsApp reminders aren't available yet — RMS has no customer-facing WhatsApp sender set up.
           </div>
           <div>
             <label className="crm-label">Message (optional — a default countdown message is used if left blank)</label>
             <textarea className="crm-input min-h-28" value={message} onChange={(e) => setMessage(e.target.value)} placeholder={`The ${campaign.campaign_name} lucky draw will be held on ${campaign.ends_on || "[date]"}. Thank you for entering — good luck!`} />
           </div>
-          <div className="flex items-end gap-2">
-            <div className="flex-1"><label className="crm-label">Send a test first (optional)</label><input type="email" className="crm-input" value={testEmail} onChange={(e) => setTestEmail(e.target.value)} placeholder="your@email.com" /></div>
-            <button onClick={() => send(true)} disabled={sending || !testEmail.trim()} className="whitespace-nowrap rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-50">{sending ? "Sending…" : "Send test"}</button>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="flex items-end gap-2">
+              <div className="flex-1"><label className="crm-label">Test email (optional)</label><input type="email" className="crm-input" value={testEmail} onChange={(e) => setTestEmail(e.target.value)} placeholder="your@email.com" /></div>
+              <button onClick={() => send("test_email")} disabled={sending || !testEmail.trim()} className="whitespace-nowrap rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-50">{sending ? "Sending…" : "Send"}</button>
+            </div>
+            <div className="flex items-end gap-2">
+              <div className="flex-1"><label className="crm-label">Test SMS (optional)</label><input type="tel" className="crm-input" value={testPhone} onChange={(e) => setTestPhone(e.target.value)} placeholder="10 digit mobile" /></div>
+              <button onClick={() => send("test_sms")} disabled={sending || !testPhone.trim()} className="whitespace-nowrap rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-50">{sending ? "Sending…" : "Send"}</button>
+            </div>
           </div>
           {error && <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600">⚠️ {error}</div>}
-          {result && !result.test && (
-            <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-700">{result.message}</div>
-          )}
-          {result && result.test && (
-            <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-700">{result.message}</div>
+          {result && (
+            <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-700">
+              {result.message}
+              {result.note && <p className="mt-1 text-xs font-semibold text-emerald-800">{result.note}</p>}
+            </div>
           )}
         </div>
         <div className="flex justify-end gap-2 border-t border-slate-100 p-4">
           <button onClick={onClose} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-bold text-slate-600 hover:bg-slate-50">{result && !result.test ? "Close" : "Cancel"}</button>
-          {!(result && !result.test) && <button onClick={() => send(false)} disabled={sending} className="rounded-xl bg-indigo-600 px-5 py-2 text-sm font-bold text-white hover:bg-indigo-700 disabled:opacity-50">{sending ? "Sending…" : "Send to all entrants"}</button>}
+          {!(result && !result.test) && <button onClick={() => send("all")} disabled={sending} className="rounded-xl bg-indigo-600 px-5 py-2 text-sm font-bold text-white hover:bg-indigo-700 disabled:opacity-50">{sending ? "Sending…" : "Send to all entrants"}</button>}
         </div>
       </div>
     </div>
@@ -1060,7 +1084,11 @@ export default function CustomerCRM() {
 
   const saveEntry = async (form) => {
     try {
-      await crmFetch("/api/customer-crm/lucky-draw/entries", { method: "POST", body: JSON.stringify(form) });
+      if (form.id) {
+        await crmFetch(`/api/customer-crm/lucky-draw/entries/${form.id}`, { method: "PATCH", body: JSON.stringify(form) });
+      } else {
+        await crmFetch("/api/customer-crm/lucky-draw/entries", { method: "POST", body: JSON.stringify(form) });
+      }
       setEntryModal(null); loadLuckyDraw();
     } catch (e) { setError(e.message || "Unable to save entry."); }
   };
@@ -1071,6 +1099,23 @@ export default function CustomerCRM() {
       await crmFetch(`/api/customer-crm/lucky-draw/entries/${id}`, { method: "DELETE" });
       loadLuckyDraw();
     } catch (e) { setError(e.message || "Unable to remove entry."); }
+  };
+
+  const [importHistoryModal, setImportHistoryModal] = useState(false);
+  const [importBatches, setImportBatches] = useState([]);
+  const [importBatchesLoading, setImportBatchesLoading] = useState(false);
+  const loadImportBatches = useCallback(async () => {
+    setImportBatchesLoading(true);
+    try { setImportBatches(await crmFetch("/api/customer-crm/lucky-draw/import-batches")); }
+    catch (e) { setError(e.message || "Unable to load import history."); }
+    finally { setImportBatchesLoading(false); }
+  }, []);
+  const undoImportBatch = async (batchId) => {
+    if (!window.confirm("Undo this import? Every entry it created will be removed. Manual entries and other imports are not affected.")) return;
+    try {
+      await crmFetch(`/api/customer-crm/lucky-draw/import-batches/${batchId}`, { method: "DELETE" });
+      loadImportBatches(); loadLuckyDraw();
+    } catch (e) { setError(e.message || "Unable to undo this import."); }
   };
 
   const runDraw = async (form) => {
@@ -1454,7 +1499,7 @@ export default function CustomerCRM() {
         <div className="crm-card overflow-hidden">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 p-5">
             <div><h2 className="text-lg font-bold text-slate-900">Slip entries{isHq ? " (all stores)" : ""}</h2><p className="text-sm text-slate-500">One row per customer slip entered at the counter.</p></div>
-            <div className="flex flex-wrap gap-2"><button disabled={!filteredEntries.length || exportingEntries} onClick={() => exportLuckyDrawEntries(filteredEntries)} className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-bold text-emerald-700 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-40"><FileSpreadsheet size={16} className="mr-1 inline"/>{exportingEntries ? "Preparing..." : "Export Excel"}</button><button disabled={!activeCampaigns.length} onClick={() => setBulkImportModal({})} className="rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-2 text-sm font-bold text-indigo-700 hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-40"><FileSpreadsheet size={16} className="mr-1 inline"/>Bulk import (CSV/Excel)</button><button disabled={!activeCampaigns.length} onClick={() => setEntryModal({})} className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-bold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-40"><Plus size={16} className="inline"/> Add entry</button></div>
+            <div className="flex flex-wrap gap-2"><button disabled={!filteredEntries.length || exportingEntries} onClick={() => exportLuckyDrawEntries(filteredEntries)} className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-bold text-emerald-700 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-40"><FileSpreadsheet size={16} className="mr-1 inline"/>{exportingEntries ? "Preparing..." : "Export Excel"}</button><button onClick={() => { setImportHistoryModal(true); loadImportBatches(); }} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-bold text-slate-600 hover:bg-slate-50"><History size={16} className="mr-1 inline"/>Import history</button><button disabled={!activeCampaigns.length} onClick={() => setBulkImportModal({})} className="rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-2 text-sm font-bold text-indigo-700 hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-40"><FileSpreadsheet size={16} className="mr-1 inline"/>Bulk import (CSV/Excel)</button><button disabled={!activeCampaigns.length} onClick={() => setEntryModal({})} className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-bold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-40"><Plus size={16} className="inline"/> Add entry</button></div>
           </div>
           <div className="flex flex-wrap items-center gap-2 border-b border-slate-100 px-5 py-3">
             <span className="text-xs font-bold uppercase tracking-wide text-slate-400">Filter by</span>
@@ -1520,6 +1565,7 @@ export default function CustomerCRM() {
                     <td className="px-5 py-3">
                       <div className="flex flex-wrap items-center gap-2">
                         {isQr && <button onClick={() => setPrintSlip(e)} title="Print it again if the last print got stuck or misfired" className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-bold text-slate-600 hover:bg-slate-50">Reprint</button>}
+                        <button onClick={() => setEntryModal({ edit: e })} className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-bold text-slate-600 hover:bg-slate-50"><Pencil size={12} className="mr-1 inline"/>Edit</button>
                         <button onClick={() => removeEntry(e.id)} className="rounded-lg border border-rose-200 px-3 py-1.5 text-xs font-bold text-rose-600 hover:bg-rose-50">Remove</button>
                       </div>
                     </td>
@@ -1684,7 +1730,40 @@ export default function CustomerCRM() {
       </div>
       {customerModal && <CustomerModal initial={customerModal.id ? customerModal : null} onClose={() => setCustomerModal(null)} onSave={saveCustomer} />}
       {campaignModal && <CampaignModal initial={campaignModal.id ? campaignModal : null} onClose={() => setCampaignModal(null)} onSave={saveCampaign} />}
-      {entryModal && <LuckyDrawEntryModal campaigns={luckyDraw.campaigns || []} defaultCampaignId={ldCampaignFilter} isHq={data.scope?.scope === "hq"} hqStores={hqStores} onClose={() => setEntryModal(null)} onSave={saveEntry} />}
+      {entryModal && <LuckyDrawEntryModal campaigns={luckyDraw.campaigns || []} defaultCampaignId={ldCampaignFilter} isHq={data.scope?.scope === "hq"} hqStores={hqStores} editEntry={entryModal.edit} onClose={() => setEntryModal(null)} onSave={saveEntry} />}
+      {importHistoryModal && (
+        <div className="fixed inset-0 z-[1000] grid place-items-center overflow-y-auto bg-slate-950/50 p-4 backdrop-blur-sm">
+          <div className="flex max-h-[94dvh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+            <ModalHeader eyebrow="Lucky Draw" title="Import history" onClose={() => setImportHistoryModal(false)} />
+            <div className="overflow-y-auto p-6">
+              <p className="mb-4 text-sm text-slate-500">One row per bulk upload. Undo removes only the entries that upload created — manual entries and every other upload are untouched.</p>
+              {importBatchesLoading ? <p className="text-sm text-slate-400">Loading...</p> : (
+                <div className="overflow-hidden rounded-xl border border-slate-200">
+                  <table className="w-full text-left text-sm">
+                    <thead className="bg-slate-50 text-xs font-bold uppercase text-slate-500">
+                      <tr><th className="px-4 py-2.5">Uploaded</th><th className="px-4 py-2.5">File</th><th className="px-4 py-2.5">Campaign</th><th className="px-4 py-2.5">Store</th><th className="px-4 py-2.5">By</th><th className="px-4 py-2.5 text-right">Created</th><th className="px-4 py-2.5"></th></tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {importBatches.map((b) => (
+                        <tr key={b.id}>
+                          <td className="px-4 py-2.5 text-xs text-slate-500">{exportDate(b.created_at) || "-"}</td>
+                          <td className="px-4 py-2.5 text-slate-700">{b.source_label || "-"}</td>
+                          <td className="px-4 py-2.5 text-slate-700">{b.campaign_name || "-"}</td>
+                          <td className="px-4 py-2.5 text-slate-700">{b.store_name || "-"}</td>
+                          <td className="px-4 py-2.5 text-xs text-slate-500">{b.uploaded_by_name || "-"}</td>
+                          <td className="px-4 py-2.5 text-right font-semibold text-slate-900">{b.created_count || 0}</td>
+                          <td className="px-4 py-2.5"><button onClick={() => undoImportBatch(b.batch_id)} className="rounded-lg border border-rose-200 px-3 py-1.5 text-xs font-bold text-rose-600 hover:bg-rose-50">Undo</button></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {!importBatches.length && <p className="p-8 text-center text-sm font-semibold text-slate-500">No bulk imports yet.</p>}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
       {drawModal && <DrawModal campaign={drawModal.campaign} isHq={data.scope?.scope === "hq"} defaultRedo={drawModal.defaultRedo} onClose={() => setDrawModal(null)} onSave={runDraw} />}
       {bulkImportModal && <LuckyDrawBulkImportModal campaigns={(luckyDraw.campaigns || []).filter((c) => c.status === "ACTIVE")} defaultCampaignId={ldCampaignFilter} isHq={data.scope?.scope === "hq"} hqStores={hqStores} onClose={() => setBulkImportModal(null)} onDone={loadLuckyDraw} />}
       {reminderModal && <LuckyDrawReminderModal campaign={reminderModal} onClose={() => setReminderModal(null)} />}

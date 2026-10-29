@@ -13,6 +13,7 @@ never a department-level admin) can create or close a campaign.
 import asyncio
 import random
 from typing import Any, Dict, List, Optional
+from uuid import uuid4
 
 import cloudinary
 import cloudinary.uploader
@@ -24,9 +25,11 @@ from pymongo import InsertOne
 from ..config import frontend_url, settings
 from ..db import (
     lucky_draw_campaigns_collection, lucky_draw_entries_collection,
-    lucky_draw_reminders_collection, lucky_draw_results_collection,
+    lucky_draw_import_batches_collection, lucky_draw_reminders_collection,
+    lucky_draw_results_collection,
 )
 from ..email_utils import send_newsletter_email
+from ..sms_utils import send_sms, sms_configured
 from .customer_crm_routes import clean, now_utc, require_crm_tab, scoped_query, serialize_doc
 from .deps import get_tenant
 
@@ -67,6 +70,15 @@ class EntryPayload(BaseModel):
     store_name: str = ""
 
 
+class EntryEditPayload(BaseModel):
+    customer_name: str
+    bill_no: str
+    email: str = ""
+    address: str = ""
+    contact_no: str = ""
+    profession: str = ""
+
+
 class EntryBulkRow(BaseModel):
     customer_name: str = ""
     email: str = ""
@@ -79,6 +91,13 @@ class EntryBulkRow(BaseModel):
 class EntryBulkPayload(BaseModel):
     campaign_id: str
     rows: List[EntryBulkRow] = []
+    # Groups every chunk of one logical upload (the frontend splits a large
+    # file into several requests) under one batch so it can be listed and
+    # undone as a single unit. The first chunk's call leaves this blank and
+    # gets one generated; the frontend then reuses it for every later chunk
+    # of the same upload.
+    batch_id: str = ""
+    source_label: str = ""
     # HQ only — which physical store this batch of slips belongs to. A
     # store-scoped login ignores this; it's always forced to its own store,
     # same as a single counter entry.
@@ -89,6 +108,7 @@ class EntryBulkPayload(BaseModel):
 class ReminderPayload(BaseModel):
     message: str = ""
     test_email: str = ""
+    test_phone: str = ""
 
 
 class DrawPayload(BaseModel):
@@ -418,6 +438,29 @@ async def create_entries_bulk(payload: EntryBulkPayload, ctx: Dict[str, Any] = D
         scope = scoped_query(ctx)
         store_name = ctx.get("store_name") or ""
 
+    # One batch groups every chunk of a single logical upload (the frontend
+    # splits a large file into several requests of this same endpoint), so
+    # the whole upload can be listed and undone as one unit later. The first
+    # chunk creates the batch document; later chunks of the same upload just
+    # increment its counters via upsert.
+    batch_id = clean(payload.batch_id) or uuid4().hex
+    await lucky_draw_import_batches_collection.update_one(
+        {"tenant_id": ctx["tenant_id"], "batch_id": batch_id},
+        {
+            "$setOnInsert": {
+                "tenant_id": ctx["tenant_id"], "batch_id": batch_id,
+                "campaign_id": payload.campaign_id, "campaign_name": campaign.get("campaign_name"),
+                "store_id": scope.get("store_id", ""), "store_name": store_name,
+                "source_label": clean(payload.source_label),
+                "uploaded_by": ctx.get("admin_id"), "uploaded_by_name": ctx.get("admin_name"),
+                "created_at": now_utc(),
+            },
+            "$inc": {"row_count": len(payload.rows)},
+            "$set": {"updated_at": now_utc()},
+        },
+        upsert=True,
+    )
+
     # Pass 1 (in memory): clean every row, catch missing-field errors and
     # duplicate bill numbers WITHIN this same upload, without touching the DB.
     now = now_utc()
@@ -471,6 +514,7 @@ async def create_entries_bulk(payload: EntryBulkPayload, ctx: Dict[str, Any] = D
             "entered_by": ctx.get("admin_id"),
             "entered_by_name": ctx.get("admin_name"),
             "source": "COUNTER_STAFF_BULK",
+            "batch_id": batch_id,
             "printed": True,
             "created_at": now,
             "updated_at": now,
@@ -490,7 +534,9 @@ async def create_entries_bulk(payload: EntryBulkPayload, ctx: Dict[str, Any] = D
 
     final_results = [r for r in results if r is not None]
     created = sum(1 for r in final_results if r["status"] == "created")
-    return {"message": f"{created} of {len(payload.rows)} entries created.", "created_count": created, "results": final_results}
+    if created:
+        await lucky_draw_import_batches_collection.update_one({"tenant_id": ctx["tenant_id"], "batch_id": batch_id}, {"$inc": {"created_count": created}})
+    return {"message": f"{created} of {len(payload.rows)} entries created.", "created_count": created, "results": final_results, "batch_id": batch_id}
 
 
 @router.delete("/entries/{entry_id}")
@@ -504,6 +550,63 @@ async def delete_entry(entry_id: str, ctx: Dict[str, Any] = Depends(get_tenant))
         raise HTTPException(status_code=404, detail="Entry not found, or belongs to another store.")
     await lucky_draw_entries_collection.delete_one({"_id": entry["_id"]})
     return {"message": "Entry removed."}
+
+
+@router.patch("/entries/{entry_id}")
+async def edit_entry(entry_id: str, payload: EntryEditPayload, ctx: Dict[str, Any] = Depends(get_tenant)):
+    """Fix a typo in a slip already saved — name, bill no, contact, etc —
+    without deleting and re-adding it (which would lose entered_by/created_at
+    history for no reason)."""
+    ctx = require_crm_tab(ctx, "luckydraw")
+    if not ObjectId.is_valid(entry_id):
+        raise HTTPException(status_code=400, detail="Invalid entry ID.")
+    query = {**scoped_query(ctx), "_id": ObjectId(entry_id)}
+    entry = await lucky_draw_entries_collection.find_one(query)
+    if not entry:
+        raise HTTPException(status_code=404, detail="Entry not found, or belongs to another store.")
+    customer_name = clean(payload.customer_name)
+    bill_no = clean(payload.bill_no)
+    if not customer_name:
+        raise HTTPException(status_code=400, detail="Customer name is required.")
+    if not bill_no:
+        raise HTTPException(status_code=400, detail="Bill No. is required.")
+    if bill_no != entry.get("bill_no"):
+        dupe_query = {"tenant_id": entry["tenant_id"], "store_id": entry.get("store_id", ""), "campaign_id": entry["campaign_id"], "bill_no": bill_no}
+        if await lucky_draw_entries_collection.find_one(dupe_query, {"_id": 1}):
+            raise HTTPException(status_code=409, detail=f"Bill No. {bill_no} is already used by another entry in this store's draw.")
+    patch = {
+        "customer_name": customer_name, "bill_no": bill_no,
+        "email": clean(payload.email), "address": clean(payload.address),
+        "contact_no": clean(payload.contact_no), "profession": clean(payload.profession),
+        "updated_at": now_utc(),
+    }
+    await lucky_draw_entries_collection.update_one({"_id": entry["_id"]}, {"$set": patch})
+    return serialize_doc(await lucky_draw_entries_collection.find_one({"_id": entry["_id"]}))
+
+
+@router.get("/import-batches")
+async def list_import_batches(ctx: Dict[str, Any] = Depends(get_tenant)):
+    """Upload history — one row per bulk-import run (a large file may have
+    been split into several chunked requests by the frontend, but they all
+    share one batch_id, so this still shows one row per actual upload)."""
+    ctx = require_crm_tab(ctx, "luckydraw")
+    rows = await lucky_draw_import_batches_collection.find(scoped_query(ctx)).sort("created_at", -1).to_list(200)
+    return [serialize_doc(r) for r in rows]
+
+
+@router.delete("/import-batches/{batch_id}")
+async def undo_import_batch(batch_id: str, ctx: Dict[str, Any] = Depends(get_tenant)):
+    """Deletes only the entries created by this one upload — identified by
+    batch_id, not a blind wipe — leaving manual entries and every other
+    batch untouched."""
+    ctx = require_crm_tab(ctx, "luckydraw")
+    query = {**scoped_query(ctx), "batch_id": batch_id}
+    batch = await lucky_draw_import_batches_collection.find_one({**scoped_query(ctx), "batch_id": batch_id})
+    if not batch:
+        raise HTTPException(status_code=404, detail="Import batch not found, or belongs to another store.")
+    result = await lucky_draw_entries_collection.delete_many(query)
+    await lucky_draw_import_batches_collection.delete_one({"_id": batch["_id"]})
+    return {"message": f"{result.deleted_count} entries removed from this import.", "deleted_count": result.deleted_count}
 
 
 @router.patch("/entries/{entry_id}/printed")
@@ -628,36 +731,75 @@ async def lookup_by_phone(contact_no: str = Query(...), ctx: Dict[str, Any] = De
 # ─────────────────────────────────────────────
 
 async def _reminder_audience(tenant_id: str, campaign_id: str) -> List[dict]:
-    """Every entrant of this campaign with an email on file, de-duplicated —
-    one customer with several slips only gets one reminder."""
+    """Every entrant of this campaign with an email AND/OR a phone number on
+    file, de-duplicated by whichever contact they have — one customer with
+    several slips only gets one reminder. Each entry carries a "channel" tag
+    so the sender below knows email vs SMS without re-checking."""
     seen, out = set(), []
-    async for e in lucky_draw_entries_collection.find({"tenant_id": tenant_id, "campaign_id": campaign_id, "email": {"$nin": ["", None]}}):
-        key = (e.get("email") or "").strip().lower()
-        if not key or key in seen:
+    async for e in lucky_draw_entries_collection.find({
+        "tenant_id": tenant_id, "campaign_id": campaign_id,
+        "$or": [{"email": {"$nin": ["", None]}}, {"contact_no": {"$nin": ["", None]}}],
+    }):
+        email = (e.get("email") or "").strip().lower()
+        phone = (e.get("contact_no") or "").strip()
+        key = f"email:{email}" if email else f"phone:{phone}"
+        if key in seen:
             continue
         seen.add(key)
+        e["_channel"] = "email" if email else "sms"
         out.append(e)
     return out
 
 
+def _sms_countdown_body(campaign: dict, message: str) -> str:
+    """Short SMS version — Twilio/DLT templates don't carry the richer HTML
+    email body, so this is a separate, shorter line using the same message
+    text the admin typed."""
+    link = frontend_url("/")
+    return f"{message} {link}".strip()
+
+
 async def _run_reminder_send(send_id: ObjectId, tenant_id: str, campaign: dict, message: str) -> None:
-    sent = failed = 0
+    sent = failed = skipped = 0
+    sent_email = sent_sms = 0
     people = await _reminder_audience(tenant_id, str(campaign["_id"]))
     subject = f"Countdown: {campaign.get('campaign_name')} draw is coming up!"
+    sms_body = _sms_countdown_body(campaign, message)
     for p in people:
+        ok = False
         try:
-            ok = await send_newsletter_email(
-                p["email"], p.get("customer_name") or "", subject, message,
-                frontend_url("/"), link=campaign.get("website_link") or "",
-            )
+            if p["_channel"] == "email":
+                ok = await send_newsletter_email(
+                    p["email"], p.get("customer_name") or "", subject, message,
+                    frontend_url("/"), link=campaign.get("website_link") or "",
+                )
+                if ok:
+                    sent_email += 1
+            else:
+                ok = await send_sms(p["contact_no"], sms_body, context=f"lucky_draw_reminder:{campaign.get('_id')}")
+                if ok:
+                    sent_sms += 1
+                elif not sms_configured():
+                    skipped += 1
+                    ok = None  # distinguish "no SMS provider" from a real send failure
         except Exception:
             ok = False
-        sent += 1 if ok else 0
-        failed += 0 if ok else 1
-        await lucky_draw_reminders_collection.update_one({"_id": send_id}, {"$set": {"sent_count": sent, "failed_count": failed}})
+        if ok is None:
+            pass  # counted as skipped above, not a failure
+        else:
+            sent += 1 if ok else 0
+            failed += 0 if ok else 1
+        await lucky_draw_reminders_collection.update_one(
+            {"_id": send_id},
+            {"$set": {"sent_count": sent, "failed_count": failed, "skipped_count": skipped, "sent_email_count": sent_email, "sent_sms_count": sent_sms}},
+        )
         await asyncio.sleep(0.05)
     await lucky_draw_reminders_collection.update_one(
-        {"_id": send_id}, {"$set": {"status": "DONE", "sent_count": sent, "failed_count": failed, "finished_at": now_utc()}}
+        {"_id": send_id},
+        {"$set": {
+            "status": "DONE", "sent_count": sent, "failed_count": failed, "skipped_count": skipped,
+            "sent_email_count": sent_email, "sent_sms_count": sent_sms, "finished_at": now_utc(),
+        }},
     )
 
 
@@ -686,20 +828,38 @@ async def send_campaign_reminder(campaign_id: str, payload: ReminderPayload, bac
             raise HTTPException(status_code=502, detail="Test email could not be sent — check the email settings.")
         return {"test": True, "message": f"Test reminder sent to {test_email}."}
 
+    test_phone = clean(payload.test_phone)
+    if test_phone:
+        if not sms_configured():
+            raise HTTPException(status_code=503, detail="SMS isn't configured yet — set TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN and a sender (TWILIO_FROM_NUMBER or TWILIO_MESSAGING_SERVICE_SID).")
+        ok = await send_sms(test_phone, _sms_countdown_body(campaign, message), context=f"lucky_draw_reminder_test:{campaign_id}")
+        if not ok:
+            raise HTTPException(status_code=502, detail="Test SMS could not be sent — check the Twilio settings.")
+        return {"test": True, "message": f"Test SMS sent to {test_phone}."}
+
     people = await _reminder_audience(ctx["tenant_id"], campaign_id)
     if not people:
-        raise HTTPException(status_code=400, detail="No entrants with an email on file for this campaign yet.")
+        raise HTTPException(status_code=400, detail="No entrants with an email or phone number on file for this campaign yet.")
+    email_count = sum(1 for p in people if p["_channel"] == "email")
+    sms_count = len(people) - email_count
     doc = {
         "tenant_id": ctx["tenant_id"], "campaign_id": campaign_id, "campaign_name": campaign.get("campaign_name"),
-        "message": message, "recipient_count": len(people), "sent_count": 0, "failed_count": 0,
+        "message": message, "recipient_count": len(people), "sent_count": 0, "failed_count": 0, "skipped_count": 0,
+        "sent_email_count": 0, "sent_sms_count": 0,
         "status": "SENDING", "sent_by_name": ctx.get("admin_name") or "", "created_at": now_utc(),
     }
     result = await lucky_draw_reminders_collection.insert_one(doc)
     background.add_task(_run_reminder_send, result.inserted_id, ctx["tenant_id"], campaign, message)
+    note = (
+        f"{email_count} by email, {sms_count} by SMS."
+        if sms_configured()
+        else f"{email_count} by email now. {sms_count} more have no email but a phone number — SMS isn't configured yet (set TWILIO_ACCOUNT_SID/AUTH_TOKEN), so they'll be skipped until it is."
+    )
     return {
         "test": False, "id": str(result.inserted_id), "recipient_count": len(people),
-        "message": f"Sending reminder to {len(people)} entrant(s) with an email on file.",
-        "note": "Email only — WhatsApp reminders need a customer-facing WhatsApp sender, which isn't set up yet.",
+        "email_count": email_count, "sms_count": sms_count,
+        "message": f"Sending reminder to {len(people)} entrant(s).",
+        "note": note,
     }
 
 
