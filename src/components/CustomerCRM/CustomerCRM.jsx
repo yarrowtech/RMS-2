@@ -333,9 +333,13 @@ function CampaignModal({ initial, onClose, onSave }) {
   );
 }
 
-function LuckyDrawEntryModal({ campaigns, defaultCampaignId, onClose, onSave }) {
-  const [form, setForm] = useState({ campaign_id: defaultCampaignId || (campaigns[0]?.id || ""), customer_name: "", email: "", address: "", contact_no: "", profession: "", bill_no: "" });
+function LuckyDrawEntryModal({ campaigns, defaultCampaignId, isHq, hqStores, onClose, onSave }) {
+  const [form, setForm] = useState({ campaign_id: defaultCampaignId || (campaigns[0]?.id || ""), customer_name: "", email: "", address: "", contact_no: "", profession: "", bill_no: "", store_id: hqStores?.[0]?.id || "" });
   const set = (key, value) => setForm((f) => ({ ...f, [key]: value }));
+  const submit = () => {
+    const storeName = hqStores?.find((s) => s.id === form.store_id)?.name || "";
+    onSave({ ...form, store_name: storeName });
+  };
   return (
     <div className="fixed inset-0 z-[1000] grid place-items-center overflow-y-auto bg-slate-950/50 p-4 backdrop-blur-sm">
       <div className="flex max-h-[94dvh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
@@ -347,6 +351,16 @@ function LuckyDrawEntryModal({ campaigns, defaultCampaignId, onClose, onSave }) 
               {campaigns.map((c) => <option key={c.id} value={c.id}>{c.campaign_name}{c.status === "CLOSED" ? " (closed)" : ""}</option>)}
             </select>
           </div>
+          {isHq && (
+            <div className="md:col-span-2">
+              <label className="crm-label">Store (which store collected this physical slip)</label>
+              {hqStores?.length ? (
+                <select className="crm-input" value={form.store_id} onChange={(e) => set("store_id", e.target.value)}>
+                  {hqStores.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                </select>
+              ) : <p className="text-xs font-semibold text-rose-600">No stores found.</p>}
+            </div>
+          )}
           <div><label className="crm-label">Customer name</label><input className="crm-input" value={form.customer_name} onChange={(e) => set("customer_name", e.target.value)} placeholder="As written on the slip" /></div>
           <div><label className="crm-label">Email</label><input type="email" className="crm-input" value={form.email} onChange={(e) => set("email", e.target.value)} placeholder="customer@email.com" /></div>
           <div className="md:col-span-2"><label className="crm-label">Address</label><input className="crm-input" value={form.address} onChange={(e) => set("address", e.target.value)} placeholder="As written on the slip" /></div>
@@ -354,7 +368,7 @@ function LuckyDrawEntryModal({ campaigns, defaultCampaignId, onClose, onSave }) 
           <div><label className="crm-label">Profession</label><input className="crm-input" value={form.profession} onChange={(e) => set("profession", e.target.value)} placeholder="e.g. Teacher, Business" /></div>
           <div><label className="crm-label">Bill no.</label><input className="crm-input" value={form.bill_no} onChange={(e) => set("bill_no", e.target.value)} placeholder="From the purchase bill" /></div>
         </div>
-        <ModalFooter onClose={onClose} onSave={() => onSave(form)} saveLabel="Save entry" />
+        <ModalFooter onClose={onClose} onSave={submit} disabled={isHq && !form.store_id} saveLabel="Save entry" />
       </div>
     </div>
   );
@@ -368,7 +382,7 @@ function LuckyDrawEntryModal({ campaigns, defaultCampaignId, onClose, onSave }) 
 // ─────────────────────────────────────────────────────────────────────────
 const LD_CSV_COLUMN_ALIASES = {
   customer_name: ["customer_name", "name", "customer"],
-  contact_no:    ["contact_no", "phone", "mobile", "contact", "mobile_number"],
+  contact_no:    ["contact_no", "phone", "phone_no", "mobile", "contact", "mobile_number"],
   email:         ["email", "email_address"],
   address:       ["address"],
   profession:    ["profession", "occupation"],
@@ -828,6 +842,8 @@ export default function CustomerCRM() {
   const [ldDateMode, setLdDateMode] = useState("all");
   const [ldDateFrom, setLdDateFrom] = useState("");
   const [ldDateTo, setLdDateTo] = useState("");
+  const [ldSearch, setLdSearch] = useState("");
+  const [ldStoreFilter, setLdStoreFilter] = useState("");
   const [campaignModal, setCampaignModal] = useState(null);
   const [entryModal, setEntryModal] = useState(null);
   const [drawModal, setDrawModal] = useState(null);
@@ -1300,13 +1316,19 @@ export default function CustomerCRM() {
     const myStoreId = data.scope?.store_id;
     const activeCampaigns = (luckyDraw.campaigns || []).filter((c) => c.status === "ACTIVE");
     const ldRange = resolveDateRange(ldDateMode, ldDateFrom, ldDateTo);
+    const ldSearchNorm = ldSearch.trim().toLowerCase();
     const filteredEntries = (luckyDraw.entries || []).filter((e) => {
       if (ldCampaignFilter && e.campaign_id !== ldCampaignFilter) return false;
+      if (isHq && ldStoreFilter && e.store_id !== ldStoreFilter) return false;
       if (ldRange) {
         const at = e.created_at ? new Date(e.created_at) : null;
         if (!at || Number.isNaN(at.getTime())) return false;
         if (ldRange.from && at < ldRange.from) return false;
         if (ldRange.to && at >= ldRange.to) return false;
+      }
+      if (ldSearchNorm) {
+        const haystack = `${e.customer_name || ""} ${e.contact_no || ""} ${e.bill_no || ""}`.toLowerCase();
+        if (!haystack.includes(ldSearchNorm)) return false;
       }
       return true;
     });
@@ -1452,6 +1474,18 @@ export default function CustomerCRM() {
                 <input type="date" value={ldDateTo} onChange={(e) => setLdDateTo(e.target.value)} className="crm-input !w-auto py-1.5 text-xs" />
               </div>
             )}
+            {isHq && (
+              <select value={ldStoreFilter} onChange={(e) => setLdStoreFilter(e.target.value)} className="crm-input !w-auto py-1.5 text-xs">
+                <option value="">All stores</option>
+                {hqStores.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+            )}
+            <input
+              value={ldSearch}
+              onChange={(e) => setLdSearch(e.target.value)}
+              placeholder="Search name, phone or bill no."
+              className="crm-input !w-auto min-w-[220px] py-1.5 text-xs"
+            />
             <span className="ml-auto text-xs font-semibold text-slate-400">{filteredEntries.length} entr{filteredEntries.length === 1 ? "y" : "ies"}</span>
           </div>
           <div className="overflow-x-auto">
@@ -1650,7 +1684,7 @@ export default function CustomerCRM() {
       </div>
       {customerModal && <CustomerModal initial={customerModal.id ? customerModal : null} onClose={() => setCustomerModal(null)} onSave={saveCustomer} />}
       {campaignModal && <CampaignModal initial={campaignModal.id ? campaignModal : null} onClose={() => setCampaignModal(null)} onSave={saveCampaign} />}
-      {entryModal && <LuckyDrawEntryModal campaigns={luckyDraw.campaigns || []} defaultCampaignId={ldCampaignFilter} onClose={() => setEntryModal(null)} onSave={saveEntry} />}
+      {entryModal && <LuckyDrawEntryModal campaigns={luckyDraw.campaigns || []} defaultCampaignId={ldCampaignFilter} isHq={data.scope?.scope === "hq"} hqStores={hqStores} onClose={() => setEntryModal(null)} onSave={saveEntry} />}
       {drawModal && <DrawModal campaign={drawModal.campaign} isHq={data.scope?.scope === "hq"} defaultRedo={drawModal.defaultRedo} onClose={() => setDrawModal(null)} onSave={runDraw} />}
       {bulkImportModal && <LuckyDrawBulkImportModal campaigns={(luckyDraw.campaigns || []).filter((c) => c.status === "ACTIVE")} defaultCampaignId={ldCampaignFilter} isHq={data.scope?.scope === "hq"} hqStores={hqStores} onClose={() => setBulkImportModal(null)} onDone={loadLuckyDraw} />}
       {reminderModal && <LuckyDrawReminderModal campaign={reminderModal} onClose={() => setReminderModal(null)} />}

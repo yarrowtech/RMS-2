@@ -61,6 +61,10 @@ class EntryPayload(BaseModel):
     contact_no: str = ""
     profession: str = ""
     bill_no: str
+    # HQ only — which physical store this slip belongs to. A store-scoped
+    # login ignores this; it's always forced to its own store.
+    store_id: str = ""
+    store_name: str = ""
 
 
 class EntryBulkRow(BaseModel):
@@ -334,13 +338,20 @@ async def create_entry(payload: EntryPayload, ctx: Dict[str, Any] = Depends(get_
     if not bill_no:
         raise HTTPException(status_code=400, detail="Bill No. is required.")
     scope = scoped_query(ctx)
+    store_name = ctx.get("store_name") or ""
+    if ctx.get("scope") not in ("store", "branch"):
+        store_id = clean(payload.store_id)
+        if not store_id:
+            raise HTTPException(status_code=400, detail="Choose which store this slip belongs to.")
+        scope["store_id"] = store_id
+        store_name = clean(payload.store_name)
     dupe_query = {**scope, "campaign_id": payload.campaign_id, "bill_no": bill_no}
     if await lucky_draw_entries_collection.find_one(dupe_query, {"_id": 1}):
         raise HTTPException(status_code=409, detail=f"Bill No. {bill_no} has already been entered for this store's draw.")
     now = now_utc()
     doc = {
         **scope,
-        "store_name": ctx.get("store_name") or "",
+        "store_name": store_name,
         "campaign_id": payload.campaign_id,
         "campaign_name": campaign.get("campaign_name"),
         "customer_name": customer_name,
