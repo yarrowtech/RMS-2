@@ -165,7 +165,10 @@ async def _execute_draw(
     entry_query: Dict[str, Any] = {"tenant_id": ctx["tenant_id"], "campaign_id": campaign_id}
     if store_id:
         entry_query["store_id"] = store_id
-    entries = await lucky_draw_entries_collection.find(entry_query).to_list(5000)
+    # Must never silently exclude entrants from the draw pool itself — a cap
+    # here would mean some people who legitimately entered could never win,
+    # with no error to show it happened. 20000 matches the entries-list cap.
+    entries = await lucky_draw_entries_collection.find(entry_query).to_list(20000)
     if not entries:
         raise HTTPException(status_code=400, detail="No entries to draw from.")
 
@@ -343,7 +346,12 @@ async def list_entries(campaign_id: Optional[str] = Query(None), ctx: Dict[str, 
         if not ObjectId.is_valid(campaign_id):
             raise HTTPException(status_code=400, detail="Invalid campaign ID.")
         query["campaign_id"] = campaign_id
-    rows = await lucky_draw_entries_collection.find(query).sort("created_at", -1).to_list(2000)
+    # 20,000 cap, not unbounded — this is a live festival-slip count that can
+    # genuinely grow past a few thousand across several stores/campaigns;
+    # the old 2000 cap silently hid real entries once a tenant passed it
+    # (the on-screen "N entries" count just stopped increasing with no
+    # error), which is what this raise fixes.
+    rows = await lucky_draw_entries_collection.find(query).sort("created_at", -1).to_list(20000)
     return [serialize_doc(r) for r in rows]
 
 
