@@ -65,6 +65,7 @@ import hashlib
 import hmac
 import httpx
 import os
+import re
 import secrets
 import uuid
 
@@ -335,6 +336,8 @@ async def register_tenant_whatsapp_number(payload: dict, ctx: dict = Depends(get
     label        = (payload.get("label") or "").strip()
     if not phone_number:
         raise HTTPException(status_code=400, detail="phone_number is required.")
+    if not re.fullmatch(r"\+?\d{7,15}", phone_number):
+        raise HTTPException(status_code=400, detail="Enter a valid phone number (digits only, 7-15 digits, optional leading +).")
 
     existing = await tenant_whatsapp_numbers_collection.find_one({"phone_number": phone_number})
     if existing and existing["tenant_id"] != ctx["tenant_id"]:

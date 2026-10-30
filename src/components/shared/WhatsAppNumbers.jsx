@@ -78,10 +78,15 @@ export default function WhatsAppNumbers() {
 
   const addNumber = async (e) => {
     e.preventDefault();
-    if (!phone.trim()) return;
+    const cleanPhone = phone.trim();
+    if (!cleanPhone) return;
+    if (!/^\+?\d{7,15}$/.test(cleanPhone)) {
+      setError("Enter a valid phone number (digits only, 7-15 digits, optional leading +).");
+      return;
+    }
     setSaving(true); setError(""); setMessage("");
     try {
-      await api("/register-number", { method: "POST", body: JSON.stringify({ phone_number: phone.trim(), label: label.trim() }) });
+      await api("/register-number", { method: "POST", body: JSON.stringify({ phone_number: cleanPhone, label: label.trim() }) });
       setPhone(""); setLabel("");
       setMessage("Number registered.");
       await load();
@@ -128,9 +133,10 @@ export default function WhatsAppNumbers() {
         <label className="block text-xs font-bold text-slate-600">
           WhatsApp number
           <input
+            type="tel"
             value={phone}
-            onChange={(e) => setPhone(e.target.value)}
-            placeholder="e.g. 91 98765 43210"
+            onChange={(e) => setPhone(e.target.value.replace(/[^\d+]/g, ""))}
+            placeholder="e.g. 919876543210"
             className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
           />
         </label>
