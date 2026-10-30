@@ -58,6 +58,7 @@ from ..db import (
     tenants_collection,
 )
 from ..config import settings, frontend_url
+from ..rate_limit import limiter
 from ..utils import gstin_checksum_valid, hash_password, verify_password
 from ..product_identity import identity_fields
 from ..email_utils import (
@@ -688,6 +689,7 @@ async def setup_vendor_password(request: Request):
 
 
 @vendor_bp.post("/login")
+@limiter.limit("10/minute")
 async def vendor_login(request: Request):
     """
     Vendor login — identity-level, not tenant-scoped. A vendor with

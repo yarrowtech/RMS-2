@@ -23,6 +23,7 @@ from ..utils import verify_password, create_access_token
 from ..activity_log import log_activity
 from app.config import settings
 from .deps import get_hq_tenant
+from ..rate_limit import limiter
 
 router = APIRouter(prefix="/superadmin", tags=["SuperAdmin"])
 
@@ -39,7 +40,8 @@ class SuperAdminLogin(BaseModel):
 
 
 @router.post("/login")
-async def superadmin_login(payload: SuperAdminLogin):
+@limiter.limit("10/minute")
+async def superadmin_login(request: Request, payload: SuperAdminLogin):
     admin = await admins_collection.find_one(
         {"email": payload.email, "department": "SUPERADMIN"}
     )

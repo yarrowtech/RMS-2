@@ -1,5 +1,5 @@
 
-from fastapi import APIRouter, HTTPException, status, Depends
+from fastapi import APIRouter, HTTPException, status, Depends, Request
 from fastapi.security import OAuth2PasswordBearer
 from pydantic import BaseModel, EmailStr
 from datetime import datetime
@@ -15,6 +15,7 @@ from bson import ObjectId
 from ..email_utils import send_reset_password_email, send_password_changed_email
 from ..activity_log import log_activity
 from fastapi import Header
+from ..rate_limit import limiter
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -224,7 +225,8 @@ class LoginRequest(BaseModel):
 
 
 @router.post("/login", response_model=TokenResponse)
-async def login(req: LoginRequest):
+@limiter.limit("10/minute")
+async def login(request: Request, req: LoginRequest):
     admin = await admins_collection.find_one({"email": req.email})
     if not admin:
         raise HTTPException(status_code=401, detail="Invalid credentials")
@@ -463,7 +465,8 @@ class ForgotPasswordRequest(BaseModel):
 
 
 @router.post("/forgot-password")
-async def forgot_password(req: ForgotPasswordRequest):
+@limiter.limit("5/minute")
+async def forgot_password(request: Request, req: ForgotPasswordRequest):
     user = await admins_collection.find_one({"email": req.email})
     if user:
         department = user.get("department")
@@ -523,7 +526,8 @@ class ResetPasswordRequest(BaseModel):
 
 
 @router.post("/reset-password")
-async def reset_password(req: ResetPasswordRequest):
+@limiter.limit("10/minute")
+async def reset_password(request: Request, req: ResetPasswordRequest):
     try:
         payload = decode_reset_token(req.token)
     except Exception:

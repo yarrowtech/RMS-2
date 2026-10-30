@@ -11,6 +11,9 @@ if hasattr(sys.stdout, "reconfigure"):
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from .rate_limit import limiter
 import asyncio
 from .error_log import log_error
 from .citimart_midnight_job import run_citimart_midnight_loop
@@ -21,7 +24,6 @@ from .routes.superadmin_tenant_routes import router as tenant_router
 from .routes.cashier_routes import router as cashier_router
 from .routes.Stock_transfer_routes import router as stock_transfer_router
 from .routes.tasklist_routes import router as tasklist_router
-from .routes.item_routes import router as item_router
 from .routes.inventoryroutes import router as inventory_router
 from .routes.products import router as products_router
 from .routes.mbuyer_routes import router as mbuyer_router
@@ -91,6 +93,14 @@ from datetime import datetime
 
 app = FastAPI(title="RMS Backend - Admin Onboarding")
 
+# Per-IP rate limiting (slowapi). A global default covers every route for
+# free; individual login/sensitive endpoints set a stricter limit via their
+# own @limiter.limit(...) decorator (see app/rate_limit.py for the shared
+# Limiter instance — it lives in its own module so route files can import
+# it too without circularly importing this one).
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
 
 
 app.add_middleware(
@@ -100,6 +110,20 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    """Baseline security headers on every response. Belt-and-suspenders with
+    whatever the hosting layer (reverse proxy/CDN) may already set — this
+    guarantees they're present even if that layer doesn't add them."""
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains"
+    response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
+    return response
 
 
 @app.exception_handler(Exception)
@@ -134,7 +158,6 @@ app.include_router(thirdparty_router)
 app.include_router(purchaseorder_router)
 app.include_router(tasklist_router)
 app.include_router(checklist_router)
-app.include_router(item_router)
 app.include_router(product_mapping_router)
 app.include_router(uploads_router)
 app.include_router(inventory_router)

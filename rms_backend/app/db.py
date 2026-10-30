@@ -19,7 +19,6 @@ admins_collection = db["admins"]
 vendors_collection = db["vendors"]
 orders_collection = db["orders"]
 purchaseorders_collection = db["purchase_orders"]
-items_collection = db["items"]
 grc_collection = db["grc"]
 
 grn_collection       = db["grn"]

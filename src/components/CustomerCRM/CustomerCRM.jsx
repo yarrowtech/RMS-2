@@ -458,6 +458,7 @@ function LuckyDrawBulkImportModal({ campaigns, defaultCampaignId, isHq, hqStores
   const [rawText, setRawText] = useState("");
   const [parsedRows, setParsedRows] = useState([]);
   const [fileName, setFileName] = useState("");
+  const [updateExisting, setUpdateExisting] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [progress, setProgress] = useState(null);
   const [results, setResults] = useState(null);
@@ -497,18 +498,20 @@ function LuckyDrawBulkImportModal({ campaigns, defaultCampaignId, isHq, hqStores
     // can be listed and undone as a single unit afterwards (Import history).
     const batchId = (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`).replace(/-/g, "");
 
-    const combined = { message: "", created_count: 0, results: [] };
+    const combined = { message: "", created_count: 0, updated_count: 0, results: [] };
     try {
       for (let i = 0; i < chunks.length; i++) {
         setProgress({ done: i, total: chunks.length });
         const json = await crmFetch("/api/customer-crm/lucky-draw/entries/bulk", {
           method: "POST",
-          body: JSON.stringify({ campaign_id: campaignId, rows: chunks[i], batch_id: batchId, source_label: fileName, ...(isHq ? { store_id: storeId, store_name: storeName } : {}) }),
+          body: JSON.stringify({ campaign_id: campaignId, rows: chunks[i], batch_id: batchId, source_label: fileName, update_existing: updateExisting, ...(isHq ? { store_id: storeId, store_name: storeName } : {}) }),
         });
         combined.created_count += json.created_count || 0;
+        combined.updated_count += json.updated_count || 0;
         combined.results.push(...(json.results || []));
       }
       combined.message = `${combined.created_count} of ${parsedRows.length} entries created.`;
+      if (combined.updated_count) combined.message += ` ${combined.updated_count} existing entr${combined.updated_count === 1 ? "y" : "ies"} updated.`;
       setResults(combined);
     } catch (err) {
       // Whatever finished in earlier chunks is already saved — show it
@@ -548,8 +551,15 @@ function LuckyDrawBulkImportModal({ campaigns, defaultCampaignId, isHq, hqStores
               <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-xs text-slate-600">
                 <p className="font-bold text-slate-700">Expected columns (header row required):</p>
                 <p className="mt-1 font-mono text-[11px] text-slate-500">customer_name, contact_no, email, address, profession, bill_no</p>
-                <p className="mt-2">Only <strong>customer_name</strong> and <strong>bill_no</strong> are required per row. A duplicate Bill No. for this campaign/store is skipped, not overwritten.</p>
+                <p className="mt-2">Only <strong>customer_name</strong> and <strong>bill_no</strong> are required per row. A duplicate Bill No. for this campaign/store is {updateExisting ? "updated with this file's details" : "skipped as an error, not overwritten"}.</p>
               </div>
+              <label className="flex items-start gap-2.5 rounded-xl border border-slate-200 p-3">
+                <input type="checkbox" className="mt-0.5" checked={updateExisting} onChange={(e) => setUpdateExisting(e.target.checked)} />
+                <span>
+                  <span className="block text-sm font-bold text-slate-700">Update existing entries</span>
+                  <span className="block text-xs text-slate-500">If a Bill No. in this file already exists, overwrite that entry's name/contact/email/etc. with this file's details instead of rejecting it as a duplicate. Use this to fix a bad earlier upload by re-uploading a corrected sheet with the same bill numbers.</span>
+                </span>
+              </label>
               <label className="block">
                 <span className="text-sm font-bold text-slate-700">Upload CSV or Excel file</span>
                 <input type="file" accept=".csv,text/csv,.xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
@@ -594,7 +604,7 @@ function LuckyDrawBulkImportModal({ campaigns, defaultCampaignId, isHq, hqStores
                       <tr key={i}>
                         <td className="px-3 py-1.5">{r.customer_name}</td>
                         <td className="px-3 py-1.5">{r.bill_no}</td>
-                        <td className="px-3 py-1.5"><span className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${r.status === "created" ? "bg-emerald-100 text-emerald-700" : "bg-red-100 text-red-700"}`}>{r.status}</span></td>
+                        <td className="px-3 py-1.5"><span className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${r.status === "created" ? "bg-emerald-100 text-emerald-700" : r.status === "updated" ? "bg-indigo-100 text-indigo-700" : "bg-red-100 text-red-700"}`}>{r.status}</span></td>
                         <td className="px-3 py-1.5 text-slate-500">{r.reason || "—"}</td>
                       </tr>
                     ))}
@@ -1741,7 +1751,7 @@ export default function CustomerCRM() {
                 <div className="overflow-hidden rounded-xl border border-slate-200">
                   <table className="w-full text-left text-sm">
                     <thead className="bg-slate-50 text-xs font-bold uppercase text-slate-500">
-                      <tr><th className="px-4 py-2.5">Uploaded</th><th className="px-4 py-2.5">File</th><th className="px-4 py-2.5">Campaign</th><th className="px-4 py-2.5">Store</th><th className="px-4 py-2.5">By</th><th className="px-4 py-2.5 text-right">Created</th><th className="px-4 py-2.5"></th></tr>
+                      <tr><th className="px-4 py-2.5">Uploaded</th><th className="px-4 py-2.5">File</th><th className="px-4 py-2.5">Campaign</th><th className="px-4 py-2.5">Store</th><th className="px-4 py-2.5">By</th><th className="px-4 py-2.5 text-right">Created</th><th className="px-4 py-2.5 text-right">Updated</th><th className="px-4 py-2.5"></th></tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                       {importBatches.map((b) => (
@@ -1752,6 +1762,7 @@ export default function CustomerCRM() {
                           <td className="px-4 py-2.5 text-slate-700">{b.store_name || "-"}</td>
                           <td className="px-4 py-2.5 text-xs text-slate-500">{b.uploaded_by_name || "-"}</td>
                           <td className="px-4 py-2.5 text-right font-semibold text-slate-900">{b.created_count || 0}</td>
+                          <td className="px-4 py-2.5 text-right font-semibold text-indigo-700">{b.updated_count || 0}</td>
                           <td className="px-4 py-2.5"><button onClick={() => undoImportBatch(b.batch_id)} className="rounded-lg border border-rose-200 px-3 py-1.5 text-xs font-bold text-rose-600 hover:bg-rose-50">Undo</button></td>
                         </tr>
                       ))}

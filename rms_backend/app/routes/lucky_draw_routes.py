@@ -20,7 +20,7 @@ import cloudinary.uploader
 from bson import ObjectId
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, UploadFile, status
 from pydantic import BaseModel
-from pymongo import InsertOne
+from pymongo import InsertOne, UpdateOne
 
 from ..config import frontend_url, settings
 from ..db import (
@@ -103,6 +103,12 @@ class EntryBulkPayload(BaseModel):
     # same as a single counter entry.
     store_id: str = ""
     store_name: str = ""
+    # Off by default (today's safe behaviour: a Bill No. already on file is
+    # rejected as an error, nothing changes). Switched on, a matching Bill
+    # No. instead UPDATES that existing entry's details from this row — the
+    # intended way to fix a bad earlier upload by re-uploading a corrected
+    # sheet with the same bill numbers.
+    update_existing: bool = False
 
 
 class ReminderPayload(BaseModel):
@@ -494,49 +500,65 @@ async def create_entries_bulk(payload: EntryBulkPayload, ctx: Dict[str, Any] = D
     else:
         existing_bill_nos = set()
 
-    insert_ops: List[InsertOne] = []
+    write_ops: List[Any] = []
     pending_rows: List[dict] = []
     for c in candidates:
-        if c["bill_no"] in existing_bill_nos:
+        is_update = c["bill_no"] in existing_bill_nos
+        if is_update and not payload.update_existing:
             results[c["i"]] = {"customer_name": c["customer_name"], "bill_no": c["bill_no"], "status": "error", "reason": f"Bill No. {c['bill_no']} has already been entered for this store's draw."}
             continue
-        doc = {
-            **scope,
-            "store_name": store_name,
-            "campaign_id": payload.campaign_id,
-            "campaign_name": campaign.get("campaign_name"),
-            "customer_name": c["customer_name"],
-            "email": c["email"],
-            "address": c["address"],
-            "contact_no": c["contact_no"],
-            "profession": c["profession"],
-            "bill_no": c["bill_no"],
-            "entered_by": ctx.get("admin_id"),
-            "entered_by_name": ctx.get("admin_name"),
-            "source": "COUNTER_STAFF_BULK",
-            "batch_id": batch_id,
-            "printed": True,
-            "created_at": now,
-            "updated_at": now,
-        }
-        insert_ops.append(InsertOne(doc))
-        pending_rows.append(c)
+        if is_update:
+            # Fixes a bad earlier upload: same Bill No., corrected details —
+            # updates the existing entry in place rather than creating a
+            # second one. Campaign/store/bill_no (the match key) are left
+            # untouched; only the slip's own fields change.
+            update_fields = {
+                "customer_name": c["customer_name"], "email": c["email"], "address": c["address"],
+                "contact_no": c["contact_no"], "profession": c["profession"], "updated_at": now,
+            }
+            write_ops.append(UpdateOne({**scope, "campaign_id": payload.campaign_id, "bill_no": c["bill_no"]}, {"$set": update_fields}))
+        else:
+            doc = {
+                **scope,
+                "store_name": store_name,
+                "campaign_id": payload.campaign_id,
+                "campaign_name": campaign.get("campaign_name"),
+                "customer_name": c["customer_name"],
+                "email": c["email"],
+                "address": c["address"],
+                "contact_no": c["contact_no"],
+                "profession": c["profession"],
+                "bill_no": c["bill_no"],
+                "entered_by": ctx.get("admin_id"),
+                "entered_by_name": ctx.get("admin_name"),
+                "source": "COUNTER_STAFF_BULK",
+                "batch_id": batch_id,
+                "printed": True,
+                "created_at": now,
+                "updated_at": now,
+            }
+            write_ops.append(InsertOne(doc))
+        pending_rows.append({**c, "_status": "updated" if is_update else "created"})
 
     # Pass 3: write in bounded chunks rather than one giant bulk_write (or,
-    # worse, one insert_one per row) — keeps each DB round-trip small and
-    # predictable regardless of how large the sheet is.
-    for start in range(0, len(insert_ops), BULK_WRITE_CHUNK):
-        chunk = insert_ops[start:start + BULK_WRITE_CHUNK]
+    # worse, one insert_one/update_one per row) — keeps each DB round-trip
+    # small and predictable regardless of how large the sheet is.
+    for start in range(0, len(write_ops), BULK_WRITE_CHUNK):
+        chunk = write_ops[start:start + BULK_WRITE_CHUNK]
         if chunk:
             await lucky_draw_entries_collection.bulk_write(chunk, ordered=False)
         for c in pending_rows[start:start + BULK_WRITE_CHUNK]:
-            results[c["i"]] = {"customer_name": c["customer_name"], "bill_no": c["bill_no"], "status": "created"}
+            results[c["i"]] = {"customer_name": c["customer_name"], "bill_no": c["bill_no"], "status": c["_status"]}
 
     final_results = [r for r in results if r is not None]
     created = sum(1 for r in final_results if r["status"] == "created")
-    if created:
-        await lucky_draw_import_batches_collection.update_one({"tenant_id": ctx["tenant_id"], "batch_id": batch_id}, {"$inc": {"created_count": created}})
-    return {"message": f"{created} of {len(payload.rows)} entries created.", "created_count": created, "results": final_results, "batch_id": batch_id}
+    updated = sum(1 for r in final_results if r["status"] == "updated")
+    if created or updated:
+        await lucky_draw_import_batches_collection.update_one({"tenant_id": ctx["tenant_id"], "batch_id": batch_id}, {"$inc": {"created_count": created, "updated_count": updated}})
+    message = f"{created} of {len(payload.rows)} entries created."
+    if updated:
+        message += f" {updated} existing entr{'y' if updated == 1 else 'ies'} updated."
+    return {"message": message, "created_count": created, "updated_count": updated, "results": final_results, "batch_id": batch_id}
 
 
 @router.delete("/entries/{entry_id}")
