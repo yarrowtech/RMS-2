@@ -25,7 +25,7 @@ const API_BASE = APP_API_URL;
 
 const availableDepartments = [
   'HR', 'Cashier', 'Finance', 'IT', 'Logistics',
-  'Design & Pattern', 'Inventory', 'Stock Planning & Forecasting',
+  'Design & Pattern', 'Inventory', 'Forecast & Analytics',
   'Third Party', 'Merchandiser Buyer', 'Vendor',
 ];
 

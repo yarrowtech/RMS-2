@@ -348,7 +348,6 @@ const DEPARTMENT_WORKSPACES = [
   { department: "Logistics",                    path: "/logistics",           icon: FaTruck,     label: "Logistics" },
   { department: "Merchandiser Buyer",           path: "/merchandiser-buyer",  icon: Building2,   label: "Merchandiser Buyer" },
   { department: "Design & Pattern",             path: "/design",              icon: Palette,     label: "Design & Pattern" },
-  { department: "Stock Planning & Forecasting", path: "/stock",               icon: TrendingUp,  label: "Stock Planning" },
   { department: "Forecast & Analytics",         path: "/forecast-analytics",  icon: LineChart,   label: "Forecast & Analytics" },
   { department: "Third Party",                  path: "/third-party",         icon: Network,     label: "Third Party" },
   { department: "Production & Job Work",        path: "/production",          icon: Factory,     label: "Production & Job Work" },
@@ -561,6 +560,7 @@ export default function AdminSidebar({
 
             {sectionLabel("Overview")}
             {topBtn("dashboard",      <FaChartPie />,  "Dashboard")}
+            {topBtn("analyticsHub",   <FaChartPie />,  "Analytics Hub")}
             {topBtn("vendorOverview", <FaUsers />,      "Vendor Overview")}
             {topBtn("allowanceApprovals", <Ruler size={14}/>, "Allowance Approvals")}
 

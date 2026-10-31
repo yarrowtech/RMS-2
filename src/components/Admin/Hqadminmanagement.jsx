@@ -65,7 +65,6 @@ const DEPT_COLOR_BY_ID = {
   "Logistics":                    "amber",
   "IT":                           "cyan",
   "Design & Pattern":             "rose",
-  "Stock Planning & Forecasting": "blue",
   "Forecast & Analytics":         "violet",
   "Third Party":                  "slate",
   "Production & Job Work":        "fuchsia",
@@ -81,9 +80,7 @@ const DEPT_COLOR_BY_ID = {
   "Store":                        "teal",
 };
 
-const DEPT_LABEL_OVERRIDES = {
-  "Stock Planning & Forecasting": "Stock Planning",
-};
+const DEPT_LABEL_OVERRIDES = {};
 
 // Hover tooltip text — most departments are self-explanatory, but these
 // two are commonly assumed to be linked when they're actually independent

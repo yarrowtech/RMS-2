@@ -177,7 +177,6 @@ DEPARTMENT_PERMISSIONS = {
     "Finance":                       ["finance"],
     "Logistics":                     ["logistics"],
     "Design & Pattern":              [],
-    "Stock Planning & Forecasting":  ["stock_allocation"],
     "Third Party":                   ["vendors"],
     "Production & Job Work":         ["job_work"],
     "HR":                            ["hr"],

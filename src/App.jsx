@@ -20,7 +20,6 @@ import AdminSetPassword from "./pages/AdminSetPassword.jsx";
 import MSeller from "./components/Merchandiser_Seller/MSeller.jsx";
 import ProductMapping from "./components/ProductMapping.jsx";
 import InventoryManagement from "./components/InventoryManagement/InventoryManagement.jsx";
-import StockPlanForecasting from "./components/StockPlanForecastingDepartment/StockPlanForecasting.jsx";
 import ForecastAnalytics from "./components/ForecastAnalytics.jsx";
 import CitimartDataHub from "./components/CitimartDataHub.jsx";
 import CitimartStoreOps from "./components/CitimartStoreOps.jsx";
@@ -115,7 +114,7 @@ export default function App() {
             handleAuthRedirect() which navigates here automatically.
             Path must match DEPARTMENT_ROUTES redirect_url in auth_routes.py  */}
         <Route path="/dashboard/select" element={<DepartmentSelector />} />
-        <Route path="/support" element={<DepartmentRouteGuard department={["HQ", "IT", "Administrator", "HR", "Cashier", "Finance", "Logistics", "Design & Pattern", "Inventory", "Stock Planning & Forecasting", "Forecast & Analytics", "Third Party", "Production & Job Work", "Merchandiser Buyer", "Marketing", "Store Owner"]}><RetailerHelpSupport /></DepartmentRouteGuard>} />
+        <Route path="/support" element={<DepartmentRouteGuard department={["HQ", "IT", "Administrator", "HR", "Cashier", "Finance", "Logistics", "Design & Pattern", "Inventory", "Forecast & Analytics", "Third Party", "Production & Job Work", "Merchandiser Buyer", "Marketing", "Store Owner"]}><RetailerHelpSupport /></DepartmentRouteGuard>} />
 
         {/* â”€â”€ Direct dashboard routes â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             These match the DEPARTMENT_ROUTES values in auth_routes.py exactly.
@@ -129,7 +128,6 @@ export default function App() {
         <Route path="/dashboard/logistics"          element={<DepartmentRouteGuard department="Logistics"><Logistics /></DepartmentRouteGuard>} />
         <Route path="/dashboard/design"             element={<DepartmentRouteGuard department="Design & Pattern"><DesignPattern /></DepartmentRouteGuard>} />
         <Route path="/dashboard/inventory"          element={<DepartmentRouteGuard department={["Inventory", "Store Owner"]}><InventoryManagement /></DepartmentRouteGuard>} />
-        <Route path="/dashboard/stock-planning"     element={<DepartmentRouteGuard department="Stock Planning & Forecasting"><StockPlanForecasting /></DepartmentRouteGuard>} />
         <Route path="/dashboard/forecast-analytics" element={<DepartmentRouteGuard department="Forecast & Analytics"><ForecastAnalytics /></DepartmentRouteGuard>} />
         <Route path="/dashboard/citimart-data-hub" element={<DepartmentRouteGuard department={["Forecast & Analytics", "Inventory"]}><CitimartDataHub /></DepartmentRouteGuard>} />
         <Route path="/dashboard/citimart-store-ops" element={<DepartmentRouteGuard department={["Store Ops", "Forecast & Analytics", "Inventory"]}><CitimartStoreOps /></DepartmentRouteGuard>} />
@@ -196,7 +194,6 @@ export default function App() {
 
         {/* Inventory / Warehouse */}
         <Route path="/inventory" element={<DepartmentRouteGuard department={["Inventory", "Store Owner"]}><InventoryManagement /></DepartmentRouteGuard>} />
-        <Route path="/stock"     element={<DepartmentRouteGuard department="Stock Planning & Forecasting"><StockPlanForecasting /></DepartmentRouteGuard>} />
         <Route path="/forecast-analytics" element={<DepartmentRouteGuard department="Forecast & Analytics"><ForecastAnalytics /></DepartmentRouteGuard>} />
         <Route path="/citimart-data-hub" element={<DepartmentRouteGuard department={["Forecast & Analytics", "Inventory"]}><CitimartDataHub /></DepartmentRouteGuard>} />
         <Route path="/citimart-store-ops" element={<DepartmentRouteGuard department={["Store Ops", "Forecast & Analytics", "Inventory"]}><CitimartStoreOps /></DepartmentRouteGuard>} />

@@ -15,6 +15,8 @@ import {
 import InternalNotificationBell from "./InternalNotificationBell.jsx";
 import InternalChatPanel from "./InternalChatPanel.jsx";
 import CitimartDataHub, { CitimartStoreInventory } from "./CitimartDataHub.jsx";
+import ForecastStockGapView from "./ForecastStockGapView.jsx";
+import ForecastDataUploadView from "./ForecastDataUploadView.jsx";
 
 function getAdminToken() {
   return (
@@ -74,6 +76,8 @@ const MENU = [
   { id: "vendors", label: "Vendor Ranking", icon: Building2 },
   { id: "purchase", label: "Purchase Plan", icon: Wallet },
   { id: "alerts", label: "Low Stock Alerts", icon: AlertTriangle },
+  { id: "stockgap", label: "Stock Gap Report", icon: Warehouse },
+  { id: "stockgap-upload", label: "Stock Gap Data Upload", icon: UploadCloud },
 ];
 
 const SEVERITY_STYLE = {
@@ -267,9 +271,25 @@ function DashboardView({ onNavigate, raphaaaMode = false }) {
       <ErrorBanner message={error} />
       <section className="overflow-hidden rounded-[22px] border border-slate-200 bg-gradient-to-br from-indigo-950 via-violet-900 to-fuchsia-900 px-6 py-7 text-white shadow-[0_16px_35px_rgba(15,23,42,.14)] sm:px-8">
         <p className="text-[11px] font-bold uppercase tracking-[.18em] text-indigo-200">Forecast & Analytics</p>
-        <h3 className="mt-1 text-xl font-bold">Top forecasted demand — last 90 days</h3>
-        <p className="mt-1 text-sm text-indigo-100/75">Simple moving average over your real sales history, not a mock chart.</p>
+        <h3 className="mt-1 text-xl font-bold">Department overview — last {data?.sales_kpis?.lookback_days || 90} days</h3>
+        <p className="mt-1 text-sm text-indigo-100/75">Real sales, demand forecasting and purchase signals, not mock data.</p>
       </section>
+
+      {!loading && (
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          {[
+            ["Revenue", `₹${(data?.sales_kpis?.total_revenue || 0).toLocaleString("en-IN")}`],
+            ["Units sold", (data?.sales_kpis?.total_units_sold || 0).toLocaleString("en-IN")],
+            ["Bills", (data?.sales_kpis?.bill_count || 0).toLocaleString("en-IN")],
+            ["Approved vendors", data?.active_vendor_count ?? 0],
+          ].map(([label, value]) => (
+            <div key={label} className="fa-stat-card p-4">
+              <p className="text-xs font-bold uppercase tracking-wide text-slate-400">{label}</p>
+              <p className="mt-1 text-xl font-black text-slate-900">{value}</p>
+            </div>
+          ))}
+        </div>
+      )}
 
       {!loading && Boolean(data?.low_stock_alert_count) && (
         <button
@@ -319,6 +339,31 @@ function DashboardView({ onNavigate, raphaaaMode = false }) {
           </table>
         </div>
       </div>
+
+      {!loading && Boolean(data?.top_restock_candidates?.length) && (
+        <div className="fa-panel overflow-hidden">
+          <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
+            <h4 className="text-sm font-bold text-slate-900">Worth restocking right now</h4>
+            <button type="button" onClick={() => onNavigate?.("purchase")} className="text-xs font-bold text-indigo-600 hover:text-indigo-800">Build full purchase plan →</button>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead><tr>{["Item", "Recommended qty", "Line cost", "Expected profit", "ROI"].map((h) => <th key={h} className="px-4 py-2.5 text-left font-bold uppercase">{h}</th>)}</tr></thead>
+              <tbody className="divide-y divide-slate-100">
+                {data.top_restock_candidates.map((row) => (
+                  <tr key={row.barcode}>
+                    <td className="px-4 py-2.5 font-semibold text-slate-800">{row.name || row.barcode}</td>
+                    <td className="px-4 py-2.5">{row.recommended_qty}</td>
+                    <td className="px-4 py-2.5">₹{row.line_cost.toLocaleString("en-IN")}</td>
+                    <td className="px-4 py-2.5 font-bold text-emerald-700">₹{row.expected_profit.toLocaleString("en-IN")}</td>
+                    <td className="px-4 py-2.5">{(row.roi * 100).toFixed(0)}%</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       {data?.footfall && !data.footfall.available && (
         <div className="fa-stat-card flex items-start gap-3 p-5">
@@ -2784,6 +2829,8 @@ export default function ForecastAnalytics() {
       case "vendors": return <VendorRankingView raphaaaMode={productEnrichmentEnabled} citimartMode={isCitimart} />;
       case "purchase": return <PurchasePlanView raphaaaMode={productEnrichmentEnabled} />;
       case "alerts": return <AlertsView raphaaaMode={productEnrichmentEnabled} />;
+      case "stockgap": return <ForecastStockGapView />;
+      case "stockgap-upload": return <ForecastDataUploadView />;
       case "vendor-sales": return productEnrichmentEnabled ? <VendorSalesRankingView /> : <DashboardView onNavigate={setActiveSection} raphaaaMode={productEnrichmentEnabled} />;
       case "design-performance": return productEnrichmentEnabled ? <DesignPerformanceView /> : <DashboardView onNavigate={setActiveSection} raphaaaMode={productEnrichmentEnabled} />;
       case "design-themes": return productEnrichmentEnabled ? <DesignThemesView /> : <DashboardView onNavigate={setActiveSection} raphaaaMode={productEnrichmentEnabled} />;

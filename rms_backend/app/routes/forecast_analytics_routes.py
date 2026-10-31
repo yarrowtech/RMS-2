@@ -1755,15 +1755,63 @@ async def tag_raphaaa_design_theme(
 # DASHBOARD
 # ═══════════════════════════════════════════════════════════════════════════
 
+async def _dashboard_sales_kpis(tenant_id: str, lookback_days: int) -> Dict[str, Any]:
+    """Revenue/units totals over the same lookback window the demand
+    forecast uses, so the two numbers on the Overview tab are directly
+    comparable instead of covering different periods. Citimart sales live in
+    a separate import collection (see _compute_citimart_demand_forecast) —
+    same split applied here."""
+    since = datetime.utcnow() - timedelta(days=max(1, lookback_days))
+    collection = citimart_sales_import_collection if tenant_id == "citimart" else sales_collection
+    match: Dict[str, Any] = {"tenant_id": tenant_id, "created_at": {"$gte": since}}
+    if collection is sales_collection:
+        match["type"] = "sale"
+
+    total_revenue = 0.0
+    total_units = 0.0
+    bill_count = 0
+    async for doc in collection.find(match, {"items": 1}):
+        bill_count += 1
+        for item in doc.get("items", []):
+            qty = float(item.get("qty") or 0)
+            price = float(item.get("price") or 0)
+            total_units += qty
+            total_revenue += qty * price
+    return {
+        "total_revenue": round(total_revenue, 2),
+        "total_units_sold": round(total_units, 2),
+        "bill_count": bill_count,
+        "lookback_days": lookback_days,
+    }
+
+
 @router.get("/dashboard")
 async def get_dashboard(ctx: TenantCtx = Depends(_require_forecast_context)):
-    demand_limit = 1000 if is_raphaaa_tenant(ctx["tenant_id"]) else 5
-    top_demand = await _compute_demand_forecast(ctx["tenant_id"], None, lookback_days=90, limit=demand_limit)
-    alert_count = await forecast_low_stock_alerts_collection.count_documents({"tenant_id": ctx["tenant_id"]})
+    tenant_id = ctx["tenant_id"]
+    demand_limit = 1000 if is_raphaaa_tenant(tenant_id) else 5
+    lookback_days = 90
+
+    top_demand = await _compute_demand_forecast(tenant_id, None, lookback_days=lookback_days, limit=demand_limit)
+    alert_count = await forecast_low_stock_alerts_collection.count_documents({"tenant_id": tenant_id})
+    sales_kpis = await _dashboard_sales_kpis(tenant_id, lookback_days)
+    active_vendor_count = await vendor_tenant_links_collection.count_documents({"tenant_id": tenant_id, "status": "Approved"})
+
+    # Top restock teaser — same ROI-ranked line math Purchase Plan uses
+    # (_lines_from_forecast), just with no budget constraint, so the
+    # Overview can show "what would be worth buying" without the admin
+    # having to enter a budget first. Capped to 3 rows; the full ranked
+    # list stays on the Purchase Plan tab.
+    forecast_for_plan = top_demand if is_raphaaa_tenant(tenant_id) else await _compute_demand_forecast(tenant_id, None, lookback_days, limit=200)
+    stock_map = await _barcode_stock_map(tenant_id, None)
+    restock_teaser = _lines_from_forecast(forecast_for_plan, stock_map)[:3]
+
     return {
         "status": "success",
-        "top_forecasted_items": top_demand,
+        "sales_kpis": sales_kpis,
         "low_stock_alert_count": alert_count,
+        "active_vendor_count": active_vendor_count,
+        "top_forecasted_items": top_demand,
+        "top_restock_candidates": restock_teaser,
         "footfall": {
             "available": False,
             "message": "No footfall data source is connected yet — POS only records completed sales, not raw store traffic. This section will populate once a footfall source (in-store counter, sensor, etc.) is wired in.",

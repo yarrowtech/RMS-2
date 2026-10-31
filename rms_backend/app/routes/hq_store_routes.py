@@ -587,7 +587,7 @@ from ..models import AdminCreate
 # Departments that ONLY make sense at HQ (no per-store equivalent).
 HQ_ONLY_DEPARTMENTS = [
     "Merchandiser Buyer", "Logistics", "IT", "Design & Pattern",
-    "Stock Planning & Forecasting", "Third Party", "Production & Job Work",
+    "Third Party", "Production & Job Work",
     "Forecast & Analytics", "Marketing",
 ]
 

@@ -411,6 +411,7 @@ import AdminStoreWiseInventory from "./AdminStoreWiseInventory.jsx";
 import HQSetup from "./Hqsetup.jsx";
 import HQAdminManagement from "./Hqadminmanagement.jsx";
 import HqVendorOverview from "./HqVendorOverview.jsx";
+import AnalyticsHub from "./AnalyticsHub.jsx";
 import HqAllowanceApprovals from "./HqAllowanceApprovals.jsx";
 
 // ─── Store context from localStorage ─────────────────────────────────────────
@@ -591,6 +592,9 @@ export default function AdminModule() {
 
         case "vendorOverview":
           return <HqVendorOverview />;
+
+        case "analyticsHub":
+          return <AnalyticsHub />;
 
         case "allowanceApprovals":
           return <HqAllowanceApprovals />;

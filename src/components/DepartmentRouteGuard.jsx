@@ -14,7 +14,7 @@ const DEPARTMENT_PATHS = {
   "Logistics": "/dashboard/logistics",
   "Design & Pattern": "/dashboard/design",
   "Inventory": "/dashboard/inventory",
-  "Stock Planning & Forecasting": "/dashboard/stock-planning",
+  "Forecast & Analytics": "/dashboard/forecast-analytics",
   "Third Party": "/dashboard/third-party",
   "Production & Job Work": "/dashboard/production",
   "Merchandiser Buyer": "/dashboard/merchandiser-buyer",

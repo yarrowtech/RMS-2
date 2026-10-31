@@ -39,7 +39,6 @@ DEPT_COLORS = {
     "Design":               "#7C3AED",
     "Third Party":          "#BE185D",
     "Merchandiser Buyer":   "#B45309",
-    "Stock Planning":       "#0E7490",
     "Barcode":              "#374151",
 }
 

@@ -108,6 +108,7 @@ const styles = `
 `;
 
 const tabs = [
+  { key: "overview", label: "Overview", icon: Sparkles },
   { key: "customers", label: "Customers", icon: Users },
   { key: "followups", label: "Follow-ups", icon: CalendarClock },
   { key: "feedback", label: "Feedback", icon: HeartHandshake },
@@ -859,7 +860,7 @@ function CouponModal({ initial, campaigns, onClose, onSave }) {
 }
 
 export default function CustomerCRM() {
-  const [active, setActive] = useState("customers");
+  const [active, setActive] = useState("overview");
   const [data, setData] = useState({ stats: {}, customers: [], followups: [], feedback: [], scope: {}, crm_tabs: null });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -938,6 +939,8 @@ export default function CustomerCRM() {
   useEffect(() => {
     if (visibleTabs.length && !visibleTabs.some((t) => t.key === active)) setActive(visibleTabs[0].key);
   }, [visibleTabs, active]);
+
+  const canSee = (tabKey) => !data.crm_tabs || data.crm_tabs.includes(tabKey);
 
   const loadLuckyDraw = useCallback(async () => {
     try {
@@ -1338,6 +1341,51 @@ export default function CustomerCRM() {
     }
   };
 
+  const renderOverview = () => {
+    const stats = data.stats || {};
+    const segmentCounts = stats.segment_counts || {};
+    const sentimentCounts = stats.sentiment_counts || {};
+    const topSegments = Object.entries(segmentCounts).sort((a, b) => b[1] - a[1]).slice(0, 6);
+    const totalFeedback = (sentimentCounts.Positive || 0) + (sentimentCounts.Neutral || 0) + (sentimentCounts.Negative || 0);
+    return (
+      <div className="space-y-5">
+        {canSee("luckydraw") || canSee("coupons") ? (
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            {canSee("luckydraw") && <Stat label="Active Lucky Draw campaigns" value={loading ? "..." : stats.active_campaigns || 0} helper={`${stats.total_lucky_draw_entries || 0} slip entries so far`} icon={Trophy} color="bg-fuchsia-50 text-fuchsia-600" />}
+            {canSee("coupons") && <Stat label="Active coupons" value={loading ? "..." : stats.active_coupons || 0} helper={`${stats.redeemed_coupons || 0} redeemed`} icon={Ticket} color="bg-sky-50 text-sky-600" />}
+            {canSee("customers") && <Stat label="Newsletter opted-in" value={loading ? "..." : stats.newsletter_subscribers || 0} helper="Customers with email consent" icon={Mail} color="bg-teal-50 text-teal-600" />}
+            {canSee("feedback") && <Stat label="Feedback logged" value={loading ? "..." : totalFeedback} helper={`${sentimentCounts.Positive || 0} positive · ${sentimentCounts.Negative || 0} negative`} icon={HeartHandshake} color="bg-rose-50 text-rose-600" />}
+          </div>
+        ) : null}
+
+        {canSee("segments") && (
+          <div className="crm-card p-5">
+            <div className="flex items-center gap-2"><Tags size={16} className="text-indigo-600" /><h3 className="font-bold text-slate-900">Customer segments</h3></div>
+            {!topSegments.length ? (
+              <p className="mt-3 text-sm text-slate-500">{loading ? "Loading…" : "No customers tagged with a segment yet."}</p>
+            ) : (
+              <div className="mt-4 space-y-2">
+                {topSegments.map(([seg, count]) => {
+                  const pct = stats.customers ? Math.round((count / stats.customers) * 100) : 0;
+                  return (
+                    <div key={seg}>
+                      <div className="flex items-center justify-between text-xs font-semibold text-slate-600"><span>{seg}</span><span>{count}</span></div>
+                      <div className="mt-1 h-2 w-full overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full bg-indigo-500" style={{ width: `${pct}%` }} /></div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+        <div className="rounded-xl border border-indigo-100 bg-indigo-50/60 p-4 text-sm text-indigo-900">
+          <Sparkles size={16} className="mr-2 inline" /> This view summarizes every Customer CRM tab you have access to — open a tab on the left for the full working list.
+        </div>
+      </div>
+    );
+  };
+
   const renderCustomers = () => (
     <div className="crm-card overflow-hidden">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 p-5">
@@ -1735,7 +1783,7 @@ export default function CustomerCRM() {
             <Stat label="Pending follow-ups" value={loading ? "..." : data.stats.pending_followups || 0} helper="Callbacks and reminders" icon={BellRing} color="bg-violet-50 text-violet-600" />
           </section>
           <section className="mt-5 rounded-xl border border-indigo-100 bg-indigo-50/60 p-4 text-sm text-indigo-900"><Sparkles size={16} className="mr-2 inline"/><b>Workflow:</b> cashier captures customer mobile during billing to CRM profile/history to marketing segments to WhatsApp/SMS/email follow-up to customer feedback history.</section>
-          <section className="mt-5">{active === "customers" && renderCustomers()}{active === "followups" && renderFollowups()}{active === "feedback" && renderFeedback()}{active === "segments" && renderSegments()}{active === "luckydraw" && renderLuckyDraw()}{active === "coupons" && renderCoupons()}{active === "newsletter" && <NewsletterTab isHq={data.scope?.scope === "hq"} />}</section>
+          <section className="mt-5">{active === "overview" && renderOverview()}{active === "customers" && renderCustomers()}{active === "followups" && renderFollowups()}{active === "feedback" && renderFeedback()}{active === "segments" && renderSegments()}{active === "luckydraw" && renderLuckyDraw()}{active === "coupons" && renderCoupons()}{active === "newsletter" && <NewsletterTab isHq={data.scope?.scope === "hq"} />}</section>
         </main>
       </div>
       {customerModal && <CustomerModal initial={customerModal.id ? customerModal : null} onClose={() => setCustomerModal(null)} onSave={saveCustomer} />}

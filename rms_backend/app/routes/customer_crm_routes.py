@@ -10,6 +10,10 @@ from ..db import (
     customer_crm_feedback_collection,
     customer_crm_followups_collection,
     customer_crm_profiles_collection,
+    coupons_collection,
+    lucky_draw_campaigns_collection,
+    lucky_draw_entries_collection,
+    newsletter_sends_collection,
     sales_collection,
 )
 from .deps import get_tenant
@@ -238,12 +242,45 @@ async def overview(ctx: Dict[str, Any] = Depends(get_tenant)):
     repeat_customers = len([c for c in customers if int(c.get("bill_count") or 0) > 1])
     total_spend = round(sum(money(c.get("total_spend")) for c in customers), 2)
     pending_followups = len([f for f in followups if f.get("status", "Pending") == "Pending"])
+
+    # Segments breakdown — "Segments" has no collection of its own, it's a
+    # grouping of the same customer rows above by their `segment` field, so
+    # this is free once `customers` is already built for that tab.
+    segment_counts: Dict[str, int] = {}
+    if can("segments"):
+        for c in customers:
+            seg = c.get("segment") or "Regular"
+            segment_counts[seg] = segment_counts.get(seg, 0) + 1
+
+    # Feedback sentiment breakdown — feedback has no numeric rating field,
+    # only a sentiment tag (Positive/Neutral/Negative) per entry.
+    sentiment_counts = {"Positive": 0, "Neutral": 0, "Negative": 0}
+    for f in feedback:
+        sentiment_counts[f.get("sentiment") or "Neutral"] = sentiment_counts.get(f.get("sentiment") or "Neutral", 0) + 1
+
+    # Lucky Draw / Coupons / Newsletter stay tenant-wide here even for a
+    # store admin (same scope those tabs themselves use) — a store doesn't
+    # run its own separate campaign, so "active campaigns" is one shared
+    # number, not a per-store split.
+    active_campaigns = await lucky_draw_campaigns_collection.count_documents({"tenant_id": ctx["tenant_id"], "status": "ACTIVE"}) if can("luckydraw") else 0
+    total_ld_entries = await lucky_draw_entries_collection.count_documents(scoped_query(ctx)) if can("luckydraw") else 0
+    active_coupons = await coupons_collection.count_documents({"tenant_id": ctx["tenant_id"], "status": "ACTIVE"}) if can("coupons") else 0
+    redeemed_coupons = await coupons_collection.count_documents({"tenant_id": ctx["tenant_id"], "status": "REDEEMED"}) if can("coupons") else 0
+    newsletter_subscribers = len([c for c in customers if c.get("consent_email")]) if can("customers") else 0
+
     return {
         "stats": {
             "customers": total_customers,
             "repeat_customers": repeat_customers,
             "total_spend": total_spend,
             "pending_followups": pending_followups,
+            "segment_counts": segment_counts,
+            "sentiment_counts": sentiment_counts,
+            "active_campaigns": active_campaigns,
+            "total_lucky_draw_entries": total_ld_entries,
+            "active_coupons": active_coupons,
+            "redeemed_coupons": redeemed_coupons,
+            "newsletter_subscribers": newsletter_subscribers,
         },
         "customers": customers[:500],
         "followups": [serialize_doc(x) for x in followups],
