@@ -16,6 +16,11 @@ client = AsyncIOMotorClient(
 db = client[settings.mongodb_db]
 
 admins_collection = db["admins"]
+# One document per login (not per admin) — an admin logged in on 3 devices
+# has 3 docs here. expires_at mirrors the JWT's own expiry so a Mongo TTL
+# index auto-deletes stale sessions without a cron job; revoking one early
+# (remote logout) just deletes the doc directly.
+active_sessions_collection = db["active_sessions"]
 vendors_collection = db["vendors"]
 orders_collection = db["orders"]
 purchaseorders_collection = db["purchase_orders"]
@@ -481,6 +486,9 @@ async def ensure_procurement_indexes():
     await lucky_draw_entries_collection.create_index([("tenant_id", 1), ("batch_id", 1)], name="lucky_draw_entry_batch")
     await lucky_draw_import_batches_collection.create_index([("tenant_id", 1), ("created_at", -1)], name="lucky_draw_batch_tenant_created")
     await lucky_draw_import_batches_collection.create_index([("tenant_id", 1), ("store_id", 1), ("created_at", -1)], name="lucky_draw_batch_store_created")
+    await active_sessions_collection.create_index([("admin_id", 1)], name="active_sessions_admin")
+    await active_sessions_collection.create_index([("session_id", 1)], unique=True, name="active_sessions_sid")
+    await active_sessions_collection.create_index([("expires_at", 1)], expireAfterSeconds=0, name="active_sessions_ttl")
     # Only one *active* (non-redone) result per campaign+store scope; a redo
     # marks the old one superseded rather than deleting it, so the audit
     # trail of who drew what, and why it was redone, is never lost.

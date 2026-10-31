@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional
 from jose import jwt, JWTError
 
 from ..auth import decode_token, create_access_token, create_reset_token, decode_reset_token
-from ..db import admins_collection, vendors_collection
+from ..db import admins_collection, vendors_collection, active_sessions_collection
 from ..utils import hash_password, verify_password
 from ..models import TokenResponse
 from ..config import settings
@@ -16,6 +16,7 @@ from ..email_utils import send_reset_password_email, send_password_changed_email
 from ..activity_log import log_activity
 from fastapi import Header
 from ..rate_limit import limiter
+from ..session_utils import start_session, describe_device
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -247,6 +248,9 @@ async def login(request: Request, req: LoginRequest):
         )
 
     counter = _is_counter_account(admin, store["scope"])
+    expires_minutes = max(COUNTER_SESSION_MINUTES, int(settings.access_token_expire_minutes)) if counter else int(settings.access_token_expire_minutes)
+
+    session_id = await start_session(request, str(admin["_id"]), store["tenant_id"], expires_minutes)
 
     # ── JWT now carries store context ─────────────────────────────────────────
     token = create_access_token(
@@ -259,8 +263,9 @@ async def login(request: Request, req: LoginRequest):
             "store_name": store["store_name"],
             "store_type": store["store_type"],
             "scope":      store["scope"],
+            "sid":        session_id,
         },
-        expires_minutes=max(COUNTER_SESSION_MINUTES, int(settings.access_token_expire_minutes)) if counter else None,
+        expires_minutes=expires_minutes,
     )
 
     managed: List[str] = admin.get("managedDepartments", [admin["department"]] if admin.get("department") else [])
@@ -296,7 +301,7 @@ async def login(request: Request, req: LoginRequest):
 # response mirror /login exactly (kept as a separate function so /login
 # itself stays untouched).
 @router.post("/google-login", response_model=TokenResponse)
-async def google_login(payload: dict):
+async def google_login(payload: dict, request: Request):
     import re
     from google.oauth2 import id_token as google_id_token
     from google.auth.transport import requests as google_requests
@@ -323,15 +328,17 @@ async def google_login(payload: dict):
         raise HTTPException(status_code=403, detail="Admin has no tenant assigned. Contact your Super Admin.")
 
     counter = _is_counter_account(admin, store["scope"])
+    expires_minutes = max(COUNTER_SESSION_MINUTES, int(settings.access_token_expire_minutes)) if counter else int(settings.access_token_expire_minutes)
+    session_id = await start_session(request, str(admin["_id"]), store["tenant_id"], expires_minutes)
     token = create_access_token(
         str(admin["_id"]),
         admin.get("department", ""),
         role="ADMIN",
         extra={
             "tenant_id": store["tenant_id"], "store_id": store["store_id"], "store_name": store["store_name"],
-            "store_type": store["store_type"], "scope": store["scope"],
+            "store_type": store["store_type"], "scope": store["scope"], "sid": session_id,
         },
-        expires_minutes=max(COUNTER_SESSION_MINUTES, int(settings.access_token_expire_minutes)) if counter else None,
+        expires_minutes=expires_minutes,
     )
     managed: List[str] = admin.get("managedDepartments", [admin["department"]] if admin.get("department") else [])
     redirect_info = get_redirect_for_departments(managed)
@@ -398,11 +405,13 @@ async def get_admin_me(authorization: str = Header(None)):
 @router.post("/logout")
 async def logout(authorization: str = Header(None)):
     """
-    There's no server-side session to invalidate — JWTs here are stateless,
-    logout is really just the frontend clearing localStorage. This endpoint
-    exists purely to record that in the activity log; it resolves whichever
-    actor type the token belongs to (admin/vendor/super admin) best-effort
-    and always returns 200, even with a missing or expired token, so the
+    JWTs here are still stateless for auth purposes, but the active_sessions
+    doc created at login is real server-side state — this is what deletes
+    it, so the session disappears from the account's "active sessions" list
+    the moment this device logs out (not just when it naturally expires).
+    Also records the logout in the activity log; resolves whichever actor
+    type the token belongs to (admin/vendor/super admin) best-effort and
+    always returns 200, even with a missing or expired token, so the
     frontend's logout flow never has to handle a failure here.
     """
     actor = "Unknown user"
@@ -440,12 +449,66 @@ async def logout(authorization: str = Header(None)):
         tenant_id = payload.get("tenant_id")
         tenant_name = payload.get("store_name")
         actor_email = actor_email or payload.get("email")
+        if payload.get("sid"):
+            await active_sessions_collection.delete_one({"session_id": payload["sid"]})
     await log_activity(
         actor, f"Logged out{f' ({role_label})' if role_label else ''}", type="info",
         tenant_id=tenant_id, tenant_name=tenant_name, actor_email=actor_email,
         actor_role=role_label or None,
     )
     return {"ok": True}
+
+
+@router.get("/sessions")
+async def list_my_sessions(authorization: str = Header(None)):
+    """Lists every device currently logged into THIS admin's account, so
+    they can spot a login they don't recognize. Current device is tagged
+    via the 'sid' claim on the token making this request."""
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Authorization token missing")
+    try:
+        payload = jwt.decode(authorization.split(" ", 1)[1], settings.secret_key, algorithms=[settings.jwt_algorithm])
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    admin_id = payload.get("sub")
+    current_sid = payload.get("sid")
+    if not admin_id:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    sessions = []
+    async for doc in active_sessions_collection.find({"admin_id": str(admin_id)}).sort("last_seen_at", -1):
+        sessions.append({
+            "session_id":   doc["session_id"],
+            "device":       doc.get("device", "Unknown device"),
+            "ip":           doc.get("ip", ""),
+            "login_at":     doc.get("login_at"),
+            "last_seen_at": doc.get("last_seen_at"),
+            "is_current":   doc["session_id"] == current_sid,
+        })
+    return {"sessions": sessions}
+
+
+@router.delete("/sessions/{session_id}")
+async def revoke_my_session(session_id: str, authorization: str = Header(None)):
+    """Remote log-out — removes one of THIS admin's own sessions. The
+    device holding that token gets rejected on its next request (see
+    deps.get_tenant's session_is_active check)."""
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Authorization token missing")
+    try:
+        payload = jwt.decode(authorization.split(" ", 1)[1], settings.secret_key, algorithms=[settings.jwt_algorithm])
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    admin_id = payload.get("sub")
+    if not admin_id:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    result = await active_sessions_collection.delete_one({"session_id": session_id, "admin_id": str(admin_id)})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Session not found.")
+    return {"message": "Session signed out."}
 
 
 @router.get("/superadmin/me")

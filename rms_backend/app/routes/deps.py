@@ -7,6 +7,7 @@ from bson import ObjectId
 
 from ..config import settings
 from ..db import admins_collection, tenants_collection
+from ..session_utils import session_is_active, touch_session
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
 
@@ -75,6 +76,21 @@ async def get_tenant(token: str = Depends(oauth2_scheme)) -> Dict[str, Any]:
             status_code=status.HTTP_403_FORBIDDEN,
             detail="This account has been suspended. Contact your administrator.",
         )
+
+    # â”€â”€ Session revocation check â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # Lets an admin (or Super Admin, on their behalf) remote-log-out a
+    # specific device. A token minted before this feature existed has no
+    # "sid" claim, so session_is_active() treats it as always-valid â€”
+    # nobody already logged in gets kicked out by this rollout.
+    session_id = payload.get("sid")
+    if session_id and not await session_is_active(session_id):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="This session has been signed out from another device. Please log in again.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    if session_id:
+        await touch_session(session_id)
 
     tenant_id = payload.get("tenant_id") or admin.get("tenant_id")
 

@@ -9,7 +9,7 @@ from fastapi import Request
 
 from ..routes.auth_routes import get_current_superadmin
 from ..models import AdminCreate
-from ..db import admins_collection
+from ..db import admins_collection, active_sessions_collection
 from ..auth import create_password_setup_token, create_reset_token
 #from ..email_utils import send_password_setup_email, send_reset_password_email
 from ..email_utils import (
@@ -298,6 +298,54 @@ async def get_admin(
         "created_at": admin.get("created_at"),
         "last_login": admin.get("last_login"),
     }
+
+
+# ============================================================
+# 4b. ADMIN'S ACTIVE SESSIONS — view + force-logout, on the admin's behalf
+# ============================================================
+
+@router.get("/admins/{admin_id}/sessions")
+async def get_admin_sessions(
+    admin_id: str,
+    current_admin: CurrentAdmin = Depends(get_current_superadmin),
+):
+    admin = await admins_collection.find_one({"_id": ObjectId(admin_id)}, {"_id": 1})
+    if not admin:
+        raise HTTPException(status_code=404, detail="Admin not found")
+    sessions = []
+    async for doc in active_sessions_collection.find({"admin_id": admin_id}).sort("last_seen_at", -1):
+        sessions.append({
+            "session_id":   doc["session_id"],
+            "device":       doc.get("device", "Unknown device"),
+            "ip":           doc.get("ip", ""),
+            "login_at":     doc.get("login_at"),
+            "last_seen_at": doc.get("last_seen_at"),
+        })
+    return {"sessions": sessions}
+
+
+@router.delete("/sessions/{session_id}")
+async def revoke_admin_session(
+    session_id: str,
+    current_admin: CurrentAdmin = Depends(get_current_superadmin),
+):
+    """Super Admin force-logout of one device belonging to any tenant's
+    admin — e.g. a suspicious login, or a departed employee whose browser
+    session hasn't expired yet."""
+    target = await active_sessions_collection.find_one({"session_id": session_id})
+    result = await active_sessions_collection.delete_one({"session_id": session_id})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Session not found.")
+    if target:
+        admin = await admins_collection.find_one({"_id": ObjectId(target["admin_id"])}, {"name": 1, "email": 1})
+        await log_activity(
+            current_admin.get("name") or current_admin.get("email", ""),
+            f"Signed out a device ({target.get('device', 'unknown')}) for {(admin or {}).get('name') or (admin or {}).get('email', target['admin_id'])}",
+            type="warning",
+            actor_email=current_admin.get("email"),
+            actor_role="Super Admin",
+        )
+    return {"message": "Session signed out."}
 
 
 # ============================================================
