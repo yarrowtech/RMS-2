@@ -1548,6 +1548,7 @@ export default function InventoryCurrentStockList() {
   const [deleting,     setDeleting]     = useState(false);
   const [genBarcodeFor,setGenBarcodeFor]= useState(null); // barcode string currently generating
   const [showImport,   setShowImport]   = useState(false);
+  const [editingBarcode, setEditingBarcode] = useState(null); // barcode string currently loading for edit
 
   const [divisions,   setDivisions]   = useState([]);
   const [sections,    setSections]    = useState([]);
@@ -1699,6 +1700,7 @@ export default function InventoryCurrentStockList() {
   //   }
   // };
     const handleEdit = async (row) => {
+  setEditingBarcode(row.barcode);
   try {
     setError(null);
 
@@ -1708,14 +1710,28 @@ export default function InventoryCurrentStockList() {
       throw new Error("Session expired. Please log in again.");
     }
 
-    const res = await fetch(
-      `${API}/inventory/products/barcode/${encodeURIComponent(row.barcode)}`,
-      {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 20000);
+
+    let res;
+    try {
+      res = await fetch(
+        `${API}/inventory/products/barcode/${encodeURIComponent(row.barcode)}`,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+          signal: controller.signal,
+        }
+      );
+    } catch (fetchErr) {
+      if (fetchErr.name === "AbortError") {
+        throw new Error("The server is taking too long to respond. Please try again in a moment.");
       }
-    );
+      throw new Error("Could not reach the server. Check your connection and try again.");
+    } finally {
+      clearTimeout(timeoutId);
+    }
 
     const json = await res.json().catch(() => ({}));
 
@@ -1753,6 +1769,8 @@ export default function InventoryCurrentStockList() {
     setShowForm(true);
   } catch (error) {
     setError(error.message || "Could not open product.");
+  } finally {
+    setEditingBarcode(null);
   }
 };
   // ── Generate barcode for a garment row (needs a real product_id) ──
@@ -2024,10 +2042,13 @@ export default function InventoryCurrentStockList() {
                           </button>
 
                           <button type="button"
-                            className="px-2.5 py-1.5 rounded-lg border border-indigo-200 bg-indigo-50 text-indigo-600 text-xs font-semibold hover:bg-indigo-100 transition-all"
+                            className="px-2.5 py-1.5 rounded-lg border border-indigo-200 bg-indigo-50 text-indigo-600 text-xs font-semibold hover:bg-indigo-100 transition-all disabled:opacity-50 disabled:cursor-wait"
                             onClick={() => handleEdit(row)}
+                            disabled={editingBarcode === row.barcode}
                             title={isMissing ? "Fix / split into styles" : "Edit product"}>
-                            <FaEdit style={{ fontSize:11 }} />
+                            {editingBarcode === row.barcode
+                              ? <span className="inline-block h-[11px] w-[11px] animate-spin rounded-full border-2 border-indigo-300 border-t-indigo-600" />
+                              : <FaEdit style={{ fontSize:11 }} />}
                           </button>
 
                           {needsBc && (
