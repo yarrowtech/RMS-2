@@ -16,6 +16,7 @@ import {
   RefreshCw,
   Search,
   Send,
+  Settings,
   Sparkles,
   Star,
   Tags,
@@ -30,6 +31,7 @@ import { clearAuthData, logoutOrReturnToDepartmentSelector } from "../../utils/a
 import NewsletterTab from "./NewsletterTab.jsx";
 import InternalNotificationBell from "../InternalNotificationBell.jsx";
 import InternalChatPanel from "../InternalChatPanel.jsx";
+import AdminSettings from "../Admin/AdminSettings.jsx";
 
 function token() {
   return localStorage.getItem("admin_token") || localStorage.getItem("access_token") || localStorage.getItem("token") || "";
@@ -1772,9 +1774,21 @@ export default function CustomerCRM() {
             <div className="flex items-center gap-3">
               <InternalNotificationBell />
               <InternalChatPanel />
-              <button onClick={load} className="whitespace-nowrap rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-indigo-700"><RefreshCw size={16} className="inline mr-1"/> Refresh</button>
+              <button
+                onClick={() => setActive((a) => (a === "settings" ? "overview" : "settings"))}
+                title="Settings"
+                aria-label="Open Settings"
+                className={`grid h-10 w-10 place-items-center rounded-xl border transition ${active === "settings" ? "border-indigo-300 bg-indigo-50 text-indigo-700" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"}`}
+              >
+                <Settings size={18} />
+              </button>
+              {active !== "settings" && <button onClick={load} className="whitespace-nowrap rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-indigo-700"><RefreshCw size={16} className="inline mr-1"/> Refresh</button>}
             </div>
           </section>
+          {active === "settings" ? (
+            <section className="mt-5"><AdminSettings departmentMode /></section>
+          ) : (
+          <>
           {error && <div className="mt-4 rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm font-semibold text-rose-700">{error}</div>}
           <section className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
             <Stat label="Known customers" value={loading ? "..." : data.stats.customers || 0} helper="CRM + POS mobile records" icon={Users} color="bg-indigo-50 text-indigo-600" />
@@ -1784,6 +1798,8 @@ export default function CustomerCRM() {
           </section>
           <section className="mt-5 rounded-xl border border-indigo-100 bg-indigo-50/60 p-4 text-sm text-indigo-900"><Sparkles size={16} className="mr-2 inline"/><b>Workflow:</b> cashier captures customer mobile during billing to CRM profile/history to marketing segments to WhatsApp/SMS/email follow-up to customer feedback history.</section>
           <section className="mt-5">{active === "overview" && renderOverview()}{active === "customers" && renderCustomers()}{active === "followups" && renderFollowups()}{active === "feedback" && renderFeedback()}{active === "segments" && renderSegments()}{active === "luckydraw" && renderLuckyDraw()}{active === "coupons" && renderCoupons()}{active === "newsletter" && <NewsletterTab isHq={data.scope?.scope === "hq"} />}</section>
+          </>
+          )}
         </main>
       </div>
       {customerModal && <CustomerModal initial={customerModal.id ? customerModal : null} onClose={() => setCustomerModal(null)} onSave={saveCustomer} />}

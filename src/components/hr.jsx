@@ -3,12 +3,13 @@ import { getAdminName, getAdminScope, getStoreId, getStoreName, logoutOrReturnTo
 import { API_BASE_URL } from "../config/api.js";
 import {
   Users, Calendar, DollarSign, Clock, Plane, LogOut, Bell, X, Plus,
-  Check, Search, RefreshCw, LogIn, BarChart3, UserPlus, AlertCircle, UploadCloud, Store, Trash2, Pencil, ListChecks,
+  Check, Search, RefreshCw, LogIn, BarChart3, UserPlus, AlertCircle, UploadCloud, Store, Trash2, Pencil, ListChecks, Settings,
 } from "lucide-react";
 import BulkStaffImportModal from "../utils/BulkStaffImportModal.jsx";
 import BulkFloorStaffImportModal from "../utils/BulkFloorStaffImportModal.jsx";
 import InternalNotificationBell from "./InternalNotificationBell.jsx";
 import InternalChatPanel from "./InternalChatPanel.jsx";
+import AdminSettings from "./Admin/AdminSettings.jsx";
 
 function getAdminToken() {
   return (
@@ -1502,7 +1503,7 @@ export default function HR() {
   const isStoreWorkspace = !canManageHolidays;
   const workspaceName = isStoreWorkspace ? (getStoreName() || "Store workspace") : "Head office workspace";
   const adminName = getAdminName() || "HR Administrator";
-  const activeLabel = MENU.find((item) => item.id === activeSection)?.label || "Overview";
+  const activeLabel = activeSection === "settings" ? "Settings" : (MENU.find((item) => item.id === activeSection)?.label || "Overview");
   const handleLogout = () => logoutOrReturnToDepartmentSelector();
 
   const renderContent = () => {
@@ -1515,6 +1516,7 @@ export default function HR() {
       case "leaves": return <LeavesView />;
       case "salary": return <SalaryView />;
       case "holidays": return <HolidaysView canManageHolidays={canManageHolidays} />;
+      case "settings": return <AdminSettings departmentMode />;
       default: return <DashboardView />;
     }
   };
@@ -1571,6 +1573,15 @@ export default function HR() {
           <div className="flex items-center gap-3">
             <InternalNotificationBell />
             <InternalChatPanel />
+            <button
+              type="button"
+              onClick={() => setActiveSection("settings")}
+              title="Settings"
+              aria-label="Open Settings"
+              className={`grid h-10 w-10 place-items-center rounded-xl border transition ${activeSection === "settings" ? "border-teal-300 bg-teal-50 text-teal-700" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"}`}
+            >
+              <Settings className="h-5 w-5" />
+            </button>
             <div className="hidden rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-right shadow-sm sm:block">
               <p className="text-[10px] font-bold uppercase tracking-[.15em] text-slate-400">Access level</p>
               <p className="mt-0.5 text-sm font-bold text-slate-700">{isStoreWorkspace ? "Store HR" : "HQ HR"}</p>

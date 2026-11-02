@@ -1,8 +1,10 @@
 import React, { useCallback, useEffect, useState } from "react";
+import { Settings, ArrowLeft } from "lucide-react";
 import { API_BASE_URL } from "../../config/api.js";
 import { logoutOrReturnToDepartmentSelector } from "../../utils/authRedirect.js";
 import InternalNotificationBell from "../InternalNotificationBell.jsx";
 import InternalChatPanel from "../InternalChatPanel.jsx";
+import AdminSettings from "../Admin/AdminSettings.jsx";
 
 // Logistics is an independent, opt-in add-on (logistics_addon_routes.py) —
 // not every retailer needs shipment/transfer tracking, so it's off by
@@ -47,6 +49,7 @@ export default function LogisticsDashboard() {
   const [data, setData] = useState({ inbound: [], transfers: [], summary: {} });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [showSettings, setShowSettings] = useState(false);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -97,19 +100,37 @@ export default function LogisticsDashboard() {
               <div className="grid h-14 w-14 shrink-0 place-items-center rounded-2xl border border-white/20 bg-white/10 text-2xl shadow-lg shadow-black/20">🚚</div>
               <div>
                 <p className="text-xs font-bold uppercase tracking-[0.2em] text-cyan-200">Movement command centre</p>
-                <h1 className="mt-1 text-3xl font-black tracking-tight text-white">Logistics</h1>
-                <p className="mt-2 max-w-2xl text-sm leading-6 text-cyan-100">What's still on the road — inbound purchase orders awaiting delivery, and stock transfers dispatched but not yet received.</p>
+                <h1 className="mt-1 text-3xl font-black tracking-tight text-white">{showSettings ? "Settings" : "Logistics"}</h1>
+                <p className="mt-2 max-w-2xl text-sm leading-6 text-cyan-100">{showSettings ? "Account and security settings." : "What's still on the road — inbound purchase orders awaiting delivery, and stock transfers dispatched but not yet received."}</p>
               </div>
             </div>
             <div className="flex flex-wrap items-center gap-2 xl:justify-end">
               <InternalNotificationBell />
               <InternalChatPanel />
-              <button type="button" onClick={refresh} disabled={loading} className="rounded-xl border border-white/20 bg-white/10 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-white/20 disabled:opacity-60">{loading ? "Loading…" : "Refresh"}</button>
+              <button
+                type="button"
+                onClick={() => setShowSettings((v) => !v)}
+                title="Settings"
+                aria-label="Open Settings"
+                className={`grid h-10 w-10 place-items-center rounded-xl border transition ${showSettings ? "border-teal-300 bg-teal-400/20 text-white" : "border-white/20 bg-white/10 text-white hover:bg-white/20"}`}
+              >
+                <Settings className="h-5 w-5" />
+              </button>
+              {!showSettings && <button type="button" onClick={refresh} disabled={loading} className="rounded-xl border border-white/20 bg-white/10 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-white/20 disabled:opacity-60">{loading ? "Loading…" : "Refresh"}</button>}
               <button type="button" onClick={() => logoutOrReturnToDepartmentSelector()} className="rounded-xl border border-rose-300/25 bg-rose-400/10 px-4 py-2.5 text-sm font-bold text-rose-100 transition hover:bg-rose-400/20">Logout</button>
             </div>
           </div>
         </div>
 
+        {showSettings ? (
+          <>
+            <button type="button" onClick={() => setShowSettings(false)} className="mb-4 inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-700 shadow-sm transition hover:bg-slate-50">
+              <ArrowLeft className="h-4 w-4" /> Back to Logistics
+            </button>
+            <AdminSettings departmentMode />
+          </>
+        ) : (
+        <>
         {error && <div className="mb-5 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-800">{error}</div>}
 
         <section className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -199,6 +220,8 @@ export default function LogisticsDashboard() {
             </div>
           )}
         </section>
+        </>
+        )}
       </div>
     </main>
   );

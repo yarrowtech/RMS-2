@@ -17,6 +17,7 @@ import {
   Share2,
   Smartphone,
   Store,
+  Settings,
   Target,
   ThumbsDown,
   ThumbsUp,
@@ -27,6 +28,7 @@ import { API_BASE_URL } from "../../config/api.js";
 import { getAdminName, logoutOrReturnToDepartmentSelector } from "../../utils/authRedirect.js";
 import InternalNotificationBell from "../InternalNotificationBell.jsx";
 import InternalChatPanel from "../InternalChatPanel.jsx";
+import AdminSettings from "../Admin/AdminSettings.jsx";
 
 function token() {
   return localStorage.getItem("admin_token") || localStorage.getItem("access_token") || localStorage.getItem("token") || "";
@@ -323,16 +325,29 @@ export default function Marketing() {
       <main className="marketing-main min-w-0 flex-1 p-5 md:p-8">
         <header className="mb-6 flex flex-col justify-between gap-4 md:flex-row md:items-center">
           <div>
-            <h1 className="text-xl font-black text-slate-900">Marketing</h1>
-            <p className="mt-1 text-sm text-slate-500">Plan offers, run campaigns, and track sales impact tenant-wide.</p>
+            <h1 className="text-xl font-black text-slate-900">{activeTab === "settings" ? "Settings" : "Marketing"}</h1>
+            <p className="mt-1 text-sm text-slate-500">{activeTab === "settings" ? "Account and security settings." : "Plan offers, run campaigns, and track sales impact tenant-wide."}</p>
           </div>
           <div className="flex items-center gap-3">
             <InternalNotificationBell />
             <InternalChatPanel />
-            <button onClick={load} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-600 hover:bg-slate-50"><RefreshCw size={15} /> Refresh</button>
+            <button
+              type="button"
+              onClick={() => setActiveTab((t) => (t === "settings" ? "campaigns" : "settings"))}
+              title="Settings"
+              aria-label="Open Settings"
+              className={`grid h-10 w-10 place-items-center rounded-xl border transition ${activeTab === "settings" ? "border-teal-300 bg-teal-50 text-teal-700" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"}`}
+            >
+              <Settings size={18} />
+            </button>
+            {activeTab !== "settings" && <button onClick={load} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-600 hover:bg-slate-50"><RefreshCw size={15} /> Refresh</button>}
           </div>
         </header>
 
+        {activeTab === "settings" ? (
+          <AdminSettings departmentMode />
+        ) : (
+        <>
         {error && <div className="mb-4 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-bold text-rose-700">{error}</div>}
         {success && <div className="mb-4 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-700">{success}</div>}
 
@@ -653,6 +668,8 @@ export default function Marketing() {
             </div>
           </div>
         </section>
+        </>
+        )}
       </main>
     </div>
   );

@@ -6,7 +6,10 @@
 // suggestions (from the existing Demand Forecast — rising items with no
 // placement, falling items that still have one).
 import React, { useCallback, useEffect, useState } from "react";
-import { LayoutGrid, Plus, LogOut, CheckCircle2, XCircle, Camera, Sparkles, TrendingUp, TrendingDown, ClipboardList, Users, Activity, Building2, BarChart3, Download } from "lucide-react";
+import { LayoutGrid, Plus, LogOut, CheckCircle2, XCircle, Camera, Sparkles, TrendingUp, TrendingDown, ClipboardList, Users, Activity, Building2, BarChart3, Download, Settings } from "lucide-react";
+import InternalNotificationBell from "../InternalNotificationBell.jsx";
+import InternalChatPanel from "../InternalChatPanel.jsx";
+import AdminSettings from "../Admin/AdminSettings.jsx";
 import { API_BASE_URL } from "../../config/api.js";
 import { getAdminName, getStoreName, isHQAdmin, logoutOrReturnToDepartmentSelector } from "../../utils/authRedirect.js";
 
@@ -988,7 +991,7 @@ export default function VisualMerchandising() {
     ? [["store-layout", "Store Layout", Building2], ["layouts", "Layouts", LayoutGrid], ["tasks", "Tasks", ClipboardList], ["compliance", "Compliance", CheckCircle2], ["analytics", "Impact Analytics", BarChart3], ["optimization", "Optimization", Sparkles], ["experiments", "Experiments", Activity], ["suggestions", "Suggestions", TrendingUp], ["staffing", "Staffing", Users], ["traffic", "Traffic", Activity]]
     : [["layouts", "Layouts", LayoutGrid], ["tasks", "My tasks", ClipboardList]];
 
-  const activeLabel = tabs.find(([key]) => key === tab)?.[1] || "Layouts";
+  const activeLabel = tab === "settings" ? "Settings" : (tabs.find(([key]) => key === tab)?.[1] || "Layouts");
   const showNotice = (msg) => { setNotice(msg); setTimeout(() => setNotice(""), 4000); };
 
   return (
@@ -1042,9 +1045,26 @@ export default function VisualMerchandising() {
             <h2 className="text-2xl font-bold tracking-tight text-slate-900">{activeLabel}</h2>
             <p className="mt-0.5 text-sm text-slate-500">Plan, publish and verify in-store product placement, from real layouts to real compliance.</p>
           </div>
+          <div className="flex items-center gap-3">
+            <InternalNotificationBell />
+            <InternalChatPanel />
+            <button
+              type="button"
+              onClick={() => setTab((t) => (t === "settings" ? "layouts" : "settings"))}
+              title="Settings"
+              aria-label="Open Settings"
+              className={`grid h-10 w-10 place-items-center rounded-xl border transition ${tab === "settings" ? "border-indigo-300 bg-indigo-50 text-indigo-700" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"}`}
+            >
+              <Settings className="h-5 w-5" />
+            </button>
+          </div>
         </header>
 
         <div className="mx-auto max-w-6xl space-y-5 px-6 py-6 lg:px-9">
+          {tab === "settings" ? (
+            <AdminSettings departmentMode />
+          ) : (
+          <>
           <GuidePanel />
           {notice && <div className="vm-panel px-4 py-2.5 text-sm font-bold text-emerald-700">{notice}</div>}
           {tab === "store-layout" && isHq && <StoreLayoutTab />}
@@ -1057,6 +1077,8 @@ export default function VisualMerchandising() {
           {tab === "suggestions" && isHq && <SuggestionsTab />}
           {tab === "staffing" && isHq && <StaffingTab />}
           {tab === "traffic" && isHq && <TrafficTab />}
+          </>
+          )}
         </div>
       </main>
     </div>
