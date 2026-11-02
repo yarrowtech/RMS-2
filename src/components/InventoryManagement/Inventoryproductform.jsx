@@ -42,6 +42,12 @@ async function authFetch(url, options = {}) {
 // ── helpers ────────────────────────────────────────────────────────────────────
 const uid = () => `v_${Math.random().toString(36).slice(2)}_${Date.now()}`;
 
+// A normal product has a handful of size/colour variants. Rendering an
+// editable row per variant breaks down once that count gets into the
+// hundreds/thousands (seen from bad bulk imports) — see the render cap
+// around the variant table below.
+const MAX_RENDERED_VARIANTS = 300;
+
 const autoBarcode = (parent, ...parts) => {
   if (!parent) return "";
   const suffix = parts.filter(Boolean)
@@ -546,6 +552,21 @@ export default function InventoryProductForm({ initialData = null, onSave, onCan
 
           {form.has_variants && (
             <>
+              {/* Safety cap — a normal product has a handful of size/colour
+                  variants. A barcode that resolves to hundreds/thousands of
+                  variants (usually a bad bulk import that merged records) was
+                  freezing the whole tab because every variant rendered its
+                  own editable row with live onChange handlers. Only the
+                  first MAX_RENDERED_VARIANTS render; the rest stay in form
+                  state untouched (so Save still submits everything) but the
+                  tab stays responsive. */}
+              {form.variants.length > MAX_RENDERED_VARIANTS && (
+                <div className="mb-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-900">
+                  This product has {form.variants.length.toLocaleString("en-IN")} variants — far more than normal. Only the
+                  first {MAX_RENDERED_VARIANTS} are shown below to keep the page responsive. This usually means a bulk
+                  import duplicated records for this barcode; it's best to fix the underlying data rather than edit here.
+                </div>
+              )}
               {/* Variant table */}
               <div className="overflow-x-auto rounded-xl border border-slate-200 mb-3">
                 <table className="w-full text-sm" style={{minWidth: form.product_type === "garment" ? "860px" : "680px"}}>
@@ -573,7 +594,7 @@ export default function InventoryProductForm({ initialData = null, onSave, onCan
                           No variants yet — click Add Variant or use Quick-fill below
                         </td>
                       </tr>
-                    ) : form.variants.map((v) => (
+                    ) : form.variants.slice(0, MAX_RENDERED_VARIANTS).map((v) => (
                       <tr key={v._uid} className="hover:bg-slate-50/60 group">
                         {/* Barcode */}
                         <td className="px-2 py-1.5">
