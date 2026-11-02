@@ -230,12 +230,14 @@ async def get_product_by_barcode(barcode: str, ctx: dict = Depends(get_hq_tenant
             matched_variant = v
             break
 
-    return JSONResponse({
+    # Encode legacy optional ObjectId/datetime fields before returning. Older
+    # product records otherwise make the edit lookup fail with HTTP 500.
+    return JSONResponse(jsonable_encoder({
         "status":          "success",
         "data":            serialized,
         "matched_variant": matched_variant,
         "is_variant_scan": matched_variant is not None,
-    })
+    }))
 
 
 @router.post("/")
