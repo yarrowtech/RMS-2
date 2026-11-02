@@ -56,7 +56,7 @@ const styles = `
   .crm-input { width: 100%; border: 1px solid #e2e8f0; background: #fff; color: #0f172a; border-radius: 10px; padding: 10px 12px; outline: none; font-size: 14px; }
   .crm-input:focus { border-color: #6366f1; box-shadow: 0 0 0 3px rgba(99,102,241,.12); }
   .crm-label { display:block; font-size:11px; font-weight:800; letter-spacing:.06em; text-transform:uppercase; color:#64748b; margin-bottom:6px; }
-  @media (max-width: 900px) { .crm-layout { flex-direction: column; } .crm-sidebar { width: 100%; min-height: auto; } .crm-main { padding: 14px; } }
+  @media (max-width: 900px) { .crm-layout { flex-direction: column; } .crm-sidebar { position: static; width: 100%; height: auto; min-height: auto; } .crm-main { padding: 14px; } }
   /* Off-screen (not display:none) so its real rendered height at the true
      62mm print width can always be measured via a ref — this is genuine
      receipt-style printing: paper feeds only as far as the content needs,
@@ -1757,7 +1757,7 @@ export default function CustomerCRM() {
     <div className="crm-shell">
       <style>{styles}</style>
       <div className="crm-layout flex min-h-screen">
-        <aside className="crm-sidebar p-5 text-white">
+        <aside className="crm-sidebar sticky top-0 flex h-screen shrink-0 flex-col overflow-y-auto p-5 text-white">
           <div className="rounded-2xl border border-white/10 bg-white/10 p-4"><p className="text-[11px] font-bold uppercase tracking-widest text-teal-200">RMS Growth</p><h1 className="mt-1.5 text-xl font-bold">Customer CRM</h1><p className="mt-1.5 text-xs text-teal-50/80">Profiles, loyalty signals, follow-ups and feedback in one customer view.</p></div>
           <nav className="mt-4 space-y-1.5">{visibleTabs.map(({ key, label, icon: Icon }) => <button key={key} onClick={() => setActive(key)} className={`flex w-full items-center gap-3 rounded-xl px-4 py-2.5 text-left text-sm transition ${active === key ? "bg-white font-bold text-slate-900 shadow" : "font-semibold text-white/85 hover:bg-white/10"}`}><Icon size={18}/><span>{label}</span></button>)}</nav>
           <button onClick={logoutOrReturnToDepartmentSelector} className="mt-6 w-full rounded-xl bg-rose-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-rose-700">Logout</button>
