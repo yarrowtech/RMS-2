@@ -1538,6 +1538,7 @@ export default function InventoryCurrentStockList() {
   const [section,      setSection]      = useState("");
   const [department,   setDepartment]   = useState("");
   const [search,       setSearch]       = useState("");
+  const [searchQuery,  setSearchQuery]  = useState("");
   const [sourceFilter, setSourceFilter] = useState("all");
   const [vendorFilter, setVendorFilter] = useState("");
   const [selectedRow,  setSelectedRow]  = useState(null);
@@ -1559,6 +1560,12 @@ export default function InventoryCurrentStockList() {
 
   const [data,    setData]    = useState([]);
   const [loading, setLoading] = useState(false);
+  const [page, setPage] = useState(1);
+  const [pages, setPages] = useState(1);
+  const [totalCount, setTotalCount] = useState(0);
+  const [summary, setSummary] = useState({ in_stock:0, low_stock:0, out_of_stock:0, quantity:0, value:0 });
+  const [serverSourceCounts, setServerSourceCounts] = useState({ all:0, admin:0, vendor:0, grn:0, data_hub_import:0 });
+  const [serverVendorNames, setServerVendorNames] = useState([]);
   const [error,   setError]   = useState(null);
   const [labelTemplateFields, setLabelTemplateFields] = useState(DEFAULT_LABEL_FIELDS);
   const [labelSettingsOpen, setLabelSettingsOpen] = useState(false);
@@ -1603,19 +1610,21 @@ export default function InventoryCurrentStockList() {
       setMetaLoading(true);
       try {
         const token = getAdminToken();
-        const res = await fetch(`${API}/inventory/products/?limit=1000`, {
+        const res = await fetch(`${API}/api/product-mapping/grouped`, {
           headers: token ? { Authorization: `Bearer ${token}` } : {},
         });
         if (!res.ok) throw new Error();
         const json = await res.json();
-        const products = json.data || [];
-        const divSet = new Set();
+        const mapping = json.data || {};
+        const divSet = new Set(Object.keys(mapping));
         const secMap = {};
         const deptMapLocal = {};
-        for (const p of products) {
-          const d = p.division || "", s = p.section || "", dp = p.department || "";
-          if (d) { divSet.add(d); if (!secMap[d]) secMap[d] = new Set(); if (s) secMap[d].add(s); }
-          if (s) { if (!deptMapLocal[s]) deptMapLocal[s] = new Set(); if (dp) deptMapLocal[s].add(dp); }
+        for (const [d, sectionsForDivision] of Object.entries(mapping)) {
+          secMap[d] = new Set(Object.keys(sectionsForDivision || {}));
+          for (const [sectionName, depts] of Object.entries(sectionsForDivision || {})) {
+            if (!deptMapLocal[sectionName]) deptMapLocal[sectionName] = new Set();
+            for (const dept of depts || []) deptMapLocal[sectionName].add(dept);
+          }
         }
         setDivisions([...divSet].sort());
         setSectionMap(Object.fromEntries(Object.entries(secMap).map(([k,v])=>[k,[...v].sort()])));
@@ -1625,6 +1634,12 @@ export default function InventoryCurrentStockList() {
     };
     fetchMeta();
   }, []);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setSearchQuery(search.trim()), 350);
+    return () => clearTimeout(timer);
+  }, [search]);
+  useEffect(() => { setPage(1); }, [division, section, department, searchQuery, sourceFilter, vendorFilter]);
 
   useEffect(() => { setSections(division && sectionMap[division] ? sectionMap[division] : []); setSection(""); setDepartment(""); }, [division, sectionMap]);
   useEffect(() => { setDepartments(section && deptMap[section] ? deptMap[section] : []); setDepartment(""); }, [section, deptMap]);
@@ -1636,7 +1651,11 @@ export default function InventoryCurrentStockList() {
       if (division)   params.append("division",   division);
       if (section)    params.append("section",    section);
       if (department) params.append("department", department);
-      if (search)     params.append("search",     search);
+      if (searchQuery) params.append("search", searchQuery);
+      if (sourceFilter !== "all") params.append("source", sourceFilter);
+      if (vendorFilter) params.append("vendor", vendorFilter);
+      params.append("page", String(page));
+      params.append("page_size", "100");
 
       const token = getAdminToken();
       const res = await fetch(`${API}/inventory/current-stock?${params.toString()}`, {
@@ -1645,9 +1664,14 @@ export default function InventoryCurrentStockList() {
       if (!res.ok) throw new Error();
       const json = await res.json();
       setData((json.data || []).map(r => ({ ...r, /* unchanged */ })));
+      setPages(json.pages || 1);
+      setTotalCount(json.count || 0);
+      setSummary(json.summary || { in_stock:0, low_stock:0, out_of_stock:0, quantity:0, value:0 });
+      setServerSourceCounts(json.source_counts || {});
+      setServerVendorNames(json.vendor_names || []);
     } catch { setError("Could not load stock data."); }
     finally { setLoading(false); }
-  }, [division, section, department, search]);
+  }, [division, section, department, searchQuery, sourceFilter, vendorFilter, page]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
@@ -1800,32 +1824,19 @@ export default function InventoryCurrentStockList() {
     }
   };
 
-  const vendorNames = React.useMemo(() => {
-    const names = new Set(data
-      .filter(r => r.vendor_name && (sourceFilter === "data_hub_import" ? r.source === "data_hub_import" : r.source === "vendor"))
-      .map(r => r.vendor_name));
-    return [...names].sort();
-  }, [data, sourceFilter]);
+  const vendorNames = serverVendorNames;
 
-  const sourceCounts = React.useMemo(() => ({
-    all:    data.length,
-    admin:  data.filter(r => r.source === "admin").length,
-    vendor: data.filter(r => r.source === "vendor").length,
-    grn:    data.filter(r => r.source === "grn").length,
-    imported: data.filter(r => r.source === "data_hub_import").length,
-  }), [data]);
+  const sourceCounts = { ...serverSourceCounts, imported: serverSourceCounts.data_hub_import || 0 };
 
   const filtered = React.useMemo(() => {
     let rows = data;
-    if (sourceFilter !== "all") rows = rows.filter(r => (r.source || "admin") === sourceFilter);
-    if (vendorFilter) rows = rows.filter(r => r.vendor_name === vendorFilter);
     return rows;
-  }, [data, sourceFilter, vendorFilter]);
+  }, [data]);
 
-  const inStock    = filtered.filter(r => r.status?.label === "In Stock").length;
-  const lowStock   = filtered.filter(r => r.status?.label === "Low Stock").length;
-  const outStock   = filtered.filter(r => r.status?.label === "Out of Stock").length;
-  const totalValue = filtered.filter(r => (r.qty||0) > 0).reduce((s,r) => s + r.qty * r.rate, 0);
+  const inStock    = summary.in_stock || 0;
+  const lowStock   = summary.low_stock || 0;
+  const outStock   = summary.out_of_stock || 0;
+  const totalValue = summary.value || 0;
 
   const tabStyle = (key, activeColor) => ({
     padding:"6px 14px", fontSize:12, fontWeight:700, borderRadius:8,
@@ -1862,7 +1873,7 @@ export default function InventoryCurrentStockList() {
             <div className="p-2 bg-indigo-600 rounded-xl"><FaBoxes className="text-white text-lg" /></div>
             <div>
               <h1 className="text-xl sm:text-2xl font-bold text-slate-900 leading-tight">Central Stock List</h1>
-              <p className="text-xs text-slate-500">{filtered.length} items · Central Inventory (HQ)</p>
+              <p className="text-xs text-slate-500">{totalCount} items · Central Inventory (HQ)</p>
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -2003,7 +2014,7 @@ export default function InventoryCurrentStockList() {
                   const rowBg      = row.source === "grn" ? "hover:bg-amber-50/40" : "hover:bg-indigo-50/40";
 
                   return (
-                    <tr key={i} className={`transition-colors ${rowBg}`}>
+                    <tr key={row.barcode || i} className={`transition-colors ${rowBg}`}>
                       <td className="px-3 py-3 font-mono text-xs text-slate-500 whitespace-nowrap">{row.barcode}</td>
                       <td className="px-3 py-3 font-mono text-xs font-semibold text-slate-700 whitespace-nowrap">{row.sku || <span className="text-slate-300">—</span>}</td>
                       <td className="px-3 py-3 min-w-[180px] max-w-[260px]">
@@ -2080,12 +2091,12 @@ export default function InventoryCurrentStockList() {
                 <tfoot className="border-t-2 border-slate-200 bg-slate-50 sticky bottom-0">
                   <tr>
                     <td colSpan={8} className="px-3 py-3 text-xs font-bold text-slate-500 uppercase tracking-wider">
-                      {filtered.length} items
+                      {totalCount} items
                       {vendorFilter && <span style={{ marginLeft:8, color:"#059669" }}>· {vendorFilter}</span>}
                       {sourceFilter === "grn" && <span style={{ marginLeft:8, color:"#D97706" }}>· GRN Inward</span>}
                     </td>
                     <td className="px-3 py-3 text-right text-xs font-bold text-slate-700 tabular-nums">
-                      {filtered.reduce((s,r) => s+(r.qty||0), 0).toLocaleString()}
+                      {(summary.quantity || 0).toLocaleString()}
                     </td>
                     <td />
                     <td className="px-3 py-3 text-right text-xs font-bold text-indigo-700 tabular-nums">
@@ -2098,6 +2109,13 @@ export default function InventoryCurrentStockList() {
             </table>
           </div>
         </div>
+        {pages > 1 && (
+          <div className="shrink-0 flex items-center justify-center gap-3 text-sm text-slate-600">
+            <button type="button" disabled={loading || page <= 1} onClick={() => setPage(v => v - 1)} className="px-3 py-1.5 rounded-lg border border-slate-200 bg-white disabled:opacity-40">Previous</button>
+            <span>Page <b>{page}</b> of <b>{pages}</b></span>
+            <button type="button" disabled={loading || page >= pages} onClick={() => setPage(v => v + 1)} className="px-3 py-1.5 rounded-lg border border-slate-200 bg-white disabled:opacity-40">Next</button>
+          </div>
+        )}
       </div>
 
       {/* ── Split Product Modal ── */}

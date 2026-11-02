@@ -228,6 +228,10 @@ async def get_current_stock(
     section:    Optional[str] = Query(None),
     department: Optional[str] = Query(None),
     search:     Optional[str] = Query(None),
+    source:     Optional[str] = Query(None),
+    vendor:     Optional[str] = Query(None),
+    page:       int           = Query(1, ge=1),
+    page_size:  int           = Query(100, ge=25, le=250),
     ctx:        dict          = Depends(get_hq_tenant),
 ):
     tenant_id = ctx["tenant_id"]
@@ -336,10 +340,37 @@ async def get_current_stock(
             or s in (r["grn_no"] or "").lower()
         ]
 
+    source_counts = {
+        "all": len(rows),
+        "admin": sum(1 for r in rows if r["source"] == "admin"),
+        "vendor": sum(1 for r in rows if r["source"] == "vendor"),
+        "grn": sum(1 for r in rows if r["source"] == "grn"),
+        "data_hub_import": sum(1 for r in rows if r["source"] == "data_hub_import"),
+    }
+    vendor_names = sorted({r["vendor_name"] for r in rows if r.get("vendor_name")})
+    if source and source != "all":
+        rows = [r for r in rows if r["source"] == source]
+    if vendor:
+        rows = [r for r in rows if r.get("vendor_name") == vendor]
+
     status_order = {"Out of Stock": 2, "Low Stock": 1, "In Stock": 0}
     rows.sort(key=lambda r: (status_order.get(r["status"]["label"], 3), r["product"].lower()))
 
-    return JSONResponse({"status": "success", "count": len(rows), "data": rows})
+    total = len(rows)
+    summary = {
+        "in_stock": sum(1 for r in rows if r["status"]["label"] == "In Stock"),
+        "low_stock": sum(1 for r in rows if r["status"]["label"] == "Low Stock"),
+        "out_of_stock": sum(1 for r in rows if r["status"]["label"] == "Out of Stock"),
+        "quantity": sum(r["qty"] for r in rows),
+        "value": sum(r["qty"] * r["rate"] for r in rows if r["qty"] > 0),
+    }
+    start = (page - 1) * page_size
+    return JSONResponse({
+        "status": "success", "count": total, "data": rows[start:start + page_size],
+        "page": page, "page_size": page_size,
+        "pages": max(1, (total + page_size - 1) // page_size),
+        "summary": summary, "source_counts": source_counts, "vendor_names": vendor_names,
+    })
 
 
 # ─────────────────────────────────────────────
