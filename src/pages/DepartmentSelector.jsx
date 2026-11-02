@@ -39,6 +39,11 @@ const DEPT_META = {
   "Merchandiser Buyer":           { emoji: "🛍️", gradient: "linear-gradient(135deg,#ef4444,#dc2626)", glow: "rgba(239,68,68,0.4)"  },
   "Vendor":                       { emoji: "🏪", gradient: "linear-gradient(135deg,#64748b,#475569)", glow: "rgba(100,116,139,0.4)" },
   "Store Ops":                    { emoji: "📍", gradient: "linear-gradient(135deg,#7c3aed,#5b21b6)", glow: "rgba(124,58,237,0.4)"  },
+  "Marketing":                    { emoji: "📣", gradient: "linear-gradient(135deg,#d946ef,#a21caf)", glow: "rgba(217,70,239,0.4)"  },
+  "Customer CRM":                 { emoji: "🤝", gradient: "linear-gradient(135deg,#14b8a6,#0f766e)", glow: "rgba(20,184,166,0.4)"  },
+  "Visual Merchandising":         { emoji: "🧩", gradient: "linear-gradient(135deg,#f472b6,#c026d3)", glow: "rgba(244,114,182,0.4)" },
+  "Production & Job Work":        { emoji: "🏭", gradient: "linear-gradient(135deg,#0ea5e9,#0369a1)", glow: "rgba(14,165,233,0.4)"  },
+  "Store Owner":                  { emoji: "🏬", gradient: "linear-gradient(135deg,#059669,#047857)", glow: "rgba(5,150,105,0.4)"  },
 };
 const DEFAULT_META = { emoji: "💼", gradient: "linear-gradient(135deg,#6b7280,#4b5563)", glow: "rgba(107,114,128,0.4)" };
 
