@@ -49,7 +49,14 @@ def _serialize(doc: dict) -> dict:
     doc = dict(doc)
     doc["id"] = _str(doc.pop("_id"))
 
-    variants = [_serialize_variant(v) for v in doc.get("variants", [])]
+    # doc.get("variants", []) only falls back to [] when the key is
+    # missing entirely — a document with "variants": null (seen from some
+    # bulk imports) passes a bare None through, and looping over that
+    # raises a TypeError that surfaces to the browser as a bare 500 with
+    # no CORS headers (looks like "failed to fetch" client-side) instead
+    # of a real error message. Also skip any non-dict entries so one
+    # malformed variant doesn't 500 the whole product lookup.
+    variants = [_serialize_variant(v) for v in (doc.get("variants") or []) if isinstance(v, dict)]
     doc["variants"] = variants
 
     # Auto-compute total stock
@@ -81,8 +88,8 @@ def _build_doc(payload: dict, tenant_id: str, is_update: bool = False) -> dict:
     product_type = (payload.get("product_type") or "general").strip().lower()
     has_variants = bool(payload.get("has_variants", False))
 
-    variants_raw = payload.get("variants", [])
-    variants     = [_serialize_variant(v) for v in variants_raw]
+    variants_raw = payload.get("variants") or []
+    variants     = [_serialize_variant(v) for v in variants_raw if isinstance(v, dict)]
 
     # Total stock: sum variants if has_variants, else use explicit stockQty
     if has_variants and variants:
