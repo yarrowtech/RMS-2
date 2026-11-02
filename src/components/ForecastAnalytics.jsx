@@ -6,17 +6,21 @@ import {
   LineChart, TrendingUp, TrendingDown, Minus, Building2, Wallet, LogOut,
   Search, RefreshCw, AlertTriangle, ShoppingCart, BarChart3,
   UploadCloud, FileSpreadsheet, CheckCircle2, XCircle, Undo2, History, Download, Trash2,
-  Warehouse, Scissors, Layers,
+  Warehouse, Scissors, Layers, Settings,
 } from "lucide-react";
 import {
   Bar, BarChart as RechartsBarChart, CartesianGrid, Legend,
   ResponsiveContainer, Tooltip, XAxis, YAxis,
+  Area, AreaChart as RechartsAreaChart, Pie, PieChart as RechartsPieChart, Cell,
 } from "recharts";
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
 import InternalNotificationBell from "./InternalNotificationBell.jsx";
 import InternalChatPanel from "./InternalChatPanel.jsx";
 import CitimartDataHub, { CitimartStoreInventory } from "./CitimartDataHub.jsx";
 import ForecastStockGapView from "./ForecastStockGapView.jsx";
 import ForecastDataUploadView from "./ForecastDataUploadView.jsx";
+import AdminSettings from "./Admin/AdminSettings.jsx";
 
 function getAdminToken() {
   return (
@@ -249,6 +253,11 @@ function TrendBadge({ trend }) {
 }
 
 /* ── Dashboard ── */
+function fmtPct(pct) {
+  if (pct === null || pct === undefined) return "no prior data";
+  return `${pct >= 0 ? "+" : ""}${pct}%`;
+}
+
 function DashboardView({ onNavigate, raphaaaMode = false }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
@@ -265,29 +274,156 @@ function DashboardView({ onNavigate, raphaaaMode = false }) {
 
   const demandRows = data?.top_forecasted_items || [];
   const visibleDemandRows = filterProductRows(demandRows, search, filters, BASIC_PRODUCT_FILTERS).slice(0, 5);
+  const PIE_COLORS = ["#4f46e5", "#7c3aed", "#0ea5e9", "#14b8a6", "#f59e0b", "#f43f5e", "#64748b", "#a855f7"];
+
+  const exportOverviewPdf = () => {
+    if (!data) return;
+    const doc = new jsPDF({ orientation: "portrait", unit: "pt", format: "a4" });
+    doc.setFontSize(14);
+    doc.text("Forecast & Analytics — Overview Report", 40, 40);
+    doc.setFontSize(10);
+    doc.text(`Window: last ${data.sales_kpis?.lookback_days || 90} days  |  Generated: ${new Date().toLocaleString("en-IN")}`, 40, 58);
+    autoTable(doc, {
+      startY: 75,
+      head: [["Metric", "Value", "vs previous period"]],
+      body: [
+        ["Revenue", `₹${(data.sales_kpis?.total_revenue || 0).toLocaleString("en-IN")}`, fmtPct(data.sales_kpis?.revenue_change_pct)],
+        ["Units sold", (data.sales_kpis?.total_units_sold || 0).toLocaleString("en-IN"), fmtPct(data.sales_kpis?.units_change_pct)],
+        ["Bills", (data.sales_kpis?.bill_count || 0).toLocaleString("en-IN"), fmtPct(data.sales_kpis?.bills_change_pct)],
+        ["Approved vendors", String(data.active_vendor_count ?? 0), "-"],
+        ["Low stock alerts", String(data.low_stock_alert_count ?? 0), "-"],
+      ],
+      styles: { fontSize: 9 },
+      headStyles: { fillColor: [49, 46, 129], textColor: [255, 255, 255] },
+    });
+    if (data.division_breakdown?.length) {
+      autoTable(doc, {
+        startY: doc.lastAutoTable.finalY + 20,
+        head: [["Division", "Units sold"]],
+        body: data.division_breakdown.map((r) => [r.division, r.qty]),
+        styles: { fontSize: 9 },
+        headStyles: { fillColor: [49, 46, 129], textColor: [255, 255, 255] },
+      });
+    }
+    doc.save(`forecast-analytics-overview_${new Date().toISOString().slice(0, 10)}.pdf`);
+  };
 
   return (
     <div className="space-y-6">
       <ErrorBanner message={error} />
       <section className="overflow-hidden rounded-[22px] border border-slate-200 bg-gradient-to-br from-indigo-950 via-violet-900 to-fuchsia-900 px-6 py-7 text-white shadow-[0_16px_35px_rgba(15,23,42,.14)] sm:px-8">
-        <p className="text-[11px] font-bold uppercase tracking-[.18em] text-indigo-200">Forecast & Analytics</p>
-        <h3 className="mt-1 text-xl font-bold">Department overview — last {data?.sales_kpis?.lookback_days || 90} days</h3>
-        <p className="mt-1 text-sm text-indigo-100/75">Real sales, demand forecasting and purchase signals, not mock data.</p>
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <p className="text-[11px] font-bold uppercase tracking-[.18em] text-indigo-200">Forecast & Analytics</p>
+            <h3 className="mt-1 text-xl font-bold">Department overview — last {data?.sales_kpis?.lookback_days || 90} days</h3>
+            <p className="mt-1 text-sm text-indigo-100/75">Real sales, demand forecasting and purchase signals, not mock data.</p>
+          </div>
+          {!loading && data && (
+            <button type="button" onClick={exportOverviewPdf} className="inline-flex shrink-0 items-center gap-2 rounded-xl border border-white/20 bg-white/10 px-3 py-2 text-xs font-bold text-white hover:bg-white/20">
+              <Download size={14} /> Export report
+            </button>
+          )}
+        </div>
       </section>
 
       {!loading && (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           {[
-            ["Revenue", `₹${(data?.sales_kpis?.total_revenue || 0).toLocaleString("en-IN")}`],
-            ["Units sold", (data?.sales_kpis?.total_units_sold || 0).toLocaleString("en-IN")],
-            ["Bills", (data?.sales_kpis?.bill_count || 0).toLocaleString("en-IN")],
-            ["Approved vendors", data?.active_vendor_count ?? 0],
-          ].map(([label, value]) => (
+            ["Revenue", `₹${(data?.sales_kpis?.total_revenue || 0).toLocaleString("en-IN")}`, Wallet, "bg-emerald-50 text-emerald-600", data?.sales_kpis?.revenue_change_pct],
+            ["Units sold", (data?.sales_kpis?.total_units_sold || 0).toLocaleString("en-IN"), ShoppingCart, "bg-indigo-50 text-indigo-600", data?.sales_kpis?.units_change_pct],
+            ["Bills", (data?.sales_kpis?.bill_count || 0).toLocaleString("en-IN"), FileSpreadsheet, "bg-sky-50 text-sky-600", data?.sales_kpis?.bills_change_pct],
+            ["Approved vendors", data?.active_vendor_count ?? 0, Building2, "bg-violet-50 text-violet-600", null],
+          ].map(([label, value, Icon, tone, pct]) => (
             <div key={label} className="fa-stat-card p-4">
-              <p className="text-xs font-bold uppercase tracking-wide text-slate-400">{label}</p>
-              <p className="mt-1 text-xl font-black text-slate-900">{value}</p>
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-wide text-slate-400">{label}</p>
+                  <p className="mt-1 text-xl font-black text-slate-900">{value}</p>
+                  {pct !== null && pct !== undefined && (
+                    <span className={`mt-1 inline-flex items-center gap-1 text-[11px] font-bold ${pct >= 0 ? "text-emerald-600" : "text-rose-600"}`}>
+                      {pct >= 0 ? <TrendingUp size={12} /> : <TrendingDown size={12} />} {Math.abs(pct)}% vs prior period
+                    </span>
+                  )}
+                </div>
+                <span className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl ${tone}`}><Icon size={18} /></span>
+              </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {!loading && Boolean(data?.sales_kpis?.trend?.length) && (
+        <div className="fa-panel p-5">
+          <h4 className="text-sm font-bold text-slate-900">Revenue trend</h4>
+          <p className="mt-0.5 text-xs text-slate-500">Daily revenue across the lookback window.</p>
+          <div className="mt-4 h-56">
+            <ResponsiveContainer width="100%" height="100%">
+              <RechartsAreaChart data={data.sales_kpis.trend} margin={{ top: 5, right: 24, left: 8, bottom: 5 }}>
+                <defs>
+                  <linearGradient id="revenueFill" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#4f46e5" stopOpacity={0.35} />
+                    <stop offset="95%" stopColor="#4f46e5" stopOpacity={0.02} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                <XAxis dataKey="date" tick={{ fontSize: 10 }} minTickGap={24} />
+                <YAxis tick={{ fontSize: 11 }} />
+                <Tooltip formatter={(v) => `₹${Number(v).toLocaleString("en-IN")}`} />
+                <Area type="monotone" dataKey="revenue" name="Revenue" stroke="#4f46e5" fill="url(#revenueFill)" strokeWidth={2} />
+              </RechartsAreaChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+      )}
+
+      <div className="grid gap-6 lg:grid-cols-5">
+        {!loading && Boolean(demandRows.length) && (
+          <div className="fa-panel p-5 lg:col-span-3">
+            <h4 className="text-sm font-bold text-slate-900">Top demand — weekly average units</h4>
+            <p className="mt-0.5 text-xs text-slate-500">Same items as the table below, visualized by sales volume.</p>
+            <div className="mt-4 h-64">
+              <ResponsiveContainer width="100%" height="100%">
+                <RechartsBarChart data={demandRows.slice(0, 8).map((r) => ({ name: (r.name || r.barcode || "").slice(0, 18), avg_weekly_qty: r.avg_weekly_qty }))} layout="vertical" margin={{ top: 5, right: 24, left: 8, bottom: 5 }}>
+                  <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                  <XAxis type="number" tick={{ fontSize: 11 }} />
+                  <YAxis type="category" dataKey="name" width={140} tick={{ fontSize: 11 }} />
+                  <Tooltip />
+                  <Bar dataKey="avg_weekly_qty" name="Weekly avg units" fill="#4f46e5" radius={[0, 5, 5, 0]} />
+                </RechartsBarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        )}
+
+        {!loading && Boolean(data?.division_breakdown?.length) && (
+          <div className="fa-panel p-5 lg:col-span-2">
+            <h4 className="text-sm font-bold text-slate-900">Sales by division</h4>
+            <p className="mt-0.5 text-xs text-slate-500">Units sold in the lookback window.</p>
+            <div className="mt-4 h-64">
+              <ResponsiveContainer width="100%" height="100%">
+                <RechartsPieChart>
+                  <Pie data={data.division_breakdown} dataKey="qty" nameKey="division" innerRadius={45} outerRadius={80} paddingAngle={2}>
+                    {data.division_breakdown.map((_, i) => <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />)}
+                  </Pie>
+                  <Tooltip />
+                  <Legend wrapperStyle={{ fontSize: 11 }} />
+                </RechartsPieChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {!loading && data?.top_vendor && (
+        <div className="fa-panel flex items-center justify-between gap-3 p-5">
+          <div className="flex items-center gap-3">
+            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-violet-50 text-violet-600"><Building2 size={18} /></span>
+            <div>
+              <p className="text-xs font-bold uppercase tracking-wide text-slate-400">Top vendor by volume</p>
+              <p className="mt-0.5 text-sm font-black text-slate-900">{data.top_vendor.name} — {data.top_vendor.qty_sold.toLocaleString("en-IN")} units sold</p>
+            </div>
+          </div>
+          <button type="button" onClick={() => onNavigate?.("vendors")} className="text-xs font-bold text-indigo-600 hover:text-indigo-800 whitespace-nowrap">Open Vendor Ranking →</button>
         </div>
       )}
 
@@ -2820,7 +2956,7 @@ export default function ForecastAnalytics() {
   if (isCitimart) {
     menu = [...menu, { id: "citimart-data-hub", label: "Citimart Data Hub", icon: UploadCloud }, { id: "citimart-inventory", label: "Store-wise Inventory", icon: Warehouse }];
   }
-  const activeLabel = menu.find((item) => item.id === activeSection)?.label || "Overview";
+  const activeLabel = activeSection === "settings" ? "Settings" : (menu.find((item) => item.id === activeSection)?.label || "Overview");
 
   const renderContent = () => {
     switch (activeSection) {
@@ -2831,6 +2967,7 @@ export default function ForecastAnalytics() {
       case "alerts": return <AlertsView raphaaaMode={productEnrichmentEnabled} />;
       case "stockgap": return <ForecastStockGapView />;
       case "stockgap-upload": return <ForecastDataUploadView />;
+      case "settings": return <AdminSettings departmentMode />;
       case "vendor-sales": return productEnrichmentEnabled ? <VendorSalesRankingView /> : <DashboardView onNavigate={setActiveSection} raphaaaMode={productEnrichmentEnabled} />;
       case "design-performance": return productEnrichmentEnabled ? <DesignPerformanceView /> : <DashboardView onNavigate={setActiveSection} raphaaaMode={productEnrichmentEnabled} />;
       case "design-themes": return productEnrichmentEnabled ? <DesignThemesView /> : <DashboardView onNavigate={setActiveSection} raphaaaMode={productEnrichmentEnabled} />;
@@ -2876,7 +3013,13 @@ export default function ForecastAnalytics() {
           ))}
         </nav>
 
-        <div className="mt-4 border-t border-white/10 pt-4">
+        <div className="mt-4 space-y-1.5 border-t border-white/10 pt-4">
+          <button
+            onClick={() => setActiveSection("settings")}
+            className={`fa-nav-item flex w-full items-center rounded-xl px-3.5 py-3 text-left text-sm font-semibold transition-all ${activeSection === "settings" ? "fa-nav-item-active" : ""}`}
+          >
+            <Settings className="mr-3 h-[18px] w-[18px] shrink-0" /> <span className="fa-nav-label">Settings</span>
+          </button>
           <button onClick={handleLogout} className="flex w-full items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-3 text-sm font-bold text-slate-100 transition hover:bg-rose-500/20 hover:text-white">
             <LogOut className="h-4 w-4" /> <span className="fa-nav-label">Log out</span>
           </button>

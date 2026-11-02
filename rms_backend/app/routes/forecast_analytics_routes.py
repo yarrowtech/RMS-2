@@ -1755,15 +1755,15 @@ async def tag_raphaaa_design_theme(
 # DASHBOARD
 # ═══════════════════════════════════════════════════════════════════════════
 
-async def _dashboard_sales_kpis(tenant_id: str, lookback_days: int) -> Dict[str, Any]:
-    """Revenue/units totals over the same lookback window the demand
-    forecast uses, so the two numbers on the Overview tab are directly
-    comparable instead of covering different periods. Citimart sales live in
-    a separate import collection (see _compute_citimart_demand_forecast) —
-    same split applied here."""
-    since = datetime.utcnow() - timedelta(days=max(1, lookback_days))
+async def _sales_window_totals(tenant_id: str, since: datetime, until: datetime) -> Dict[str, Any]:
+    """Revenue/units/bill totals for one arbitrary [since, until) window —
+    the shared primitive behind both the current-period KPIs and the
+    previous-period comparison, so the two numbers are computed identically
+    and genuinely comparable. Citimart sales live in a separate import
+    collection (see _compute_citimart_demand_forecast) — same split applied
+    here."""
     collection = citimart_sales_import_collection if tenant_id == "citimart" else sales_collection
-    match: Dict[str, Any] = {"tenant_id": tenant_id, "created_at": {"$gte": since}}
+    match: Dict[str, Any] = {"tenant_id": tenant_id, "created_at": {"$gte": since, "$lt": until}}
     if collection is sales_collection:
         match["type"] = "sale"
 
@@ -1777,11 +1777,51 @@ async def _dashboard_sales_kpis(tenant_id: str, lookback_days: int) -> Dict[str,
             price = float(item.get("price") or 0)
             total_units += qty
             total_revenue += qty * price
+    return {"total_revenue": round(total_revenue, 2), "total_units_sold": round(total_units, 2), "bill_count": bill_count}
+
+
+def _pct_change(current: float, previous: float) -> Optional[float]:
+    """None (not 0) when there's no previous-period baseline to compare
+    against — the frontend shows "no prior data" instead of a misleading 0%."""
+    if not previous:
+        return None
+    return round(((current - previous) / previous) * 100, 1)
+
+
+async def _dashboard_sales_kpis(tenant_id: str, lookback_days: int) -> Dict[str, Any]:
+    """Revenue/units totals over the same lookback window the demand
+    forecast uses, so the two numbers on the Overview tab are directly
+    comparable instead of covering different periods. Also returns the
+    previous period of equal length (for %-change badges) and a daily
+    revenue trend (for the Overview chart)."""
+    now = datetime.utcnow()
+    since = now - timedelta(days=max(1, lookback_days))
+    previous_since = since - timedelta(days=max(1, lookback_days))
+
+    current = await _sales_window_totals(tenant_id, since, now)
+    previous = await _sales_window_totals(tenant_id, previous_since, since)
+
+    collection = citimart_sales_import_collection if tenant_id == "citimart" else sales_collection
+    match: Dict[str, Any] = {"tenant_id": tenant_id, "created_at": {"$gte": since}}
+    if collection is sales_collection:
+        match["type"] = "sale"
+    daily_revenue: Dict[str, float] = {}
+    async for doc in collection.find(match, {"items": 1, "created_at": 1}):
+        created = doc.get("created_at")
+        if not isinstance(created, datetime):
+            continue
+        day_key = created.date().isoformat()
+        day_total = sum(float(i.get("qty") or 0) * float(i.get("price") or 0) for i in doc.get("items", []))
+        daily_revenue[day_key] = daily_revenue.get(day_key, 0.0) + day_total
+    trend = [{"date": d, "revenue": round(v, 2)} for d, v in sorted(daily_revenue.items())]
+
     return {
-        "total_revenue": round(total_revenue, 2),
-        "total_units_sold": round(total_units, 2),
-        "bill_count": bill_count,
+        **current,
         "lookback_days": lookback_days,
+        "revenue_change_pct": _pct_change(current["total_revenue"], previous["total_revenue"]),
+        "units_change_pct": _pct_change(current["total_units_sold"], previous["total_units_sold"]),
+        "bills_change_pct": _pct_change(current["bill_count"], previous["bill_count"]),
+        "trend": trend,
     }
 
 
@@ -1805,6 +1845,25 @@ async def get_dashboard(ctx: TenantCtx = Depends(_require_forecast_context)):
     stock_map = await _barcode_stock_map(tenant_id, None)
     restock_teaser = _lines_from_forecast(forecast_for_plan, stock_map)[:3]
 
+    # Division breakdown + top vendor teaser — computed off forecast_for_plan
+    # (the wider, unsliced set) rather than top_demand, since top_demand is
+    # capped to 5 rows for non-Raphaaa tenants and would make these
+    # breakdowns meaningless with that few rows.
+    division_totals: Dict[str, float] = {}
+    vendor_totals: Dict[str, float] = {}
+    for row in forecast_for_plan:
+        qty = row.get("total_qty_sold") or 0
+        division = row.get("division") or "Unclassified"
+        division_totals[division] = division_totals.get(division, 0.0) + qty
+        vendor_name = row.get("vendor_name") or ""
+        if vendor_name:
+            vendor_totals[vendor_name] = vendor_totals.get(vendor_name, 0.0) + qty
+    division_breakdown = sorted(
+        [{"division": k, "qty": round(v, 2)} for k, v in division_totals.items() if v > 0],
+        key=lambda r: r["qty"], reverse=True,
+    )[:8]
+    top_vendor = max(vendor_totals.items(), key=lambda kv: kv[1]) if vendor_totals else None
+
     return {
         "status": "success",
         "sales_kpis": sales_kpis,
@@ -1812,6 +1871,8 @@ async def get_dashboard(ctx: TenantCtx = Depends(_require_forecast_context)):
         "active_vendor_count": active_vendor_count,
         "top_forecasted_items": top_demand,
         "top_restock_candidates": restock_teaser,
+        "division_breakdown": division_breakdown,
+        "top_vendor": {"name": top_vendor[0], "qty_sold": round(top_vendor[1], 2)} if top_vendor else None,
         "footfall": {
             "available": False,
             "message": "No footfall data source is connected yet — POS only records completed sales, not raw store traffic. This section will populate once a footfall source (in-store counter, sensor, etc.) is wired in.",
