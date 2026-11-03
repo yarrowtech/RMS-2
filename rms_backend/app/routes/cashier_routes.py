@@ -8,11 +8,18 @@ import os
 import secrets
 import re
 
-from ..db import db, product_collection, inventory_collection, sales_collection, store_stock_collection
+from ..db import db, product_collection, inventory_collection, sales_collection, store_stock_collection, admins_collection
 from .store_helper import get_store_context
 from ..error_log import log_error
 from ..email_utils import send_customer_pos_invoice_email
 from ..product_identity import identity_fields
+from ..utils import verify_password
+
+# Return reasons that mean "this bill was wrong" rather than a genuine
+# customer return — these need a manager to confirm before the credit
+# note is issued, so a cashier can't self-authorize their own mistakes
+# with zero oversight. Kept in sync with the frontend's REASONS_NEEDING_APPROVAL.
+RETURN_REASONS_NEEDING_APPROVAL = {"Billing Error", "Wrong Item/Qty", "Price Correction", "Other"}
 
 router = APIRouter(prefix="/cashier", tags=["Cashier POS"])
 
@@ -678,6 +685,40 @@ async def product_cache(
         "data": results,
     })
 
+# POST /cashier/verify-manager
+# ═══════════════════════════════════════════════════════════════════════════════
+# A cashier correcting their own billing mistake needs a manager/HQ admin
+# to confirm it before the system issues a credit note — otherwise any
+# cashier could self-authorize unlimited "returns" with no oversight. This
+# checks credentials inline without creating a session, so the cashier's
+# own login is untouched; it never issues a token, only a yes/no plus the
+# approving admin's name for the audit trail.
+
+@router.post("/verify-manager")
+async def verify_manager(payload: dict, authorization: str = Header(None)):
+    store = await _require_store_context(authorization)
+    username = str(payload.get("username") or "").strip().lower()
+    password = str(payload.get("password") or "")
+    if not username or not password:
+        raise HTTPException(status_code=400, detail="Manager username and password are required.")
+
+    admin = await admins_collection.find_one({
+        "tenant_id": store["tenant_id"],
+        "email": {"$regex": f"^{re.escape(username)}$", "$options": "i"},
+    })
+    if not admin or admin.get("scope") != "hq":
+        raise HTTPException(status_code=401, detail="No HQ manager account found with that username.")
+    if admin.get("status") not in (None, "ACTIVE"):
+        raise HTTPException(status_code=401, detail="That manager account is not active.")
+
+    hashed = admin.get("hashed_password")
+    if not hashed or not verify_password(password, hashed):
+        raise HTTPException(status_code=401, detail="Incorrect manager password.")
+
+    await _audit_pos(store, "manager_override_verified", {"manager_name": admin.get("name", username)})
+    return {"status": "success", "manager_name": admin.get("name") or username}
+
+
 # POST /cashier/bill
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -755,6 +796,12 @@ async def save_bill(
         if duplicate_return:
             raise HTTPException(status_code=400, detail="This invoice has already been returned.")
 
+        return_reason = str(payload.get("returnReason") or "").strip()
+        if not return_reason:
+            raise HTTPException(status_code=400, detail="A reason is required for every return.")
+        if return_reason in RETURN_REASONS_NEEDING_APPROVAL and not payload.get("managerVerified"):
+            raise HTTPException(status_code=403, detail="This return reason needs manager approval before it can be saved.")
+
     if not items:
         raise HTTPException(status_code=400, detail="No items in bill.")
 
@@ -808,6 +855,8 @@ async def save_bill(
         "invoice_no": invoice_no,
         "type": "return" if is_return else "sale",
         "original_invoice": payload.get("originalInvoice", ""),
+        "return_reason": str(payload.get("returnReason") or "") if is_return else "",
+        "return_approved_by": str(payload.get("managerName") or "") if is_return else "",
         "date": now.strftime("%Y-%m-%d %H:%M"),
         "cashier_name": cashier_name,
         "customer_name": bill_meta.get("customerName", ""),
@@ -828,9 +877,14 @@ async def save_bill(
         "client_offline_id": client_offline_id,
         "offline_invoice_no": offline_invoice_no,
         "created_offline_at": created_offline_at,
-        "sync_source": sync_source or ("offline_pos" if client_offline_id else "online_pos"),
-        "synced_from_offline": bool(client_offline_id),
-        "sync_status": "synced" if client_offline_id else "online",
+        # client_offline_id is now also sent on the normal online Finalize
+        # path (as an idempotency key, so a frozen tab retrying the same
+        # request can't double-bill/double-deduct stock) — it no longer
+        # implies this bill actually came through the offline queue.
+        # sync_source is the only thing that means that.
+        "sync_source": sync_source or "online_pos",
+        "synced_from_offline": sync_source == "offline_pos",
+        "sync_status": "synced" if sync_source == "offline_pos" else "online",
         "stock_conflicts": stock_conflicts,
         "inventory_warnings": [],
         "inventory_not_found": [],
@@ -890,7 +944,7 @@ async def save_bill(
         "net_payable": bill_doc.get("summary", {}).get("net_payable", 0),
         "payment_method": bill_doc.get("payment_method"),
         "payment_split": bill_doc.get("payment_split", {}),
-        "synced_from_offline": bool(client_offline_id),
+        "synced_from_offline": sync_source == "offline_pos",
         "stock_conflicts": stock_conflicts,
         "inventory_not_found": inventory_not_found,
     })
@@ -924,7 +978,7 @@ async def save_bill(
         "id": str(result.inserted_id),
         "message": f"{'Return bill' if is_return else 'Bill'} saved.",
         "store_id": store_id,
-        "sync_status": "synced" if client_offline_id else "online",
+        "sync_status": bill_doc["sync_status"],
         "share_url": bill_doc.get("share_url", ""),
         "customer_email": bill_doc.get("customer_email", ""),
         "email_sent": email_sent,

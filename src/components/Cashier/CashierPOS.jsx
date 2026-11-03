@@ -14,6 +14,14 @@ import CashierGuideModal from "./CashierGuideModal";
 function money(v)  { return `₹${Math.abs(Number(v || 0)).toFixed(2)}`; }
 function num(v)    { return Math.abs(Number(v || 0)).toFixed(2); }
 
+// Returns need a reason so HQ can tell a genuine customer return apart
+// from a cashier correcting their own mistake. The last four need a
+// manager (HQ-scoped admin) to verify their password before the credit
+// note can be saved — kept in sync with the backend's
+// RETURN_REASONS_NEEDING_APPROVAL in cashier_routes.py.
+const RETURN_REASONS = ["Customer Return", "Billing Error", "Wrong Item/Qty", "Price Correction", "Other"];
+const REASONS_NEEDING_APPROVAL = new Set(["Billing Error", "Wrong Item/Qty", "Price Correction", "Other"]);
+
 const OFFLINE_BILLS_KEY = "rms_cashier_offline_bills_v1";
 
 function readOfflineBills() {
@@ -50,6 +58,39 @@ function makeOfflineInvoiceNo(isReturn = false) {
 
 function makeOfflineId() {
   return `offline_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+// In-progress cart draft — autosaved (debounced) while the cashier is
+// still scanning/building a bill, before Finalize or Save offline is
+// ever clicked. Without this, a frozen/crashed tab loses the whole
+// in-progress bill with nothing recoverable, which is worse than the
+// offline-sync case (that one at least has a saved copy).
+const DRAFT_CART_KEY = "rms_cashier_draft_cart_v1";
+
+function readDraftCart() {
+  try {
+    const raw = localStorage.getItem(DRAFT_CART_KEY);
+    const parsed = raw ? JSON.parse(raw) : null;
+    return parsed && Array.isArray(parsed.items) && parsed.items.length > 0 ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeDraftCart(draft) {
+  try {
+    localStorage.setItem(DRAFT_CART_KEY, JSON.stringify(draft));
+  } catch {
+    // Draft autosave is a convenience, not critical — never break billing over it.
+  }
+}
+
+function clearDraftCart() {
+  try {
+    localStorage.removeItem(DRAFT_CART_KEY);
+  } catch {
+    // ignore
+  }
 }
 
 
@@ -367,13 +408,14 @@ const POS_GUIDE_STEPS = [
   { icon: FaBarcode, badgeClass: "bg-violet-100 text-violet-600", title: "Scan or search a product", text: "Use a barcode scanner, or type a product name/code in the search box. Only items actually received into your store's stock will come up — something a vendor has only listed in their catalogue won't scan as sellable." },
   { icon: FaPlus, badgeClass: "bg-indigo-100 text-indigo-600", title: "Build the bill", text: "Adjust quantity with the +/− buttons, remove a line with the trash icon, and apply a discount if your store allows it." },
   { icon: FaCreditCard, badgeClass: "bg-violet-100 text-violet-600", title: "Generate the bill", text: "Click \"Generate Bill\", choose the payment method, and confirm. Stock is deducted from your store the moment the bill is generated — there's no separate confirm step after." },
-  { icon: FaUndo, badgeClass: "bg-rose-100 text-rose-600", title: "Process a return", text: "Switch to \"Return\" mode and look up the original invoice number. Pick which items are coming back — returned stock goes back into your store automatically." },
+  { icon: FaUndo, badgeClass: "bg-rose-100 text-rose-600", title: "Process a return", text: "Switch to \"Return\" mode and look up the original invoice number. Pick which items are coming back, then choose a reason — \"Customer Return\" goes straight through. Any other reason (billing error, wrong item/qty, price correction) needs a manager to verify their password before you can finalize it. Returned stock goes back into your store automatically." },
   { icon: FaLock, badgeClass: "bg-emerald-100 text-emerald-600", title: "Close your shift", text: "At the end of the day, click \"Close shift\" and enter the cash you actually counted. RMS compares it to what it expected — a mismatch is recorded for review, but it will not stop you from closing." },
 ];
 
 const POS_GUIDE_NOTES = [
   { tone: "info", icon: FaWifi, title: "Working without internet", text: "Click \"Offline products\" beforehand to cache today's stock so you can keep billing if the connection drops. Once you're back online, sync the pending bills from the amber banner that appears." },
   { tone: "caution", icon: FaExclamationTriangle, title: "Two things RMS will not stop you from doing", text: "It does not block a sale that goes beyond what's actually in stock, and there's no automatic discount limit. Keep an eye on the shelf, and follow your store's discount policy yourself — the system trusts the cashier here." },
+  { tone: "info", icon: FaExclamationTriangle, title: "If the screen freezes mid-bill", text: "An in-progress cart autosaves every second or so. If the tab has to be reloaded, an amber banner offers to restore the last unsaved cart — check it before re-scanning everything from scratch." },
 ];
 
 /* ─── Generate Bill Popup ─── */
@@ -473,15 +515,58 @@ function GenerateBillPopup({ open, isReturn, items, bill, setBill, summary, onCl
   const [splitEnabled, setSplitEnabled] = useState(false);
   const [split, setSplit] = useState({ Cash: "", Card: "", UPI: "" });
 
+  const [returnReason, setReturnReason] = useState("");
+  const [managerUser, setManagerUser] = useState("");
+  const [managerPass, setManagerPass] = useState("");
+  const [managerVerifying, setManagerVerifying] = useState(false);
+  const [managerError, setManagerError] = useState("");
+  const [managerVerifiedName, setManagerVerifiedName] = useState("");
+
+  const needsApproval = isReturn && REASONS_NEEDING_APPROVAL.has(returnReason);
+
   useEffect(() => {
     document.body.style.overflow = open ? "hidden" : "auto";
     if (!open) {
       setPaid("");
       setSplitEnabled(false);
       setSplit({ Cash: "", Card: "", UPI: "" });
+      setReturnReason("");
+      setManagerUser("");
+      setManagerPass("");
+      setManagerError("");
+      setManagerVerifiedName("");
     }
     return () => { document.body.style.overflow = "auto"; };
   }, [open]);
+
+  // Switching to a reason that no longer needs approval (or back to one
+  // that does) clears any prior verification — approval is tied to the
+  // specific reason selected, not left dangling from an earlier choice.
+  useEffect(() => { setManagerVerifiedName(""); setManagerError(""); }, [returnReason]);
+
+  const verifyManager = async () => {
+    if (!managerUser.trim() || !managerPass) {
+      setManagerError("Enter the manager's username and password.");
+      return;
+    }
+    setManagerVerifying(true);
+    setManagerError("");
+    try {
+      const res = await cashierFetch(`${API_BASE}/cashier/verify-manager`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: managerUser.trim(), password: managerPass }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || "Verification failed");
+      setManagerVerifiedName(data.manager_name || managerUser.trim());
+      setManagerPass("");
+    } catch (e) {
+      setManagerError(e.message || "Verification failed");
+    } finally {
+      setManagerVerifying(false);
+    }
+  };
 
   if (!open) return null;
 
@@ -629,6 +714,55 @@ function GenerateBillPopup({ open, isReturn, items, bill, setBill, summary, onCl
               </div>
             </div>
 
+            {/* Return reason + manager approval */}
+            {isReturn && (
+              <div className="rounded-2xl border border-rose-200 bg-rose-50/50 p-4">
+                <h3 className="mb-3 text-xs font-black uppercase tracking-widest text-rose-700">Reason for return</h3>
+                <select
+                  value={returnReason}
+                  onChange={e => setReturnReason(e.target.value)}
+                  className="h-11 w-full rounded-xl border border-rose-200 bg-white px-4 text-sm font-bold text-slate-800 outline-none focus:border-rose-500"
+                >
+                  <option value="">Select a reason…</option>
+                  {RETURN_REASONS.map(r => <option key={r} value={r}>{r}</option>)}
+                </select>
+
+                {needsApproval && (
+                  managerVerifiedName ? (
+                    <div className="mt-3 flex items-center gap-2 rounded-xl bg-emerald-50 border border-emerald-200 px-4 py-2.5 text-xs font-black text-emerald-700">
+                      <FaCheckCircle /> Approved by {managerVerifiedName}
+                    </div>
+                  ) : (
+                    <div className="mt-3 rounded-xl border border-amber-300 bg-amber-50 p-3">
+                      <p className="mb-2 flex items-center gap-2 text-xs font-black text-amber-800">
+                        <FaLock size={11} /> Manager approval required for this reason
+                      </p>
+                      <div className="grid grid-cols-2 gap-2">
+                        <input
+                          type="text" placeholder="Manager username"
+                          value={managerUser} onChange={e => setManagerUser(e.target.value)}
+                          className="h-10 rounded-lg border border-amber-200 bg-white px-3 text-xs font-bold outline-none focus:border-amber-500"
+                        />
+                        <input
+                          type="password" placeholder="Manager password"
+                          value={managerPass} onChange={e => setManagerPass(e.target.value)}
+                          onKeyDown={e => e.key === "Enter" && verifyManager()}
+                          className="h-10 rounded-lg border border-amber-200 bg-white px-3 text-xs font-bold outline-none focus:border-amber-500"
+                        />
+                      </div>
+                      {managerError && <p className="mt-2 text-xs font-bold text-rose-600">{managerError}</p>}
+                      <button
+                        type="button" onClick={verifyManager} disabled={managerVerifying}
+                        className="mt-2 w-full rounded-lg bg-amber-600 py-2 text-xs font-black uppercase tracking-widest text-white hover:bg-amber-700 disabled:opacity-60"
+                      >
+                        {managerVerifying ? "Verifying…" : "Verify manager"}
+                      </button>
+                    </div>
+                  )
+                )}
+              </div>
+            )}
+
             {/* Payment method */}
             <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
               <h3 className="mb-3 text-xs font-black uppercase tracking-widest text-black">
@@ -696,8 +830,10 @@ function GenerateBillPopup({ open, isReturn, items, bill, setBill, summary, onCl
             )}
             <button onClick={() => {
               if (!validateCash()) return;
-              onFinalize(paidTotal, change, selectedPaymentMethod, splitEnabled ? splitClean : {});
-            }} disabled={saving}
+              if (isReturn && !returnReason) return setManagerError("Select a reason for this return first.");
+              if (needsApproval && !managerVerifiedName) return setManagerError("Manager approval is required before this return can be saved.");
+              onFinalize(paidTotal, change, selectedPaymentMethod, splitEnabled ? splitClean : {}, returnReason, managerVerifiedName);
+            }} disabled={saving || (isReturn && (!returnReason || (needsApproval && !managerVerifiedName)))}
               className={`flex w-full cursor-pointer items-center justify-center gap-2 rounded-2xl py-4 text-xs font-black uppercase tracking-widest text-white disabled:opacity-60 ${isReturn ? "bg-rose-600 sm:col-span-2" : "bg-violet-600"}`}>
               {saving ? <FaSpinner className="animate-spin" /> : <FaPrint />}
               {saving ? "Saving..." : isReturn ? "Finalize Return Bill" : "Finalize Bill"}
@@ -1286,6 +1422,15 @@ export default function CashierPOS() {
 
   const [mode,           setMode]           = useState("sale");
   const [items,          setItems]          = useState([]);
+  // Stable per-cart idempotency key. Sent with every Finalize request so
+  // that if the tab freezes/stalls right after the request goes out and
+  // the cashier retries with the same cart, the backend's existing
+  // client_offline_id dedup check (built for offline sync) recognizes the
+  // retry and returns the already-saved bill instead of double-billing
+  // the customer and double-deducting stock. Rotates only when the cart
+  // is actually cleared (after a successful save, or manually).
+  const [cartId,         setCartId]         = useState(() => makeOfflineId());
+  const [draftPrompt,    setDraftPrompt]    = useState(() => readDraftCart());
   const [barcode,        setBarcode]        = useState("");
   const [search,         setSearch]         = useState("");
   const [searchRes,      setSearchRes]      = useState([]);
@@ -1584,6 +1729,36 @@ export default function CashierPOS() {
     setItems([]); setBarcode(""); setSearch(""); setSearchRes([]);
     setOriginalInvoice("");
     setBill(prev => ({ ...prev, customerName: "", mobile: "", customerEmail: "", offer: "", appliedOffer: 0, discount: "", promotionName: "", promotionType: "", paymentMethod: "Cash" }));
+    setCartId(makeOfflineId());
+    clearDraftCart();
+  };
+
+  // Debounced draft autosave — covers a freeze/crash while the cashier is
+  // still building the bill (before Finalize/Save offline, where nothing
+  // was persisted at all before this). Skipped for return mode: a return
+  // always starts from "Load Invoice" again anyway, and its items came
+  // from the server, not typed in, so there's nothing meaningfully lost.
+  useEffect(() => {
+    if (isReturn || items.length === 0) return undefined;
+    const timer = setTimeout(() => {
+      writeDraftCart({ items, bill, mode, originalInvoice, cartId, savedAt: new Date().toISOString() });
+    }, 800);
+    return () => clearTimeout(timer);
+  }, [items, bill, mode, originalInvoice, cartId, isReturn]);
+
+  const restoreDraftCart = () => {
+    if (!draftPrompt) return;
+    setItems(draftPrompt.items || []);
+    setBill(prev => ({ ...prev, ...(draftPrompt.bill || {}) }));
+    setOriginalInvoice(draftPrompt.originalInvoice || "");
+    setCartId(draftPrompt.cartId || makeOfflineId());
+    setDraftPrompt(null);
+    showToast("Cart restored", "success");
+  };
+
+  const discardDraftCart = () => {
+    clearDraftCart();
+    setDraftPrompt(null);
   };
 
   const saveOfflineBill = useCallback((paidAmount = 0, changeReturn = 0, reason = "Backend unavailable", paymentMethodOverride = bill.paymentMethod, paymentSplitOverride = {}) => {
@@ -1703,7 +1878,7 @@ export default function CashierPOS() {
     else showToast(`${synced} offline bill(s) synced`, "success");
   }, [showToast]);
 
-  const finalizeBill = useCallback(async (paidAmount = 0, changeReturn = 0, paymentMethodOverride = bill.paymentMethod, paymentSplitOverride = {}) => {
+  const finalizeBill = useCallback(async (paidAmount = 0, changeReturn = 0, paymentMethodOverride = bill.paymentMethod, paymentSplitOverride = {}, returnReason = "", managerName = "") => {
     setSaving(true);
     try {
       const res = await cashierFetch(`${API_BASE}/cashier/bill`, {
@@ -1716,7 +1891,11 @@ export default function CashierPOS() {
           bill: { ...bill, paymentMethod: paymentMethodOverride, paymentSplit: paymentSplitOverride },
           paidAmount,
           changeReturn,
-          originalInvoice,   
+          originalInvoice,
+          returnReason,
+          managerVerified: Boolean(managerName),
+          managerName,
+          clientOfflineId: cartId,
         }),
       });
       let data = {};
@@ -1766,11 +1945,28 @@ export default function CashierPOS() {
     } finally {
       setSaving(false);
     }
-  }, [isReturn, items, summary, bill, showToast, originalInvoice, saveOfflineBill]); // eslint-disable-line
+  }, [isReturn, items, summary, bill, showToast, originalInvoice, saveOfflineBill, cartId]); // eslint-disable-line
 
   return (
     <div className="min-h-screen bg-[#f4f7fb] text-slate-900">
       <Toast message={toast.msg} type={toast.type} />
+
+      {/* Recovered draft cart — shown when a previous session left an
+          unsaved in-progress bill behind (tab freeze/crash/accidental close). */}
+      {draftPrompt && (
+        <div className="sticky top-0 z-50 border-b border-amber-300 bg-amber-100 px-4 py-2.5 sm:px-6">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-xs font-bold text-amber-900">
+              <FaExclamationTriangle className="mr-1.5 inline" />
+              Found an unsaved cart from earlier ({draftPrompt.items?.length || 0} item{draftPrompt.items?.length === 1 ? "" : "s"}). Restore it?
+            </p>
+            <div className="flex gap-2">
+              <button onClick={restoreDraftCart} className="rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-black text-white hover:bg-amber-700">Restore</button>
+              <button onClick={discardDraftCart} className="rounded-lg border border-amber-400 bg-white px-3 py-1.5 text-xs font-black text-amber-800 hover:bg-amber-50">Discard</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Invoice lookup modal */}
       <InvoiceLookupModal
