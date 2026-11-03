@@ -939,6 +939,7 @@ export default function CustomerCRM() {
   );
 
   useEffect(() => {
+    if (active === "settings") return;
     if (visibleTabs.length && !visibleTabs.some((t) => t.key === active)) setActive(visibleTabs[0].key);
   }, [visibleTabs, active]);
 
