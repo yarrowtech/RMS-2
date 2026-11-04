@@ -1088,6 +1088,16 @@ const API_BASE = `${APP_API_URL}`;
 /* ─── Helpers ─── */
 const cn = (...a) => a.filter(Boolean).join(" ");
 
+// This whole screen's requests were missing this entirely — every fetch()
+// below had no Authorization header, so every one of them 401'd against
+// this backend's Bearer-token-only auth and was silently swallowed by a
+// .catch(() => {}) or an empty-looking error state. Not just the filter
+// dropdown — the records list itself never loaded either.
+function authHeaders(extra = {}) {
+  const token = localStorage.getItem("admin_token") || localStorage.getItem("access_token") || localStorage.getItem("token") || "";
+  return { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...extra };
+}
+
 // GET /api/product-mapping/grouped nests one level deeper than every
 // Division/Section/Department dropdown expects — see the fix/comment in
 // InventoryManagementCurrentStockList.jsx and Inventoryproductform.jsx.
@@ -1186,8 +1196,8 @@ export default function DamageReturnStock() {
 
   /* Load mapping + inventory */
   useEffect(() => {
-    fetch(`${API_BASE}/api/product-mapping/grouped`).then(r => r.json()).then(d => setMapping(flattenGroupedMapping(d.data || {}))).catch(() => {});
-    fetch(`${API_BASE}/inventory/current-stock`).then(r => r.json()).then(d => setInvRows(d.data || [])).catch(() => {});
+    fetch(`${API_BASE}/inventory/filter-tree`, { headers: authHeaders() }).then(r => r.json()).then(d => setMapping(d.data || {})).catch(() => {});
+    fetch(`${API_BASE}/inventory/current-stock`, { headers: authHeaders() }).then(r => r.json()).then(d => setInvRows(d.data || [])).catch(() => {});
   }, []);
 
   /* Fetch records */
@@ -1202,7 +1212,7 @@ export default function DamageReturnStock() {
       if (department !== "All") params.append("department", department);
       if (search.trim())        params.append("search",     search.trim());
 
-      const res  = await fetch(`${API_BASE}/inventory/damage-return?${params}`);
+      const res  = await fetch(`${API_BASE}/inventory/damage-return?${params}`, { headers: authHeaders() });
       if (!res.ok) throw new Error("Failed to load");
       const json = await res.json();
       const data = json.data || [];
@@ -1278,12 +1288,12 @@ export default function DamageReturnStock() {
     try {
       const payload = { ...form, lines: clean };
       const res  = await fetch(`${API_BASE}/inventory/damage-return`, {
-        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
+        method: "POST", headers: authHeaders({ "Content-Type": "application/json" }), body: JSON.stringify(payload),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || "Save failed");
       closeModal(); fetchRecords();
-      fetch(`${API_BASE}/inventory/current-stock`).then(r => r.json()).then(d => setInvRows(d.data || []));
+      fetch(`${API_BASE}/inventory/current-stock`, { headers: authHeaders() }).then(r => r.json()).then(d => setInvRows(d.data || []));
     } catch (e) { setFormErr(e.message); }
     finally { setSaving(false); }
   };

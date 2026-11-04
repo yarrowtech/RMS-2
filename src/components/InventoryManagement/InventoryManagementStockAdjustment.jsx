@@ -112,8 +112,8 @@ export default function StockAdjustment() {
 
   /* Load mapping + inventory */
   useEffect(() => {
-    fetch(`${API_BASE}/api/product-mapping/grouped`, { headers: authHeaders() })
-      .then(r => r.json()).then(d => setMapping(flattenGroupedMapping(d.data || {}))).catch(() => {});
+    fetch(`${API_BASE}/inventory/filter-tree`, { headers: authHeaders() })
+      .then(r => r.json()).then(d => setMapping(d.data || {})).catch(() => {});
     const stockUrl = isStoreWorkspace
       ? `${API_BASE}/stock-allocation/store-stock/${storeId}`
       : `${API_BASE}/inventory/current-stock`;

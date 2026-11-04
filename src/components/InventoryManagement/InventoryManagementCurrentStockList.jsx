@@ -1610,32 +1610,27 @@ export default function InventoryCurrentStockList() {
       setMetaLoading(true);
       try {
         const token = getAdminToken();
-        const res = await fetch(`${API}/api/product-mapping/grouped`, {
+        // Reads the real catalog (GET /inventory/filter-tree), not the
+        // separate manually-curated product_mapping settings table — that
+        // table is never auto-populated when a product is actually added,
+        // so a tenant that never touched that settings screen would see
+        // every Division/Section/Department dropdown come back empty even
+        // though their products genuinely have those fields filled in.
+        const res = await fetch(`${API}/inventory/filter-tree`, {
           headers: token ? { Authorization: `Bearer ${token}` } : {},
         });
         if (!res.ok) throw new Error();
         const json = await res.json();
-        // /api/product-mapping/grouped nests one level deeper than this
-        // screen needs: { product_type: { division: { section: [dept] } } }.
-        // Current-stock filtering only ever filters by division/section/
-        // department (never product_type), so every product_type's subtree
-        // is merged together here — reading Object.keys(mapping) directly
-        // was treating product types ("Garment", "Fmcg"...) as divisions,
-        // which meant every dropdown was one level off and picking any
-        // division/section/department could never match a real row.
-        const mappingByType = json.data || {};
+        const mapping = json.data || {};
         const divSet = new Set();
         const secMap = {};
         const deptMapLocal = {};
-        for (const sectionsByDivision of Object.values(mappingByType)) {
-          for (const [d, sectionsForDivision] of Object.entries(sectionsByDivision || {})) {
-            divSet.add(d);
-            if (!secMap[d]) secMap[d] = new Set();
-            for (const [sectionName, depts] of Object.entries(sectionsForDivision || {})) {
-              secMap[d].add(sectionName);
-              if (!deptMapLocal[sectionName]) deptMapLocal[sectionName] = new Set();
-              for (const dept of depts || []) deptMapLocal[sectionName].add(dept);
-            }
+        for (const [d, sectionsForDivision] of Object.entries(mapping)) {
+          divSet.add(d);
+          secMap[d] = new Set(Object.keys(sectionsForDivision || {}));
+          for (const [sectionName, depts] of Object.entries(sectionsForDivision || {})) {
+            if (!deptMapLocal[sectionName]) deptMapLocal[sectionName] = new Set();
+            for (const dept of depts || []) deptMapLocal[sectionName].add(dept);
           }
         }
         setDivisions([...divSet].sort());

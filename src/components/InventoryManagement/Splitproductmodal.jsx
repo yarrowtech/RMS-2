@@ -286,9 +286,9 @@ export default function SplitProductModal({ row, onClose, onDone }) {
   const [mapping, setMapping] = useState({});
 
   useEffect(() => {
-    authFetch(`${API}/api/product-mapping/grouped`)
+    authFetch(`${API}/inventory/filter-tree`)
       .then(r => r.json())
-      .then(d => setMapping(flattenGroupedMapping(d.data || {})))
+      .then(d => setMapping(d.data || {}))
       .catch(() => {});
   }, []);
 

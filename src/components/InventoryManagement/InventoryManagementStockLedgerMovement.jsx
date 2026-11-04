@@ -100,13 +100,13 @@ export default function StockLedgerMovement() {
     localStorage.getItem("token") ||
     "";
 
-  fetch(`${API_BASE}/api/product-mapping/grouped`, {
+  fetch(`${API_BASE}/inventory/filter-tree`, {
     headers: {
       Authorization: `Bearer ${token}`,
     },
   })
     .then(r => r.json())
-    .then(d => setMapping(flattenGroupedMapping(d.data || {})))
+    .then(d => setMapping(d.data || {}))
     .catch(() => {});
 }, []);
 

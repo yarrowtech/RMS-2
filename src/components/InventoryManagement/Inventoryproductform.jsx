@@ -262,9 +262,13 @@ export default function InventoryProductForm({ initialData = null, onSave, onCan
   const [mapping, setMapping] = useState({});
 
   useEffect(() => {
-    authFetch(`${API}/api/product-mapping/grouped`)
+    // Reads the real catalog (GET /inventory/filter-tree), not the
+    // separate manually-curated product_mapping settings table — see the
+    // flattenGroupedMapping comment above for why that table can't be
+    // trusted as the source for this dropdown.
+    authFetch(`${API}/inventory/filter-tree`)
       .then(r => r.json())
-      .then(d => setMapping(flattenGroupedMapping(d.data || {})))
+      .then(d => setMapping(d.data || {}))
       .catch(() => {});
   }, []);
 

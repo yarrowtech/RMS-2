@@ -873,6 +873,16 @@ const API_BASE = `${APP_API_URL}`;
 /* ─── Helpers ─── */
 const cn = (...c) => c.filter(Boolean).join(" ");
 
+// This whole screen's requests were missing this entirely — every fetch()
+// below had no Authorization header, so every one of them 401'd against
+// this backend's Bearer-token-only auth and was silently swallowed or
+// surfaced as a generic "Save failed". Not just the filter dropdown — the
+// rules list itself never loaded either.
+function authHeaders(extra = {}) {
+  const token = localStorage.getItem("admin_token") || localStorage.getItem("access_token") || localStorage.getItem("token") || "";
+  return { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...extra };
+}
+
 // GET /api/product-mapping/grouped nests one level deeper than every
 // Division/Section/Department dropdown expects — see the fix/comment in
 // InventoryManagementCurrentStockList.jsx and Inventoryproductform.jsx.
@@ -977,9 +987,9 @@ export default function ReorderLevelSetup() {
 
   /* Load mapping */
   useEffect(() => {
-    fetch(`${API_BASE}/api/product-mapping/grouped`)
+    fetch(`${API_BASE}/inventory/filter-tree`, { headers: authHeaders() })
       .then(r => r.json())
-      .then(d => setMapping(flattenGroupedMapping(d.data || {})))
+      .then(d => setMapping(d.data || {}))
       .catch(() => {});
   }, []);
 
@@ -995,7 +1005,7 @@ export default function ReorderLevelSetup() {
       if (search.trim())                      params.append("search",     search.trim());
       if (lowOnly)                            params.append("low_only",   "true");
 
-      const res  = await fetch(`${API_BASE}/inventory/reorder-rules?${params.toString()}`);
+      const res  = await fetch(`${API_BASE}/inventory/reorder-rules?${params.toString()}`, { headers: authHeaders() });
       if (!res.ok) throw new Error("Failed to load rules");
       const json = await res.json();
       const data = json.data || [];
@@ -1064,7 +1074,7 @@ export default function ReorderLevelSetup() {
 
       const res  = await fetch(url, {
         method,
-        headers: { "Content-Type": "application/json" },
+        headers: authHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify(payload),
       });
       const data = await res.json();
@@ -1082,7 +1092,7 @@ export default function ReorderLevelSetup() {
   const handleDelete = async (id) => {
     if (!window.confirm("Delete this reorder rule?")) return;
     try {
-      const res = await fetch(`${API_BASE}/inventory/reorder-rules/${id}`, { method: "DELETE" });
+      const res = await fetch(`${API_BASE}/inventory/reorder-rules/${id}`, { method: "DELETE", headers: authHeaders() });
       if (!res.ok) { const d = await res.json(); throw new Error(d.detail || "Delete failed"); }
       fetchData();
     } catch (e) {

@@ -219,6 +219,50 @@ async def build_product_master(tenant_id: str) -> dict:
 
 
 # ─────────────────────────────────────────────
+# GET /inventory/filter-tree
+# ─────────────────────────────────────────────
+
+@router.get("/filter-tree")
+async def get_inventory_filter_tree(ctx: dict = Depends(get_hq_tenant)):
+    """Division -> section -> [departments], built directly from what's
+    actually on products in this tenant's catalog.
+
+    Every Division/Section/Department dropdown across Inventory used to
+    read /api/product-mapping/grouped instead — a SEPARATE, manually
+    curated taxonomy table that is never auto-populated when a product is
+    actually added (only product_mapping_routes.py's own settings screen
+    writes to it). A tenant that never set that screen up has real
+    products with real division/section/department values, but every
+    filter dropdown in the app shows nothing, because they were reading
+    the wrong source of truth. This reads the real catalog instead, so
+    the dropdowns always match reality regardless of whether that
+    separate settings screen was ever touched.
+    """
+    tree: dict = {}
+    cursor = product_collection.find(
+        {"tenant_id": ctx["tenant_id"]},
+        {"division": 1, "section": 1, "department": 1},
+    ).batch_size(10000)
+    async for p in cursor:
+        division = (p.get("division") or "").strip()
+        section = (p.get("section") or "").strip()
+        department = (p.get("department") or "").strip()
+        if not division:
+            continue
+        sections = tree.setdefault(division, {})
+        if not section:
+            continue
+        departments = sections.setdefault(section, set())
+        if department:
+            departments.add(department)
+
+    return {"data": {
+        division: {section: sorted(departments) for section, departments in sections.items()}
+        for division, sections in tree.items()
+    }}
+
+
+# ─────────────────────────────────────────────
 # GET /inventory/current-stock
 # ─────────────────────────────────────────────
 
