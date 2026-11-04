@@ -37,6 +37,21 @@ cloudinary.config(cloud_name=settings.cloudinary_cloud_name, api_key=settings.cl
 
 router = APIRouter(prefix="/api/customer-crm/lucky-draw", tags=["Lucky Draw"])
 
+# Excel/CSV uploads of a customer list commonly have a mix of real bill
+# numbers and rows with no purchase on file — and "no purchase" often shows
+# up as literal placeholder text in the cell (copy-pasted "None"/"N/A", a
+# formula that produced "nan", a lone dash) rather than a truly empty cell.
+# clean() only trims whitespace, so any of these would otherwise be kept as
+# if they were a real bill no. — wrongly making that row "has a bill no."
+# (eligible to win) and wrongly blocking a second placeholder row as a
+# "duplicate bill no.". This treats all of them the same as blank.
+_BILL_NO_PLACEHOLDERS = {"none", "null", "n/a", "na", "nil", "nan", "-", "--", "n.a.", "n.a"}
+
+
+def clean_bill_no(value: Any) -> str:
+    value = clean(value)
+    return "" if value.lower() in _BILL_NO_PLACEHOLDERS else value
+
 
 class CampaignPayload(BaseModel):
     campaign_name: str
@@ -63,7 +78,11 @@ class EntryPayload(BaseModel):
     address: str = ""
     contact_no: str = ""
     profession: str = ""
-    bill_no: str
+    # Optional — a customer can be recorded (and counted as a CRM contact)
+    # without a bill no. _execute_draw already keys/dedupes by phone, not
+    # bill no, so an entry with no bill no is still fully eligible to win;
+    # bill no here is purely a record of proof-of-purchase when present.
+    bill_no: str = ""
     # HQ only — which physical store this slip belongs to. A store-scoped
     # login ignores this; it's always forced to its own store.
     store_id: str = ""
@@ -72,7 +91,7 @@ class EntryPayload(BaseModel):
 
 class EntryEditPayload(BaseModel):
     customer_name: str
-    bill_no: str
+    bill_no: str = ""
     email: str = ""
     address: str = ""
     contact_no: str = ""
@@ -176,12 +195,20 @@ async def _execute_draw(
     if store_id:
         store_name = next((e.get("store_name") for e in entries if e.get("store_name")), "")
 
+    # Bill No. is proof of purchase — a customer with name + phone but no
+    # bill no. is still fully recorded and still receives every lucky-draw
+    # and CRM message, but they never entered against an actual purchase,
+    # so they're excluded from the pool that can actually be picked to win.
+    eligible_entries = [e for e in entries if clean(e.get("bill_no"))]
+
     pool: Dict[str, dict] = {}
-    for entry in entries:
+    for entry in eligible_entries:
         contact = clean(entry.get("contact_no"))
         key = f"phone:{contact}" if contact else f"entry:{entry['_id']}"
         pool.setdefault(key, entry)
     candidates = list(pool.values())
+    if not candidates:
+        raise HTTPException(status_code=400, detail="No entries with a Bill No. to draw from — entries without a Bill No. aren't eligible to win.")
     picked = random.SystemRandom().sample(candidates, k=min(winner_count, len(candidates)))
 
     winners = [{
@@ -366,11 +393,9 @@ async def create_entry(payload: EntryPayload, ctx: Dict[str, Any] = Depends(get_
     if campaign.get("status") != "ACTIVE":
         raise HTTPException(status_code=409, detail="This campaign is closed for new entries.")
     customer_name = clean(payload.customer_name)
-    bill_no = clean(payload.bill_no)
+    bill_no = clean_bill_no(payload.bill_no)
     if not customer_name:
         raise HTTPException(status_code=400, detail="Customer name is required.")
-    if not bill_no:
-        raise HTTPException(status_code=400, detail="Bill No. is required.")
     scope = scoped_query(ctx)
     store_name = ctx.get("store_name") or ""
     if ctx.get("scope") not in ("store", "branch"):
@@ -379,9 +404,13 @@ async def create_entry(payload: EntryPayload, ctx: Dict[str, Any] = Depends(get_
             raise HTTPException(status_code=400, detail="Choose which store this slip belongs to.")
         scope["store_id"] = store_id
         store_name = clean(payload.store_name)
-    dupe_query = {**scope, "campaign_id": payload.campaign_id, "bill_no": bill_no}
-    if await lucky_draw_entries_collection.find_one(dupe_query, {"_id": 1}):
-        raise HTTPException(status_code=409, detail=f"Bill No. {bill_no} has already been entered for this store's draw.")
+    # Only check for a duplicate bill no when one was actually given — an
+    # empty bill_no isn't "the same bill" repeated, it's just absent, so it
+    # must never block a second (or hundredth) no-bill-no customer entry.
+    if bill_no:
+        dupe_query = {**scope, "campaign_id": payload.campaign_id, "bill_no": bill_no}
+        if await lucky_draw_entries_collection.find_one(dupe_query, {"_id": 1}):
+            raise HTTPException(status_code=409, detail=f"Bill No. {bill_no} has already been entered for this store's draw.")
     now = now_utc()
     doc = {
         **scope,
@@ -483,14 +512,18 @@ async def create_entries_bulk(payload: EntryBulkPayload, ctx: Dict[str, Any] = D
     seen_bill_nos: set = set()
     for i, row in enumerate(payload.rows):
         customer_name = clean(row.customer_name)
-        bill_no = clean(row.bill_no)
-        if not customer_name or not bill_no:
-            results[i] = {"customer_name": customer_name or "(blank)", "bill_no": bill_no, "status": "error", "reason": "Customer name and Bill No. are both required."}
+        bill_no = clean_bill_no(row.bill_no)
+        if not customer_name:
+            results[i] = {"customer_name": "(blank)", "bill_no": bill_no, "status": "error", "reason": "Customer name is required."}
             continue
-        if bill_no in seen_bill_nos:
+        # Only dedupe when a bill_no is actually present — several rows all
+        # left blank aren't "the same bill" repeated, they're just separate
+        # no-bill-no customers, and must not collide with each other.
+        if bill_no and bill_no in seen_bill_nos:
             results[i] = {"customer_name": customer_name, "bill_no": bill_no, "status": "error", "reason": f"Bill No. {bill_no} appears more than once in this upload."}
             continue
-        seen_bill_nos.add(bill_no)
+        if bill_no:
+            seen_bill_nos.add(bill_no)
         candidates.append({
             "i": i, "customer_name": customer_name, "bill_no": bill_no,
             "email": clean(row.email), "address": clean(row.address),
@@ -498,10 +531,15 @@ async def create_entries_bulk(payload: EntryBulkPayload, ctx: Dict[str, Any] = D
         })
 
     # Pass 2: ONE query for every bill_no already on file for this
-    # campaign/store, instead of one find_one per row.
-    if candidates:
+    # campaign/store, instead of one find_one per row. Blank bill_nos are
+    # excluded here on purpose — "" isn't a real bill number to match
+    # against, and letting it through would make every no-bill-no row look
+    # like a duplicate of every other no-bill-no row already on file,
+    # silently overwriting one customer's details with another's.
+    bill_nos_to_check = [c["bill_no"] for c in candidates if c["bill_no"]]
+    if bill_nos_to_check:
         existing_cursor = lucky_draw_entries_collection.find(
-            {**scope, "campaign_id": payload.campaign_id, "bill_no": {"$in": [c["bill_no"] for c in candidates]}},
+            {**scope, "campaign_id": payload.campaign_id, "bill_no": {"$in": bill_nos_to_check}},
             {"bill_no": 1},
         )
         existing_bill_nos = {doc["bill_no"] async for doc in existing_cursor}
@@ -511,7 +549,7 @@ async def create_entries_bulk(payload: EntryBulkPayload, ctx: Dict[str, Any] = D
     write_ops: List[Any] = []
     pending_rows: List[dict] = []
     for c in candidates:
-        is_update = c["bill_no"] in existing_bill_nos
+        is_update = bool(c["bill_no"]) and c["bill_no"] in existing_bill_nos
         if is_update and not payload.update_existing:
             results[c["i"]] = {"customer_name": c["customer_name"], "bill_no": c["bill_no"], "status": "error", "reason": f"Bill No. {c['bill_no']} has already been entered for this store's draw."}
             continue
@@ -561,12 +599,21 @@ async def create_entries_bulk(payload: EntryBulkPayload, ctx: Dict[str, Any] = D
     final_results = [r for r in results if r is not None]
     created = sum(1 for r in final_results if r["status"] == "created")
     updated = sum(1 for r in final_results if r["status"] == "updated")
+    # How many of THIS chunk's successful rows had no bill no. — tallied
+    # on the batch doc alongside created/updated so Import History can show
+    # "X of these N customers have no bill no." without re-scanning every
+    # entry later. Only counts rows that actually succeeded, matching how
+    # created_count/updated_count already work.
+    no_bill_no = sum(1 for r in final_results if r["status"] in ("created", "updated") and not r["bill_no"])
     if created or updated:
-        await lucky_draw_import_batches_collection.update_one({"tenant_id": ctx["tenant_id"], "batch_id": batch_id}, {"$inc": {"created_count": created, "updated_count": updated}})
+        await lucky_draw_import_batches_collection.update_one(
+            {"tenant_id": ctx["tenant_id"], "batch_id": batch_id},
+            {"$inc": {"created_count": created, "updated_count": updated, "no_bill_no_count": no_bill_no}},
+        )
     message = f"{created} of {len(payload.rows)} entries created."
     if updated:
         message += f" {updated} existing entr{'y' if updated == 1 else 'ies'} updated."
-    return {"message": message, "created_count": created, "updated_count": updated, "results": final_results, "batch_id": batch_id}
+    return {"message": message, "created_count": created, "updated_count": updated, "no_bill_no_count": no_bill_no, "results": final_results, "batch_id": batch_id}
 
 
 @router.delete("/entries/{entry_id}")
@@ -595,12 +642,10 @@ async def edit_entry(entry_id: str, payload: EntryEditPayload, ctx: Dict[str, An
     if not entry:
         raise HTTPException(status_code=404, detail="Entry not found, or belongs to another store.")
     customer_name = clean(payload.customer_name)
-    bill_no = clean(payload.bill_no)
+    bill_no = clean_bill_no(payload.bill_no)
     if not customer_name:
         raise HTTPException(status_code=400, detail="Customer name is required.")
-    if not bill_no:
-        raise HTTPException(status_code=400, detail="Bill No. is required.")
-    if bill_no != entry.get("bill_no"):
+    if bill_no and bill_no != entry.get("bill_no"):
         dupe_query = {"tenant_id": entry["tenant_id"], "store_id": entry.get("store_id", ""), "campaign_id": entry["campaign_id"], "bill_no": bill_no}
         if await lucky_draw_entries_collection.find_one(dupe_query, {"_id": 1}):
             raise HTTPException(status_code=409, detail=f"Bill No. {bill_no} is already used by another entry in this store's draw.")

@@ -418,6 +418,14 @@ function splitLdCsvLine(line) {
   return out;
 }
 
+// A sheet's bill_no column commonly mixes real bill numbers with rows that
+// have no purchase on file — and "no purchase" often shows up as literal
+// placeholder text ("None", "N/A", a formula's "nan", a lone dash) rather
+// than a truly blank cell. Treat all of those the same as blank so they
+// don't get kept as if they were a real bill no. — the backend applies the
+// same normalization, this just keeps the upload preview accurate too.
+const LD_BILL_NO_PLACEHOLDERS = new Set(["none", "null", "n/a", "na", "nil", "nan", "-", "--", "n.a.", "n.a"]);
+
 function normalizeLdRow(raw) {
   const row = {};
   for (const [key, aliases] of Object.entries(LD_CSV_COLUMN_ALIASES)) {
@@ -425,6 +433,7 @@ function normalizeLdRow(raw) {
       if (raw[alias]) { row[key] = String(raw[alias]).trim(); break; }
     }
   }
+  if (row.bill_no && LD_BILL_NO_PLACEHOLDERS.has(row.bill_no.toLowerCase())) row.bill_no = "";
   return row;
 }
 
@@ -492,7 +501,7 @@ function LuckyDrawBulkImportModal({ campaigns, defaultCampaignId, isHq, hqStores
   const submit = async () => {
     if (!campaignId) { setError("Choose a campaign first."); return; }
     if (isHq && !storeId) { setError("Choose which store these slips belong to."); return; }
-    if (!parsedRows.length) { setError("No valid rows to import. Each row needs at least a customer name and Bill No."); return; }
+    if (!parsedRows.length) { setError("No valid rows to import. Each row needs at least a customer name."); return; }
     setSubmitting(true); setError(""); setProgress(null);
     const storeName = hqStores?.find((s) => s.id === storeId)?.name || "";
     const chunks = [];
@@ -501,7 +510,7 @@ function LuckyDrawBulkImportModal({ campaigns, defaultCampaignId, isHq, hqStores
     // can be listed and undone as a single unit afterwards (Import history).
     const batchId = (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`).replace(/-/g, "");
 
-    const combined = { message: "", created_count: 0, updated_count: 0, results: [] };
+    const combined = { message: "", created_count: 0, updated_count: 0, no_bill_no_count: 0, results: [] };
     try {
       for (let i = 0; i < chunks.length; i++) {
         setProgress({ done: i, total: chunks.length });
@@ -511,10 +520,12 @@ function LuckyDrawBulkImportModal({ campaigns, defaultCampaignId, isHq, hqStores
         });
         combined.created_count += json.created_count || 0;
         combined.updated_count += json.updated_count || 0;
+        combined.no_bill_no_count += json.no_bill_no_count || 0;
         combined.results.push(...(json.results || []));
       }
       combined.message = `${combined.created_count} of ${parsedRows.length} entries created.`;
       if (combined.updated_count) combined.message += ` ${combined.updated_count} existing entr${combined.updated_count === 1 ? "y" : "ies"} updated.`;
+      if (combined.no_bill_no_count) combined.message += ` ${combined.no_bill_no_count} of these have no bill no. (recorded, but not eligible to win).`;
       setResults(combined);
     } catch (err) {
       // Whatever finished in earlier chunks is already saved — show it
@@ -554,7 +565,7 @@ function LuckyDrawBulkImportModal({ campaigns, defaultCampaignId, isHq, hqStores
               <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-xs text-slate-600">
                 <p className="font-bold text-slate-700">Expected columns (header row required):</p>
                 <p className="mt-1 font-mono text-[11px] text-slate-500">customer_name, contact_no, email, address, profession, bill_no</p>
-                <p className="mt-2">Only <strong>customer_name</strong> and <strong>bill_no</strong> are required per row. A duplicate Bill No. for this campaign/store is {updateExisting ? "updated with this file's details" : "skipped as an error, not overwritten"}.</p>
+                <p className="mt-2">Only <strong>customer_name</strong> is required per row. Bill No. is optional — a customer with no bill no. is still recorded, just without proof-of-purchase on file. A duplicate Bill No. for this campaign/store is {updateExisting ? "updated with this file's details" : "skipped as an error, not overwritten"}.</p>
               </div>
               <label className="flex items-start gap-2.5 rounded-xl border border-slate-200 p-3">
                 <input type="checkbox" className="mt-0.5" checked={updateExisting} onChange={(e) => setUpdateExisting(e.target.checked)} />
@@ -582,7 +593,7 @@ function LuckyDrawBulkImportModal({ campaigns, defaultCampaignId, isHq, hqStores
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                       {parsedRows.map((r, i) => (
-                        <tr key={i} className={!r.customer_name || !r.bill_no ? "bg-red-50" : ""}>
+                        <tr key={i} className={!r.customer_name ? "bg-red-50" : ""}>
                           <td className="px-3 py-1.5">{r.customer_name || "—"}</td>
                           <td className="px-3 py-1.5">{r.contact_no || "—"}</td>
                           <td className="px-3 py-1.5">{r.email || "—"}</td>
@@ -1816,7 +1827,7 @@ export default function CustomerCRM() {
                 <div className="overflow-hidden rounded-xl border border-slate-200">
                   <table className="w-full text-left text-sm">
                     <thead className="bg-slate-50 text-xs font-bold uppercase text-slate-500">
-                      <tr><th className="px-4 py-2.5">Uploaded</th><th className="px-4 py-2.5">File</th><th className="px-4 py-2.5">Campaign</th><th className="px-4 py-2.5">Store</th><th className="px-4 py-2.5">By</th><th className="px-4 py-2.5 text-right">Created</th><th className="px-4 py-2.5 text-right">Updated</th><th className="px-4 py-2.5"></th></tr>
+                      <tr><th className="px-4 py-2.5">Uploaded</th><th className="px-4 py-2.5">File</th><th className="px-4 py-2.5">Campaign</th><th className="px-4 py-2.5">Store</th><th className="px-4 py-2.5">By</th><th className="px-4 py-2.5 text-right">Created</th><th className="px-4 py-2.5 text-right">Updated</th><th className="px-4 py-2.5 text-right">No bill no.</th><th className="px-4 py-2.5"></th></tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                       {importBatches.map((b) => (
@@ -1828,6 +1839,7 @@ export default function CustomerCRM() {
                           <td className="px-4 py-2.5 text-xs text-slate-500">{b.uploaded_by_name || "-"}</td>
                           <td className="px-4 py-2.5 text-right font-semibold text-slate-900">{b.created_count || 0}</td>
                           <td className="px-4 py-2.5 text-right font-semibold text-indigo-700">{b.updated_count || 0}</td>
+                          <td className="px-4 py-2.5 text-right font-semibold text-amber-700" title="Recorded as a customer, but not eligible to win this draw (no bill no.)">{b.no_bill_no_count || 0}</td>
                           <td className="px-4 py-2.5"><button onClick={() => undoImportBatch(b.batch_id)} className="rounded-lg border border-rose-200 px-3 py-1.5 text-xs font-bold text-rose-600 hover:bg-rose-50">Undo</button></td>
                         </tr>
                       ))}
