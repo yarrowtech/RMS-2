@@ -839,10 +839,16 @@ async function parseVendorXlsx(file) {
   }).filter((row) => row.company_name || row.mobile);
 }
 
+// Kept in sync with MAX_BULK_INVITE_ROWS in vendor_routes.py — a larger
+// file is split into sequential batches automatically instead of the
+// whole import being rejected outright with no indication why.
+const VENDOR_BULK_INVITE_BATCH_SIZE = 200;
+
 function VendorBulkImportModal({ onClose }) {
   const [rawText, setRawText] = useState("");
   const [parsedRows, setParsedRows] = useState([]);
   const [submitting, setSubmitting] = useState(false);
+  const [batchProgress, setBatchProgress] = useState(null);
   const [results, setResults] = useState(null);
   const [error, setError] = useState("");
 
@@ -871,17 +877,42 @@ function VendorBulkImportModal({ onClose }) {
 
   const submit = async () => {
     if (!parsedRows.length) { setError("No valid rows to import. Each row needs at least a company name and mobile number."); return; }
-    setSubmitting(true); setError("");
+    setSubmitting(true); setError(""); setBatchProgress(null);
+
+    const batches = [];
+    for (let i = 0; i < parsedRows.length; i += VENDOR_BULK_INVITE_BATCH_SIZE) {
+      batches.push(parsedRows.slice(i, i + VENDOR_BULK_INVITE_BATCH_SIZE));
+    }
+    if (batches.length > 1) setBatchProgress({ done: 0, total: batches.length });
+
+    const combined = { created_count: 0, results: [] };
     try {
-      const json = await vendorRequest("/invite/bulk", {
-        method: "POST",
-        body: JSON.stringify({ rows: parsedRows }),
-      });
-      setResults(json);
+      for (const batch of batches) {
+        try {
+          const json = await vendorRequest("/invite/bulk", {
+            method: "POST",
+            body: JSON.stringify({ rows: batch }),
+          });
+          combined.created_count += json.created_count || 0;
+          combined.results.push(...(json.results || []));
+        } catch (batchErr) {
+          // A later batch failing must not discard invites already
+          // created by earlier batches — surface what succeeded so far.
+          combined.results.push(...batch.map((row) => ({
+            company_name: row.company_name || "(blank)",
+            status: "error",
+            reason: batchErr.message || "This batch failed to import.",
+          })));
+        }
+        setBatchProgress((prev) => (prev ? { ...prev, done: prev.done + 1 } : prev));
+      }
+      combined.message = `${combined.created_count} of ${parsedRows.length} invite(s) created.`;
+      setResults(combined);
     } catch (err) {
       setError(err.message || "Bulk import failed.");
     } finally {
       setSubmitting(false);
+      setBatchProgress(null);
     }
   };
 
@@ -902,6 +933,7 @@ function VendorBulkImportModal({ onClose }) {
               <p className="font-bold text-slate-700">Expected columns (header row required):</p>
               <p className="mt-1 font-mono text-[11px] text-slate-500">company_name, mobile, email, contact_person, product_type, address, brand_name</p>
               <p className="mt-2">Only <strong>company_name</strong> and <strong>mobile</strong> are required per row.</p>
+              <p className="mt-2">Files over {VENDOR_BULK_INVITE_BATCH_SIZE} rows are sent in automatic batches of {VENDOR_BULK_INVITE_BATCH_SIZE} — no need to split the file yourself.</p>
             </div>
 
             <label className="block">
@@ -944,7 +976,9 @@ function VendorBulkImportModal({ onClose }) {
               <button onClick={onClose} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-bold text-slate-600 hover:bg-slate-50">Cancel</button>
               <button onClick={submit} disabled={submitting || !parsedRows.length}
                 className="rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 px-5 py-2 text-sm font-bold text-white shadow-lg shadow-violet-600/15 transition hover:brightness-110 disabled:opacity-50">
-                {submitting ? "Importing…" : `Import ${parsedRows.length} vendor${parsedRows.length !== 1 ? "s" : ""}`}
+                {submitting
+                  ? (batchProgress ? `Importing batch ${batchProgress.done + 1} of ${batchProgress.total}…` : "Importing…")
+                  : `Import ${parsedRows.length} vendor${parsedRows.length !== 1 ? "s" : ""}`}
               </button>
             </div>
           </>

@@ -441,26 +441,38 @@ async def register_vendor(request: Request, background_tasks: BackgroundTasks):
     }
 
 
-@vendor_bp.get("/pending")
-async def get_pending_vendors(ctx: dict = Depends(get_hq_tenant)):
-    """List all vendor relationships Pending for this tenant."""
+async def _merge_links_with_identities(links: list) -> list:
+    """Batched version of looping _merge_link_with_identity per link — one
+    $in query for every vendor identity these links point at, instead of
+    a find_one() per link. At 200 approved/pending vendors the old loop
+    meant 200 extra sequential DB round trips on every page load of that
+    tab; this is 1 (plus however many pages the driver needs for the
+    result set, which Mongo batches internally, not per-document)."""
+    vendor_ids = {link["vendor_id"] for link in links}
+    vendors_by_id = {}
+    async for vendor in vendors_collection.find({"_id": {"$in": list(vendor_ids)}}):
+        vendors_by_id[vendor["_id"]] = vendor
+
     rows = []
-    async for link in vendor_tenant_links_collection.find({"status": "Pending", "tenant_id": ctx["tenant_id"]}):
-        vendor = await vendors_collection.find_one({"_id": link["vendor_id"]})
+    for link in links:
+        vendor = vendors_by_id.get(link["vendor_id"])
         if vendor:
             rows.append(await _merge_link_with_identity(link, vendor))
     return rows
+
+
+@vendor_bp.get("/pending")
+async def get_pending_vendors(ctx: dict = Depends(get_hq_tenant)):
+    """List all vendor relationships Pending for this tenant."""
+    links = await vendor_tenant_links_collection.find({"status": "Pending", "tenant_id": ctx["tenant_id"]}).to_list(length=None)
+    return await _merge_links_with_identities(links)
 
 
 @vendor_bp.get("/approved")
 async def get_approved_vendors(ctx: dict = Depends(get_hq_tenant)):
     """List all vendor relationships Approved for this tenant."""
-    rows = []
-    async for link in vendor_tenant_links_collection.find({"status": "Approved", "tenant_id": ctx["tenant_id"]}):
-        vendor = await vendors_collection.find_one({"_id": link["vendor_id"]})
-        if vendor:
-            rows.append(await _merge_link_with_identity(link, vendor))
-    return rows
+    links = await vendor_tenant_links_collection.find({"status": "Approved", "tenant_id": ctx["tenant_id"]}).to_list(length=None)
+    return await _merge_links_with_identities(links)
 
 
 async def _finalize_vendor_approval(
@@ -1776,13 +1788,31 @@ async def create_vendor_invite(request: Request, ctx: dict = Depends(get_hq_tena
 MAX_BULK_INVITE_ROWS = 200
 
 
+async def _send_bulk_invite_emails(jobs: list):
+    """Fires all bulk-invite emails after the HTTP response has already
+    gone back to the admin. Each send is isolated in its own try/except —
+    one bad address must never stop the rest of a 200-row batch, and
+    nothing here can make the original request wait on SMTP."""
+    for email, contact_name, company_name, invite_link in jobs:
+        try:
+            await send_vendor_invite_email(email, contact_name or company_name, company_name, invite_link)
+        except Exception:
+            pass
+
+
 @vendor_bp.post("/invite/bulk")
-async def create_vendor_invites_bulk(request: Request, ctx: dict = Depends(get_hq_tenant)):
+async def create_vendor_invites_bulk(request: Request, background_tasks: BackgroundTasks, ctx: dict = Depends(get_hq_tenant)):
     """CSV-driven version of POST /invite — same invite doc, same unique
-    token per row, just looped. Unlike the single-invite flow (which lets
-    the frontend decide separately whether to also call /send-invite-email),
-    this sends the email immediately per row when one is provided, since
-    there's no per-row UI step to defer it to."""
+    token per row, just looped.
+
+    Rows are inserted synchronously (fast, local DB writes) so the
+    response can confirm exactly what was created. Emails are queued as
+    a single background task instead — doing ~200 sequential SMTP round
+    trips inline here, inside one HTTP request, was slow enough to risk
+    hitting a reverse-proxy timeout on a full-size batch and left no way
+    to recover mid-loop if one sent failed. The "emailed" field in each
+    row's result now means "has an email address and was queued to be
+    sent," not "the email send call already returned.\""""
     import secrets as _secrets
     body = await request.json()
     rows = body.get("rows") or []
@@ -1793,6 +1823,7 @@ async def create_vendor_invites_bulk(request: Request, ctx: dict = Depends(get_h
 
     now = datetime.utcnow()
     results = []
+    email_jobs = []
     for row in rows:
         company_name = str(row.get("company_name") or row.get("companyName") or "").strip()
         mobile       = str(row.get("mobile") or "").strip()
@@ -1830,13 +1861,13 @@ async def create_vendor_invites_bulk(request: Request, ctx: dict = Depends(get_h
         emailed = False
         if email:
             invite_link = frontend_url(f"vendor/register?token={raw_token}")
-            try:
-                await send_vendor_invite_email(email, contact_name or company_name, company_name, invite_link)
-                emailed = True
-            except Exception:
-                pass
+            email_jobs.append((email, contact_name, company_name, invite_link))
+            emailed = True
 
         results.append({"company_name": company_name, "status": "created", "token": raw_token, "emailed": emailed})
+
+    if email_jobs:
+        background_tasks.add_task(_send_bulk_invite_emails, email_jobs)
 
     created = sum(1 for r in results if r["status"] == "created")
     return {

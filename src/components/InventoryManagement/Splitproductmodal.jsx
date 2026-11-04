@@ -6,6 +6,24 @@ import toast from "react-hot-toast";
 
 const API = APP_API_URL;
 
+// GET /api/product-mapping/grouped nests one level deeper than this
+// dropdown expects — see the same fix/comment in Inventoryproductform.jsx.
+function flattenGroupedMapping(byType) {
+  const flat = {};
+  for (const divisions of Object.values(byType || {})) {
+    for (const [div, sections] of Object.entries(divisions || {})) {
+      if (!flat[div]) flat[div] = {};
+      for (const [sec, depts] of Object.entries(sections || {})) {
+        if (!flat[div][sec]) flat[div][sec] = [];
+        for (const dept of depts || []) {
+          if (!flat[div][sec].includes(dept)) flat[div][sec].push(dept);
+        }
+      }
+    }
+  }
+  return flat;
+}
+
 // ── Shared auth helper — same fix as InventoryProductForm.jsx ──────────────
 function getAdminToken() {
   return (
@@ -270,7 +288,7 @@ export default function SplitProductModal({ row, onClose, onDone }) {
   useEffect(() => {
     authFetch(`${API}/api/product-mapping/grouped`)
       .then(r => r.json())
-      .then(d => setMapping(d.data || {}))
+      .then(d => setMapping(flattenGroupedMapping(d.data || {})))
       .catch(() => {});
   }, []);
 

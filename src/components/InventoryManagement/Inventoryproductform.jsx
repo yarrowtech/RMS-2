@@ -7,6 +7,32 @@ import QuickFillPanel from "../Quickfillpanel";
 
 const API = APP_API_URL;
 
+// GET /api/product-mapping/grouped nests one level deeper than every
+// Division/Section/Department dropdown in this app expects:
+// { product_type: { division: { section: [department] } } }. Reading its
+// top-level keys directly as divisions (as every caller of this endpoint
+// used to) actually put product types ("Garment", "Fmcg"...) into the
+// Division dropdown, shifting every level down by one — so no division/
+// section/department picked from the dropdowns could ever match a real
+// product. This merges every product_type's subtree into one flat
+// division -> section -> [departments] map, since this form doesn't
+// filter by product_type anyway.
+function flattenGroupedMapping(byType) {
+  const flat = {};
+  for (const divisions of Object.values(byType || {})) {
+    for (const [div, sections] of Object.entries(divisions || {})) {
+      if (!flat[div]) flat[div] = {};
+      for (const [sec, depts] of Object.entries(sections || {})) {
+        if (!flat[div][sec]) flat[div][sec] = [];
+        for (const dept of depts || []) {
+          if (!flat[div][sec].includes(dept)) flat[div][sec].push(dept);
+        }
+      }
+    }
+  }
+  return flat;
+}
+
 // ── Shared auth helper ──────────────────────────────────────────────────────
 // ⚠️ FIXED: this file previously read the token ONCE at module import time
 // (`const token = localStorage.getItem(...)`) into a module-level `hdrs`
@@ -238,7 +264,7 @@ export default function InventoryProductForm({ initialData = null, onSave, onCan
   useEffect(() => {
     authFetch(`${API}/api/product-mapping/grouped`)
       .then(r => r.json())
-      .then(d => setMapping(d.data || {}))
+      .then(d => setMapping(flattenGroupedMapping(d.data || {})))
       .catch(() => {});
   }, []);
 

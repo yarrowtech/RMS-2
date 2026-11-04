@@ -1615,15 +1615,27 @@ export default function InventoryCurrentStockList() {
         });
         if (!res.ok) throw new Error();
         const json = await res.json();
-        const mapping = json.data || {};
-        const divSet = new Set(Object.keys(mapping));
+        // /api/product-mapping/grouped nests one level deeper than this
+        // screen needs: { product_type: { division: { section: [dept] } } }.
+        // Current-stock filtering only ever filters by division/section/
+        // department (never product_type), so every product_type's subtree
+        // is merged together here — reading Object.keys(mapping) directly
+        // was treating product types ("Garment", "Fmcg"...) as divisions,
+        // which meant every dropdown was one level off and picking any
+        // division/section/department could never match a real row.
+        const mappingByType = json.data || {};
+        const divSet = new Set();
         const secMap = {};
         const deptMapLocal = {};
-        for (const [d, sectionsForDivision] of Object.entries(mapping)) {
-          secMap[d] = new Set(Object.keys(sectionsForDivision || {}));
-          for (const [sectionName, depts] of Object.entries(sectionsForDivision || {})) {
-            if (!deptMapLocal[sectionName]) deptMapLocal[sectionName] = new Set();
-            for (const dept of depts || []) deptMapLocal[sectionName].add(dept);
+        for (const sectionsByDivision of Object.values(mappingByType)) {
+          for (const [d, sectionsForDivision] of Object.entries(sectionsByDivision || {})) {
+            divSet.add(d);
+            if (!secMap[d]) secMap[d] = new Set();
+            for (const [sectionName, depts] of Object.entries(sectionsForDivision || {})) {
+              secMap[d].add(sectionName);
+              if (!deptMapLocal[sectionName]) deptMapLocal[sectionName] = new Set();
+              for (const dept of depts || []) deptMapLocal[sectionName].add(dept);
+            }
           }
         }
         setDivisions([...divSet].sort());

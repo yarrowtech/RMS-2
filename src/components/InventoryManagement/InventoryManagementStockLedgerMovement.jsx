@@ -13,6 +13,25 @@ const API_BASE = `${APP_API_URL}`;
 /* ─── Movement types must match what backend returns ─── */
 const MOVEMENT_TYPES = ["All", "GRN (Purchase In)", "GRN Reversal", "Adjustment", "POS Sale", "POS Return"];
 
+// GET /api/product-mapping/grouped nests one level deeper than every
+// Division/Section/Department dropdown expects — see the fix/comment in
+// InventoryManagementCurrentStockList.jsx and Inventoryproductform.jsx.
+function flattenGroupedMapping(byType) {
+  const flat = {};
+  for (const divisions of Object.values(byType || {})) {
+    for (const [div, sections] of Object.entries(divisions || {})) {
+      if (!flat[div]) flat[div] = {};
+      for (const [sec, depts] of Object.entries(sections || {})) {
+        if (!flat[div][sec]) flat[div][sec] = [];
+        for (const dept of depts || []) {
+          if (!flat[div][sec].includes(dept)) flat[div][sec].push(dept);
+        }
+      }
+    }
+  }
+  return flat;
+}
+
 /* ─── Helpers ─── */
 function todayYmd() {
   const d = new Date(), pad = (n) => String(n).padStart(2, "0");
@@ -87,7 +106,7 @@ export default function StockLedgerMovement() {
     },
   })
     .then(r => r.json())
-    .then(d => setMapping(d.data || {}))
+    .then(d => setMapping(flattenGroupedMapping(d.data || {})))
     .catch(() => {});
 }, []);
 

@@ -1088,6 +1088,25 @@ const API_BASE = `${APP_API_URL}`;
 /* ─── Helpers ─── */
 const cn = (...a) => a.filter(Boolean).join(" ");
 
+// GET /api/product-mapping/grouped nests one level deeper than every
+// Division/Section/Department dropdown expects — see the fix/comment in
+// InventoryManagementCurrentStockList.jsx and Inventoryproductform.jsx.
+function flattenGroupedMapping(byType) {
+  const flat = {};
+  for (const divisions of Object.values(byType || {})) {
+    for (const [div, sections] of Object.entries(divisions || {})) {
+      if (!flat[div]) flat[div] = {};
+      for (const [sec, depts] of Object.entries(sections || {})) {
+        if (!flat[div][sec]) flat[div][sec] = [];
+        for (const dept of depts || []) {
+          if (!flat[div][sec].includes(dept)) flat[div][sec].push(dept);
+        }
+      }
+    }
+  }
+  return flat;
+}
+
 const BLUE_INPUT =
   "w-full bg-slate-100 rounded-xl px-3 py-2 text-sm text-slate-900 " +
   "border border-blue-400 focus:border-blue-600 focus:ring-2 focus:ring-blue-200 " +
@@ -1167,7 +1186,7 @@ export default function DamageReturnStock() {
 
   /* Load mapping + inventory */
   useEffect(() => {
-    fetch(`${API_BASE}/api/product-mapping/grouped`).then(r => r.json()).then(d => setMapping(d.data || {})).catch(() => {});
+    fetch(`${API_BASE}/api/product-mapping/grouped`).then(r => r.json()).then(d => setMapping(flattenGroupedMapping(d.data || {}))).catch(() => {});
     fetch(`${API_BASE}/inventory/current-stock`).then(r => r.json()).then(d => setInvRows(d.data || [])).catch(() => {});
   }, []);
 
