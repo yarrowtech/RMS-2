@@ -3,6 +3,10 @@ from pydantic import Field
 from typing import List, Optional
 
 class Settings(BaseSettings):
+    readonly_mongodb_uri: Optional[str] = None
+    readonly_api_key: Optional[str] = None
+    readonly_tenant_id: Optional[str] = None
+
     mongodb_uri: str = Field(..., env='MONGODB_URI')
     mongodb_db: str = Field(..., env='MONGODB_DB')
 
@@ -41,16 +45,15 @@ class Settings(BaseSettings):
     google_client_id: Optional[str] = Field(None, env='GOOGLE_CLIENT_ID')
     anthropic_api_key: Optional[str] = Field(None, env='ANTHROPIC_API_KEY')
 
-    # Twilio SMS — fallback channel for customers with no email on file.
-    # Unset means SMS sending is simply skipped (not an error); the reminder
-    # flow only uses it once all three are present. twilio_from_number is a
-    # real SMS-capable Twilio number; set twilio_messaging_service_sid
-    # instead if you're sending through a Messaging Service (recommended for
-    # India, where DLT template routing is handled by the service).
-    twilio_account_sid: Optional[str] = Field(None, env='TWILIO_ACCOUNT_SID')
-    twilio_auth_token: Optional[str] = Field(None, env='TWILIO_AUTH_TOKEN')
-    twilio_from_number: Optional[str] = Field(None, env='TWILIO_FROM_NUMBER')
-    twilio_messaging_service_sid: Optional[str] = Field(None, env='TWILIO_MESSAGING_SERVICE_SID')
+    # Fast2SMS — fallback channel for customers with no email on file
+    # (Lucky Draw countdown reminders, winner announcements, etc). Both
+    # must be set for sms_utils.sms_configured() to report true; unset
+    # means SMS sending is simply skipped, not an error. fast2sms_sender_id
+    # is the 6-character DLT-registered Sender ID (e.g. "RAPHAA") — a
+    # promotional/marketing send to an Indian number is rejected by the
+    # carrier without one. See sms_utils.py for the DLT route details.
+    fast2sms_api_key: Optional[str] = Field(None, env='FAST2SMS_API_KEY')
+    fast2sms_sender_id: Optional[str] = Field(None, env='FAST2SMS_SENDER_ID')
 
 
     cloudinary_cloud_name: str

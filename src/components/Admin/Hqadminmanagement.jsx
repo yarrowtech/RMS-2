@@ -192,7 +192,7 @@ function orgValuesForStore(admins, storeId, key) {
   )].sort();
 }
 
-function AddAdminModal({ onClose, onCreated, stores = [], deptConfig, admins = [] }) {
+function AddAdminModal({ onClose, onCreated, stores = [], deptConfig, admins = [], enabledDepartments = null }) {
   const [form,   setForm]   = useState(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
   const [errors, setErrors] = useState({});
@@ -393,6 +393,7 @@ function AddAdminModal({ onClose, onCreated, stores = [], deptConfig, admins = [
                 {(isStoreScope ? storeDepartments : hqDepartments).map(deptId => {
                   const active = selectedDepts.includes(deptId);
                   const color  = deptColor(deptId);
+                  const locked = !isStoreScope && Array.isArray(enabledDepartments) && !enabledDepartments.includes(deptId);
                   // NOTE: Tailwind scans source for complete, literal class
                   // strings at build time — `border-${accent}-400` would
                   // never get generated into the CSS bundle. Use full
@@ -400,14 +401,16 @@ function AddAdminModal({ onClose, onCreated, stores = [], deptConfig, admins = [
                   const activeBorderCls = isStoreScope ? "border-teal-400"        : "border-indigo-400";
                   const checkboxCls     = isStoreScope ? "bg-teal-500 border-teal-500" : "bg-indigo-500 border-indigo-500";
                   return (
-                    <button key={deptId} type="button" onClick={() => toggleDept(deptId)} title={DEPT_HINT_BY_ID[deptId]}
+                    <button key={deptId} type="button" disabled={locked} onClick={() => toggleDept(deptId)}
+                      title={locked ? "Not unlocked for this business yet — enable it under Admin Panel → Departments." : DEPT_HINT_BY_ID[deptId]}
                       className={`px-3 py-2 rounded-xl border text-xs font-semibold text-left transition-all flex items-center gap-2 ${
+                        locked ? "border-slate-100 text-slate-300 bg-slate-50 cursor-not-allowed" :
                         active ? `${activeBorderCls} ${DEPT_COLOR[color]}` : "border-slate-200 text-slate-600 hover:border-slate-300 bg-white"
                       }`}>
-                      <div className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 ${active ? checkboxCls : "border-slate-300"}`}>
-                        {active && <CheckCircle className="w-3 h-3 text-white"/>}
+                      <div className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 ${active && !locked ? checkboxCls : "border-slate-300"}`}>
+                        {active && !locked && <CheckCircle className="w-3 h-3 text-white"/>}
                       </div>
-                      {deptLabel(deptId)}
+                      {deptLabel(deptId)}{locked && <Lock className="w-3 h-3 ml-auto shrink-0"/>}
                     </button>
                   );
                 })}
@@ -548,9 +551,29 @@ function AddAdminModal({ onClose, onCreated, stores = [], deptConfig, admins = [
 // ══════════════════════════════════════════════════════════════════════════════
 // VIEW ADMIN MODAL
 // ══════════════════════════════════════════════════════════════════════════════
-function EditPermissionsModal({ admin, onClose, onSaved, deptConfig, admins = [], stores = [] }) {
+function EditPermissionsModal({ admin, onClose, onSaved, deptConfig, admins = [], stores = [], enabledDepartments = null }) {
   const [permissions, setPermissions] = useState([...(admin.permissions || [])]);
-  const [departments, setDepartments] = useState([...(admin.managedDepartments || [])]);
+  // Filtered against the real checkbox options right away, not just at
+  // save time — an invalid leftover value (anything that's neither a
+  // real department option nor "HQ" itself) would otherwise inflate the
+  // "N selected" count above the checkboxes without ever showing up as a
+  // ticked box anywhere. "HQ" is deliberately always kept if present —
+  // it's not an operational department, it's Admin Panel access, shown
+  // as its own separate toggle above, not one of these checkboxes.
+  const initialAvailableDepartments = admin.scope === "store"
+    ? deptConfig?.store_departments
+    : deptConfig?.hq_departments;
+  const [departments, setDepartments] = useState(() =>
+    // deptConfig can still be null on first mount if this modal opens
+    // before it's finished loading — filtering against an empty list in
+    // that case would wrongly wipe out this admin's real, valid
+    // departments too, not just an invalid leftover. Only filter once the
+    // real options list has actually arrived; otherwise keep the raw
+    // value as-is (save-time filtering below still runs regardless).
+    initialAvailableDepartments
+      ? (admin.managedDepartments || []).filter((d) => d === "HQ" || initialAvailableDepartments.includes(d))
+      : [...(admin.managedDepartments || [])]
+  );
   const [division, setDivision] = useState(admin.division || "");
   const [section, setSection] = useState(admin.section || "");
   const [floor, setFloor] = useState(admin.floor || "");
@@ -601,11 +624,26 @@ function EditPermissionsModal({ admin, onClose, onSaved, deptConfig, admins = []
       toast.error("Select at least one department for this admin.");
       return;
     }
+    // The initial `departments` state is seeded straight from whatever
+    // this admin's managedDepartments already held (see useState above) —
+    // including a stale/invalid leftover value like the old "HQ"
+    // placeholder some tenants' first admin was created with. There's no
+    // checkbox for "HQ" among these department options — it's Admin
+    // Panel access, toggled separately above — so any OTHER invalid
+    // leftover value would otherwise silently ride along in every save
+    // and get rejected by the backend's own validation. "HQ" is kept
+    // deliberately; everything else is filtered to real, selectable
+    // departments only.
+    const cleanDepartments = departments.filter((d) => d === "HQ" || availableDepartments.includes(d));
+    if (!cleanDepartments.filter((d) => d !== "HQ").length) {
+      toast.error("Select at least one department for this admin.");
+      return;
+    }
     try {
       setSaving(true);
       await api(`/hq/admins/${admin.id}`, {
         method: "PATCH",
-        body: JSON.stringify({ permissions, managedDepartments: departments, division, section, floor, is_department_head: isHead }),
+        body: JSON.stringify({ permissions, managedDepartments: cleanDepartments, division, section, floor, is_department_head: isHead }),
       });
       toast.success(`Access updated for ${admin.name}`);
       await onSaved();
@@ -644,23 +682,48 @@ function EditPermissionsModal({ admin, onClose, onSaved, deptConfig, admins = []
               <p className="mt-2 text-xs text-slate-500">Currently: <b>{admin.store_name || admin.store_id}</b></p>
             </section>
           )}
+          {admin.scope === "hq" && (
+            <section className="mb-6 rounded-xl border border-slate-200 bg-slate-50 p-4">
+              <label className="flex cursor-pointer items-start gap-3">
+                <input
+                  type="checkbox"
+                  className="mt-0.5 h-4 w-4"
+                  checked={departments.includes("HQ")}
+                  onChange={() => toggleDepartment("HQ")}
+                />
+                <span>
+                  <span className="block text-sm font-bold text-slate-800">Admin Management Panel access</span>
+                  <span className="mt-0.5 block text-xs text-slate-500">
+                    Separate from the departments below — this is what lets this admin open Admin Management itself (Stores &amp; Admins, Admin Management, Department Reports, etc.), not just the department tabs ticked below. Usually only the tenant's primary HQ admin needs this.
+                  </span>
+                </span>
+              </label>
+            </section>
+          )}
           <section className="mb-6">
             <div className="mb-3 flex items-center justify-between gap-3">
               <div>
                 <p className="text-xs font-black uppercase tracking-widest text-slate-500">Departments</p>
                 <p className="mt-1 text-xs text-slate-400">{admin.scope === "store" ? "Store-only departments shown here; use Move above to change which store." : "HQ scope is fixed for this admin."}</p>
               </div>
-              <span className="rounded-full bg-indigo-50 px-2.5 py-1 text-xs font-bold text-indigo-700">{departments.length} selected</span>
+              <span className="rounded-full bg-indigo-50 px-2.5 py-1 text-xs font-bold text-indigo-700">{departments.filter((d) => d !== "HQ").length} selected</span>
             </div>
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
               {availableDepartments.map(department => {
                 const active = departments.includes(department);
-                return <button key={department} type="button" onClick={() => toggleDepartment(department)} title={DEPT_HINT_BY_ID[department]}
-                  className={`flex items-center gap-3 rounded-xl border p-3 text-left text-sm font-semibold transition ${active ? "border-violet-300 bg-violet-50 text-violet-800" : "border-slate-200 text-slate-600 hover:border-violet-200"}`}>
-                  <span className={`flex h-4 w-4 items-center justify-center rounded border ${active ? "border-violet-600 bg-violet-600 text-white" : "border-slate-300"}`}>
-                    {active && <CheckCircle className="h-3 w-3"/>}
+                // Already-assigned departments stay freely toggleable (off) even if
+                // the tenant later re-locks that department — only NEW selections
+                // of a not-yet-unlocked department are blocked here.
+                const locked = admin.scope !== "store" && !active && Array.isArray(enabledDepartments) && !enabledDepartments.includes(department);
+                return <button key={department} type="button" disabled={locked} onClick={() => toggleDepartment(department)}
+                  title={locked ? "Not unlocked for this business yet — enable it under Admin Panel → Departments." : DEPT_HINT_BY_ID[department]}
+                  className={`flex items-center gap-3 rounded-xl border p-3 text-left text-sm font-semibold transition ${
+                    locked ? "border-slate-100 bg-slate-50 text-slate-300 cursor-not-allowed" :
+                    active ? "border-violet-300 bg-violet-50 text-violet-800" : "border-slate-200 text-slate-600 hover:border-violet-200"}`}>
+                  <span className={`flex h-4 w-4 items-center justify-center rounded border ${active && !locked ? "border-violet-600 bg-violet-600 text-white" : "border-slate-300"}`}>
+                    {active && !locked && <CheckCircle className="h-3 w-3"/>}
                   </span>
-                  {deptLabel(department)}
+                  {deptLabel(department)}{locked && <Lock className="h-3 w-3 ml-auto shrink-0"/>}
                 </button>;
               })}
             </div>
@@ -1484,6 +1547,7 @@ export default function HQAdminManagement() {
   const [admins,    setAdmins]    = useState([]);
   const [stores,    setStores]    = useState([]);
   const [deptConfig, setDeptConfig] = useState(null);
+  const [enabledDepartments, setEnabledDepartments] = useState(null);
   const [loading,   setLoading]   = useState(false);
   const [search,    setSearch]    = useState("");
   const [filterScope, setFilterScope] = useState("all");
@@ -1497,14 +1561,16 @@ export default function HQAdminManagement() {
   const fetchAll = useCallback(async () => {
     try {
       setLoading(true);
-      const [admData, stData, deptData] = await Promise.all([
+      const [admData, stData, deptData, tenantDeptData] = await Promise.all([
         api("/hq/admins"),
         api("/hq/stores"),
         api("/hq/departments"),
+        api("/hq/tenant-departments").catch(() => null),
       ]);
       setAdmins(admData.data || []);
       setStores(stData.data  || []);
       setDeptConfig(deptData.data || null);
+      setEnabledDepartments(tenantDeptData?.data?.enabled_departments ?? null);
     } catch { toast.error("Failed to load data"); }
     finally { setLoading(false); }
   }, []);
@@ -1750,7 +1816,7 @@ export default function HQAdminManagement() {
           </div>
         </div>
       ), document.body)}
-      {showAdd && createPortal(<AddAdminModal onClose={() => setShowAdd(false)} onCreated={fetchAll} stores={stores} deptConfig={deptConfig} admins={admins}/>, document.body)}
+      {showAdd && createPortal(<AddAdminModal onClose={() => setShowAdd(false)} onCreated={fetchAll} stores={stores} deptConfig={deptConfig} admins={admins} enabledDepartments={enabledDepartments}/>, document.body)}
       {showBulkImport && (
         <BulkStaffImportModal
           onClose={() => setShowBulkImport(false)}
@@ -1761,7 +1827,7 @@ export default function HQAdminManagement() {
         />
       )}
       {viewAdmin && createPortal(<ViewAdminModal admin={viewAdmin} onClose={() => setViewAdmin(null)}/>, document.body)}
-      {editAdmin && createPortal(<EditPermissionsModal admin={editAdmin} onClose={() => setEditAdmin(null)} onSaved={fetchAll} deptConfig={deptConfig} admins={admins} stores={stores}/>, document.body)}
+      {editAdmin && createPortal(<EditPermissionsModal admin={editAdmin} onClose={() => setEditAdmin(null)} onSaved={fetchAll} deptConfig={deptConfig} admins={admins} stores={stores} enabledDepartments={enabledDepartments}/>, document.body)}
     </div>
   );
 }

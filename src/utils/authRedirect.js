@@ -108,6 +108,14 @@ export function handleAuthRedirect(responseData, navigate) {
   }
 
   // ── CASE 2: No redirect_type — fallback using departments array ───────────
+  // Mirrors get_redirect_for_departments() in auth_routes.py — a true HQ
+  // admin skips the selector regardless of how many departments they have.
+  if (departments.includes("HQ")) {
+    localStorage.setItem("admin_active_department", "HQ");
+    const path = (routes && routes.HQ) || DEPT_PATH_MAP.HQ;
+    navigate(path, { replace: true });
+    return;
+  }
   if (departments.length > 1) {
     localStorage.removeItem("admin_active_department");
     const builtRoutes = {};

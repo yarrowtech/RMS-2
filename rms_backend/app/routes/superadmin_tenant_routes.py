@@ -14,6 +14,7 @@ from ..email_utils import send_password_setup_email, send_tenant_status_email
 from ..activity_log import log_activity
 from ..config import settings
 from ..retailer_plans import INTERNAL_FREE_PLAN, RETAILER_PLAN_LIMITS, normalize_retailer_plan, retailer_plan_config
+from .hq_store_routes import HQ_DEPARTMENTS
 
 # Add to db.py:
 # tenants_collection = db["tenants"]
@@ -210,8 +211,23 @@ async def create_tenant(
         "name":               payload.hq_admin_name.strip(),
         "email":              payload.hq_admin_email,
         "phone":              (payload.hq_admin_phone or "").strip(),
+        # "HQ" here is NOT just a placeholder label — authRedirect.js's
+        # DEPT_PATH_MAP["HQ"] = "/admin" and DepartmentSelector.jsx's own
+        # DEPT_ROUTES/DEPT_META both treat "HQ" as a real, first-class
+        # pseudo-department: it's what makes the Admin Management Panel
+        # itself reachable. A previous version of this fix REPLACED "HQ"
+        # with the real operational departments instead of adding them
+        # alongside it, which silently took away this admin's own Admin
+        # Panel access — they'd land on the department picker with no way
+        # back into Admin Management at all. "HQ" must stay in this list;
+        # the real departments are added on top of it, not instead of it.
+        # There's no plan-based department gating for a full retailer
+        # tenant (see retailer_plans.py's own docstring on this — plan
+        # only limits store/admin-seat counts), so the first HQ admin
+        # gets every real department by default too, same as any other
+        # admin would if all the checkboxes were ticked for them.
         "department":         "Store Owner" if is_single_store else "HQ",
-        "managedDepartments": ["Store Owner"] if is_single_store else ["HQ"],
+        "managedDepartments": ["Store Owner"] if is_single_store else (["HQ"] + list(HQ_DEPARTMENTS)),
         "permissions":        [
             "inventory", "vendors", "purchase_orders",
             "grn", "grc", "reports", "mbuyer", "stock_allocation"

@@ -18,6 +18,7 @@ import asyncio
 from .error_log import log_error
 from .citimart_midnight_job import run_citimart_midnight_loop
 from .routes import superadmin_routes, auth_routes, admin_routes
+from .routes.readonly_routes import router as readonly_router
 from .db import admins_collection, ensure_procurement_indexes
 from .routes import vendor_routes,order_routes, grc_routes , grn_routes,Purchaseinvoice_routes
 from .routes.superadmin_tenant_routes import router as tenant_router
@@ -61,6 +62,7 @@ from .routes.document_message_routes import router as document_message_router
 from .routes.support_routes import router as support_router
 from .routes.analytics_routes import router as analytics_router
 from .routes.analytics_hub_routes import router as analytics_hub_router
+from .routes.tenant_departments_routes import router as tenant_departments_router, superadmin_router as tenant_departments_superadmin_router
 from .routes.retailer_seat_addon_routes import router as retailer_seat_addon_router
 from .routes.retailer_store_addon_routes import router as retailer_store_addon_router
 from .routes.marketing_routes import router as marketing_router, superadmin_router as superadmin_marketing_router
@@ -93,6 +95,7 @@ from .utils import hash_password, verify_password
 from datetime import datetime
 
 app = FastAPI(title="RMS Backend - Admin Onboarding")
+app.include_router(readonly_router)
 
 # Per-IP rate limiting (slowapi). A global default covers every route for
 # free; individual login/sensitive endpoints set a stricter limit via their
@@ -212,6 +215,8 @@ app.include_router(document_message_router)
 app.include_router(support_router)
 app.include_router(analytics_router)
 app.include_router(analytics_hub_router)
+app.include_router(tenant_departments_router)
+app.include_router(tenant_departments_superadmin_router)
 app.include_router(retailer_seat_addon_router)
 app.include_router(retailer_store_addon_router)
 app.include_router(marketing_router)

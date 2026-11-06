@@ -136,7 +136,13 @@ export default function DepartmentSelector() {
               }));
             }
 
-            if (depts.length === 1) {
+            // A true HQ admin skips this picker entirely, same rule as
+            // the backend's own get_redirect_for_departments() — they
+            // land straight on their Admin Panel regardless of how many
+            // other departments are also on their account.
+            if (depts.includes("HQ")) {
+              navigate(routes.HQ || "/admin", { replace: true });
+            } else if (depts.length === 1) {
               navigate(routes[depts[0]], { replace: true });
             }
           } else {

@@ -57,6 +57,11 @@ mbuyer_gr_return_collection      = db["mbuyer_gr_returns"]
 mbuyer_next_plan_collection      = db["mbuyer_next_plans"]
 mbuyer_debit_note_collection     = db["mbuyer_debit_notes"]
 tenants_collection = db["tenants"]
+# One row per "unlock this paid department" request from a tenant's HQ
+# admin — same pending/approve/decline shape as the existing single-store
+# upgrade flow in store_upgrade_routes.py, reused for full retailer
+# tenants instead of inventing a second billing/approval mechanism.
+department_upgrade_requests_collection = db["department_upgrade_requests"]
 vendor_tenant_links_collection = db["vendor_tenant_links"]
 vendor_catalogue_collection    = db["vendor_catalogue"]
 catalogue_inquiries_collection = db["catalogue_inquiries"]
@@ -310,6 +315,21 @@ lucky_draw_results_collection = db["lucky_draw_results"]
 # can see what went out and when without re-triggering a duplicate send.
 lucky_draw_reminders_collection = db["lucky_draw_reminders"]
 lucky_draw_import_batches_collection = db["lucky_draw_import_batches"]
+# Winner-announcement broadcast — ONE doc per campaign (not one per send
+# attempt, unlike reminders). Re-running the announcement after new
+# entries show up, or after a partial failure, continues the SAME record
+# rather than starting a fresh count, because lucky_draw_announcement_
+# recipients_collection below is the thing that actually remembers who's
+# already been messaged.
+lucky_draw_announcements_collection = db["lucky_draw_announcements"]
+# Durable per-recipient send state for the winner announcement. This is
+# what makes a re-run safe: a row that already reached "sent" is never
+# touched again (new sends only ever insert new "pending" rows for
+# entrants who weren't in the audience last time, or retry rows still
+# stuck on "pending"/"failed"), so running the broadcast twice — e.g.
+# because new entries came in, or because the first run partially
+# failed — never double-messages anyone who already got it.
+lucky_draw_announcement_recipients_collection = db["lucky_draw_announcement_recipients"]
 
 # Customer CRM coupons — its own tab, its own collection. A coupon isn't
 # tied to Lucky Draw specifically (HQ can hand one to any customer), but
@@ -481,11 +501,43 @@ async def ensure_procurement_indexes():
     await customer_crm_feedback_collection.create_index([("tenant_id", 1), ("created_at", -1)], name="crm_feedback_tenant_created")
     await lucky_draw_campaigns_collection.create_index([("tenant_id", 1), ("status", 1), ("created_at", -1)], name="lucky_draw_campaign_tenant_status")
     await lucky_draw_entries_collection.create_index([("tenant_id", 1), ("campaign_id", 1), ("created_at", -1)], name="lucky_draw_entry_campaign_created")
-    await lucky_draw_entries_collection.create_index([("tenant_id", 1), ("store_id", 1), ("campaign_id", 1), ("bill_no", 1)], unique=True, name="lucky_draw_entry_bill_unique")
+    # Bill No. is now optional on a lucky draw entry (a customer can be
+    # recorded with just name + phone, not eligible to win but still a CRM
+    # contact) — see create_entry()/create_entries_bulk() in
+    # lucky_draw_routes.py, which already only check for a duplicate bill
+    # no. when one was actually given. A plain unique index on this field
+    # doesn't know that: it was rejecting the SECOND no-bill-no entry in
+    # the same store/campaign with a duplicate-key error on bill_no: ""
+    # even though the application layer correctly allows any number of
+    # them. partialFilterExpression restricts uniqueness to entries that
+    # actually have a non-empty bill_no, matching the app-level rule
+    # exactly. The index name is unchanged, so this drop+recreate is safe
+    # to run on every startup — if it's already the partial version
+    # (post-migration), the drop/recreate is just a no-op either way.
+    try:
+        await lucky_draw_entries_collection.drop_index("lucky_draw_entry_bill_unique")
+    except Exception:
+        pass
+    await lucky_draw_entries_collection.create_index(
+        [("tenant_id", 1), ("store_id", 1), ("campaign_id", 1), ("bill_no", 1)],
+        unique=True, name="lucky_draw_entry_bill_unique",
+        partialFilterExpression={"bill_no": {"$gt": ""}},
+    )
     await lucky_draw_entries_collection.create_index([("tenant_id", 1), ("store_id", 1), ("printed", 1)], name="lucky_draw_entry_print_queue")
     await lucky_draw_entries_collection.create_index([("tenant_id", 1), ("batch_id", 1)], name="lucky_draw_entry_batch")
     await lucky_draw_import_batches_collection.create_index([("tenant_id", 1), ("created_at", -1)], name="lucky_draw_batch_tenant_created")
     await lucky_draw_import_batches_collection.create_index([("tenant_id", 1), ("store_id", 1), ("created_at", -1)], name="lucky_draw_batch_store_created")
+    # One announcement record per campaign.
+    await lucky_draw_announcements_collection.create_index([("tenant_id", 1), ("campaign_id", 1)], unique=True, name="lucky_draw_announcement_campaign")
+    # The resumability key: one recipient row per (campaign, contact), ever.
+    await lucky_draw_announcement_recipients_collection.create_index(
+        [("tenant_id", 1), ("campaign_id", 1), ("dedupe_key", 1)], unique=True, name="lucky_draw_announcement_recipient_key",
+    )
+    await lucky_draw_announcement_recipients_collection.create_index(
+        [("tenant_id", 1), ("campaign_id", 1), ("status", 1)], name="lucky_draw_announcement_recipient_status",
+    )
+    await department_upgrade_requests_collection.create_index([("tenant_id", 1), ("status", 1)], name="dept_upgrade_tenant_status")
+    await department_upgrade_requests_collection.create_index([("tenant_id", 1), ("department", 1)], name="dept_upgrade_tenant_department")
     await active_sessions_collection.create_index([("admin_id", 1)], name="active_sessions_admin")
     await active_sessions_collection.create_index([("session_id", 1)], unique=True, name="active_sessions_sid")
     await active_sessions_collection.create_index([("expires_at", 1)], expireAfterSeconds=0, name="active_sessions_ttl")

@@ -1,18 +1,32 @@
-"""SMS sending via Twilio's REST API — the fallback channel for customers
-who have no email on file (Lucky Draw countdown reminders, etc).
+"""SMS sending via Fast2SMS's DLT route — the fallback channel for
+customers who have no email on file (Lucky Draw countdown reminders,
+winner announcements, etc).
 
 Unconfigured means skipped, not broken: every function here returns False
-and logs nothing destructive when TWILIO_ACCOUNT_SID/AUTH_TOKEN and a sender
-(TWILIO_FROM_NUMBER or TWILIO_MESSAGING_SERVICE_SID) aren't all set — the
-same "not configured yet" pattern email_utils.py and whatsapp_routes.py
-already use. Nothing needs to change in code once real credentials are
-added to the environment; it just starts working.
+and logs nothing destructive when FAST2SMS_API_KEY/FAST2SMS_SENDER_ID
+aren't both set — the same "not configured yet" pattern email_utils.py
+and whatsapp_routes.py already use. Nothing needs to change in code once
+real credentials are added to the environment; it just starts working.
 
-India-specific note: any promotional/transactional SMS sent to an Indian
-number must come from a DLT-registered template — Twilio's Messaging
-Service (TWILIO_MESSAGING_SERVICE_SID) is the simplest way to route through
-that registration; a bare TWILIO_FROM_NUMBER works outside India or once
-you've separately registered that number's templates with your carrier.
+India-specific note, important: this uses Fast2SMS's `dlt_manual` route,
+NOT their `q` ("Quick SMS") route. Quick SMS is unregistered/non-DLT and
+is ONLY legal for OTP/transactional messages — using it to send a
+promotional message (a lucky draw winner announcement, a marketing
+reminder) violates TRAI regulations and risks the sender number/account
+being blocked. `dlt_manual` requires:
+  1. A DLT-registered Principal Entity (your business) on one of the
+     telecom DLT portals — Fast2SMS's own dashboard walks you through
+     this registration, you don't deal with the raw DLT portal directly.
+  2. A DLT-registered Sender ID (FAST2SMS_SENDER_ID, 6 letters, e.g.
+     "RAPHAA") — shows as the sender name on the customer's phone.
+  3. A DLT-registered message TEMPLATE whose content matches what you
+     actually send, variable-for-variable. Fast2SMS checks the outgoing
+     text against your registered templates and rejects anything that
+     doesn't match one — so whoever registers the template needs to use
+     the exact wording this app generates (see
+     lucky_draw_routes._winner_announcement_text /
+     _sms_countdown_body), with the dynamic parts (winner names, campaign
+     name, date) as the template's variable placeholders.
 """
 import asyncio
 from typing import Optional
@@ -22,30 +36,32 @@ import requests
 from .config import settings
 from .db import sms_failures_collection
 
-TWILIO_API_BASE = "https://api.twilio.com/2010-04-01"
+FAST2SMS_API_URL = "https://www.fast2sms.com/dev/bulkV2"
 
 
 def sms_configured() -> bool:
-    return bool(
-        settings.twilio_account_sid
-        and settings.twilio_auth_token
-        and (settings.twilio_from_number or settings.twilio_messaging_service_sid)
-    )
+    return bool(settings.fast2sms_api_key and settings.fast2sms_sender_id)
 
 
 def _send_sync(to_number: str, body: str) -> bool:
-    url = f"{TWILIO_API_BASE}/Accounts/{settings.twilio_account_sid}/Messages.json"
-    data = {"To": to_number, "Body": body}
-    if settings.twilio_messaging_service_sid:
-        data["MessagingServiceSid"] = settings.twilio_messaging_service_sid
-    else:
-        data["From"] = settings.twilio_from_number
     response = requests.post(
-        url, data=data,
-        auth=(settings.twilio_account_sid, settings.twilio_auth_token),
+        FAST2SMS_API_URL,
+        headers={"authorization": settings.fast2sms_api_key},
+        data={
+            "route": "dlt_manual",
+            "sender_id": settings.fast2sms_sender_id,
+            "message": body,
+            "numbers": to_number,
+            "flash": "0",
+        },
         timeout=15,
     )
-    return response.ok
+    if not response.ok:
+        return False
+    try:
+        return bool(response.json().get("return"))
+    except Exception:
+        return False
 
 
 async def send_sms(to_number: str, body: str, context: str = "") -> bool:
@@ -55,11 +71,16 @@ async def send_sms(to_number: str, body: str, context: str = "") -> bool:
     aborting the whole batch."""
     if not sms_configured():
         return False
-    to_number = (to_number or "").strip()
-    if not to_number:
+    # Fast2SMS expects a bare 10-digit Indian number, no "+91"/"91" prefix
+    # and no spaces/dashes — strip anything else off, including a leading
+    # country code, so numbers saved in any of those shapes still work.
+    digits = "".join(ch for ch in (to_number or "") if ch.isdigit())
+    if len(digits) > 10 and digits.startswith("91"):
+        digits = digits[-10:]
+    if len(digits) != 10:
         return False
     try:
-        return await asyncio.to_thread(_send_sync, to_number, body)
+        return await asyncio.to_thread(_send_sync, digits, body)
     except Exception as exc:
         await sms_failures_collection.insert_one({
             "to": to_number, "context": context, "error": str(exc),

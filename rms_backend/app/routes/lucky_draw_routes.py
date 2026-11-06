@@ -12,8 +12,12 @@ never a department-level admin) can create or close a campaign.
 """
 import asyncio
 import random
+from datetime import timezone
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
+from zoneinfo import ZoneInfo
+
+IST = ZoneInfo("Asia/Kolkata")
 
 import cloudinary
 import cloudinary.uploader
@@ -26,7 +30,8 @@ from ..config import frontend_url, settings
 from ..db import (
     lucky_draw_campaigns_collection, lucky_draw_entries_collection,
     lucky_draw_import_batches_collection, lucky_draw_reminders_collection,
-    lucky_draw_results_collection,
+    lucky_draw_results_collection, lucky_draw_announcements_collection,
+    lucky_draw_announcement_recipients_collection,
 )
 from ..email_utils import send_newsletter_email
 from ..sms_utils import send_sms, sms_configured
@@ -746,7 +751,27 @@ async def redo_draw(campaign_id: str, payload: RedoPayload, ctx: Dict[str, Any] 
         "superseded": True, "superseded_at": now, "superseded_by": ctx.get("admin_id"),
         "superseded_by_name": ctx.get("admin_name"), "superseded_reason": reason,
     }})
-    return await _execute_draw(ctx, campaign, store_id, payload.winner_count, redo_of=str(existing["_id"]), redo_reason=reason)
+    result = await _execute_draw(ctx, campaign, store_id, payload.winner_count, redo_of=str(existing["_id"]), redo_reason=reason)
+
+    # If a winner announcement already went out with the OLD (now wrong)
+    # winner names, it must not stay silently "done" — anyone already
+    # marked sent would never receive the corrected names, since the
+    # announcement send only ever sends to pending/failed rows. A redo
+    # means the previous announcement's content is now wrong, so every
+    # recipient goes back to pending and the admin needs to re-announce.
+    reset = await lucky_draw_announcement_recipients_collection.update_many(
+        {"tenant_id": ctx["tenant_id"], "campaign_id": campaign_id},
+        {"$set": {"status": "pending", "reset_for_redo_at": now}},
+    )
+    if reset.modified_count:
+        await lucky_draw_announcements_collection.update_one(
+            {"tenant_id": ctx["tenant_id"], "campaign_id": campaign_id},
+            {"$set": {
+                "status": "NEEDS_RESEND", "sent_count": 0, "failed_count": 0, "pending_count": reset.modified_count,
+                "redo_reset_at": now, "redo_reason": reason,
+            }},
+        )
+    return result
 
 
 @router.get("/results")
@@ -827,9 +852,10 @@ async def _reminder_audience(tenant_id: str, campaign_id: str) -> List[dict]:
 
 
 def _sms_countdown_body(campaign: dict, message: str) -> str:
-    """Short SMS version — Twilio/DLT templates don't carry the richer HTML
-    email body, so this is a separate, shorter line using the same message
-    text the admin typed."""
+    """Short SMS version — a DLT-registered template is plain text, no
+    HTML, so this is a separate, shorter line using the same message text
+    the admin typed. Must match whatever template was actually registered
+    with Fast2SMS once that's set up — see sms_utils.py for the details."""
     link = frontend_url("/")
     return f"{message} {link}".strip()
 
@@ -906,10 +932,10 @@ async def send_campaign_reminder(campaign_id: str, payload: ReminderPayload, bac
     test_phone = clean(payload.test_phone)
     if test_phone:
         if not sms_configured():
-            raise HTTPException(status_code=503, detail="SMS isn't configured yet — set TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN and a sender (TWILIO_FROM_NUMBER or TWILIO_MESSAGING_SERVICE_SID).")
+            raise HTTPException(status_code=503, detail="SMS isn't configured yet — set FAST2SMS_API_KEY and FAST2SMS_SENDER_ID.")
         ok = await send_sms(test_phone, _sms_countdown_body(campaign, message), context=f"lucky_draw_reminder_test:{campaign_id}")
         if not ok:
-            raise HTTPException(status_code=502, detail="Test SMS could not be sent — check the Twilio settings.")
+            raise HTTPException(status_code=502, detail="Test SMS could not be sent — check the Fast2SMS settings.")
         return {"test": True, "message": f"Test SMS sent to {test_phone}."}
 
     people = await _reminder_audience(ctx["tenant_id"], campaign_id)
@@ -928,7 +954,7 @@ async def send_campaign_reminder(campaign_id: str, payload: ReminderPayload, bac
     note = (
         f"{email_count} by email, {sms_count} by SMS."
         if sms_configured()
-        else f"{email_count} by email now. {sms_count} more have no email but a phone number — SMS isn't configured yet (set TWILIO_ACCOUNT_SID/AUTH_TOKEN), so they'll be skipped until it is."
+        else f"{email_count} by email now. {sms_count} more have no email but a phone number — SMS isn't configured yet (set FAST2SMS_API_KEY/FAST2SMS_SENDER_ID), so they'll be skipped until it is."
     )
     return {
         "test": False, "id": str(result.inserted_id), "recipient_count": len(people),
@@ -947,3 +973,192 @@ async def list_campaign_reminders(campaign_id: str, ctx: Dict[str, Any] = Depend
         {"tenant_id": ctx["tenant_id"], "campaign_id": campaign_id}
     ).sort("created_at", -1).to_list(50)
     return [serialize_doc(r) for r in rows]
+
+
+# ─────────────────────────────────────────────
+# WINNER ANNOUNCEMENT — tells EVERY entrant (bill-no holders and no-bill-no
+# customers alike, per the eligibility rule: everyone gets messaged, only
+# bill-no holders could actually win) who won, by name. Unlike the
+# countdown reminder above (fire-and-forget, one send per click), this is
+# built to be re-run safely: new entries keep showing up right up to draw
+# day, and a send to a thousand-plus people can legitimately fail partway
+# through (SMS provider hiccup, etc). lucky_draw_announcement_recipients_
+# collection is a durable per-person ledger — re-running only ever sends
+# to someone who hasn't already gotten it, never a second time to someone
+# who has.
+# ─────────────────────────────────────────────
+
+ORDINALS = ["1st", "2nd", "3rd", "4th", "5th", "6th", "7th", "8th", "9th", "10th"]
+
+
+def _ordinal(n: int) -> str:
+    return ORDINALS[n - 1] if 1 <= n <= len(ORDINALS) else f"{n}th"
+
+
+async def _latest_result(tenant_id: str, campaign_id: str) -> Optional[dict]:
+    return await lucky_draw_results_collection.find_one(
+        {"tenant_id": tenant_id, "campaign_id": campaign_id, "superseded": {"$ne": True}},
+        sort=[("created_at", -1)],
+    )
+
+
+def _winner_announcement_text(campaign: dict, result: dict) -> str:
+    names = [w.get("customer_name") or "Winner" for w in (result.get("winners") or [])]
+    lines = ", ".join(f"{_ordinal(i)}: {name}" for i, name in enumerate(names, start=1))
+    # campaign.ends_on is the officially-communicated draw date (what
+    # customers were told at entry time). Falls back to the actual date
+    # the draw was run, in case ends_on was never set on the campaign —
+    # created_at is stored in UTC, so it's converted to IST before taking
+    # the calendar date; a draw run late evening IST can already be past
+    # midnight in UTC, which would otherwise show customers the wrong day.
+    created_at = result.get("created_at")
+    # Motor returns a naive datetime for a field stored via now_utc() —
+    # it IS UTC, but has no tzinfo attached, so .astimezone() without
+    # first marking it as UTC would wrongly treat it as local server time.
+    if created_at and created_at.tzinfo is None:
+        created_at = created_at.replace(tzinfo=timezone.utc)
+    fallback_date = created_at.astimezone(IST).strftime("%d %b %Y") if created_at else ""
+    draw_date = campaign.get("ends_on") or fallback_date
+    date_part = f" (drawn on {draw_date})" if draw_date else ""
+    return f"🎉 The results are in for the {campaign.get('campaign_name')} Lucky Draw{date_part}! Winners — {lines}. Thank you to everyone who entered!"
+
+
+@router.get("/campaigns/{campaign_id}/announcement")
+async def get_announcement_status(campaign_id: str, ctx: Dict[str, Any] = Depends(get_tenant)):
+    ctx = require_crm_tab(ctx, "luckydraw")
+    if not ObjectId.is_valid(campaign_id):
+        raise HTTPException(status_code=400, detail="Invalid campaign ID.")
+    doc = await lucky_draw_announcements_collection.find_one({"tenant_id": ctx["tenant_id"], "campaign_id": campaign_id})
+    return serialize_doc(doc) if doc else None
+
+
+async def _run_announcement_send(tenant_id: str, campaign_id: str) -> None:
+    """Sends only to rows still 'pending' or 'failed' — a row already
+    'sent' is never touched again, which is the entire resumability
+    guarantee this feature is built on."""
+    campaign = await lucky_draw_campaigns_collection.find_one({"_id": ObjectId(campaign_id), "tenant_id": tenant_id})
+    if not campaign:
+        return
+    result = await _latest_result(tenant_id, campaign_id)
+    if not result:
+        return
+    subject = f"🎉 {campaign.get('campaign_name')} Lucky Draw — the results are in!"
+    message = _winner_announcement_text(campaign, result)
+    sms_body = _sms_countdown_body(campaign, message)
+
+    cursor = lucky_draw_announcement_recipients_collection.find({
+        "tenant_id": tenant_id, "campaign_id": campaign_id, "status": {"$in": ["pending", "failed"]},
+    })
+    async for r in cursor:
+        ok = False
+        try:
+            if r["channel"] == "email":
+                ok = await send_newsletter_email(
+                    r["contact"], r.get("customer_name") or "", subject, message,
+                    frontend_url("/"), link=campaign.get("website_link") or "",
+                )
+            elif sms_configured():
+                ok = await send_sms(r["contact"], sms_body, context=f"lucky_draw_announcement:{campaign_id}")
+            else:
+                ok = None  # no SMS provider configured — leave as a distinct skip, not a failure to retry forever
+        except Exception:
+            ok = False
+
+        new_status = "sent" if ok else ("pending" if ok is None else "failed")
+        await lucky_draw_announcement_recipients_collection.update_one(
+            {"_id": r["_id"]}, {"$set": {"status": new_status, "last_attempted_at": now_utc()}}
+        )
+        await asyncio.sleep(0.05)
+
+    counts = {}
+    async for row in lucky_draw_announcement_recipients_collection.aggregate([
+        {"$match": {"tenant_id": tenant_id, "campaign_id": campaign_id}},
+        {"$group": {"_id": "$status", "n": {"$sum": 1}}},
+    ]):
+        counts[row["_id"]] = row["n"]
+    await lucky_draw_announcements_collection.update_one(
+        {"tenant_id": tenant_id, "campaign_id": campaign_id},
+        {"$set": {
+            "status": "DONE" if not counts.get("pending") else "SENDING",
+            "sent_count": counts.get("sent", 0), "failed_count": counts.get("failed", 0), "pending_count": counts.get("pending", 0),
+            "finished_at": now_utc(),
+        }},
+    )
+
+
+@router.post("/campaigns/{campaign_id}/announce-winners")
+async def announce_winners(campaign_id: str, payload: ReminderPayload, background: BackgroundTasks, ctx: Dict[str, Any] = Depends(get_tenant)):
+    ctx = require_hq(require_crm_tab(ctx, "luckydraw"))
+    if not ObjectId.is_valid(campaign_id):
+        raise HTTPException(status_code=400, detail="Invalid campaign ID.")
+    campaign = await lucky_draw_campaigns_collection.find_one({"_id": ObjectId(campaign_id), "tenant_id": ctx["tenant_id"]})
+    if not campaign:
+        raise HTTPException(status_code=404, detail="Campaign not found.")
+    result = await _latest_result(tenant_id=ctx["tenant_id"], campaign_id=campaign_id)
+    if not result:
+        raise HTTPException(status_code=400, detail="Run the draw for this campaign before announcing winners.")
+
+    message = (payload.message or "").strip() or _winner_announcement_text(campaign, result)
+    subject = f"🎉 {campaign.get('campaign_name')} Lucky Draw — the results are in!"
+
+    test_email = clean(payload.test_email)
+    if test_email:
+        ok = await send_newsletter_email(test_email, "there", subject, message, frontend_url("/"), link=campaign.get("website_link") or "")
+        if not ok:
+            raise HTTPException(status_code=502, detail="Test email could not be sent — check the email settings.")
+        return {"test": True, "message": f"Test announcement sent to {test_email}."}
+
+    test_phone = clean(payload.test_phone)
+    if test_phone:
+        if not sms_configured():
+            raise HTTPException(status_code=503, detail="SMS isn't configured yet — set FAST2SMS_API_KEY and FAST2SMS_SENDER_ID.")
+        ok = await send_sms(test_phone, _sms_countdown_body(campaign, message), context=f"lucky_draw_announcement_test:{campaign_id}")
+        if not ok:
+            raise HTTPException(status_code=502, detail="Test SMS could not be sent — check the SMS provider settings.")
+        return {"test": True, "message": f"Test SMS sent to {test_phone}."}
+
+    # Everyone who entered gets told who won — bill-no holders and
+    # no-bill-no customers alike (see _reminder_audience: it already pulls
+    # every entrant with an email or phone, no bill_no filter).
+    people = await _reminder_audience(ctx["tenant_id"], campaign_id)
+    if not people:
+        raise HTTPException(status_code=400, detail="No entrants with an email or phone number on file for this campaign yet.")
+
+    now = now_utc()
+    new_rows = 0
+    for p in people:
+        email = (p.get("email") or "").strip().lower()
+        phone = (p.get("contact_no") or "").strip()
+        dedupe_key = f"email:{email}" if email else f"phone:{phone}"
+        res = await lucky_draw_announcement_recipients_collection.update_one(
+            {"tenant_id": ctx["tenant_id"], "campaign_id": campaign_id, "dedupe_key": dedupe_key},
+            {"$setOnInsert": {
+                "tenant_id": ctx["tenant_id"], "campaign_id": campaign_id, "dedupe_key": dedupe_key,
+                "customer_name": p.get("customer_name") or "", "channel": p["_channel"],
+                "contact": p["email"] if p["_channel"] == "email" else p["contact_no"],
+                "status": "pending", "created_at": now,
+            }},
+            upsert=True,
+        )
+        if res.upserted_id:
+            new_rows += 1
+
+    total = await lucky_draw_announcement_recipients_collection.count_documents(
+        {"tenant_id": ctx["tenant_id"], "campaign_id": campaign_id}
+    )
+    already_sent = await lucky_draw_announcement_recipients_collection.count_documents(
+        {"tenant_id": ctx["tenant_id"], "campaign_id": campaign_id, "status": "sent"}
+    )
+    await lucky_draw_announcements_collection.update_one(
+        {"tenant_id": ctx["tenant_id"], "campaign_id": campaign_id},
+        {
+            "$set": {"campaign_name": campaign.get("campaign_name"), "message": message, "status": "SENDING", "updated_at": now},
+            "$setOnInsert": {"created_at": now},
+        },
+        upsert=True,
+    )
+    background.add_task(_run_announcement_send, ctx["tenant_id"], campaign_id)
+    return {
+        "test": False, "recipient_count": total, "new_recipients": new_rows, "already_sent": already_sent,
+        "message": f"Sending to {total - already_sent} entrant(s) who haven't been messaged yet ({already_sent} already sent from an earlier run).",
+    }

@@ -412,6 +412,8 @@ import HQSetup from "./Hqsetup.jsx";
 import HQAdminManagement from "./Hqadminmanagement.jsx";
 import HqVendorOverview from "./HqVendorOverview.jsx";
 import AnalyticsHub from "./AnalyticsHub.jsx";
+import DepartmentReports from "./DepartmentReports.jsx";
+import TenantDepartments from "./TenantDepartments.jsx";
 import HqAllowanceApprovals from "./HqAllowanceApprovals.jsx";
 
 // ─── Store context from localStorage ─────────────────────────────────────────
@@ -595,6 +597,12 @@ export default function AdminModule() {
 
         case "analyticsHub":
           return <AnalyticsHub />;
+
+        case "departmentReports":
+          return <DepartmentReports />;
+
+        case "tenantDepartments":
+          return <TenantDepartments />;
 
         case "allowanceApprovals":
           return <HqAllowanceApprovals />;

@@ -59,6 +59,14 @@ def get_redirect_for_departments(departments: List[str]) -> Dict[str, Any]:
             "routes":        {},
         }
     routes = {dept: DEPARTMENT_ROUTES.get(dept, "/admin") for dept in departments}
+    # "HQ" is a true HQ admin — they have (or can see) every department
+    # anyway, so making them pick a tile on the Department Selector is
+    # pure friction, not a real choice. They land straight on their own
+    # Admin Panel regardless of how many other departments are also on
+    # their account; Department Reports inside that Panel is where they
+    # actually look at any individual department's dashboard.
+    if "HQ" in departments:
+        return {"redirect_type": "direct", "redirect_url": routes.get("HQ", "/admin"), "departments": departments, "routes": routes}
     if len(departments) == 1:
         return {"redirect_type": "direct",   "redirect_url": routes[departments[0]], "departments": departments, "routes": routes}
     return     {"redirect_type": "selector", "redirect_url": "/dashboard/select",   "departments": departments, "routes": routes}

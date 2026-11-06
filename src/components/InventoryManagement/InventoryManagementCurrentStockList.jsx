@@ -934,7 +934,7 @@ import {
   FaFilter, FaSearch, FaBoxes, FaLayerGroup, FaBuilding,
   FaSyncAlt, FaChevronDown, FaWarehouse, FaTimes, FaTag,
   FaStore, FaUserTie, FaTrashAlt, FaClipboardList, FaEdit,
-  FaPrint, FaExclamationTriangle, FaPlus, FaSlidersH, FaFileImport,
+  FaPrint, FaExclamationTriangle, FaPlus, FaSlidersH, FaFileImport, FaDownload,
 } from "react-icons/fa";
 import QuickFillPanel from "../Quickfillpanel";
 import BarcodeStickerPrint from "../Barcodestickerprint.jsx";
@@ -1560,6 +1560,15 @@ export default function InventoryCurrentStockList() {
 
   const [data,    setData]    = useState([]);
   const [loading, setLoading] = useState(false);
+  // Defaults to today — leaving this untouched means this screen behaves
+  // exactly as it always has (live /current-stock). Picking any earlier
+  // date switches it to /inventory/stock-as-on, which reconstructs that
+  // date's quantities from today's stock plus every movement logged
+  // since. Nothing about the original behavior changes unless this is
+  // actually changed.
+  const todayYmd = () => new Date().toISOString().slice(0, 10);
+  const [asOnDate, setAsOnDate] = useState(todayYmd());
+  const [exportingHistorical, setExportingHistorical] = useState(false);
   const [page, setPage] = useState(1);
   const [pages, setPages] = useState(1);
   const [totalCount, setTotalCount] = useState(0);
@@ -1646,10 +1655,12 @@ export default function InventoryCurrentStockList() {
     const timer = setTimeout(() => setSearchQuery(search.trim()), 350);
     return () => clearTimeout(timer);
   }, [search]);
-  useEffect(() => { setPage(1); }, [division, section, department, searchQuery, sourceFilter, vendorFilter]);
+  useEffect(() => { setPage(1); }, [division, section, department, searchQuery, sourceFilter, vendorFilter, asOnDate]);
 
   useEffect(() => { setSections(division && sectionMap[division] ? sectionMap[division] : []); setSection(""); setDepartment(""); }, [division, sectionMap]);
   useEffect(() => { setDepartments(section && deptMap[section] ? deptMap[section] : []); setDepartment(""); }, [section, deptMap]);
+
+  const isHistorical = asOnDate !== todayYmd();
 
   const fetchData = useCallback(async () => {
     setLoading(true); setError(null);
@@ -1659,15 +1670,23 @@ export default function InventoryCurrentStockList() {
       if (section)    params.append("section",    section);
       if (department) params.append("department", department);
       if (searchQuery) params.append("search", searchQuery);
-      if (sourceFilter !== "all") params.append("source", sourceFilter);
-      if (vendorFilter) params.append("vendor", vendorFilter);
       params.append("page", String(page));
       params.append("page_size", "100");
 
       const token = getAdminToken();
-      const res = await fetch(`${API}/inventory/current-stock?${params.toString()}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      let url;
+      if (isHistorical) {
+        // Source filter (Admin/Vendor/GRN) doesn't apply to the
+        // reconstructed historical view — it's not tracked per-movement,
+        // only on the live record — so it's intentionally left off here.
+        params.append("as_on_date", asOnDate);
+        url = `${API}/inventory/stock-as-on?${params.toString()}`;
+      } else {
+        if (sourceFilter !== "all") params.append("source", sourceFilter);
+        if (vendorFilter) params.append("vendor", vendorFilter);
+        url = `${API}/inventory/current-stock?${params.toString()}`;
+      }
+      const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
       if (!res.ok) throw new Error();
       const json = await res.json();
       setData((json.data || []).map(r => ({ ...r, /* unchanged */ })));
@@ -1678,9 +1697,55 @@ export default function InventoryCurrentStockList() {
       setServerVendorNames(json.vendor_names || []);
     } catch { setError("Could not load stock data."); }
     finally { setLoading(false); }
-  }, [division, section, department, searchQuery, sourceFilter, vendorFilter, page]);
+  }, [division, section, department, searchQuery, sourceFilter, vendorFilter, page, isHistorical, asOnDate]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
+
+  // Exports the FULL reconstructed stock for asOnDate, not just the
+  // current page — loops the same endpoint at its max page_size (250)
+  // across every page, since this is a deliberate, infrequent action
+  // (not the live table render) where a few extra round trips are fine.
+  const exportHistoricalExcel = async () => {
+    setExportingHistorical(true);
+    try {
+      const token = getAdminToken();
+      const all = [];
+      let currentPage = 1;
+      let totalPages = 1;
+      do {
+        const params = new URLSearchParams();
+        if (division) params.append("division", division);
+        if (section) params.append("section", section);
+        if (department) params.append("department", department);
+        if (searchQuery) params.append("search", searchQuery);
+        params.append("as_on_date", asOnDate);
+        params.append("page", String(currentPage));
+        params.append("page_size", "250");
+        const res = await fetch(`${API}/inventory/stock-as-on?${params.toString()}`, { headers: { Authorization: `Bearer ${token}` } });
+        if (!res.ok) throw new Error("Export failed.");
+        const json = await res.json();
+        all.push(...(json.data || []));
+        totalPages = json.pages || 1;
+        currentPage += 1;
+      } while (currentPage <= totalPages);
+
+      const XLSX = await import("xlsx");
+      const rows = all.map(r => ({
+        Barcode: r.barcode, SKU: r.sku, Product: r.product,
+        Division: r.division, Section: r.section, Department: r.department,
+        Quantity: r.qty, Rate: r.rate, Value: Math.max(0, r.qty) * r.rate,
+        Status: r.status?.label || "",
+      }));
+      const sheet = XLSX.utils.json_to_sheet(rows);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, sheet, "Stock as on");
+      XLSX.writeFile(workbook, `stock-as-on-${asOnDate}.xlsx`);
+    } catch {
+      alert("❌ Could not export. Please try again.");
+    } finally {
+      setExportingHistorical(false);
+    }
+  };
 
   const handleDeleteConfirm = async () => {
     if (!deleteTarget) return;
@@ -1880,10 +1945,21 @@ export default function InventoryCurrentStockList() {
             <div className="p-2 bg-indigo-600 rounded-xl"><FaBoxes className="text-white text-lg" /></div>
             <div>
               <h1 className="text-xl sm:text-2xl font-bold text-slate-900 leading-tight">Central Stock List</h1>
-              <p className="text-xs text-slate-500">{totalCount} items · Central Inventory (HQ)</p>
+              <p className="text-xs text-slate-500">{totalCount} items · Central Inventory (HQ){isHistorical ? ` · Stock as on ${asOnDate}` : ""}</p>
             </div>
           </div>
           <div className="flex items-center gap-2">
+            <label className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-600" title="Reconstructs stock as it stood on this date from today's quantities plus every logged movement since — pick today to go back to the live view.">
+              Stock as on
+              <input type="date" max={todayYmd()} value={asOnDate} onChange={(e) => setAsOnDate(e.target.value || todayYmd())}
+                className="border-0 bg-transparent text-xs font-bold text-indigo-700 outline-none" />
+            </label>
+            {isHistorical && (
+              <button onClick={exportHistoricalExcel} disabled={exportingHistorical}
+                className="flex items-center gap-2 px-3 py-2 rounded-xl border border-emerald-200 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 text-sm font-bold transition-colors disabled:opacity-50">
+                <FaDownload className="text-xs" /> {exportingHistorical ? "Exporting…" : "Export Excel"}
+              </button>
+            )}
             <button onClick={fetchData} disabled={loading}
               className="flex items-center gap-2 px-3 py-2 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-600 text-sm font-medium transition-colors disabled:opacity-50">
               <FaSyncAlt className={loading ? "animate-spin" : ""} /> Refresh
@@ -1933,7 +2009,16 @@ export default function InventoryCurrentStockList() {
           </div>
         </div>
 
-        {/* Source tabs */}
+        {/* Source tabs — not shown for a historical "stock as on" view:
+            source (Admin/Vendor/GRN) is tracked on the live record only,
+            not per past movement, so it has no meaning for a reconstructed
+            date. */}
+        {isHistorical && (
+          <div className="shrink-0 rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-2.5 text-xs font-bold text-indigo-800">
+            Showing stock reconstructed as on {asOnDate}. Source/vendor filters don't apply to a historical view — pick today's date to use them again.
+          </div>
+        )}
+        {!isHistorical && (
         <div className="flex gap-2 shrink-0 flex-wrap items-center">
           <span style={{ fontSize:11, color:"#94A3B8", fontWeight:700 }}>SOURCE</span>
           <button onClick={() => { setSourceFilter("all"); setVendorFilter(""); }}    style={tabStyle("all",    "#6366F1")}>All ({sourceCounts.all})</button>
@@ -1957,6 +2042,7 @@ export default function InventoryCurrentStockList() {
             </>
           )}
         </div>
+        )}
 
         {/* Filters */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 bg-white p-3 sm:p-4 rounded-2xl shadow-sm shrink-0 border border-slate-200">

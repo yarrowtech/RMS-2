@@ -16,7 +16,7 @@ import {
   Bell, Database, BarChart2, Globe, Key, FileText, Layers, Hash,
   ChevronRight, ToggleLeft, ToggleRight, Mail, Clock, Ban,
   ArrowRight, Server, Wifi, HardDrive, Zap, ShieldCheck, ShieldOff,
-  UserCheck, UserX, SendHorizonal, Store, Edit, Plus, IndianRupee, Headphones
+  UserCheck, UserX, SendHorizonal, Store, Edit, Plus, IndianRupee, Headphones, Sparkles
 } from 'lucide-react';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -228,8 +228,37 @@ const AddAdminModal = ({ isOpen, onClose, formData, formErrors, onInputChange, o
 
 // ─── View Admin Modal ──────────────────────────────────────────────────────────
 
-const ViewAdminModal = ({ admin, onClose }) => {
+const ViewAdminModal = ({ admin, onClose, onFixed }) => {
+  const [fixing, setFixing] = useState(false);
   if (!admin) return null;
+
+  // Covers the case where a tenant's primary HQ admin ends up with no way
+  // back into their own Admin Management Panel — "HQ" (not a checkbox on
+  // their own tenant's Edit Admin Access screen, see hq_store_routes.py)
+  // is what makes that Panel reachable at all, so if it's ever missing
+  // from managedDepartments, that admin's own tenant-scoped screens can't
+  // fix it either (Admin Management IS the thing they're locked out of).
+  // Super Admin sits outside that scope entirely, so this is the one
+  // place that can always restore it, regardless of what's broken on the
+  // tenant side.
+  const missingHqAccess = admin.scope === "hq" && !(admin.managedDepartments || []).includes("HQ");
+  const grantHqAccess = async () => {
+    setFixing(true);
+    try {
+      const nextDepartments = ["HQ", ...(admin.managedDepartments || [])];
+      await apiFetch(`/superadmin/admins/${admin.id}/departments`, {
+        method: "PATCH",
+        body: JSON.stringify({ managedDepartments: nextDepartments }),
+      });
+      await onFixed?.();
+      onClose();
+    } catch (e) {
+      alert(e.message || "Could not grant Admin Panel access.");
+    } finally {
+      setFixing(false);
+    }
+  };
+
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg">
@@ -267,6 +296,16 @@ const ViewAdminModal = ({ admin, onClose }) => {
               ))}
             </div>
           </div>
+          {missingHqAccess && (
+            <div className="rounded-xl border border-rose-200 bg-rose-50 p-3">
+              <p className="text-xs font-bold text-rose-800">⚠️ No Admin Management Panel access</p>
+              <p className="mt-1 text-xs text-rose-700">This HQ admin has no "HQ" department — they can't open their own Admin Management Panel (Stores &amp; Admins, Admin Management, etc.), including to fix this themselves.</p>
+              <button onClick={grantHqAccess} disabled={fixing}
+                className="mt-2 rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-rose-700 disabled:opacity-50">
+                {fixing ? "Granting…" : "Grant Admin Panel access"}
+              </button>
+            </div>
+          )}
           {(admin.permissions || []).length > 0 && (
             <div>
               <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Permissions</p>
@@ -1099,6 +1138,33 @@ export default function SuperAdmin() {
     finally { setResetLoading(false); }
   }, []);
 
+  const [deptUpgradeRequests, setDeptUpgradeRequests] = useState([]);
+  const [deptUpgradeLoading, setDeptUpgradeLoading] = useState(false);
+  const [deptUpgradeBusyId, setDeptUpgradeBusyId] = useState('');
+
+  const fetchDeptUpgradeRequests = useCallback(async () => {
+    setDeptUpgradeLoading(true);
+    try {
+      const data = await apiFetch('/superadmin/department-upgrade-requests');
+      setDeptUpgradeRequests(Array.isArray(data) ? data : []);
+    } catch (err) { console.error('Fetch department upgrade requests:', err); }
+    finally { setDeptUpgradeLoading(false); }
+  }, []);
+
+  const reviewDeptUpgradeRequest = async (id, action) => {
+    setDeptUpgradeBusyId(id);
+    try {
+      await apiFetch(`/superadmin/department-upgrade-requests/${id}/review`, {
+        method: 'POST', body: JSON.stringify({ action }),
+      });
+      await fetchDeptUpgradeRequests();
+    } catch (err) {
+      alert(err.message || 'Could not update this request.');
+    } finally {
+      setDeptUpgradeBusyId('');
+    }
+  };
+
   const [auditLogs, setAuditLogs] = useState([]);
   const [auditLogsLoading, setAuditLogsLoading] = useState(true);
 
@@ -1112,6 +1178,7 @@ export default function SuperAdmin() {
   }, []);
 
   useEffect(() => { fetchAdmins(); }, [fetchAdmins]);
+  useEffect(() => { fetchDeptUpgradeRequests(); }, [fetchDeptUpgradeRequests]);
   useEffect(() => { fetchAuditLogs(); }, [fetchAuditLogs]);
 
   // Auto-fetch reset requests when that card opens
@@ -1333,6 +1400,7 @@ export default function SuperAdmin() {
     { id: 'health',    label: 'System Health', icon: Server },
     { id: 'retailers', label: 'Retailers',       icon: Building2 },
     { id: 'onboarding', label: 'Onboarding',     icon: UserPlus },
+    { id: 'deptUpgrades', label: 'Dept. Upgrades', icon: Sparkles },
     { id: 'controls',  label: 'My Controls',    icon: Key      },
     { id: 'logs',      label: 'Activity Logs',  icon: Activity  },
   ];
@@ -1348,7 +1416,7 @@ export default function SuperAdmin() {
         onPermissionToggle={handlePermissionToggle} onSubmit={handleSubmitAdmin}
         retailers={retailers}
       />
-      <ViewAdminModal admin={selectedAdmin} onClose={() => setSelectedAdmin(null)} />
+      <ViewAdminModal admin={selectedAdmin} onClose={() => setSelectedAdmin(null)} onFixed={fetchAdmins} />
 
       {/* Header */}
       <header className="bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 border-b border-slate-700 shadow-2xl">
@@ -1463,6 +1531,9 @@ export default function SuperAdmin() {
                 <Icon className="w-4 h-4" />
                 <span className="hidden sm:inline">{label}</span>
                 {id === 'controls' && resetRequests.length > 0 && (
+                  <span className="w-2 h-2 rounded-full bg-red-500 absolute top-2 right-2" />
+                )}
+                {id === 'deptUpgrades' && deptUpgradeRequests.length > 0 && (
                   <span className="w-2 h-2 rounded-full bg-red-500 absolute top-2 right-2" />
                 )}
               </button>
@@ -1619,6 +1690,48 @@ export default function SuperAdmin() {
           <SuperAdminOnboardingRequests
             onCreateTenant={(item) => { setPendingOnboarding(item); setActiveTab('retailers'); }}
           />
+        )}
+
+        {/* ── TAB: Department Upgrade Requests ── */}
+        {activeTab === 'deptUpgrades' && (
+          <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
+            <div className="p-5 border-b border-gray-100 flex items-center justify-between">
+              <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+                <Sparkles className="w-5 h-5 text-amber-500" /> Department Upgrade Requests
+              </h2>
+              <button onClick={fetchDeptUpgradeRequests} className="p-2 text-gray-400 hover:text-gray-700 hover:bg-gray-50 rounded-lg transition-colors" title="Refresh">
+                <RefreshCw className={`w-4 h-4 ${deptUpgradeLoading ? 'animate-spin' : ''}`} />
+              </button>
+            </div>
+            <div className="divide-y divide-gray-100">
+              {deptUpgradeRequests.length === 0 ? (
+                <p className="text-center text-gray-400 text-sm py-10">No pending department upgrade requests.</p>
+              ) : deptUpgradeRequests.map((r) => (
+                <div key={r.id} className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-bold text-gray-900">{r.department} <span className="font-normal text-gray-400">— {r.tenant_id}</span></p>
+                    <p className="text-xs text-gray-500 mt-0.5">Requested by {r.requested_by_name || 'HQ admin'}{r.note ? ` · "${r.note}"` : ''}</p>
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      disabled={deptUpgradeBusyId === r.id}
+                      onClick={() => reviewDeptUpgradeRequest(r.id, 'decline')}
+                      className="px-3 py-1.5 rounded-lg border border-gray-200 text-xs font-bold text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+                    >
+                      Decline
+                    </button>
+                    <button
+                      disabled={deptUpgradeBusyId === r.id}
+                      onClick={() => reviewDeptUpgradeRequest(r.id, 'approve')}
+                      className="px-3 py-1.5 rounded-lg bg-emerald-600 text-xs font-bold text-white hover:bg-emerald-700 disabled:opacity-50"
+                    >
+                      {deptUpgradeBusyId === r.id ? 'Working…' : 'Approve & unlock'}
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
         )}
 
         {/* ── Edit Tenant Modal ── */}

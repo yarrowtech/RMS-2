@@ -263,6 +263,115 @@ async def get_inventory_filter_tree(ctx: dict = Depends(get_hq_tenant)):
 
 
 # ─────────────────────────────────────────────
+# GET /inventory/stock-as-on
+# ─────────────────────────────────────────────
+
+@router.get("/stock-as-on")
+async def get_stock_as_on(
+    as_on_date: str = Query(..., description="YYYY-MM-DD — reconstructs stock as it stood at the end of this date"),
+    division:   Optional[str] = Query(None),
+    section:    Optional[str] = Query(None),
+    department: Optional[str] = Query(None),
+    search:     Optional[str] = Query(None),
+    page:       int           = Query(1, ge=1),
+    page_size:  int           = Query(100, ge=25, le=250),
+    ctx:        dict          = Depends(get_hq_tenant),
+):
+    """Reconstructs historical stock by working backwards from today's
+    live quantity: current_qty minus the net effect of every logged
+    movement (GRN in, GRN reversal, POS sale/return, manual adjustment)
+    dated AFTER as_on_date. Nothing is snapshotted or pre-computed —
+    this is purely additive, read-only math over data that's already
+    being written exactly as it is today; it changes nothing about how
+    /current-stock or any other existing report behaves.
+
+    Accuracy note: this is only as good as the ledger's coverage. Any
+    stock-moving event that happened outside GRN/adjustments/POS (e.g. a
+    direct database edit) won't be reversed out and the reconstructed
+    figure would be off by that amount.
+    """
+    tenant_id = ctx["tenant_id"]
+    product_master = await build_product_master(tenant_id)
+
+    stock_map: Dict[str, dict] = {}
+    async for doc in inventory_collection.find({"tenant_id": tenant_id}):
+        bc = (doc.get("barcode") or "").strip()
+        if bc:
+            stock_map[bc] = {
+                "stockQty":    float(doc.get("stockQty", 0)),
+                "rate":        float(doc.get("rate", 0)),
+                "description": doc.get("description", ""),
+                "division":    doc.get("division", ""),
+                "section":     doc.get("section", ""),
+                "department":  doc.get("department", ""),
+            }
+
+    ledger_rows = await _collect_ledger_rows(tenant_id, None, ctx, product_master)
+    net_after: Dict[str, float] = {}
+    for r in ledger_rows:
+        if r["date"] > as_on_date:
+            net_after[r["barcode"]] = net_after.get(r["barcode"], 0.0) + (r["in_qty"] - r["out_qty"])
+
+    all_barcodes = set(product_master.keys()) | set(stock_map.keys()) | set(net_after.keys())
+
+    rows = []
+    for bc in all_barcodes:
+        pm  = product_master.get(bc, {})
+        stk = stock_map.get(bc, {})
+        current_qty = stk["stockQty"] if bc in stock_map else pm.get("initial_qty", 0)
+        rate = stk["rate"] if stk.get("rate", 0) > 0 else pm.get("cost_price", 0)
+        qty = round(current_qty - net_after.get(bc, 0.0), 3)
+
+        rows.append({
+            "id":         pm.get("product_id", ""),
+            "barcode":    bc,
+            "sku":        pm.get("sku", ""),
+            "design_no":  pm.get("design_no", ""),
+            "brand":      pm.get("brand", ""),
+            "product":    pm.get("product") or stk.get("description") or bc,
+            "division":   pm.get("division") or stk.get("division", ""),
+            "section":    pm.get("section")  or stk.get("section",  ""),
+            "department": pm.get("department") or stk.get("department", ""),
+            "hsn_code":   pm.get("hsn_code", ""),
+            "mrp":        pm.get("mrp", 0),
+            "qty":        qty,
+            "rate":       rate,
+            "status":     stock_status(qty),
+        })
+
+    if division:
+        rows = [r for r in rows if r["division"] == division]
+    if section:
+        rows = [r for r in rows if r["section"] == section]
+    if department:
+        rows = [r for r in rows if r["department"] == department]
+    if search:
+        s = search.strip().lower()
+        rows = [
+            r for r in rows
+            if s in r["product"].lower() or s in r["sku"].lower() or s in r["barcode"].lower()
+        ]
+
+    rows.sort(key=lambda r: r["product"].lower())
+
+    total = len(rows)
+    summary = {
+        "in_stock":     sum(1 for r in rows if r["status"]["label"] == "In Stock"),
+        "low_stock":    sum(1 for r in rows if r["status"]["label"] == "Low Stock"),
+        "out_of_stock": sum(1 for r in rows if r["status"]["label"] == "Out of Stock"),
+        "quantity":     sum(r["qty"] for r in rows),
+        "value":        sum(r["qty"] * r["rate"] for r in rows if r["qty"] > 0),
+    }
+    start = (page - 1) * page_size
+    return JSONResponse({
+        "status": "success", "count": total, "data": rows[start:start + page_size],
+        "page": page, "page_size": page_size,
+        "pages": max(1, (total + page_size - 1) // page_size),
+        "as_on_date": as_on_date, "summary": summary,
+    })
+
+
+# ─────────────────────────────────────────────
 # GET /inventory/current-stock
 # ─────────────────────────────────────────────
 

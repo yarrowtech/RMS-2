@@ -706,6 +706,102 @@ function LuckyDrawReminderModal({ campaign, onClose }) {
   );
 }
 
+function LuckyDrawAnnounceModal({ campaign, onClose }) {
+  const [message, setMessage] = useState("");
+  const [testEmail, setTestEmail] = useState("");
+  const [testPhone, setTestPhone] = useState("");
+  const [sending, setSending] = useState(false);
+  const [result, setResult] = useState(null);
+  const [error, setError] = useState("");
+  const [status, setStatus] = useState(null);
+  const [statusLoading, setStatusLoading] = useState(true);
+
+  const loadStatus = useCallback(async () => {
+    setStatusLoading(true);
+    try {
+      const json = await crmFetch(`/api/customer-crm/lucky-draw/campaigns/${campaign.id}/announcement`);
+      setStatus(json);
+    } catch { /* no announcement sent yet — fine, status stays null */ }
+    finally { setStatusLoading(false); }
+  }, [campaign.id]);
+
+  useEffect(() => { loadStatus(); }, [loadStatus]);
+
+  // While a send is in progress, poll so the admin can watch it finish —
+  // this can genuinely take a while across a few thousand recipients
+  // (SMS especially), and it keeps running in the background even if
+  // this modal is closed and reopened later.
+  useEffect(() => {
+    if (status?.status !== "SENDING") return undefined;
+    const timer = setInterval(loadStatus, 3000);
+    return () => clearInterval(timer);
+  }, [status?.status, loadStatus]);
+
+  const send = async (mode) => {
+    setSending(true); setError("");
+    try {
+      const json = await crmFetch(`/api/customer-crm/lucky-draw/campaigns/${campaign.id}/announce-winners`, {
+        method: "POST", body: JSON.stringify({ message, test_email: mode === "test_email" ? testEmail : "", test_phone: mode === "test_sms" ? testPhone : "" }),
+      });
+      setResult(json);
+      if (mode === "all") loadStatus();
+    } catch (e) { setError(e.message || "Could not send the announcement."); }
+    finally { setSending(false); }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[1000] grid place-items-center overflow-y-auto bg-slate-950/50 p-4 backdrop-blur-sm">
+      <div className="flex max-h-[94dvh] w-full max-w-xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+        <ModalHeader eyebrow="Lucky Draw" title={`Announce winners — ${campaign.campaign_name}`} onClose={onClose} />
+        <div className="space-y-4 overflow-y-auto p-6">
+          <div className="rounded-xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-xs leading-5 text-emerald-900">
+            Goes out to <b>every entrant</b> — bill-no holders and no-bill-no customers alike. This is safe to send more than once: anyone already messaged is automatically skipped, so re-running after new entries show up only reaches the new people.
+          </div>
+          {!statusLoading && status?.status === "NEEDS_RESEND" && (
+            <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs font-bold text-rose-800">
+              ⚠️ The draw for this campaign was redone after the announcement already went out — the earlier send had the wrong winner names. Everyone has been reset to unsent; click "Announce" below to send the corrected result to all {status.pending_count || 0} entrant(s).
+            </div>
+          )}
+          {!statusLoading && status && status.status !== "NEEDS_RESEND" && (
+            <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-xs font-semibold text-slate-700">
+              {status.status === "SENDING"
+                ? <span className="text-amber-700">Still sending — {status.sent_count || 0} of {(status.sent_count || 0) + (status.failed_count || 0) + (status.pending_count || 0)} done so far.</span>
+                : <span>Last sent: {status.sent_count || 0} delivered, {status.failed_count || 0} failed, as of {exportDate(status.finished_at) || "just now"}.</span>}
+            </div>
+          )}
+          <div>
+            <label className="crm-label">Message (optional — a default message with the winner names is used if left blank)</label>
+            <textarea className="crm-input min-h-28" value={message} onChange={(e) => setMessage(e.target.value)} placeholder="🎉 The results are in for the [campaign] Lucky Draw! Winners — 1st: ..., 2nd: ..., 3rd: .... Thank you to everyone who entered!" />
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="flex items-end gap-2">
+              <div className="flex-1"><label className="crm-label">Test email (optional)</label><input type="email" className="crm-input" value={testEmail} onChange={(e) => setTestEmail(e.target.value)} placeholder="your@email.com" /></div>
+              <button onClick={() => send("test_email")} disabled={sending || !testEmail.trim()} className="whitespace-nowrap rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-50">{sending ? "Sending…" : "Send"}</button>
+            </div>
+            <div className="flex items-end gap-2">
+              <div className="flex-1"><label className="crm-label">Test SMS (optional)</label><input type="tel" className="crm-input" value={testPhone} onChange={(e) => setTestPhone(e.target.value)} placeholder="10 digit mobile" /></div>
+              <button onClick={() => send("test_sms")} disabled={sending || !testPhone.trim()} className="whitespace-nowrap rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-50">{sending ? "Sending…" : "Send"}</button>
+            </div>
+          </div>
+          {error && <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600">⚠️ {error}</div>}
+          {result && !result.test && (
+            <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-700">
+              {result.message}
+            </div>
+          )}
+          {result?.test && (
+            <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-700">{result.message}</div>
+          )}
+        </div>
+        <div className="flex justify-end gap-2 border-t border-slate-100 p-4">
+          <button onClick={onClose} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-bold text-slate-600 hover:bg-slate-50">Close</button>
+          <button onClick={() => send("all")} disabled={sending} className="rounded-xl bg-emerald-600 px-5 py-2 text-sm font-bold text-white hover:bg-emerald-700 disabled:opacity-50">{sending ? "Sending…" : status?.sent_count ? "Send to new/unsent entrants" : "Announce to all entrants"}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function DrawModal({ campaign, isHq, defaultRedo, onClose, onSave }) {
   const [form, setForm] = useState({ store_id: "", winner_count: 1, reason: "", redo: Boolean(defaultRedo) });
   const set = (key, value) => setForm((f) => ({ ...f, [key]: value }));
@@ -897,6 +993,7 @@ export default function CustomerCRM() {
   const [drawModal, setDrawModal] = useState(null);
   const [bulkImportModal, setBulkImportModal] = useState(null);
   const [reminderModal, setReminderModal] = useState(null);
+  const [announceModal, setAnnounceModal] = useState(null);
   const [lookupPhone, setLookupPhone] = useState("");
   const [lookupResult, setLookupResult] = useState(null);
   const [lookupBusy, setLookupBusy] = useState(false);
@@ -1545,6 +1642,7 @@ export default function CustomerCRM() {
                   {c.status === "CLOSED" && <button onClick={() => setDrawModal({ campaign: c, defaultRedo: hasOwnDraw(c.id) })} className="flex-1 rounded-lg bg-indigo-600 px-3 py-2 text-xs font-bold text-white hover:bg-indigo-700"><Trophy size={14} className="inline"/> {hasOwnDraw(c.id) ? "Redo draw" : "Run draw"}</button>}
                 </div>
                 {isHq && <button onClick={() => setReminderModal(c)} className="mt-2 w-full rounded-lg border border-indigo-200 px-3 py-2 text-xs font-bold text-indigo-700 hover:bg-indigo-50">Send countdown reminder</button>}
+                {isHq && hasOwnDraw(c.id) && <button onClick={() => setAnnounceModal(c)} className="mt-2 w-full rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-bold text-emerald-700 hover:bg-emerald-100"><Trophy size={13} className="mr-1 inline"/>Announce winners</button>}
               </div>
             ))}
             {!(luckyDraw.campaigns || []).length && <p className="text-sm text-slate-500">No campaign yet.{isHq ? " Create one to start collecting slip entries." : " Ask HQ Admin to create one."}</p>}
@@ -1855,6 +1953,7 @@ export default function CustomerCRM() {
       {drawModal && <DrawModal campaign={drawModal.campaign} isHq={data.scope?.scope === "hq"} defaultRedo={drawModal.defaultRedo} onClose={() => setDrawModal(null)} onSave={runDraw} />}
       {bulkImportModal && <LuckyDrawBulkImportModal campaigns={(luckyDraw.campaigns || []).filter((c) => c.status === "ACTIVE")} defaultCampaignId={ldCampaignFilter} isHq={data.scope?.scope === "hq"} hqStores={hqStores} onClose={() => setBulkImportModal(null)} onDone={loadLuckyDraw} />}
       {reminderModal && <LuckyDrawReminderModal campaign={reminderModal} onClose={() => setReminderModal(null)} />}
+      {announceModal && <LuckyDrawAnnounceModal campaign={announceModal} onClose={() => setAnnounceModal(null)} />}
       {printSlip && <PrintSlipModal entry={printSlip} onClose={() => setPrintSlip(null)} onPrinted={markPrinted} />}
       {couponModal && <CouponModal initial={couponModal.id ? couponModal : null} campaigns={luckyDraw.campaigns} onClose={() => setCouponModal(null)} onSave={saveCoupon} />}
     </div>

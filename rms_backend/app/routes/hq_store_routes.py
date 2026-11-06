@@ -661,9 +661,26 @@ STORE_DEPARTMENT_DEFAULT_PERMISSIONS = {
 }
 
 
+async def _enabled_departments_for_tenant(tenant_id: str) -> Optional[List[str]]:
+    """None means "no curation set up yet" — every HQ department stays
+    allowed, so a tenant that's never opened the new Departments screen
+    isn't suddenly locked out of staff it already has."""
+    tenant = await tenants_collection.find_one({"tenant_id": tenant_id}, {"enabled_departments": 1})
+    if tenant is None or tenant.get("enabled_departments") is None:
+        return None
+    return tenant["enabled_departments"]
+
+
 def _department_allowed_for_scope(department: str, scope: str) -> bool:
     if scope == "hq":
-        return department in HQ_DEPARTMENTS
+        # "HQ" is a pseudo-department, not a checkbox on the Edit Admin
+        # Access screen — authRedirect.js's DEPT_PATH_MAP["HQ"] = "/admin"
+        # and DepartmentSelector.jsx both treat it as what makes the Admin
+        # Management Panel itself reachable. It must always validate as
+        # allowed for an hq-scoped admin so it's never rejected if present
+        # in a save — see update_admin_access() below, which is what
+        # actually keeps it from ever being silently dropped.
+        return department == "HQ" or department in HQ_DEPARTMENTS
     if scope == "store":
         return department in STORE_DEPARTMENTS
     return False
@@ -847,6 +864,19 @@ async def hq_create_admin(
             )
         )
 
+    if payload.scope == "hq":
+        enabled = await _enabled_departments_for_tenant(ctx["tenant_id"])
+        if enabled is not None:
+            not_unlocked = [d for d in payload.managedDepartments if d != "HQ" and d not in enabled]
+            if not_unlocked:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"This business hasn't unlocked: {', '.join(not_unlocked)}. "
+                        f"Enable it (or request an upgrade) under Admin Panel → Departments first."
+                    )
+                )
+
     existing = await admins_collection.find_one({"email": payload.email})
     if existing:
         raise HTTPException(status_code=400, detail=f"Admin with email '{payload.email}' already exists.")
@@ -961,8 +991,22 @@ async def hq_update_admin(
         # scope, using the admin's existing "scope" field, not a scope
         # re-derived from the new department list.
         admin_scope = admin.get("scope", "hq")
+        next_departments = list(payload.managedDepartments)
+        # The Edit Admin Access screen's checkbox grid is for the real
+        # operational departments only — "HQ" (Admin Management Panel
+        # access) is handled by its own separate toggle in that screen,
+        # since NOT every hq-scoped admin should have it: a department
+        # head created with just, say, Finance, is deliberately scoped
+        # without Admin Panel access (see create_hq_admin() above — it
+        # never adds "HQ" on its own). So this only ever PRESERVES "HQ" if
+        # the admin already had it before this edit; it never grants it
+        # fresh just because the admin happens to be hq-scoped. Explicit
+        # intent (the separate toggle, or the original tenant-creation
+        # default) is what actually grants it, not this safety net.
+        if admin_scope == "hq" and "HQ" in admin.get("managedDepartments", []) and "HQ" not in next_departments:
+            next_departments = ["HQ"] + next_departments
         invalid = [
-            d for d in payload.managedDepartments
+            d for d in next_departments
             if not _department_allowed_for_scope(d, admin_scope)
         ]
         if invalid:
@@ -973,17 +1017,40 @@ async def hq_update_admin(
                     f"{', '.join(invalid)}."
                 )
             )
-        if not payload.managedDepartments:
+        if not next_departments:
             raise HTTPException(status_code=400, detail="An admin must have at least one department.")
-        if locked_store_id and STORE_HR_RESTRICTED_DEPARTMENTS.intersection(payload.managedDepartments):
+        if admin_scope == "hq":
+            enabled = await _enabled_departments_for_tenant(ctx["tenant_id"])
+            # Only block departments being newly ADDED by this edit — an
+            # admin who already had a paid department (e.g. granted before
+            # this curation feature existed, or before the tenant re-locked
+            # it) keeps it. Otherwise every unrelated edit to that admin
+            # (even just a permission tweak) would fail until HQ re-unlocks
+            # a department nobody is actually trying to add here.
+            previously_had = set(admin.get("managedDepartments", []))
+            newly_added = [d for d in next_departments if d not in previously_had]
+            if enabled is not None:
+                not_unlocked = [d for d in newly_added if d != "HQ" and d not in enabled]
+                if not_unlocked:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            f"This business hasn't unlocked: {', '.join(not_unlocked)}. "
+                            f"Enable it (or request an upgrade) under Admin Panel → Departments first."
+                        )
+                    )
+        if locked_store_id and STORE_HR_RESTRICTED_DEPARTMENTS.intersection(next_departments):
             raise HTTPException(
                 status_code=403,
                 detail="Assigning HR or Finance needs HQ approval — ask your HQ admin to make this change.",
             )
-        patch["managedDepartments"] = payload.managedDepartments
+        patch["managedDepartments"] = next_departments
         # Keep the legacy single department field aligned with the first
-        # selected department. Older screens and setup emails still read it.
-        patch["department"] = payload.managedDepartments[0]
+        # selected REAL department — "HQ" is always prepended above, so
+        # skip past it here rather than making every hq admin's primary
+        # department label show as the literal string "HQ".
+        real_departments = [d for d in next_departments if d != "HQ"]
+        patch["department"] = real_departments[0] if real_departments else "HQ"
     if payload.status             is not None:
         if payload.status not in ("ACTIVE", "SUSPENDED"):
             raise HTTPException(status_code=400, detail="status must be ACTIVE or SUSPENDED")

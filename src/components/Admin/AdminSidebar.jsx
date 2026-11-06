@@ -561,6 +561,8 @@ export default function AdminSidebar({
             {sectionLabel("Overview")}
             {topBtn("dashboard",      <FaChartPie />,  "Dashboard")}
             {topBtn("analyticsHub",   <FaChartPie />,  "Analytics Hub")}
+            {topBtn("departmentReports", <LayoutGrid size={14}/>, "Department Reports")}
+            {topBtn("tenantDepartments", <Package size={14}/>, "Departments")}
             {topBtn("vendorOverview", <FaUsers />,      "Vendor Overview")}
             {topBtn("allowanceApprovals", <Ruler size={14}/>, "Allowance Approvals")}
 

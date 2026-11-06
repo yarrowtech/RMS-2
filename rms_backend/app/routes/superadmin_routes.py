@@ -101,6 +101,7 @@ async def get_all_admins(current_admin: CurrentAdmin = Depends(get_current_super
             "store_id":           admin.get("store_id", ""),
             "store_name":         admin.get("store_name", ""),
             "store_type":         admin.get("store_type", ""),
+            "scope":              admin.get("scope", "hq" if not admin.get("store_id") else "store"),
         })
     return {"count": len(admins_list), "admins": admins_list}
  
