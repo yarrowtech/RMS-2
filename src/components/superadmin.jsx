@@ -29,6 +29,17 @@ const availableDepartments = [
   'Third Party', 'Merchandiser Buyer', 'Vendor',
 ];
 
+// Mirrors hq_store_routes.py's HQ_DEPARTMENTS exactly (HQ_ONLY_DEPARTMENTS +
+// SHARED_DEPARTMENTS) — used only for the one-off "grant every department"
+// repair action below, so it must stay the real, full operational list, not
+// the narrower `availableDepartments` above (which is missing several of
+// these, e.g. Production & Job Work, Marketing, Customer CRM, Store Ops).
+const HQ_DEPARTMENT_NAMES = [
+  'Merchandiser Buyer', 'Logistics', 'IT', 'Design & Pattern', 'Third Party',
+  'Production & Job Work', 'Forecast & Analytics', 'Marketing', 'Inventory',
+  'Finance', 'HR', 'Customer CRM', 'Store Ops', 'Visual Merchandising',
+];
+
 const availablePermissions = [
   'User Management', 'Analytics & Reports', 'System Configuration',
   'Audit Logs', 'Billing & Finance', 'Department Control',
@@ -259,6 +270,32 @@ const ViewAdminModal = ({ admin, onClose, onFixed }) => {
     }
   };
 
+  // Covers the mirror-image breakage: an HQ admin who DOES have "HQ" (so
+  // their Admin Panel opens fine) but has no real operational department
+  // at all — e.g. tenant creation defaulted them to ["HQ"] only, before
+  // the Admin Panel's own department list was fixed to include the real
+  // HQ_DEPARTMENTS too. They can still log in and see the Panel shell, but
+  // every department-gated screen inside it (Inventory, Finance, Customer
+  // CRM...) has nothing to show them.
+  const realDepartments = (admin.managedDepartments || []).filter((d) => d !== "HQ");
+  const missingRealDepartments = admin.scope === "hq" && !missingHqAccess && realDepartments.length === 0;
+  const grantAllDepartments = async () => {
+    setFixing(true);
+    try {
+      const nextDepartments = ["HQ", ...HQ_DEPARTMENT_NAMES];
+      await apiFetch(`/superadmin/admins/${admin.id}/departments`, {
+        method: "PATCH",
+        body: JSON.stringify({ managedDepartments: nextDepartments }),
+      });
+      await onFixed?.();
+      onClose();
+    } catch (e) {
+      alert(e.message || "Could not grant department access.");
+    } finally {
+      setFixing(false);
+    }
+  };
+
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg">
@@ -303,6 +340,16 @@ const ViewAdminModal = ({ admin, onClose, onFixed }) => {
               <button onClick={grantHqAccess} disabled={fixing}
                 className="mt-2 rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-rose-700 disabled:opacity-50">
                 {fixing ? "Granting…" : "Grant Admin Panel access"}
+              </button>
+            </div>
+          )}
+          {missingRealDepartments && (
+            <div className="rounded-xl border border-amber-200 bg-amber-50 p-3">
+              <p className="text-xs font-bold text-amber-800">⚠️ No operational departments</p>
+              <p className="mt-1 text-xs text-amber-700">This HQ admin can open the Admin Panel, but has no real department assigned (only "HQ") — every department-gated screen inside (Inventory, Finance, Customer CRM, etc.) has nothing to show them.</p>
+              <button onClick={grantAllDepartments} disabled={fixing}
+                className="mt-2 rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-amber-700 disabled:opacity-50">
+                {fixing ? "Granting…" : "Grant all departments"}
               </button>
             </div>
           )}

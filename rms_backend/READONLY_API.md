@@ -10,7 +10,11 @@ It is independent of user login tokens and cannot authorize the app's write rout
 Set these backend environment variables (unset means the API returns 503):
 
 - `READONLY_API_KEY`: generate a strong random secret, e.g. `python -c "import secrets; print(secrets.token_urlsafe(32))"`.
-- `READONLY_TENANT_ID`: exact tenant ID to expose. Clients cannot override it.
+- `READONLY_TENANT_ID`: exact tenant ID to expose. Clients cannot override it. Set to the
+  literal value `*` to expose **every tenant** on this platform instead of just one — this is
+  a deliberate, explicit opt-in (it never happens from an unset/blank value) and means the
+  key holder can see every retailer's products, inventory, and store data, not only your own.
+  Only use `*` when the integration genuinely needs cross-tenant data.
 - `READONLY_MONGODB_URI`: separate MongoDB user credentials for the existing `MONGODB_DB`.
 
 Provision the MongoDB user in your database administration console with **only**

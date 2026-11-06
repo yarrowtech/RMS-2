@@ -30,7 +30,12 @@ async def authorize(response: Response, key: Optional[str] = Depends(key_header)
         raise HTTPException(503, "Read-only integration is not configured")
     if not key or not secrets.compare_digest(key.encode(), settings.readonly_api_key.encode()):
         raise HTTPException(401, "Invalid API key")
-    return settings.readonly_tenant_id
+    # "*" is a deliberate, explicit opt-in to cross-tenant access (every
+    # retailer on this platform, not just one) — it must never happen by
+    # accident from an unset env var, which is why a blank/missing
+    # readonly_tenant_id still fails the 503 check above instead of
+    # silently falling through to "all tenants".
+    return None if settings.readonly_tenant_id == "*" else settings.readonly_tenant_id
 
 
 @lru_cache(maxsize=1)
@@ -65,7 +70,7 @@ async def list_records(resource: str, limit: int = Query(50, ge=1, le=200),
                        q: Optional[str] = Query(None, min_length=1, max_length=100),
                        tenant: str = Depends(authorize)):
     collection, projection, search_fields = resource_collection(resource)
-    query = {"tenant_id": tenant}
+    query = {} if tenant is None else {"tenant_id": tenant}
     if after:
         if not ObjectId.is_valid(after):
             raise HTTPException(422, "Invalid pagination cursor")
@@ -86,7 +91,8 @@ async def get_record(resource: str, record_id: str, tenant: str = Depends(author
     if not ObjectId.is_valid(record_id):
         raise HTTPException(422, "Invalid record ID")
     try:
-        doc = await collection.find_one({"tenant_id": tenant, "_id": ObjectId(record_id)}, projection, max_time_ms=5000)
+        record_query = {"_id": ObjectId(record_id)} if tenant is None else {"tenant_id": tenant, "_id": ObjectId(record_id)}
+        doc = await collection.find_one(record_query, projection, max_time_ms=5000)
     except PyMongoError:
         raise HTTPException(503, "Read-only database unavailable") from None
     if doc is None:

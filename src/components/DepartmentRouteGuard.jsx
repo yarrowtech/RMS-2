@@ -82,7 +82,18 @@ export default function DepartmentRouteGuard({ department, children }) {
         }));
 
         if (!cancelled) {
-          if (assigned && (selected || departments.length === 1)) {
+          // "HQ" always skips department selection, same rule as the backend's
+          // get_redirect_for_departments() and DepartmentSelector.jsx's own
+          // HQ-skip branch — an admin with HQ + many other real departments
+          // (e.g. the default for every tenant's primary admin) must not be
+          // required to have "HQ" sitting in admin_active_department first,
+          // or this guard and DepartmentSelector's own redirect bounce off
+          // each other forever (selected stays false, length > 1 sends them
+          // to the selector, the selector's HQ-skip sends them right back).
+          if (departments.includes("HQ") && allowedDepartments.includes("HQ")) {
+            localStorage.setItem("admin_active_department", "HQ");
+            setState({ loading: false, allowed: true, redirect: "" });
+          } else if (assigned && (selected || departments.length === 1)) {
             if (!selected) localStorage.setItem("admin_active_department", assignedDepartment);
             setState({ loading: false, allowed: true, redirect: "" });
           } else if (departments.length > 1) {
