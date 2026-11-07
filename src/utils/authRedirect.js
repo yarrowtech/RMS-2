@@ -234,6 +234,13 @@ export function clearAuthData() {
  * Leave the current department workspace.
  * Multi-department admins keep their authenticated session and return to the
  * department selector. Single-department admins perform a complete logout.
+ * An admin with "HQ" is an exception to the "multi-department → selector"
+ * rule: "HQ" always skips the selector (DepartmentSelector.jsx, authRedirect
+ * CASE 2, DepartmentRouteGuard all redirect it straight back to /admin), so
+ * routing an HQ admin here on logout would just bounce them right back into
+ * the Admin Panel with their session untouched — Logout would silently do
+ * nothing. HQ admins always get a full logout instead, regardless of how
+ * many other departments are also on their account.
  */
 export async function logoutOrReturnToDepartmentSelector() {
   const token =
@@ -274,7 +281,7 @@ export async function logoutOrReturnToDepartmentSelector() {
     }
   }
 
-  if (token && departments.length > 1) {
+  if (token && departments.length > 1 && !departments.includes("HQ")) {
     localStorage.removeItem("admin_active_department");
     window.location.replace("/dashboard/select");
     return;
