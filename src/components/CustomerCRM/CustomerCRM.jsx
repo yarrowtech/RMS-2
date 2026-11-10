@@ -1942,15 +1942,15 @@ export default function CustomerCRM() {
       {entryModal && <LuckyDrawEntryModal campaigns={luckyDraw.campaigns || []} defaultCampaignId={ldCampaignFilter} isHq={data.scope?.scope === "hq"} hqStores={hqStores} editEntry={entryModal.edit} onClose={() => setEntryModal(null)} onSave={saveEntry} />}
       {importHistoryModal && (
         <div className="fixed inset-0 z-[1000] grid place-items-center overflow-y-auto bg-slate-950/50 p-4 backdrop-blur-sm">
-          <div className="flex max-h-[94dvh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+          <div className="flex max-h-[94dvh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
             <ModalHeader eyebrow="Lucky Draw" title="Import history" onClose={() => setImportHistoryModal(false)} />
             <div className="overflow-y-auto p-6">
               <p className="mb-4 text-sm text-slate-500">One row per bulk upload. Undo removes only the entries that upload created — manual entries and every other upload are untouched.</p>
               {importBatchesLoading ? <p className="text-sm text-slate-400">Loading...</p> : (
-                <div className="overflow-hidden rounded-xl border border-slate-200">
-                  <table className="w-full text-left text-sm">
+                <div className="overflow-x-auto rounded-xl border border-slate-200">
+                  <table className="w-full min-w-[920px] text-left text-sm">
                     <thead className="bg-slate-50 text-xs font-bold uppercase text-slate-500">
-                      <tr><th className="px-4 py-2.5">Uploaded</th><th className="px-4 py-2.5">File</th><th className="px-4 py-2.5">Campaign</th><th className="px-4 py-2.5">Store</th><th className="px-4 py-2.5">By</th><th className="px-4 py-2.5 text-right">Created</th><th className="px-4 py-2.5 text-right">Updated</th><th className="px-4 py-2.5 text-right">No bill no.</th><th className="px-4 py-2.5"></th></tr>
+                      <tr><th className="px-4 py-2.5">Uploaded</th><th className="px-4 py-2.5">File</th><th className="px-4 py-2.5">Campaign</th><th className="px-4 py-2.5">Store</th><th className="px-4 py-2.5">By</th><th className="px-4 py-2.5 text-right">Created</th><th className="px-4 py-2.5 text-right">Updated</th><th className="px-4 py-2.5 text-right">No bill no.</th><th className="px-4 py-2.5">Action</th></tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                       {importBatches.map((b) => (
