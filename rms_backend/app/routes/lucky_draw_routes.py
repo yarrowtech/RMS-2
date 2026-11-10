@@ -141,18 +141,26 @@ class ReminderPayload(BaseModel):
     test_phone: str = ""
 
 
+class TierInput(BaseModel):
+    # e.g. "1st Prize" with count=2 — any number of winners per tier,
+    # independent of the other tiers (2nd Prize having 3 winners and 3rd
+    # Prize having 4 doesn't need 1st to also have more than 1).
+    label: str
+    count: int = 1
+
+
 class DrawPayload(BaseModel):
     # HQ only: which store's entries to draw from. Left blank/null by HQ
     # pools every store's entries into one chain-wide "grand draw". A
     # store-scoped login can never set this — it's always forced to their
     # own store.
     store_id: Optional[str] = None
-    winner_count: int = 1
+    tiers: List[TierInput] = [TierInput(label="1st Prize", count=1)]
 
 
 class RedoPayload(BaseModel):
     store_id: Optional[str] = None
-    winner_count: int = 1
+    tiers: List[TierInput] = [TierInput(label="1st Prize", count=1)]
     reason: str
 
 
@@ -177,15 +185,23 @@ async def _execute_draw(
     ctx: Dict[str, Any],
     campaign: dict,
     store_id: Optional[str],
-    winner_count: int,
+    tiers: List[TierInput],
     redo_of: Optional[str] = None,
     redo_reason: Optional[str] = None,
 ) -> dict:
     """Randomly pick winner(s) from every eligible entry and record the
     result. One customer (matched by contact number) can only win once per
-    draw, even if they hold several entries from separate bills."""
+    draw, even if they hold several entries from separate bills.
+
+    Winners are drawn across ALL tiers in one shuffle (so no entry can win
+    two tiers), then sliced into tiers in order — 1st Prize's count first,
+    then 2nd Prize's, etc. Each tier can have any number of winners,
+    independently of the others (e.g. 1st=2, 2nd=3, 3rd=4)."""
     campaign_id = str(campaign["_id"])
-    winner_count = max(1, min(50, int(winner_count or 1)))
+    clean_tiers = [{"label": clean(t.label) or "Prize", "count": max(1, min(50, int(t.count or 1)))} for t in tiers]
+    if not clean_tiers:
+        raise HTTPException(status_code=400, detail="At least one prize tier is required.")
+    winner_count = max(1, min(50, sum(t["count"] for t in clean_tiers)))
     entry_query: Dict[str, Any] = {"tenant_id": ctx["tenant_id"], "campaign_id": campaign_id}
     if store_id:
         entry_query["store_id"] = store_id
@@ -216,17 +232,25 @@ async def _execute_draw(
         raise HTTPException(status_code=400, detail="No entries with a Bill No. to draw from — entries without a Bill No. aren't eligible to win.")
     picked = random.SystemRandom().sample(candidates, k=min(winner_count, len(candidates)))
 
-    winners = [{
-        "entry_id": str(w["_id"]), "customer_name": w.get("customer_name"), "contact_no": w.get("contact_no"),
-        "address": w.get("address"), "profession": w.get("profession"), "bill_no": w.get("bill_no"),
-        "store_id": w.get("store_id"), "store_name": w.get("store_name"),
-    } for w in picked]
+    winners = []
+    idx = 0
+    for tier in clean_tiers:
+        for _ in range(tier["count"]):
+            if idx >= len(picked):
+                break
+            w = picked[idx]
+            idx += 1
+            winners.append({
+                "entry_id": str(w["_id"]), "customer_name": w.get("customer_name"), "contact_no": w.get("contact_no"),
+                "address": w.get("address"), "profession": w.get("profession"), "bill_no": w.get("bill_no"),
+                "store_id": w.get("store_id"), "store_name": w.get("store_name"), "prize_tier": tier["label"],
+            })
 
     now = now_utc()
     doc = {
         "tenant_id": ctx["tenant_id"], "campaign_id": campaign_id, "campaign_name": campaign.get("campaign_name"),
         "store_id": store_id, "store_name": store_name,
-        "eligible_count": len(candidates), "winners": winners,
+        "eligible_count": len(candidates), "winners": winners, "tiers": clean_tiers,
         "run_by": ctx.get("admin_id"), "run_by_name": ctx.get("admin_name"),
         "created_at": now, "superseded": False,
         "redo_of": redo_of, "redo_reason": redo_reason,
@@ -726,7 +750,7 @@ async def run_draw(campaign_id: str, payload: DrawPayload, ctx: Dict[str, Any] =
     })
     if existing:
         raise HTTPException(status_code=409, detail="This draw has already been run. Use Redo draw with a reason if it must be run again.")
-    return await _execute_draw(ctx, campaign, store_id, payload.winner_count)
+    return await _execute_draw(ctx, campaign, store_id, payload.tiers)
 
 
 @router.post("/campaigns/{campaign_id}/draw/redo", status_code=status.HTTP_201_CREATED)
@@ -751,7 +775,7 @@ async def redo_draw(campaign_id: str, payload: RedoPayload, ctx: Dict[str, Any] 
         "superseded": True, "superseded_at": now, "superseded_by": ctx.get("admin_id"),
         "superseded_by_name": ctx.get("admin_name"), "superseded_reason": reason,
     }})
-    result = await _execute_draw(ctx, campaign, store_id, payload.winner_count, redo_of=str(existing["_id"]), redo_reason=reason)
+    result = await _execute_draw(ctx, campaign, store_id, payload.tiers, redo_of=str(existing["_id"]), redo_reason=reason)
 
     # If a winner announcement already went out with the OLD (now wrong)
     # winner names, it must not stay silently "done" — anyone already
@@ -1003,8 +1027,18 @@ async def _latest_result(tenant_id: str, campaign_id: str) -> Optional[dict]:
 
 
 def _winner_announcement_text(campaign: dict, result: dict) -> str:
-    names = [w.get("customer_name") or "Winner" for w in (result.get("winners") or [])]
-    lines = ", ".join(f"{_ordinal(i)}: {name}" for i, name in enumerate(names, start=1))
+    """Admin-facing preview/test-send only — groups winners by prize tier,
+    e.g. "1st Prize: A, B; 2nd Prize: C, D, E". This combined, variable-
+    length listing can NEVER be the text actually sent to real entrants —
+    see _personalized_messages() below for why (DLT templates are fixed
+    shape; a tier having 2 winners one draw and 4 the next makes this an
+    unregistrable, ever-changing template). This function exists only so
+    an admin testing the feature sees a human-readable summary."""
+    by_tier: Dict[str, List[str]] = {}
+    for w in (result.get("winners") or []):
+        tier = w.get("prize_tier") or "Winner"
+        by_tier.setdefault(tier, []).append(w.get("customer_name") or "Winner")
+    lines = "; ".join(f"{tier}: {', '.join(names)}" for tier, names in by_tier.items())
     # campaign.ends_on is the officially-communicated draw date (what
     # customers were told at entry time). Falls back to the actual date
     # the draw was run, in case ends_on was never set on the campaign —
@@ -1021,6 +1055,31 @@ def _winner_announcement_text(campaign: dict, result: dict) -> str:
     draw_date = campaign.get("ends_on") or fallback_date
     date_part = f" (drawn on {draw_date})" if draw_date else ""
     return f"🎉 The results are in for the {campaign.get('campaign_name')} Lucky Draw{date_part}! Winners — {lines}. Thank you to everyone who entered!"
+
+
+def _personalized_messages(campaign: dict, recipient: dict) -> tuple[str, str]:
+    """One fixed-shape message per recipient, winner or not — this is what
+    actually gets sent (unlike _winner_announcement_text above). Each
+    person only ever sees their own name/tier/bill no, never anyone else's,
+    so the exact same two templates work regardless of how many winners
+    each tier has. These two templates are what must be registered on DLT
+    — word for word, with only the bracketed values varying."""
+    link = frontend_url("/")
+    if recipient.get("is_winner"):
+        name = recipient.get("customer_name") or "there"
+        tier = recipient.get("prize_tier") or "a prize"
+        bill_no = recipient.get("bill_no") or "-"
+        long_msg = (
+            f"🎉 Congratulations {name}! You won {tier} in the {campaign.get('campaign_name')} "
+            f"Lucky Draw (Bill No: {bill_no}). Please visit the store to claim your prize."
+        )
+    else:
+        long_msg = (
+            f"The {campaign.get('campaign_name')} Lucky Draw results are out. "
+            f"You weren't selected this time — thank you for participating!"
+        )
+    sms_body = f"{long_msg} {link}".strip()
+    return long_msg, sms_body
 
 
 @router.get("/campaigns/{campaign_id}/announcement")
@@ -1043,18 +1102,17 @@ async def _run_announcement_send(tenant_id: str, campaign_id: str) -> None:
     if not result:
         return
     subject = f"🎉 {campaign.get('campaign_name')} Lucky Draw — the results are in!"
-    message = _winner_announcement_text(campaign, result)
-    sms_body = _sms_countdown_body(campaign, message)
 
     cursor = lucky_draw_announcement_recipients_collection.find({
         "tenant_id": tenant_id, "campaign_id": campaign_id, "status": {"$in": ["pending", "failed"]},
     })
     async for r in cursor:
         ok = False
+        long_msg, sms_body = _personalized_messages(campaign, r)
         try:
             if r["channel"] == "email":
                 ok = await send_newsletter_email(
-                    r["contact"], r.get("customer_name") or "", subject, message,
+                    r["contact"], r.get("customer_name") or "", subject, long_msg,
                     frontend_url("/"), link=campaign.get("website_link") or "",
                 )
             elif sms_configured():
@@ -1098,12 +1156,22 @@ async def announce_winners(campaign_id: str, payload: ReminderPayload, backgroun
     if not result:
         raise HTTPException(status_code=400, detail="Run the draw for this campaign before announcing winners.")
 
-    message = (payload.message or "").strip() or _winner_announcement_text(campaign, result)
+    # Real sends are always one of the two fixed, DLT-registrable templates
+    # from _personalized_messages() — never free text — since a variable-
+    # shape message can't be a registered DLT template. payload.message (if
+    # typed) only previews/overrides the TEST send below, it never reaches
+    # real entrants.
+    preview_message = (payload.message or "").strip() or _winner_announcement_text(campaign, result)
     subject = f"🎉 {campaign.get('campaign_name')} Lucky Draw — the results are in!"
+
+    # entry_id -> winner info, so each recipient (matched by their own
+    # entry below) can be tagged winner/non-winner with their own tier and
+    # bill no — never another winner's details.
+    winner_map = {w["entry_id"]: w for w in (result.get("winners") or [])}
 
     test_email = clean(payload.test_email)
     if test_email:
-        ok = await send_newsletter_email(test_email, "there", subject, message, frontend_url("/"), link=campaign.get("website_link") or "")
+        ok = await send_newsletter_email(test_email, "there", subject, preview_message, frontend_url("/"), link=campaign.get("website_link") or "")
         if not ok:
             raise HTTPException(status_code=502, detail="Test email could not be sent — check the email settings.")
         return {"test": True, "message": f"Test announcement sent to {test_email}."}
@@ -1112,14 +1180,23 @@ async def announce_winners(campaign_id: str, payload: ReminderPayload, backgroun
     if test_phone:
         if not sms_configured():
             raise HTTPException(status_code=503, detail="SMS isn't configured yet — set FAST2SMS_API_KEY and FAST2SMS_SENDER_ID.")
-        ok = await send_sms(test_phone, _sms_countdown_body(campaign, message), context=f"lucky_draw_announcement_test:{campaign_id}")
+        # Sends whichever REAL template a recipient would actually get —
+        # the winner template if this draw has a winner, else the
+        # non-winner one — so the test genuinely exercises what will be
+        # submitted against the registered DLT template, not an arbitrary
+        # preview string that would always be rejected by DLT regardless.
+        sample_winner = next(iter(result.get("winners") or []), None)
+        sample_recipient = {"is_winner": True, **sample_winner} if sample_winner else {"is_winner": False}
+        _, test_sms_body = _personalized_messages(campaign, sample_recipient)
+        ok = await send_sms(test_phone, test_sms_body, context=f"lucky_draw_announcement_test:{campaign_id}")
         if not ok:
             raise HTTPException(status_code=502, detail="Test SMS could not be sent — check the SMS provider settings.")
         return {"test": True, "message": f"Test SMS sent to {test_phone}."}
 
-    # Everyone who entered gets told who won — bill-no holders and
+    # Everyone who entered gets told the result — bill-no holders and
     # no-bill-no customers alike (see _reminder_audience: it already pulls
-    # every entrant with an email or phone, no bill_no filter).
+    # every entrant with an email or phone, no bill_no filter) — but only
+    # winners get the winner template; everyone else gets the non-winner one.
     people = await _reminder_audience(ctx["tenant_id"], campaign_id)
     if not people:
         raise HTTPException(status_code=400, detail="No entrants with an email or phone number on file for this campaign yet.")
@@ -1130,14 +1207,26 @@ async def announce_winners(campaign_id: str, payload: ReminderPayload, backgroun
         email = (p.get("email") or "").strip().lower()
         phone = (p.get("contact_no") or "").strip()
         dedupe_key = f"email:{email}" if email else f"phone:{phone}"
+        winner_info = winner_map.get(str(p.get("_id")))
         res = await lucky_draw_announcement_recipients_collection.update_one(
             {"tenant_id": ctx["tenant_id"], "campaign_id": campaign_id, "dedupe_key": dedupe_key},
-            {"$setOnInsert": {
-                "tenant_id": ctx["tenant_id"], "campaign_id": campaign_id, "dedupe_key": dedupe_key,
-                "customer_name": p.get("customer_name") or "", "channel": p["_channel"],
-                "contact": p["email"] if p["_channel"] == "email" else p["contact_no"],
-                "status": "pending", "created_at": now,
-            }},
+            {
+                "$setOnInsert": {
+                    "tenant_id": ctx["tenant_id"], "campaign_id": campaign_id, "dedupe_key": dedupe_key,
+                    "customer_name": p.get("customer_name") or "", "channel": p["_channel"],
+                    "contact": p["email"] if p["_channel"] == "email" else p["contact_no"],
+                    "status": "pending", "created_at": now,
+                },
+                # Always refreshed (even on an existing row) so a redo's new
+                # winner set reaches every recipient the next time this
+                # endpoint runs — see redo_draw(), which resets status to
+                # pending but doesn't touch these fields itself.
+                "$set": {
+                    "is_winner": bool(winner_info),
+                    "prize_tier": winner_info.get("prize_tier") if winner_info else None,
+                    "bill_no": winner_info.get("bill_no") if winner_info else None,
+                },
+            },
             upsert=True,
         )
         if res.upserted_id:
@@ -1152,7 +1241,7 @@ async def announce_winners(campaign_id: str, payload: ReminderPayload, backgroun
     await lucky_draw_announcements_collection.update_one(
         {"tenant_id": ctx["tenant_id"], "campaign_id": campaign_id},
         {
-            "$set": {"campaign_name": campaign.get("campaign_name"), "message": message, "status": "SENDING", "updated_at": now},
+            "$set": {"campaign_name": campaign.get("campaign_name"), "message": preview_message, "status": "SENDING", "updated_at": now},
             "$setOnInsert": {"created_at": now},
         },
         upsert=True,

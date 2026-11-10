@@ -755,7 +755,7 @@ function LuckyDrawAnnounceModal({ campaign, onClose }) {
         <ModalHeader eyebrow="Lucky Draw" title={`Announce winners — ${campaign.campaign_name}`} onClose={onClose} />
         <div className="space-y-4 overflow-y-auto p-6">
           <div className="rounded-xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-xs leading-5 text-emerald-900">
-            Goes out to <b>every entrant</b> — bill-no holders and no-bill-no customers alike. This is safe to send more than once: anyone already messaged is automatically skipped, so re-running after new entries show up only reaches the new people.
+            Goes out to <b>every entrant</b> — bill-no holders and no-bill-no customers alike. Each winner gets their own SMS with just their own name, prize tier and bill no (never anyone else's); everyone else gets a separate "results are out" message — this is what DLT requires, since a message can't legally list a variable number of names. This is safe to send more than once: anyone already messaged is automatically skipped, so re-running after new entries show up (or after a redo) only reaches the new/corrected people.
           </div>
           {!statusLoading && status?.status === "NEEDS_RESEND" && (
             <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs font-bold text-rose-800">
@@ -770,8 +770,13 @@ function LuckyDrawAnnounceModal({ campaign, onClose }) {
             </div>
           )}
           <div>
-            <label className="crm-label">Message (optional — a default message with the winner names is used if left blank)</label>
-            <textarea className="crm-input min-h-28" value={message} onChange={(e) => setMessage(e.target.value)} placeholder="🎉 The results are in for the [campaign] Lucky Draw! Winners — 1st: ..., 2nd: ..., 3rd: .... Thank you to everyone who entered!" />
+            <label className="crm-label">Preview text (test sends only — the real bulk send always uses the fixed winner/non-winner templates below, never this text, since DLT requires a pre-approved fixed template)</label>
+            <textarea className="crm-input min-h-28" value={message} onChange={(e) => setMessage(e.target.value)} placeholder="Used only for test email previews — leave blank to see the default summary." />
+          </div>
+          <div className="rounded-xl border border-indigo-100 bg-indigo-50/60 p-3 text-xs leading-5 text-indigo-900">
+            <p className="font-bold uppercase tracking-wide text-indigo-700">Register these two exact templates with your DLT operator</p>
+            <p className="mt-1.5 font-mono">🎉 Congratulations {"{name}"}! You won {"{prize tier}"} in the {"{campaign}"} Lucky Draw (Bill No: {"{bill no}"}). Please visit the store to claim your prize. {"{link}"}</p>
+            <p className="mt-2 font-mono">The {"{campaign}"} Lucky Draw results are out. You weren't selected this time — thank you for participating! {"{link}"}</p>
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="flex items-end gap-2">
@@ -803,8 +808,15 @@ function LuckyDrawAnnounceModal({ campaign, onClose }) {
 }
 
 function DrawModal({ campaign, isHq, defaultRedo, onClose, onSave }) {
-  const [form, setForm] = useState({ store_id: "", winner_count: 1, reason: "", redo: Boolean(defaultRedo) });
+  const [form, setForm] = useState({
+    store_id: "", reason: "", redo: Boolean(defaultRedo),
+    tiers: [{ label: "1st Prize", count: 1 }, { label: "2nd Prize", count: 1 }, { label: "3rd Prize", count: 1 }],
+  });
   const set = (key, value) => setForm((f) => ({ ...f, [key]: value }));
+  const setTier = (idx, key, value) => setForm((f) => ({ ...f, tiers: f.tiers.map((t, i) => (i === idx ? { ...t, [key]: value } : t)) }));
+  const addTier = () => setForm((f) => ({ ...f, tiers: [...f.tiers, { label: `${f.tiers.length + 1}th Prize`, count: 1 }] }));
+  const removeTier = (idx) => setForm((f) => ({ ...f, tiers: f.tiers.filter((_, i) => i !== idx) }));
+  const totalWinners = form.tiers.reduce((sum, t) => sum + (Number(t.count) || 0), 0);
   return (
     <div className="fixed inset-0 z-[1000] grid place-items-center overflow-y-auto bg-slate-950/50 p-4 backdrop-blur-sm">
       <div className="flex max-h-[94dvh] w-full max-w-lg flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
@@ -816,7 +828,20 @@ function DrawModal({ campaign, isHq, defaultRedo, onClose, onSave }) {
               <input className="crm-input" value={form.store_id} onChange={(e) => set("store_id", e.target.value)} placeholder="Leave blank for one chain-wide grand draw across every store" />
             </div>
           )}
-          <div><label className="crm-label">Number of winners</label><input type="number" min="1" max="50" className="crm-input" value={form.winner_count} onChange={(e) => set("winner_count", e.target.value)} /></div>
+          <div>
+            <label className="crm-label">Prize tiers — each can have a different number of winners</label>
+            <div className="grid gap-2">
+              {form.tiers.map((t, idx) => (
+                <div key={idx} className="flex items-center gap-2">
+                  <input className="crm-input flex-1" value={t.label} onChange={(e) => setTier(idx, "label", e.target.value)} placeholder="e.g. 1st Prize" />
+                  <input type="number" min="1" max="50" className="crm-input w-24" value={t.count} onChange={(e) => setTier(idx, "count", e.target.value)} />
+                  {form.tiers.length > 1 && <button type="button" onClick={() => removeTier(idx)} className="rounded-lg border border-slate-200 px-2.5 py-2 text-xs font-bold text-rose-600 hover:bg-rose-50">✕</button>}
+                </div>
+              ))}
+            </div>
+            <button type="button" onClick={addTier} className="mt-2 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-bold text-indigo-600 hover:bg-indigo-50">+ Add another tier</button>
+            <p className="mt-2 text-xs font-semibold text-slate-500">{totalWinners} winner(s) total will be drawn across all tiers — one shuffle, no one can win two tiers.</p>
+          </div>
           <label className="flex items-center gap-2 text-sm font-semibold text-slate-700"><input type="checkbox" checked={form.redo} onChange={(e) => set("redo", e.target.checked)} /> This redoes a draw already run for this exact scope</label>
           {form.redo && <div><label className="crm-label">Reason for redoing (required)</label><textarea className="crm-input min-h-20" value={form.reason} onChange={(e) => set("reason", e.target.value)} placeholder="e.g. winner unreachable, entry error found..." /></div>}
           <p className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs font-semibold text-amber-800">This is a real random shuffle of every eligible entry (one chance per unique phone number). Once run, the result is locked — redoing it later always requires a written reason on record.</p>
@@ -1245,7 +1270,7 @@ export default function CustomerCRM() {
   const runDraw = async (form) => {
     if (!drawModal?.campaign) return;
     try {
-      const payload = { winner_count: Number(form.winner_count || 1) };
+      const payload = { tiers: form.tiers.map((t) => ({ label: t.label || "Prize", count: Number(t.count) || 1 })) };
       if (data.scope?.scope === "hq") payload.store_id = form.store_id ? form.store_id : null;
       const path = form.redo
         ? `/api/customer-crm/lucky-draw/campaigns/${drawModal.campaign.id}/draw/redo`
@@ -1763,9 +1788,9 @@ export default function CustomerCRM() {
                     {!r.superseded && <span className="rounded-full bg-emerald-100 px-3 py-1 text-[11px] font-bold text-emerald-700">FINAL</span>}
                   </div>
                   <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                    {(r.winners || []).map((w, idx) => (
+                    {(r.winners || []).map((w) => (
                       <div key={w.entry_id} className="rounded-xl border border-amber-200 bg-amber-50 p-3">
-                        <p className="text-[11px] font-bold uppercase tracking-wide text-amber-700">Winner #{idx + 1}</p>
+                        <p className="text-[11px] font-bold uppercase tracking-wide text-amber-700">{w.prize_tier || "Winner"}</p>
                         <p className="font-bold text-slate-900">{w.customer_name}</p>
                         <p className="text-xs text-slate-500">{w.contact_no || "No contact"} - Bill {w.bill_no}</p>
                       </div>
