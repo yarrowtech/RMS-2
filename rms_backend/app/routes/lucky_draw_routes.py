@@ -164,6 +164,23 @@ class RedoPayload(BaseModel):
     reason: str
 
 
+class ManualWinnerInput(BaseModel):
+    # Picked by the admin from the entry list, not by the system — used when
+    # the actual draw happened physically/offline and the result just needs
+    # to be recorded (e.g. names pulled from a box in front of customers).
+    entry_id: str
+    prize_tier: str = "Prize"
+
+
+class ManualDrawPayload(BaseModel):
+    store_id: Optional[str] = None
+    winners: List[ManualWinnerInput] = []
+
+
+class ManualRedoPayload(ManualDrawPayload):
+    reason: str
+
+
 def require_hq(ctx: Dict[str, Any]) -> Dict[str, Any]:
     if ctx.get("scope") != "hq":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only HQ Admin can manage lucky draw campaigns.")
@@ -250,7 +267,69 @@ async def _execute_draw(
     doc = {
         "tenant_id": ctx["tenant_id"], "campaign_id": campaign_id, "campaign_name": campaign.get("campaign_name"),
         "store_id": store_id, "store_name": store_name,
-        "eligible_count": len(candidates), "winners": winners, "tiers": clean_tiers,
+        "eligible_count": len(candidates), "winners": winners, "tiers": clean_tiers, "method": "random",
+        "run_by": ctx.get("admin_id"), "run_by_name": ctx.get("admin_name"),
+        "created_at": now, "superseded": False,
+        "redo_of": redo_of, "redo_reason": redo_reason,
+    }
+    result = await lucky_draw_results_collection.insert_one(doc)
+    saved = await lucky_draw_results_collection.find_one({"_id": result.inserted_id})
+    return serialize_doc(saved)
+
+
+async def _execute_manual_draw(
+    ctx: Dict[str, Any],
+    campaign: dict,
+    store_id: Optional[str],
+    winners_input: List[ManualWinnerInput],
+    redo_of: Optional[str] = None,
+    redo_reason: Optional[str] = None,
+) -> dict:
+    """Records a draw that actually happened offline (names physically pulled
+    in front of customers) — no randomness here, just writing down who the
+    admin says won which tier, in the exact same result shape _execute_draw
+    produces, so Announce winners / redo / the results list all work on it
+    unchanged."""
+    campaign_id = str(campaign["_id"])
+    if not winners_input:
+        raise HTTPException(status_code=400, detail="At least one winner is required.")
+
+    entry_query: Dict[str, Any] = {"tenant_id": ctx["tenant_id"], "campaign_id": campaign_id}
+    if store_id:
+        entry_query["store_id"] = store_id
+    entries = await lucky_draw_entries_collection.find(entry_query).to_list(20000)
+    entries_by_id = {str(e["_id"]): e for e in entries}
+
+    seen_entry_ids = set()
+    winners = []
+    store_name = ""
+    for w in winners_input:
+        entry_id = clean(w.entry_id)
+        if entry_id in seen_entry_ids:
+            raise HTTPException(status_code=400, detail="The same entry was picked as a winner more than once.")
+        seen_entry_ids.add(entry_id)
+        entry = entries_by_id.get(entry_id)
+        if not entry:
+            raise HTTPException(status_code=404, detail=f"Entry {entry_id} was not found in this campaign/scope.")
+        if not clean(entry.get("bill_no")):
+            raise HTTPException(status_code=400, detail=f"{entry.get('customer_name') or 'This entry'} has no Bill No. on file — not eligible to win.")
+        if not store_name and entry.get("store_name"):
+            store_name = entry["store_name"]
+        winners.append({
+            "entry_id": entry_id, "customer_name": entry.get("customer_name"), "contact_no": entry.get("contact_no"),
+            "address": entry.get("address"), "profession": entry.get("profession"), "bill_no": entry.get("bill_no"),
+            "store_id": entry.get("store_id"), "store_name": entry.get("store_name"),
+            "prize_tier": clean(w.prize_tier) or "Prize",
+        })
+
+    now = now_utc()
+    eligible_count = len([e for e in entries if clean(e.get("bill_no"))])
+    doc = {
+        "tenant_id": ctx["tenant_id"], "campaign_id": campaign_id, "campaign_name": campaign.get("campaign_name"),
+        "store_id": store_id, "store_name": store_name,
+        "eligible_count": eligible_count, "winners": winners,
+        "tiers": [{"label": label, "count": sum(1 for w in winners if w["prize_tier"] == label)} for label in dict.fromkeys(w["prize_tier"] for w in winners)],
+        "method": "manual",
         "run_by": ctx.get("admin_id"), "run_by_name": ctx.get("admin_name"),
         "created_at": now, "superseded": False,
         "redo_of": redo_of, "redo_reason": redo_reason,
@@ -776,13 +855,18 @@ async def redo_draw(campaign_id: str, payload: RedoPayload, ctx: Dict[str, Any] 
         "superseded_by_name": ctx.get("admin_name"), "superseded_reason": reason,
     }})
     result = await _execute_draw(ctx, campaign, store_id, payload.tiers, redo_of=str(existing["_id"]), redo_reason=reason)
+    await _reset_announcement_for_redo(ctx, campaign_id, now, reason)
+    return result
 
-    # If a winner announcement already went out with the OLD (now wrong)
-    # winner names, it must not stay silently "done" — anyone already
-    # marked sent would never receive the corrected names, since the
-    # announcement send only ever sends to pending/failed rows. A redo
-    # means the previous announcement's content is now wrong, so every
-    # recipient goes back to pending and the admin needs to re-announce.
+
+async def _reset_announcement_for_redo(ctx: Dict[str, Any], campaign_id: str, now: Any, reason: str) -> None:
+    """If a winner announcement already went out with the OLD (now wrong)
+    winner names, it must not stay silently "done" — anyone already marked
+    sent would never receive the corrected names, since the announcement
+    send only ever sends to pending/failed rows. A redo means the previous
+    announcement's content is now wrong, so every recipient goes back to
+    pending and the admin needs to re-announce. Shared by both the random
+    and manual redo endpoints."""
     reset = await lucky_draw_announcement_recipients_collection.update_many(
         {"tenant_id": ctx["tenant_id"], "campaign_id": campaign_id},
         {"$set": {"status": "pending", "reset_for_redo_at": now}},
@@ -795,6 +879,54 @@ async def redo_draw(campaign_id: str, payload: RedoPayload, ctx: Dict[str, Any] 
                 "redo_reset_at": now, "redo_reason": reason,
             }},
         )
+
+
+@router.post("/campaigns/{campaign_id}/draw/manual", status_code=status.HTTP_201_CREATED)
+async def run_manual_draw(campaign_id: str, payload: ManualDrawPayload, ctx: Dict[str, Any] = Depends(get_tenant)):
+    """Records a draw that happened physically/offline — the admin picks
+    which already-entered customers won which tier, instead of the system
+    shuffling the pool. Same locking/conflict rules as the random draw."""
+    ctx = require_crm_tab(ctx, "luckydraw")
+    if not ObjectId.is_valid(campaign_id):
+        raise HTTPException(status_code=400, detail="Invalid campaign ID.")
+    campaign = await lucky_draw_campaigns_collection.find_one({"_id": ObjectId(campaign_id), "tenant_id": ctx["tenant_id"]})
+    if not campaign:
+        raise HTTPException(status_code=404, detail="Campaign not found.")
+    if campaign.get("status") != "CLOSED":
+        raise HTTPException(status_code=409, detail="Close the campaign before recording its draw.")
+    store_id = _resolve_store_scope(ctx, payload.store_id)
+    existing = await lucky_draw_results_collection.find_one({
+        "tenant_id": ctx["tenant_id"], "campaign_id": campaign_id, "store_id": store_id, "superseded": False,
+    })
+    if existing:
+        raise HTTPException(status_code=409, detail="This draw has already been recorded. Use Redo with a reason if it must be corrected.")
+    return await _execute_manual_draw(ctx, campaign, store_id, payload.winners)
+
+
+@router.post("/campaigns/{campaign_id}/draw/manual/redo", status_code=status.HTTP_201_CREATED)
+async def redo_manual_draw(campaign_id: str, payload: ManualRedoPayload, ctx: Dict[str, Any] = Depends(get_tenant)):
+    ctx = require_crm_tab(ctx, "luckydraw")
+    reason = clean(payload.reason)
+    if not reason:
+        raise HTTPException(status_code=400, detail="A reason is required to redo a draw.")
+    if not ObjectId.is_valid(campaign_id):
+        raise HTTPException(status_code=400, detail="Invalid campaign ID.")
+    campaign = await lucky_draw_campaigns_collection.find_one({"_id": ObjectId(campaign_id), "tenant_id": ctx["tenant_id"]})
+    if not campaign:
+        raise HTTPException(status_code=404, detail="Campaign not found.")
+    store_id = _resolve_store_scope(ctx, payload.store_id)
+    existing = await lucky_draw_results_collection.find_one({
+        "tenant_id": ctx["tenant_id"], "campaign_id": campaign_id, "store_id": store_id, "superseded": False,
+    })
+    if not existing:
+        raise HTTPException(status_code=404, detail="No existing draw to redo for this scope — use Run Draw instead.")
+    now = now_utc()
+    await lucky_draw_results_collection.update_one({"_id": existing["_id"]}, {"$set": {
+        "superseded": True, "superseded_at": now, "superseded_by": ctx.get("admin_id"),
+        "superseded_by_name": ctx.get("admin_name"), "superseded_reason": reason,
+    }})
+    result = await _execute_manual_draw(ctx, campaign, store_id, payload.winners, redo_of=str(existing["_id"]), redo_reason=reason)
+    await _reset_announcement_for_redo(ctx, campaign_id, now, reason)
     return result
 
 

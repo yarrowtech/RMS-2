@@ -852,6 +852,95 @@ function DrawModal({ campaign, isHq, defaultRedo, onClose, onSave }) {
   );
 }
 
+function ManualDrawModal({ campaign, isHq, defaultRedo, entries, onClose, onSave }) {
+  const [form, setForm] = useState({
+    store_id: "", reason: "", redo: Boolean(defaultRedo),
+    winners: [{ label: "1st Prize", entry_id: "", search: "" }],
+  });
+  const set = (key, value) => setForm((f) => ({ ...f, [key]: value }));
+  const setWinner = (idx, key, value) => setForm((f) => ({ ...f, winners: f.winners.map((w, i) => (i === idx ? { ...w, [key]: value } : w)) }));
+  const addWinner = () => setForm((f) => ({ ...f, winners: [...f.winners, { label: "Prize", entry_id: "", search: "" }] }));
+  const removeWinner = (idx) => setForm((f) => ({ ...f, winners: f.winners.filter((_, i) => i !== idx) }));
+  const campaignEntries = (entries || []).filter((e) => e.campaign_id === campaign?.id && clean(e.bill_no || ""));
+  function clean(v) { return (v || "").toString().trim(); }
+  const matches = (search) => {
+    const q = clean(search).toLowerCase();
+    if (!q) return [];
+    return campaignEntries.filter((e) =>
+      (e.customer_name || "").toLowerCase().includes(q) || (e.bill_no || "").toLowerCase().includes(q) || (e.contact_no || "").includes(q)
+    ).slice(0, 8);
+  };
+  const pickedIds = new Set(form.winners.map((w) => w.entry_id).filter(Boolean));
+  return (
+    <div className="fixed inset-0 z-[1000] grid place-items-center overflow-y-auto bg-slate-950/50 p-4 backdrop-blur-sm">
+      <div className="flex max-h-[94dvh] w-full max-w-xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+        <ModalHeader eyebrow="Lucky Draw" title={`Record offline draw — ${campaign?.campaign_name || ""}`} onClose={onClose} />
+        <div className="grid gap-4 overflow-y-auto p-6">
+          <p className="rounded-xl border border-indigo-100 bg-indigo-50/60 p-3 text-xs font-semibold text-indigo-800">
+            Use this when the draw already happened physically (names pulled in front of customers). No randomness here — just search and pick the exact entry that was drawn for each prize.
+          </p>
+          {isHq && (
+            <div>
+              <label className="crm-label">Store scope</label>
+              <input className="crm-input" value={form.store_id} onChange={(e) => set("store_id", e.target.value)} placeholder="Leave blank if this covers every store" />
+            </div>
+          )}
+          <div>
+            <label className="crm-label">Winners</label>
+            <div className="grid gap-3">
+              {form.winners.map((w, idx) => {
+                const picked = w.entry_id ? campaignEntries.find((e) => e.id === w.entry_id) : null;
+                return (
+                  <div key={idx} className="rounded-xl border border-slate-200 p-3">
+                    <div className="flex items-center gap-2">
+                      <input className="crm-input w-36" value={w.label} onChange={(e) => setWinner(idx, "label", e.target.value)} placeholder="e.g. 1st Prize" />
+                      {form.winners.length > 1 && <button type="button" onClick={() => removeWinner(idx)} className="ml-auto rounded-lg border border-slate-200 px-2.5 py-2 text-xs font-bold text-rose-600 hover:bg-rose-50">✕</button>}
+                    </div>
+                    {picked ? (
+                      <div className="mt-2 flex items-center justify-between rounded-lg bg-emerald-50 p-2 text-xs">
+                        <span className="font-bold text-emerald-700">{picked.customer_name} — Bill {picked.bill_no}{picked.store_name ? ` (${picked.store_name})` : ""}</span>
+                        <button type="button" onClick={() => setWinner(idx, "entry_id", "")} className="font-bold text-slate-500 underline">Change</button>
+                      </div>
+                    ) : (
+                      <div className="relative mt-2">
+                        <input
+                          className="crm-input"
+                          value={w.search}
+                          onChange={(e) => setWinner(idx, "search", e.target.value)}
+                          placeholder="Search by name, bill no. or phone..."
+                        />
+                        {w.search && (
+                          <div className="absolute z-10 mt-1 w-full overflow-hidden rounded-lg border border-slate-200 bg-white shadow-lg">
+                            {matches(w.search).filter((e) => !pickedIds.has(e.id)).map((e) => (
+                              <button
+                                key={e.id}
+                                type="button"
+                                onClick={() => { setWinner(idx, "entry_id", e.id); setWinner(idx, "search", ""); }}
+                                className="block w-full px-3 py-2 text-left text-xs hover:bg-indigo-50"
+                              >
+                                <span className="font-bold text-slate-900">{e.customer_name}</span> — Bill {e.bill_no}{e.store_name ? ` (${e.store_name})` : ""}
+                              </button>
+                            ))}
+                            {!matches(w.search).length && <p className="px-3 py-2 text-xs text-slate-400">No match with a Bill No. on file.</p>}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+            <button type="button" onClick={addWinner} className="mt-2 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-bold text-indigo-600 hover:bg-indigo-50">+ Add another winner</button>
+          </div>
+          <label className="flex items-center gap-2 text-sm font-semibold text-slate-700"><input type="checkbox" checked={form.redo} onChange={(e) => set("redo", e.target.checked)} /> This redoes a draw already recorded for this exact scope</label>
+          {form.redo && <div><label className="crm-label">Reason for redoing (required)</label><textarea className="crm-input min-h-20" value={form.reason} onChange={(e) => set("reason", e.target.value)} placeholder="e.g. wrong entry picked, name misread..." /></div>}
+        </div>
+        <ModalFooter onClose={onClose} onSave={() => onSave(form)} saveLabel={form.redo ? "Confirm redo" : "Save draw result"} />
+      </div>
+    </div>
+  );
+}
+
 function PrintSlipModal({ entry, onClose, onPrinted }) {
   const printRef = useRef(null);
 
@@ -1016,6 +1105,7 @@ export default function CustomerCRM() {
   const [campaignModal, setCampaignModal] = useState(null);
   const [entryModal, setEntryModal] = useState(null);
   const [drawModal, setDrawModal] = useState(null);
+  const [manualDrawModal, setManualDrawModal] = useState(null);
   const [bulkImportModal, setBulkImportModal] = useState(null);
   const [reminderModal, setReminderModal] = useState(null);
   const [announceModal, setAnnounceModal] = useState(null);
@@ -1279,6 +1369,22 @@ export default function CustomerCRM() {
       await crmFetch(path, { method: "POST", body: JSON.stringify(payload) });
       setDrawModal(null); loadLuckyDraw();
     } catch (e) { setError(e.message || "Unable to run the draw."); }
+  };
+
+  const runManualDraw = async (form) => {
+    if (!manualDrawModal?.campaign) return;
+    try {
+      const winners = form.winners.filter((w) => w.entry_id).map((w) => ({ prize_tier: w.label || "Prize", entry_id: w.entry_id }));
+      if (!winners.length) return setError("Pick at least one winner before saving.");
+      const payload = { winners };
+      if (data.scope?.scope === "hq") payload.store_id = form.store_id ? form.store_id : null;
+      const path = form.redo
+        ? `/api/customer-crm/lucky-draw/campaigns/${manualDrawModal.campaign.id}/draw/manual/redo`
+        : `/api/customer-crm/lucky-draw/campaigns/${manualDrawModal.campaign.id}/draw/manual`;
+      if (form.redo) payload.reason = form.reason;
+      await crmFetch(path, { method: "POST", body: JSON.stringify(payload) });
+      setManualDrawModal(null); loadLuckyDraw();
+    } catch (e) { setError(e.message || "Unable to save the draw result."); }
   };
 
   const markPrinted = async (id) => {
@@ -1665,6 +1771,7 @@ export default function CustomerCRM() {
                 <div className="mt-3 flex gap-2">
                   <button onClick={() => setLdCampaignFilter(ldCampaignFilter === c.id ? "" : c.id)} className="flex-1 rounded-lg bg-slate-900 px-3 py-2 text-xs font-bold text-white hover:bg-slate-800">{ldCampaignFilter === c.id ? "Clear filter" : "View entries"}</button>
                   {c.status === "CLOSED" && <button onClick={() => setDrawModal({ campaign: c, defaultRedo: hasOwnDraw(c.id) })} className="flex-1 rounded-lg bg-indigo-600 px-3 py-2 text-xs font-bold text-white hover:bg-indigo-700"><Trophy size={14} className="inline"/> {hasOwnDraw(c.id) ? "Redo draw" : "Run draw"}</button>}
+                  {c.status === "CLOSED" && <button onClick={() => setManualDrawModal({ campaign: c, defaultRedo: hasOwnDraw(c.id) })} title="Use this when the draw already happened physically/offline — record who won instead of letting the system pick" className="flex-1 rounded-lg border border-indigo-200 px-3 py-2 text-xs font-bold text-indigo-700 hover:bg-indigo-50">{hasOwnDraw(c.id) ? "Redo (offline)" : "Record offline draw"}</button>}
                 </div>
                 {isHq && <button onClick={() => setReminderModal(c)} className="mt-2 w-full rounded-lg border border-indigo-200 px-3 py-2 text-xs font-bold text-indigo-700 hover:bg-indigo-50">Send countdown reminder</button>}
                 {isHq && hasOwnDraw(c.id) && <button onClick={() => setAnnounceModal(c)} className="mt-2 w-full rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-bold text-emerald-700 hover:bg-emerald-100"><Trophy size={13} className="mr-1 inline"/>Announce winners</button>}
@@ -1976,6 +2083,7 @@ export default function CustomerCRM() {
         </div>
       )}
       {drawModal && <DrawModal campaign={drawModal.campaign} isHq={data.scope?.scope === "hq"} defaultRedo={drawModal.defaultRedo} onClose={() => setDrawModal(null)} onSave={runDraw} />}
+      {manualDrawModal && <ManualDrawModal campaign={manualDrawModal.campaign} isHq={data.scope?.scope === "hq"} defaultRedo={manualDrawModal.defaultRedo} entries={luckyDraw.entries || []} onClose={() => setManualDrawModal(null)} onSave={runManualDraw} />}
       {bulkImportModal && <LuckyDrawBulkImportModal campaigns={(luckyDraw.campaigns || []).filter((c) => c.status === "ACTIVE")} defaultCampaignId={ldCampaignFilter} isHq={data.scope?.scope === "hq"} hqStores={hqStores} onClose={() => setBulkImportModal(null)} onDone={loadLuckyDraw} />}
       {reminderModal && <LuckyDrawReminderModal campaign={reminderModal} onClose={() => setReminderModal(null)} />}
       {announceModal && <LuckyDrawAnnounceModal campaign={announceModal} onClose={() => setAnnounceModal(null)} />}
