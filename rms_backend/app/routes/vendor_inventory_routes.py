@@ -1,5 +1,5 @@
 """Vendor-owned inventory, independent from retailer inventory and B2B stock."""
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 from bson import ObjectId
 from fastapi import APIRouter, HTTPException, Header
@@ -205,5 +205,5 @@ async def item_ledger(inventory_id: str, authorization: str = Header(None)):
         raise HTTPException(status_code=404, detail="Stock item not found")
     rows = []
     async for entry in vendor_inventory_ledger_collection.find({"vendor_id": vendor_id, "inventory_id": ObjectId(inventory_id)}).sort("created_at", -1).limit(80):
-        rows.append({**{key: entry.get(key) for key in ("movement_type", "quantity_in", "quantity_out", "reference_no", "note")}, "created_at": entry.get("created_at").isoformat() if entry.get("created_at") else None})
+        rows.append({**{key: entry.get(key) for key in ("movement_type", "quantity_in", "quantity_out", "reference_no", "note")}, "created_at": (entry.get("created_at") if getattr(entry.get("created_at"), "tzinfo", True) else entry.get("created_at").replace(tzinfo=timezone.utc)).isoformat() if entry.get("created_at") else None})
     return {"data": rows}

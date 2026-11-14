@@ -17,7 +17,7 @@ box would be at this stage.
 import math
 import re
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Literal, Optional
 
 from bson import ObjectId
@@ -2190,7 +2190,7 @@ async def get_low_stock_alerts(ctx: TenantCtx = Depends(_require_forecast_contex
             "store_id": doc.get("store_id"), "store_name": doc.get("store_name") or "HQ / Central",
             "stock_qty": doc.get("stock_qty", 0), "avg_weekly_qty": doc.get("avg_weekly_qty", 0),
             "days_remaining": doc.get("days_remaining"), "severity": doc.get("severity", "warning"),
-            "updated_at": doc.get("updated_at").isoformat() if isinstance(doc.get("updated_at"), datetime) else None,
+            "updated_at": (doc.get("updated_at") if doc.get("updated_at").tzinfo else doc.get("updated_at").replace(tzinfo=timezone.utc)).isoformat() if isinstance(doc.get("updated_at"), datetime) else None,
         }
         row.update(_raphaaa_master_context(product_metadata.get(doc["barcode"]) or {}))
         rows.append(row)
@@ -2209,7 +2209,7 @@ async def get_restock_draft(ctx: TenantCtx = Depends(_require_forecast_context))
             line.update(_raphaaa_master_context(product_metadata.get(line.get("barcode")) or {}))
     return {
         "status": "success",
-        "generated_at": doc["generated_at"].isoformat() if isinstance(doc.get("generated_at"), datetime) else None,
+        "generated_at": (doc["generated_at"] if doc["generated_at"].tzinfo else doc["generated_at"].replace(tzinfo=timezone.utc)).isoformat() if isinstance(doc.get("generated_at"), datetime) else None,
         "lines": lines,
         "line_count": len(lines),
     }

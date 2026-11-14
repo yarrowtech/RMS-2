@@ -18,7 +18,7 @@ be called daily by the same external scheduler that already hits
 cron of its own).
 """
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
@@ -88,7 +88,7 @@ async def get_store_addon_status(ctx: TenantCtx = Depends(get_hq_tenant)):
         "effective_limit": limit,
         "used": used,
         "unlimited": limit is None,
-        "expires_at": expires_at.isoformat() if isinstance(expires_at, datetime) else None,
+        "expires_at": (expires_at if expires_at.tzinfo else expires_at.replace(tzinfo=timezone.utc)).isoformat() if isinstance(expires_at, datetime) else None,
         "lapsed": lapsed,
         "price_per_store_inr_per_month": PRICE_PER_STORE_INR_PER_MONTH,
         "max_stores_per_purchase": MAX_STORES_PER_PURCHASE,

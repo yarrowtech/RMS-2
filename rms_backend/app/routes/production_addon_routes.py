@@ -11,7 +11,7 @@ Not tied to plan tier — not even Enterprise gets it automatically. A
 retailer can be pure retail, pure job-work, or both; which plan they're on
 says nothing about whether they do production.
 """
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, Literal
 
 from bson import ObjectId
@@ -45,8 +45,8 @@ def _serialize(document: dict) -> dict:
         "note": document.get("note", ""),
         "status": document.get("status", "PENDING"),
         "internal_note": document.get("internal_note", ""),
-        "created_at": document.get("created_at").isoformat() if isinstance(document.get("created_at"), datetime) else None,
-        "reviewed_at": document.get("reviewed_at").isoformat() if isinstance(document.get("reviewed_at"), datetime) else None,
+        "created_at": (document.get("created_at") if document.get("created_at").tzinfo else document.get("created_at").replace(tzinfo=timezone.utc)).isoformat() if isinstance(document.get("created_at"), datetime) else None,
+        "reviewed_at": (document.get("reviewed_at") if document.get("reviewed_at").tzinfo else document.get("reviewed_at").replace(tzinfo=timezone.utc)).isoformat() if isinstance(document.get("reviewed_at"), datetime) else None,
     }
 
 

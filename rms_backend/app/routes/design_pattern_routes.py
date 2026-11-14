@@ -2,7 +2,7 @@
 import io
 import re
 import secrets
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict
 
 from bson import ObjectId
@@ -206,7 +206,7 @@ def serialize(row: dict) -> dict:
     result = dict(row)
     result["id"] = str(result.pop("_id"))
     for key, value in list(result.items()):
-        if isinstance(value, datetime): result[key] = value.isoformat()
+        if isinstance(value, datetime): result[key] = (value if value.tzinfo else value.replace(tzinfo=timezone.utc)).isoformat()
     return result
 
 async def require_design(ctx: dict = Depends(get_hq_tenant)) -> dict:

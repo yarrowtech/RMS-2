@@ -16,7 +16,7 @@ token just means an anonymous event, never a 401 — a tracking call must
 never be able to break the page that fired it.
 """
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 from bson import ObjectId
@@ -263,7 +263,7 @@ async def _compute_users(match: Dict[str, Any], days: int, limit: int) -> dict:
             "sessions": len(u["sessions"]),
             "page_views": u["page_views"],
             "feature_uses": u["feature_uses"],
-            "last_active": u["last_active"].isoformat() if isinstance(u["last_active"], datetime) else None,
+            "last_active": (u["last_active"] if u["last_active"].tzinfo else u["last_active"].replace(tzinfo=timezone.utc)).isoformat() if isinstance(u["last_active"], datetime) else None,
             "top_pages": [{"path": p, "views": c} for p, c in top_pages],
             "top_features": [{"feature": f, "count": c} for f, c in top_features],
         })

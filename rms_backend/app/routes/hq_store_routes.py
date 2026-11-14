@@ -14,7 +14,7 @@ from fastapi import APIRouter, HTTPException, Depends, Request, UploadFile, File
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, EmailStr
 from typing import Any, Dict, List, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from bson import ObjectId
 import re
 import cloudinary
@@ -106,7 +106,7 @@ def _serialize_store(s: dict) -> dict:
         "address":    s.get("address", ""),
         "phone":      s.get("phone", ""),
         "active":     s.get("active", True),
-        "created_at": s["created_at"].isoformat() if isinstance(s.get("created_at"), datetime) else "",
+        "created_at": (s["created_at"] if s["created_at"].tzinfo else s["created_at"].replace(tzinfo=timezone.utc)).isoformat() if isinstance(s.get("created_at"), datetime) else "",
     }
 
 
@@ -356,7 +356,7 @@ async def list_store_admins(ctx: TenantCtx = Depends(get_hq_tenant)):
             "permissions":        a.get("permissions", []),
             "status":     a.get("status", "PENDING"),
             "password_set": a.get("password_set", False),
-            "created_at": a["created_at"].isoformat() if isinstance(a.get("created_at"), datetime) else "",
+            "created_at": (a["created_at"] if a["created_at"].tzinfo else a["created_at"].replace(tzinfo=timezone.utc)).isoformat() if isinstance(a.get("created_at"), datetime) else "",
         })
     return JSONResponse({"status": "success", "data": admins})
 
@@ -787,7 +787,7 @@ async def hq_list_admins(ctx: TenantCtx = Depends(get_hq_or_store_hr_tenant)):
             "status":             a.get("status", "PENDING"),
             "password_set":       a.get("password_set", False),
             "tenant_id":          a.get("tenant_id", ""),
-            "created_at":         a["created_at"].isoformat() if isinstance(a.get("created_at"), datetime) else "",
+            "created_at":         (a["created_at"] if a["created_at"].tzinfo else a["created_at"].replace(tzinfo=timezone.utc)).isoformat() if isinstance(a.get("created_at"), datetime) else "",
         })
     return JSONResponse({"status": "success", "data": admins})
 

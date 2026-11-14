@@ -148,7 +148,10 @@ async def newsletter_history(ctx: Dict[str, Any] = Depends(get_tenant)):
         rows.append({
             "id": str(d["_id"]), "subject": d.get("subject"), "status": d.get("status"),
             "recipient_count": d.get("recipient_count", 0), "sent_count": d.get("sent_count", 0), "failed_count": d.get("failed_count", 0),
-            "created_at": d["created_at"].isoformat() if isinstance(d.get("created_at"), datetime) else "",
+            "created_at": (
+                (d["created_at"] if d["created_at"].tzinfo else d["created_at"].replace(tzinfo=timezone.utc)).isoformat()
+                if isinstance(d.get("created_at"), datetime) else ""
+            ),
         })
     return rows
 

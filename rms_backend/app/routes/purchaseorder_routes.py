@@ -5,7 +5,7 @@ from ..config import settings, frontend_url
 from pydantic import BaseModel, Field
 from ..product_identity import identity_fields
 from typing import Any, Dict, List, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from bson import ObjectId
 import uuid
 import re
@@ -84,7 +84,7 @@ def _ensure_buyer_line_snapshot(item: dict, recorded_at: Optional[datetime] = No
     if item.get("buyerRequestedRate") is None:
         item["buyerRequestedRate"] = float(item.get("rate") or 0)
     if not item.get("buyerRequestedAt"):
-        item["buyerRequestedAt"] = recorded_at.isoformat()
+        item["buyerRequestedAt"] = (recorded_at if recorded_at.tzinfo else recorded_at.replace(tzinfo=timezone.utc)).isoformat()
     if not item.get("originalQty"):
         item["originalQty"] = requested_qty
     history = list(item.get("quantityHistory") or [])

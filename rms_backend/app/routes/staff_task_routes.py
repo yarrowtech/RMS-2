@@ -13,7 +13,7 @@ see or be assigned a task here.
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel, Field
 from typing import Any, Dict, List, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 from bson import ObjectId
 
 from .deps import get_any_tenant
@@ -95,8 +95,8 @@ def _serialize(doc: dict) -> dict:
         "department": doc.get("department", ""), "store_id": doc.get("store_id"), "store_name": doc.get("store_name", ""),
         "priority": doc.get("priority", "medium"), "status": doc.get("status", "open"),
         "due_date": doc.get("due_date", ""),
-        "created_at": doc.get("created_at").isoformat() if isinstance(doc.get("created_at"), datetime) else None,
-        "updated_at": doc.get("updated_at").isoformat() if isinstance(doc.get("updated_at"), datetime) else None,
+        "created_at": (doc.get("created_at") if doc.get("created_at").tzinfo else doc.get("created_at").replace(tzinfo=timezone.utc)).isoformat() if isinstance(doc.get("created_at"), datetime) else None,
+        "updated_at": (doc.get("updated_at") if doc.get("updated_at").tzinfo else doc.get("updated_at").replace(tzinfo=timezone.utc)).isoformat() if isinstance(doc.get("updated_at"), datetime) else None,
     }
 
 

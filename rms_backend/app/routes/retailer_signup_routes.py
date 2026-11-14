@@ -9,7 +9,7 @@ exists until payment clears.
 """
 import asyncio
 import secrets
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Literal, Optional
 
 from bson import ObjectId
@@ -65,7 +65,7 @@ def _serialize(doc: dict) -> dict:
         "plan":         doc.get("plan", "basic"),
         "status":       doc.get("status", "PENDING_PAYMENT"),
         "amount_inr":   doc.get("amount_inr", 0),
-        "created_at":   doc.get("created_at").isoformat() if isinstance(doc.get("created_at"), datetime) else None,
+        "created_at":   (doc.get("created_at") if doc.get("created_at").tzinfo else doc.get("created_at").replace(tzinfo=timezone.utc)).isoformat() if isinstance(doc.get("created_at"), datetime) else None,
     }
 
 

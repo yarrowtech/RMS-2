@@ -18,7 +18,7 @@ even if the tenant later disabled it here. Worth tightening later if this
 needs to be a hard security boundary rather than a self-service curation
 tool for what the business actually uses.
 """
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List
 
 from bson import ObjectId
@@ -137,7 +137,7 @@ async def list_department_upgrade_requests(current_admin: Dict[str, Any] = Depen
         "department": r.get("department", ""),
         "note": r.get("note", ""),
         "requested_by_name": r.get("requested_by_name", ""),
-        "created_at": r.get("created_at").isoformat() if isinstance(r.get("created_at"), datetime) else None,
+        "created_at": (r.get("created_at") if r.get("created_at").tzinfo else r.get("created_at").replace(tzinfo=timezone.utc)).isoformat() if isinstance(r.get("created_at"), datetime) else None,
     } for r in rows]
 
 

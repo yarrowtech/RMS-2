@@ -8,7 +8,7 @@ employee create/delete here; staff lifecycle stays owned by the existing
 Admin Management screens (hq_store_routes.py / Store Staff).
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Literal, Optional
 
 from bson import ObjectId
@@ -58,7 +58,7 @@ def _serialize(doc: dict, extra_id_fields: tuple = ()) -> dict:
             doc[f] = str(doc[f])
     for f in ("created_at", "updated_at", "reviewed_at"):
         if isinstance(doc.get(f), datetime):
-            doc[f] = doc[f].isoformat()
+            doc[f] = (doc[f] if doc[f].tzinfo else doc[f].replace(tzinfo=timezone.utc)).isoformat()
     return doc
 
 
@@ -226,7 +226,7 @@ def _serialize_floor_staff(doc: dict) -> dict:
     row["id"] = str(row.pop("_id"))
     for key in ("created_at", "updated_at"):
         if isinstance(row.get(key), datetime):
-            row[key] = row[key].isoformat()
+            row[key] = (row[key] if row[key].tzinfo else row[key].replace(tzinfo=timezone.utc)).isoformat()
     return row
 
 

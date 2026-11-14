@@ -20,7 +20,7 @@ superadmin_routes.py. Wire this in alongside it:
 
 from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
 from fastapi.responses import JSONResponse
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 from bson import ObjectId
 from pydantic import BaseModel, EmailStr
@@ -95,7 +95,7 @@ def _as_iso(value: Any) -> Optional[str]:
     """Keep management responses JSON-safe without leaking raw Mongo values."""
     if not value:
         return None
-    return value.isoformat() if isinstance(value, datetime) else str(value)
+    return (value if value.tzinfo else value.replace(tzinfo=timezone.utc)).isoformat() if isinstance(value, datetime) else str(value)
 
 
 def _subscription_view(subscription: Optional[dict]) -> dict:
@@ -496,8 +496,8 @@ async def list_all_vendors(current_admin: CurrentAdmin = Depends(get_current_sup
             "tenant_id":       tenant_id,
             "tenant_name":     name_map.get(tenant_id, tenant_id or "— none —"),
             "password_set":    identity.get("password_set", False),
-            "created_at":      link["created_at"].isoformat() if isinstance(link.get("created_at"), datetime) else str(link.get("created_at", "")),
-            "approved_at":     link["approved_at"].isoformat() if isinstance(link.get("approved_at"), datetime) else (str(link.get("approved_at")) if link.get("approved_at") else None),
+            "created_at":      (link["created_at"] if link["created_at"].tzinfo else link["created_at"].replace(tzinfo=timezone.utc)).isoformat() if isinstance(link.get("created_at"), datetime) else str(link.get("created_at", "")),
+            "approved_at":     (link["approved_at"] if link["approved_at"].tzinfo else link["approved_at"].replace(tzinfo=timezone.utc)).isoformat() if isinstance(link.get("approved_at"), datetime) else (str(link.get("approved_at")) if link.get("approved_at") else None),
         })
 
     summary = {

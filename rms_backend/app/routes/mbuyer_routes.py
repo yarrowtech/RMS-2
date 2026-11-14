@@ -5,7 +5,7 @@ from fastapi import APIRouter, HTTPException, Query, Depends
 from .deps import get_hq_tenant
 from fastapi.responses import JSONResponse
 from typing import Optional, Any
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from bson import ObjectId
 from .forecast_analytics_routes import _compute_demand_forecast
 from app.email_utils import send_sample_request_email
@@ -130,7 +130,7 @@ async def get_open_po_tracker(
             "vendorValue":   round(vendor_value, 2),
             "division":      po.get("division", ""),
             "department":    po.get("department", ""),
-            "createdAt":     created_at.isoformat() if isinstance(created_at, datetime) else str(created_at or ""),
+            "createdAt":     (created_at if created_at.tzinfo else created_at.replace(tzinfo=timezone.utc)).isoformat() if isinstance(created_at, datetime) else str(created_at or ""),
             "vendorType":    po.get("vendor_type", ""),
             "hasVariance":   any(
                 abs(_float(it.get("variancePct", 0))) > 0
@@ -212,7 +212,7 @@ async def get_vendor_performance(
 
         created = po.get("createdAt")
         if created:
-            d = created.isoformat() if isinstance(created, datetime) else str(created)
+            d = (created if created.tzinfo else created.replace(tzinfo=timezone.utc)).isoformat() if isinstance(created, datetime) else str(created)
             if d > v["last_po_date"]: v["last_po_date"] = d
 
         items = po.get("items", [])
@@ -395,7 +395,7 @@ async def get_variance_log(
                 "amendedQty":    amended_qty,
                 "varianceStatus": var_st,
                 "overrideApplied": bool(po.get("variance_override")),
-                "createdAt":     po["createdAt"].isoformat() if isinstance(po.get("createdAt"), datetime) else str(po.get("createdAt", "")),
+                "createdAt":     (po["createdAt"] if po["createdAt"].tzinfo else po["createdAt"].replace(tzinfo=timezone.utc)).isoformat() if isinstance(po.get("createdAt"), datetime) else str(po.get("createdAt", "")),
             })
 
     # Sort: blocked first, then flagged, then by impact descending
@@ -452,7 +452,7 @@ async def get_budgets(ctx: dict = Depends(get_hq_tenant)):
             "department":  _clean_budget_dimension(b.get("department"), "Unassigned"),
             "totalBudget": _float(b.get("totalBudget", 0)),
             "notes":       b.get("notes", ""),
-            "createdAt":   b.get("createdAt","").isoformat() if isinstance(b.get("createdAt"), datetime) else str(b.get("createdAt","")),
+            "createdAt":   (b.get("createdAt","") if b.get("createdAt","").tzinfo else b.get("createdAt","").replace(tzinfo=timezone.utc)).isoformat() if isinstance(b.get("createdAt"), datetime) else str(b.get("createdAt","")),
         })
 
     # ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ Compute committed spend from active POs ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬
@@ -1025,7 +1025,7 @@ async def get_purchase_plan(
             record["lastRate"] = rate or record["lastRate"]
             record["totalValue"] += rate * _float(item.get("quantity") or item.get("qty") or 0)
             created = po.get("createdAt")
-            created_str = created.isoformat() if isinstance(created, datetime) else str(created or "")
+            created_str = (created if created.tzinfo else created.replace(tzinfo=timezone.utc)).isoformat() if isinstance(created, datetime) else str(created or "")
             if created_str and created_str > record["lastPODate"]:
                 record["lastPODate"] = created_str
 
@@ -1313,7 +1313,7 @@ async def get_dashboard(ctx: dict = Depends(get_hq_tenant)):
             "vendorName":  po.get("vendorName", ""),
             "value":       round(val, 2),
             "daysWaiting": days_waiting,
-            "updatedAt":   updated.isoformat() if isinstance(updated, datetime) else str(updated or ""),
+            "updatedAt":   (updated if updated.tzinfo else updated.replace(tzinfo=timezone.utc)).isoformat() if isinstance(updated, datetime) else str(updated or ""),
         })
 
     # ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ 7. Overdue POs ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬
@@ -1346,7 +1346,7 @@ async def get_dashboard(ctx: dict = Depends(get_hq_tenant)):
             "name":      v.get("name") or v.get("vendor_name") or "",
             "email":     v.get("email", ""),
             "mobile":    v.get("contactMobile") or v.get("mobile", ""),
-            "createdAt": created.isoformat() if isinstance(created, datetime) else str(created or ""),
+            "createdAt": (created if created.tzinfo else created.replace(tzinfo=timezone.utc)).isoformat() if isinstance(created, datetime) else str(created or ""),
             "source":    v.get("source", "registration"),
         })
 
@@ -1827,7 +1827,7 @@ async def get_order_details(search: Optional[str] = Query(None), ctx: dict = Dep
             "quantity": d.get("quantity", ""),
             "colour":   d.get("colour", ""),
             "fabric":   d.get("fabric", ""),
-            "createdAt": d.get("createdAt", "").isoformat() if isinstance(d.get("createdAt"), datetime) else str(d.get("createdAt", "")),
+            "createdAt": (d.get("createdAt", "") if d.get("createdAt", "").tzinfo else d.get("createdAt", "").replace(tzinfo=timezone.utc)).isoformat() if isinstance(d.get("createdAt"), datetime) else str(d.get("createdAt", "")),
         })
     if search:
         q = search.lower()
@@ -1902,7 +1902,7 @@ async def get_sample_or_real(search: Optional[str] = Query(None), ctx: dict = De
             "vendorType": d.get("vendorType") or "registered",
             "vendorEmail": d.get("vendorEmail", ""),
             "vendorMobile": d.get("vendorMobile", ""),
-            "createdAt": d.get("createdAt", "").isoformat() if isinstance(d.get("createdAt"), datetime) else str(d.get("createdAt", "")),
+            "createdAt": (d.get("createdAt", "") if d.get("createdAt", "").tzinfo else d.get("createdAt", "").replace(tzinfo=timezone.utc)).isoformat() if isinstance(d.get("createdAt"), datetime) else str(d.get("createdAt", "")),
         })
     if search:
         query = search.lower().strip()
@@ -2016,7 +2016,7 @@ async def get_buyer_grcs(search: Optional[str] = Query(None), ctx: dict = Depend
             "checkedBy":          d.get("checkedBy", ""),
             "passedBy":           d.get("passedBy", ""),
             "items":              d.get("items", []),
-            "createdAt": d["createdAt"].isoformat() if isinstance(d.get("createdAt"), datetime) else str(d.get("createdAt", "")),
+            "createdAt": (d["createdAt"] if d["createdAt"].tzinfo else d["createdAt"].replace(tzinfo=timezone.utc)).isoformat() if isinstance(d.get("createdAt"), datetime) else str(d.get("createdAt", "")),
         })
     if search:
         q = search.lower()
@@ -2116,7 +2116,7 @@ async def get_product_descriptions(search: Optional[str] = Query(None), ctx: dic
             "productShortDescription": d.get("productShortDescription", ""),
             "sizeAvailable":           d.get("sizeAvailable", ""),
             "colours":                 d.get("colours", ""),
-            "createdAt": d["createdAt"].isoformat() if isinstance(d.get("createdAt"), datetime) else str(d.get("createdAt", "")),
+            "createdAt": (d["createdAt"] if d["createdAt"].tzinfo else d["createdAt"].replace(tzinfo=timezone.utc)).isoformat() if isinstance(d.get("createdAt"), datetime) else str(d.get("createdAt", "")),
         })
     if search:
         q = search.lower()
@@ -2201,7 +2201,7 @@ async def get_gr_returns(search: Optional[str] = Query(None), ctx: dict = Depend
             "size":            d.get("size", ""),
             "qc":              d.get("qc", ""),
             "photos":          d.get("photos", []),   # list of {id, src, name}
-            "createdAt": d["createdAt"].isoformat() if isinstance(d.get("createdAt"), datetime) else "",
+            "createdAt": (d["createdAt"] if d["createdAt"].tzinfo else d["createdAt"].replace(tzinfo=timezone.utc)).isoformat() if isinstance(d.get("createdAt"), datetime) else "",
             "sourceType": d.get("sourceType", "legacy"),
             "sourceId": d.get("sourceId", ""),
             "sourceReference": d.get("sourceReference", ""),
@@ -2268,7 +2268,7 @@ async def get_next_plans(search: Optional[str] = Query(None), ctx: dict = Depend
             "quantity": d.get("quantity", ""),
             "price":    d.get("price", ""),
             "size":     d.get("size", ""),
-            "createdAt": d["createdAt"].isoformat() if isinstance(d.get("createdAt"), datetime) else "",
+            "createdAt": (d["createdAt"] if d["createdAt"].tzinfo else d["createdAt"].replace(tzinfo=timezone.utc)).isoformat() if isinstance(d.get("createdAt"), datetime) else "",
             "sourceType": d.get("sourceType", "legacy"),
             "sourceId": d.get("sourceId", ""),
             "sourceReference": d.get("sourceReference", ""),
@@ -2355,7 +2355,7 @@ async def get_debit_notes(search: Optional[str] = Query(None), ctx: dict = Depen
             "cinNo":                d.get("cinNo", ""),
             "vendorSeal":           d.get("vendorSeal", ""),
             "authorisedSignatory":  d.get("authorisedSignatory", ""),
-            "createdAt": d["createdAt"].isoformat() if isinstance(d.get("createdAt"), datetime) else "",
+            "createdAt": (d["createdAt"] if d["createdAt"].tzinfo else d["createdAt"].replace(tzinfo=timezone.utc)).isoformat() if isinstance(d.get("createdAt"), datetime) else "",
             "sourceType": d.get("sourceType", "legacy"),
             "sourceId": d.get("sourceId", ""),
             "sourceReference": d.get("sourceReference", ""),

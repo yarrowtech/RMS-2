@@ -3,7 +3,7 @@
 from fastapi import APIRouter, HTTPException, Query, Header, Depends
 from fastapi.responses import JSONResponse
 from typing import Optional, List
-from datetime import datetime
+from datetime import datetime, timezone
 from bson import ObjectId
 
 from app.db import stock_transfers_collection, inventory_collection, store_stock_collection, stores_collection, tenants_collection
@@ -65,9 +65,9 @@ def serialize(doc: dict) -> dict:
     if doc.get("linked_transfer_id"):
         doc["linked_transfer_id"] = str(doc["linked_transfer_id"])
     if isinstance(doc.get("createdAt"), datetime):
-        doc["createdAt"] = doc["createdAt"].isoformat()
+        doc["createdAt"] = (doc["createdAt"] if doc["createdAt"].tzinfo else doc["createdAt"].replace(tzinfo=timezone.utc)).isoformat()
     if isinstance(doc.get("updatedAt"), datetime):
-        doc["updatedAt"] = doc["updatedAt"].isoformat()
+        doc["updatedAt"] = (doc["updatedAt"] if doc["updatedAt"].tzinfo else doc["updatedAt"].replace(tzinfo=timezone.utc)).isoformat()
     return doc
 
 

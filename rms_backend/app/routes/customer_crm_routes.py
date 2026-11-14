@@ -38,7 +38,12 @@ def serialize_doc(doc: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
         elif isinstance(value, ObjectId):
             out[key] = str(value)
         elif isinstance(value, datetime):
-            out[key] = value.isoformat()
+            # Mongo hands back a naive datetime even though the value itself
+            # is UTC (every writer here uses now_utc()). Without tagging it
+            # UTC before isoformat(), the string has no offset suffix and
+            # the frontend's `new Date(...)` reads it as local time instead
+            # — showing a clock that's wrong by the browser's UTC offset.
+            out[key] = (value if value.tzinfo else value.replace(tzinfo=timezone.utc)).isoformat()
         else:
             out[key] = value
     return out

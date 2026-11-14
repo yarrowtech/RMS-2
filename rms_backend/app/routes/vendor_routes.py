@@ -45,7 +45,7 @@ from fastapi import APIRouter, HTTPException, Request, BackgroundTasks
 from fastapi.responses import StreamingResponse
 from bson import ObjectId
 from jose import jwt
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from io import BytesIO
 from html import escape
 import re
@@ -1781,7 +1781,7 @@ async def create_vendor_invite(request: Request, ctx: dict = Depends(get_hq_tena
     return {
         "message":    "Invite created successfully",
         "token":      raw_token,
-        "expires_at": invite_doc["expires_at"].isoformat(),
+        "expires_at": (invite_doc["expires_at"] if invite_doc["expires_at"].tzinfo else invite_doc["expires_at"].replace(tzinfo=timezone.utc)).isoformat(),
     }
 
 
@@ -1902,7 +1902,7 @@ async def get_invite_by_token(token: str):
         "email":           invite.get("email", ""),
         "address":         invite.get("address", ""),
         "productCategory": invite.get("productCategory", ""),
-        "expiresAt":       invite["expires_at"].isoformat(),
+        "expiresAt":       (invite["expires_at"] if invite["expires_at"].tzinfo else invite["expires_at"].replace(tzinfo=timezone.utc)).isoformat(),
     }
 
 
@@ -2097,7 +2097,7 @@ async def accept_questionnaire_submission(
             return {
                 "message":   "Already accepted. Returning existing invite token.",
                 "token":     existing_invite["token"],
-                "expiresAt": existing_invite["expires_at"].isoformat(),
+                "expiresAt": (existing_invite["expires_at"] if existing_invite["expires_at"].tzinfo else existing_invite["expires_at"].replace(tzinfo=timezone.utc)).isoformat(),
             }
 
     accepted_by = ctx.get("admin_id", "M-Buyer")
@@ -2138,7 +2138,7 @@ async def accept_questionnaire_submission(
     return {
         "message":   "Questionnaire accepted. Invite link generated.",
         "token":     raw_token,
-        "expiresAt": invite_doc["expires_at"].isoformat(),
+        "expiresAt": (invite_doc["expires_at"] if invite_doc["expires_at"].tzinfo else invite_doc["expires_at"].replace(tzinfo=timezone.utc)).isoformat(),
     }
 
 
@@ -2197,8 +2197,8 @@ async def list_invites(ctx: dict = Depends(get_hq_tenant), limit: int = Query(20
             "status":          inv_status,
             "source":          inv.get("source", "visiting_card"),
             "invitedBy":       inviter_names.get(str(inv.get("created_by")), inv.get("created_by") or ""),
-            "createdAt":       inv["created_at"].isoformat() if isinstance(inv.get("created_at"), datetime) else None,
-            "expiresAt":       expires_at.isoformat() if isinstance(expires_at, datetime) else None,
+            "createdAt":       (inv["created_at"] if inv["created_at"].tzinfo else inv["created_at"].replace(tzinfo=timezone.utc)).isoformat() if isinstance(inv.get("created_at"), datetime) else None,
+            "expiresAt":       (expires_at if expires_at.tzinfo else expires_at.replace(tzinfo=timezone.utc)).isoformat() if isinstance(expires_at, datetime) else None,
             "vendorId":        str(inv["vendor_id"]) if inv.get("vendor_id") else None,
             # Only still-usable invites carry their token forward — no
             # reason to hand back a link for one that's already registered

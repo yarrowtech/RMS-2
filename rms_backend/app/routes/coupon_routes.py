@@ -46,7 +46,10 @@ def serialize(doc: Optional[dict]) -> Optional[dict]:
         if key == "_id":
             out["id"] = str(value)
         elif isinstance(value, datetime):
-            out[key] = value.isoformat()
+            # Mongo returns a naive datetime even though the value is UTC;
+            # tag it before isoformat() or the frontend's `new Date(...)`
+            # reads the string as local time instead of UTC.
+            out[key] = (value if value.tzinfo else value.replace(tzinfo=timezone.utc)).isoformat()
         else:
             out[key] = value
     return out

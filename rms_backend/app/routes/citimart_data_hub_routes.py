@@ -25,7 +25,7 @@ import io
 import logging
 import re
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List
 
 import pandas as pd
@@ -1013,10 +1013,10 @@ async def list_imports(ctx: TenantCtx = Depends(_citimart_context)):
     async for row in citimart_data_hub_imports_collection.find({"tenant_id": ctx["tenant_id"]}).sort("imported_at", -1).limit(200):
         rows.append({
             "batch_id": row["batch_id"], "kind": row["kind"], "row_count": row["row_count"],
-            "imported_by": row.get("imported_by", ""), "imported_at": row["imported_at"].isoformat(),
+            "imported_by": row.get("imported_by", ""), "imported_at": (row["imported_at"] if row["imported_at"].tzinfo else row["imported_at"].replace(tzinfo=timezone.utc)).isoformat(),
             "file_name": row.get("file_name", ""),
             "live_sync_status": row.get("live_sync_status", "NOT_SYNCED" if row.get("kind") == "stock" else "ANALYTICS_ONLY"),
-            "synced_at": row.get("synced_at").isoformat() if row.get("synced_at") else None,
+            "synced_at": (row.get("synced_at") if getattr(row.get("synced_at"), "tzinfo", True) else row.get("synced_at").replace(tzinfo=timezone.utc)).isoformat() if row.get("synced_at") else None,
             "snapshot_mode": row.get("snapshot_mode"), "reconciliation_status": row.get("reconciliation_status"),
         })
     return {"status": "success", "data": rows}

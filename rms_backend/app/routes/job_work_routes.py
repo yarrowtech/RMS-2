@@ -5,7 +5,7 @@ to a cutter or stitcher remains retailer-owned material, so it is moved into a
 job-work order balance and reconciled when panels/finished goods return.
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 import json
 import uuid
@@ -393,10 +393,10 @@ def _serialize(document: dict) -> dict:
     row["id"] = str(row.pop("_id"))
     for key in ("created_at", "updated_at", "issued_at", "due_date", "token_expires_at", "order_viewed_at"):
         if isinstance(row.get(key), datetime):
-            row[key] = row[key].isoformat()
+            row[key] = (row[key] if row[key].tzinfo else row[key].replace(tzinfo=timezone.utc)).isoformat()
     if isinstance(row.get("comments"), list):
         row["comments"] = [
-            {**comment, "date": comment["date"].isoformat() if isinstance(comment.get("date"), datetime) else comment.get("date")}
+            {**comment, "date": (comment["date"] if comment["date"].tzinfo else comment["date"].replace(tzinfo=timezone.utc)).isoformat() if isinstance(comment.get("date"), datetime) else comment.get("date")}
             for comment in row["comments"]
         ]
     row["is_overdue"] = _is_overdue(row)
@@ -901,10 +901,10 @@ def _serialize_theme(doc: dict) -> dict:
     row["id"] = str(row.pop("_id"))
     for key in ("created_at", "updated_at"):
         if isinstance(row.get(key), datetime):
-            row[key] = row[key].isoformat()
+            row[key] = (row[key] if row[key].tzinfo else row[key].replace(tzinfo=timezone.utc)).isoformat()
     for line in row.get("lines") or []:
         if isinstance(line.get("added_at"), datetime):
-            line["added_at"] = line["added_at"].isoformat()
+            line["added_at"] = (line["added_at"] if line["added_at"].tzinfo else line["added_at"].replace(tzinfo=timezone.utc)).isoformat()
     return row
 
 

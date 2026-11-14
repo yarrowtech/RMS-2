@@ -1,5 +1,5 @@
 """Public retailer/store-owner onboarding leads and Super Admin review."""
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Literal, Optional
 
 from bson import ObjectId
@@ -53,8 +53,8 @@ def _view(item: dict) -> dict:
         "status": item.get("status", "PENDING"), "review_note": item.get("review_note", ""),
         "signup_id": item.get("signup_id", ""), "tenant_id": item.get("tenant_id", ""),
         "reviewed_by": item.get("reviewed_by", ""),
-        "created_at": item.get("created_at").isoformat() if item.get("created_at") else None,
-        "updated_at": item.get("updated_at").isoformat() if item.get("updated_at") else None,
+        "created_at": (item.get("created_at") if getattr(item.get("created_at"), "tzinfo", True) else item.get("created_at").replace(tzinfo=timezone.utc)).isoformat() if item.get("created_at") else None,
+        "updated_at": (item.get("updated_at") if getattr(item.get("updated_at"), "tzinfo", True) else item.get("updated_at").replace(tzinfo=timezone.utc)).isoformat() if item.get("updated_at") else None,
     }
 
 

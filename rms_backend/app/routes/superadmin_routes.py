@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter, HTTPException, Header, status, Depends, Query
 from pydantic import BaseModel, EmailStr
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 from bson import ObjectId
 from fastapi import Request
@@ -92,7 +92,7 @@ async def get_all_admins(current_admin: CurrentAdmin = Depends(get_current_super
             "permissions":        admin.get("permissions", []),
             "status":             admin.get("status", "PENDING"),
             "password_set":       admin.get("password_set", False),
-            "createdDate":        created_at.isoformat()[:10] if isinstance(created_at, datetime) else None,
+            "createdDate":        (created_at if created_at.tzinfo else created_at.replace(tzinfo=timezone.utc)).isoformat()[:10] if isinstance(created_at, datetime) else None,
             "managedUsersCount":  admin.get("managedUsersCount", 0),
             "last_login":         admin.get("last_login"),
             "phone":              admin.get("phone"),
@@ -537,7 +537,7 @@ async def get_reset_requests(current_admin: CurrentAdmin = Depends(get_current_s
             "name": user["name"],
             "email": user["email"],
             "department": user.get("department"),
-            "requested_at": requested_at.isoformat() if isinstance(requested_at, datetime) else None,
+            "requested_at": (requested_at if requested_at.tzinfo else requested_at.replace(tzinfo=timezone.utc)).isoformat() if isinstance(requested_at, datetime) else None,
         })
     return {"count": len(requests), "requests": requests}
 
@@ -685,7 +685,7 @@ async def get_audit_logs(
             "tenant_name": log.get("tenant_name"),
             "actor_email": log.get("actor_email"),
             "actor_role": log.get("actor_role"),
-            "time": created.isoformat() if isinstance(created, datetime) else None,
+            "time": (created if created.tzinfo else created.replace(tzinfo=timezone.utc)).isoformat() if isinstance(created, datetime) else None,
         })
     total = await audit_logs_collection.count_documents(query)
     return {"total": total, "logs": logs}
@@ -730,7 +730,7 @@ async def get_error_logs(
             "traceback": log.get("traceback"),
             "context": log.get("context") or {},
             "resolved": bool(log.get("resolved")),
-            "created_at": created.isoformat() if isinstance(created, datetime) else None,
+            "created_at": (created if created.tzinfo else created.replace(tzinfo=timezone.utc)).isoformat() if isinstance(created, datetime) else None,
         })
     total = await error_logs_collection.count_documents(query)
     unresolved = await error_logs_collection.count_documents({"resolved": False})
@@ -772,7 +772,7 @@ async def get_email_failures(
             "recipients": row.get("recipients") or [],
             "reason": row.get("reason"),
             "resolved": bool(row.get("resolved")),
-            "created_at": created.isoformat() if isinstance(created, datetime) else None,
+            "created_at": (created if created.tzinfo else created.replace(tzinfo=timezone.utc)).isoformat() if isinstance(created, datetime) else None,
         })
     total = await email_failures_collection.count_documents(query)
     unresolved = await email_failures_collection.count_documents({"resolved": False})
@@ -912,7 +912,7 @@ async def get_announcements(current_admin: CurrentAdmin = Depends(get_current_su
     items: List[Dict[str, Any]] = []
     async for a in cursor:
         created = a.get("created_at")
-        items.append({"id": str(a["_id"]), "text": a["text"], "active": a.get("active", True), "created": created.isoformat() if isinstance(created, datetime) else None})
+        items.append({"id": str(a["_id"]), "text": a["text"], "active": a.get("active", True), "created": (created if created.tzinfo else created.replace(tzinfo=timezone.utc)).isoformat() if isinstance(created, datetime) else None})
     return {"announcements": items}
 
 
@@ -955,7 +955,7 @@ async def list_api_keys(current_admin: CurrentAdmin = Depends(get_current_supera
         raw: str = k.get("key", "")
         masked = raw[:10] + "****" + raw[-4:] if len(raw) > 14 else raw
         last_used = k.get("last_used")
-        keys.append({"id": str(k["_id"]), "name": k["name"], "key": masked, "active": k.get("active", True), "created": k.get("created_at").isoformat()[:10] if k.get("created_at") else None, "last_used": last_used.isoformat() if isinstance(last_used, datetime) else last_used})
+        keys.append({"id": str(k["_id"]), "name": k["name"], "key": masked, "active": k.get("active", True), "created": (k.get("created_at") if k.get("created_at").tzinfo else k.get("created_at").replace(tzinfo=timezone.utc)).isoformat()[:10] if k.get("created_at") else None, "last_used": (last_used if last_used.tzinfo else last_used.replace(tzinfo=timezone.utc)).isoformat() if isinstance(last_used, datetime) else last_used})
     return {"keys": keys}
 
 
@@ -1041,7 +1041,7 @@ async def list_content_pages(current_admin: CurrentAdmin = Depends(get_current_s
     pages: List[Dict[str, Any]] = []
     async for p in cursor:
         updated = p.get("updated_at")
-        pages.append({"id": str(p["_id"]), "name": p["name"], "slug": p["slug"], "content": p.get("content", ""), "last_updated": updated.isoformat() if isinstance(updated, datetime) else None})
+        pages.append({"id": str(p["_id"]), "name": p["name"], "slug": p["slug"], "content": p.get("content", ""), "last_updated": (updated if updated.tzinfo else updated.replace(tzinfo=timezone.utc)).isoformat() if isinstance(updated, datetime) else None})
     return {"pages": pages}
 
 
@@ -1072,7 +1072,7 @@ async def get_flagged_content(current_admin: CurrentAdmin = Depends(get_current_
     items: List[Dict[str, Any]] = []
     async for f in cursor:
         created = f.get("created_at")
-        items.append({"id": str(f["_id"]), "user": f.get("user_id"), "reason": f.get("reason"), "content": f.get("content"), "time": created.isoformat() if isinstance(created, datetime) else None})
+        items.append({"id": str(f["_id"]), "user": f.get("user_id"), "reason": f.get("reason"), "content": f.get("content"), "time": (created if created.tzinfo else created.replace(tzinfo=timezone.utc)).isoformat() if isinstance(created, datetime) else None})
     return {"count": len(items), "items": items}
 
 
@@ -1115,7 +1115,7 @@ async def list_invoices(current_admin: CurrentAdmin = Depends(get_current_supera
     invoices: List[Dict[str, Any]] = []
     async for inv in cursor:
         date = inv.get("date")
-        invoices.append({"id": str(inv["_id"]), "invoice_number": inv.get("invoice_number"), "date": date.isoformat()[:10] if isinstance(date, datetime) else None, "amount": inv.get("amount"), "currency": inv.get("currency", "USD"), "status": inv.get("status"), "plan": inv.get("plan")})
+        invoices.append({"id": str(inv["_id"]), "invoice_number": inv.get("invoice_number"), "date": (date if date.tzinfo else date.replace(tzinfo=timezone.utc)).isoformat()[:10] if isinstance(date, datetime) else None, "amount": inv.get("amount"), "currency": inv.get("currency", "USD"), "status": inv.get("status"), "plan": inv.get("plan")})
     return {"invoices": invoices}
 
 
@@ -1247,7 +1247,7 @@ async def list_stores(
             "manager_name": manager_name,
             "active":       s.get("active", True),
             "admin_count":  admin_count,
-            "created_at":   created.isoformat()[:10] if isinstance(created, datetime) else None,
+            "created_at":   (created if created.tzinfo else created.replace(tzinfo=timezone.utc)).isoformat()[:10] if isinstance(created, datetime) else None,
         })
 
     # Nest branches under their parent stores
@@ -1580,7 +1580,7 @@ async def get_store_admins(
             "status":             admin.get("status", "PENDING"),
             "password_set":       admin.get("password_set", False),
             "is_manager":         str(store.get("manager_id", "")) == str(admin["_id"]),
-            "createdDate":        created.isoformat()[:10] if isinstance(created, datetime) else None,
+            "createdDate":        (created if created.tzinfo else created.replace(tzinfo=timezone.utc)).isoformat()[:10] if isinstance(created, datetime) else None,
         })
 
     return {

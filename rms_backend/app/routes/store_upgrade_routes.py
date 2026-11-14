@@ -10,7 +10,7 @@ import base64
 import hashlib
 import hmac
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, Literal, Optional
 from urllib import error as urlerror
 from urllib import request as urlrequest
@@ -239,8 +239,8 @@ def _serialize(document: dict) -> dict:
         "approved_departments": document.get("approved_departments"),
         "payment_status": document.get("payment_status", "unpaid"),
         "internal_note": document.get("internal_note", ""),
-        "created_at": document.get("created_at").isoformat() if isinstance(document.get("created_at"), datetime) else None,
-        "reviewed_at": document.get("reviewed_at").isoformat() if isinstance(document.get("reviewed_at"), datetime) else None,
+        "created_at": (document.get("created_at") if document.get("created_at").tzinfo else document.get("created_at").replace(tzinfo=timezone.utc)).isoformat() if isinstance(document.get("created_at"), datetime) else None,
+        "reviewed_at": (document.get("reviewed_at") if document.get("reviewed_at").tzinfo else document.get("reviewed_at").replace(tzinfo=timezone.utc)).isoformat() if isinstance(document.get("reviewed_at"), datetime) else None,
     }
 
 

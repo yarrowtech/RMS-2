@@ -3,7 +3,7 @@ multi-store tenants alike, whenever their plan is on the self-serve paid
 billing path (has a real subscription_expires_at set)."""
 import asyncio
 import math
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from bson import ObjectId
@@ -24,7 +24,7 @@ EXPIRY_REMINDER_WINDOW_DAYS = 14  # retailers get more runway than the 7-day ven
 
 
 def _serialize_date(value):
-    return value.isoformat() if isinstance(value, datetime) else None
+    return (value if value.tzinfo else value.replace(tzinfo=timezone.utc)).isoformat() if isinstance(value, datetime) else None
 
 
 async def _billed_tenant(ctx: dict) -> dict:
@@ -189,7 +189,7 @@ async def create_retailer_renewal_link(ctx: dict = Depends(get_tenant)):
     return {
         "message": "Secure Razorpay renewal link created.",
         "payment_link": payment_link_url,
-        "expires_at": expires_at.isoformat(),
+        "expires_at": (expires_at if expires_at.tzinfo else expires_at.replace(tzinfo=timezone.utc)).isoformat(),
         "amount_inr": config["price_inr"],
     }
 
@@ -282,7 +282,7 @@ async def create_retailer_upgrade_link(payload: dict, ctx: dict = Depends(get_te
     return {
         "message": f"Secure Razorpay upgrade link created for the {config['label']} plan.",
         "payment_link": payment_link_url,
-        "expires_at": expires_at.isoformat(),
+        "expires_at": (expires_at if expires_at.tzinfo else expires_at.replace(tzinfo=timezone.utc)).isoformat(),
         "amount_inr": config["price_inr"],
         "requested_plan": requested_plan,
     }
@@ -343,7 +343,7 @@ async def process_retailer_upgrade_payment_link_webhook(event: dict, event_id: s
             "updated_at": now,
         }},
     )
-    return {"status": "upgraded", "tenant_id": tenant_id, "plan": requested_plan, "next_payment_due": next_due.isoformat()}
+    return {"status": "upgraded", "tenant_id": tenant_id, "plan": requested_plan, "next_payment_due": (next_due if next_due.tzinfo else next_due.replace(tzinfo=timezone.utc)).isoformat()}
 
 
 async def process_retailer_renewal_payment_link_webhook(event: dict, event_id: str = "") -> dict | None:
@@ -397,7 +397,7 @@ async def process_retailer_renewal_payment_link_webhook(event: dict, event_id: s
         {"_id": tenant["_id"]},
         {"$set": {"subscription_status": "active", "subscription_renewed_at": now, "subscription_expires_at": next_due, "subscription_payment_id": payment_id, "updated_at": now}},
     )
-    return {"status": "renewed", "tenant_id": tenant_id, "next_payment_due": next_due.isoformat()}
+    return {"status": "renewed", "tenant_id": tenant_id, "next_payment_due": (next_due if next_due.tzinfo else next_due.replace(tzinfo=timezone.utc)).isoformat()}
 
 
 async def _authorize_cron_or_superadmin(authorization: Optional[str], x_cron_secret: Optional[str]) -> None:

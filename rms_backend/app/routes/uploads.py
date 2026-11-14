@@ -1,13 +1,13 @@
 
 
 
-from fastapi import APIRouter, UploadFile, File, HTTPException, Query, BackgroundTasks
+from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, Query, BackgroundTasks
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.encoders import jsonable_encoder
 from motor.motor_asyncio import AsyncIOMotorClient
 from openpyxl import load_workbook
 import pandas as pd
-from typing import Iterator, List, Optional
+from typing import Any, Dict, Iterator, List, Optional
 from datetime import datetime, timedelta
 import hashlib
 import asyncio
@@ -18,9 +18,16 @@ from pathlib import Path
 from uuid import uuid4
 from dotenv import load_dotenv
 
+from .forecast_analytics_routes import _require_forecast_context
+from .auth_routes import get_current_superadmin
+
 load_dotenv()
 
-router = APIRouter(prefix="/api/upload", tags=["Upload"])
+# Every route here reads/writes forecast_db directly with no tenant_id field
+# at all — this was previously reachable with no login whatsoever. Gating at
+# the router level (same Forecast & Analytics check every other forecast
+# endpoint already uses) closes that without having to touch each route.
+router = APIRouter(prefix="/api/upload", tags=["Upload"], dependencies=[Depends(_require_forecast_context)])
 
 MAIN_MONGO_URI     = os.getenv("MONGODB_URI")
 MAIN_DB_NAME       = os.getenv("MONGODB_DB")
@@ -135,7 +142,7 @@ def iter_excel_or_csv(
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"File read error ({filename}): {e}")
 
-async def insert_to_mongo(df: pd.DataFrame, collection: str, upload_id: Optional[str] = None) -> int:
+async def insert_to_mongo(df: pd.DataFrame, collection: str, tenant_id: str, upload_id: Optional[str] = None) -> int:
     if df.empty:
         return 0
 
@@ -154,14 +161,17 @@ async def insert_to_mongo(df: pd.DataFrame, collection: str, upload_id: Optional
     df["_row_hash"] = df.apply(row_fingerprint, axis=1)
 
     coll = forecast_db[collection]
-    await coll.create_index("_row_hash")
+    await coll.create_index([("tenant_id", 1), ("_row_hash", 1)])
 
+    # Dedup is scoped per tenant — two tenants uploading an identical-looking
+    # row (same store/date/qty) must not make tenant B's row silently vanish
+    # as a "duplicate" of tenant A's.
     hashes = df["_row_hash"].dropna().unique().tolist()
     existing = set()
     chunk_size = 1000
     for start in range(0, len(hashes), chunk_size):
         chunk = hashes[start:start + chunk_size]
-        cursor = coll.find({"_row_hash": {"$in": chunk}}, {"_row_hash": 1})
+        cursor = coll.find({"tenant_id": tenant_id, "_row_hash": {"$in": chunk}}, {"_row_hash": 1})
         async for doc in cursor:
             if "_row_hash" in doc:
                 existing.add(doc["_row_hash"])
@@ -171,8 +181,9 @@ async def insert_to_mongo(df: pd.DataFrame, collection: str, upload_id: Optional
         return 0
 
     records = new_df.where(pd.notnull(new_df), None).to_dict(orient="records")
-    if upload_id:
-        for record in records:
+    for record in records:
+        record["tenant_id"] = tenant_id
+        if upload_id:
             record["_upload_id"] = upload_id
     inserted = 0
     for start in range(0, len(records), chunk_size):
@@ -230,7 +241,7 @@ async def save_upload_stream(file: UploadFile, upload_type: str) -> str:
 #  "Std Rate"            → STDRATE          → STANDARDRATE
 # ══════════════════════════════════════════════════════════
 
-async def upload_sales(files: List[UploadFile] = File(...)):
+async def upload_sales(files: List[UploadFile], tenant_id: str):
     required = ["STORE", "DIVISION", "SECTION", "DEPARTMENT", "VENDOR", "BILLQTY"]
     optional = ["CAT1", "CAT2", "CAT3", "CAT4", "CAT5", "CATEGORY6", "RSP", "STANDARDRATE"]
     identity_fields = ["BILLNO", "BARCODE", "ITEMCODE", "SKU", "LINENO"]
@@ -312,13 +323,14 @@ async def upload_sales(files: List[UploadFile] = File(...)):
             df["BILLQTY"] = pd.to_numeric(df["BILLQTY"], errors="coerce").fillna(0)
             file_processed += len(df)
             detected_columns = detected_columns or df.columns.tolist()
-            file_inserted += await insert_to_mongo(df, "sales_data", upload_id)
+            file_inserted += await insert_to_mongo(df, "sales_data", tenant_id, upload_id)
         if chunks_seen == 0:
             Path(saved_path).unlink(missing_ok=True)
             raise HTTPException(status_code=400, detail=f"No data rows found in {file.filename}")
         total_rows += file_inserted
         total_processed += file_processed
         await forecast_db["uploaded_files"].insert_one({
+            "tenant_id": tenant_id,
             "filename": file.filename, "collection": "sales_data", "inserted_rows": file_inserted,
             "processed_rows": file_processed, "upload_id": upload_id,
             "type": "sales", "selected_sheet": selected_sheet, "detected_columns": detected_columns,
@@ -338,7 +350,7 @@ async def upload_sales(files: List[UploadFile] = File(...)):
 # Confirmed godown keywords from real data
 GODOWN_KEYWORDS = ["PACKAGE", "WAREHOUSE"]  # "WAREHOUSE" catches SEMI FRESH WAREHOUSE too
 
-async def upload_stock(files: List[UploadFile] = File(...)):
+async def upload_stock(files: List[UploadFile], tenant_id: str):
     required = ["SOURCESITE", "DIVISION", "SECTION", "DEPARTMENT", "VENDOR", "CLOSINGQTY"]
     required_groups = [[name] for name in required]
     keep = [
@@ -383,13 +395,14 @@ async def upload_stock(files: List[UploadFile] = File(...)):
             df["SITE_NAME"] = classified.apply(lambda value: value[1])
             file_processed += len(df)
             detected_columns = detected_columns or df.columns.tolist()
-            file_inserted += await insert_to_mongo(df, "stock_data", upload_id)
+            file_inserted += await insert_to_mongo(df, "stock_data", tenant_id, upload_id)
         if chunks_seen == 0:
             Path(saved_path).unlink(missing_ok=True)
             raise HTTPException(status_code=400, detail=f"No data rows found in {file.filename}")
         total_rows += file_inserted
         total_processed += file_processed
         await forecast_db["uploaded_files"].insert_one({
+            "tenant_id": tenant_id,
             "filename": file.filename, "collection": "stock_data", "inserted_rows": file_inserted,
             "processed_rows": file_processed, "upload_id": upload_id,
             "type": "stock", "selected_sheet": selected_sheet, "detected_columns": detected_columns,
@@ -404,7 +417,7 @@ async def upload_stock(files: List[UploadFile] = File(...)):
     })
 
 
-async def run_upload_job(job_id: str, upload_type: str, queued_files: list):
+async def run_upload_job(job_id: str, upload_type: str, queued_files: list, tenant_id: str):
     async with UPLOAD_JOB_LOCK:
         await forecast_db["upload_jobs"].update_one(
             {"job_id": job_id},
@@ -419,7 +432,7 @@ async def run_upload_job(job_id: str, upload_type: str, queued_files: list):
                 queued["upload"].headers = {"content-type": queued.get("content_type") or "application/octet-stream"}
 
             uploads = [queued["upload"] for queued in queued_files]
-            response = await (upload_sales(uploads) if upload_type == "sales" else upload_stock(uploads))
+            response = await (upload_sales(uploads, tenant_id) if upload_type == "sales" else upload_stock(uploads, tenant_id))
             result = json.loads(response.body.decode("utf-8"))
             await forecast_db["upload_jobs"].update_one(
                 {"job_id": job_id},
@@ -437,7 +450,7 @@ async def run_upload_job(job_id: str, upload_type: str, queued_files: list):
                 Path(queued["path"]).unlink(missing_ok=True)
 
 
-async def queue_upload(files: List[UploadFile], upload_type: str, background_tasks: BackgroundTasks):
+async def queue_upload(files: List[UploadFile], upload_type: str, background_tasks: BackgroundTasks, tenant_id: str):
     job_id = uuid4().hex
     queued_files = []
     try:
@@ -453,11 +466,11 @@ async def queue_upload(files: List[UploadFile], upload_type: str, background_tas
         raise
 
     await forecast_db["upload_jobs"].insert_one({
-        "job_id": job_id, "type": upload_type, "status": "queued",
+        "job_id": job_id, "tenant_id": tenant_id, "type": upload_type, "status": "queued",
         "filenames": [item["filename"] for item in queued_files],
         "created_at": datetime.utcnow(),
     })
-    background_tasks.add_task(run_upload_job, job_id, upload_type, queued_files)
+    background_tasks.add_task(run_upload_job, job_id, upload_type, queued_files, tenant_id)
     return JSONResponse(
         status_code=202,
         content={"status": "queued", "job_id": job_id, "message": "Upload saved and queued for processing."},
@@ -465,18 +478,24 @@ async def queue_upload(files: List[UploadFile], upload_type: str, background_tas
 
 
 @router.post("/sales")
-async def queue_sales_upload(background_tasks: BackgroundTasks, files: List[UploadFile] = File(...)):
-    return await queue_upload(files, "sales", background_tasks)
+async def queue_sales_upload(
+    background_tasks: BackgroundTasks, files: List[UploadFile] = File(...),
+    ctx: Dict[str, Any] = Depends(_require_forecast_context),
+):
+    return await queue_upload(files, "sales", background_tasks, ctx["tenant_id"])
 
 
 @router.post("/stock")
-async def queue_stock_upload(background_tasks: BackgroundTasks, files: List[UploadFile] = File(...)):
-    return await queue_upload(files, "stock", background_tasks)
+async def queue_stock_upload(
+    background_tasks: BackgroundTasks, files: List[UploadFile] = File(...),
+    ctx: Dict[str, Any] = Depends(_require_forecast_context),
+):
+    return await queue_upload(files, "stock", background_tasks, ctx["tenant_id"])
 
 
 @router.get("/jobs/{job_id}")
-async def get_upload_job(job_id: str):
-    job = await forecast_db["upload_jobs"].find_one({"job_id": job_id}, {"_id": 0})
+async def get_upload_job(job_id: str, ctx: Dict[str, Any] = Depends(_require_forecast_context)):
+    job = await forecast_db["upload_jobs"].find_one({"job_id": job_id, "tenant_id": ctx["tenant_id"]}, {"_id": 0})
     if not job:
         raise HTTPException(status_code=404, detail="Upload job not found")
     return jsonable_encoder(job)
@@ -485,7 +504,8 @@ async def get_upload_job(job_id: str):
 # FILTER OPTIONS
 
 @router.get("/filters/options")
-async def get_filter_options():
+async def get_filter_options(ctx: Dict[str, Any] = Depends(_require_forecast_context)):
+    tenant_id = ctx["tenant_id"]
     try:
         def uniq(arr):
             return sorted(set(
@@ -493,17 +513,17 @@ async def get_filter_options():
                 if x not in [None, "", "nan", "NAN", "None", "UNKNOWN"]
             ))
 
-        stores      = await forecast_db["stock_data"].distinct("SITE_NAME")
-        divisions   = await forecast_db["stock_data"].distinct("DIVISION")
-        sections    = await forecast_db["stock_data"].distinct("SECTION")
-        departments = await forecast_db["stock_data"].distinct("DEPARTMENT")
-        vendors     = await forecast_db["stock_data"].distinct("VENDOR")
+        stores      = await forecast_db["stock_data"].distinct("SITE_NAME", {"tenant_id": tenant_id})
+        divisions   = await forecast_db["stock_data"].distinct("DIVISION", {"tenant_id": tenant_id})
+        sections    = await forecast_db["stock_data"].distinct("SECTION", {"tenant_id": tenant_id})
+        departments = await forecast_db["stock_data"].distinct("DEPARTMENT", {"tenant_id": tenant_id})
+        vendors     = await forecast_db["stock_data"].distinct("VENDOR", {"tenant_id": tenant_id})
 
         cats = []
         for f in ["CAT1","CAT2","CAT3","CAT4","CAT5","CATEGORY6"]:
-            cats += await forecast_db["sales_data"].distinct(f)
+            cats += await forecast_db["sales_data"].distinct(f, {"tenant_id": tenant_id})
         for f in ["CATEGORY1","CATEGORY2","CATEGORY3","CATEGORY4","CATEGORY5","CATEGORY6","CAT6"]:
-            cats += await forecast_db["stock_data"].distinct(f)
+            cats += await forecast_db["stock_data"].distinct(f, {"tenant_id": tenant_id})
 
         return {
             "stores":      uniq(stores),
@@ -548,13 +568,13 @@ async def ensure_stock_gap_indexes():
             return
         await asyncio.gather(
             forecast_db["sales_data"].create_index([
-                ("DATE", 1), ("STORE", 1), ("DIVISION", 1),
+                ("tenant_id", 1), ("DATE", 1), ("STORE", 1), ("DIVISION", 1),
                 ("SECTION", 1), ("DEPARTMENT", 1), ("VENDOR", 1),
-            ], name="stock_gap_sales_filters"),
+            ], name="stock_gap_sales_filters_v2"),
             forecast_db["stock_data"].create_index([
-                ("STOCKASON", -1), ("SOURCE_SITE", 1), ("SITE_NAME", 1),
+                ("tenant_id", 1), ("STOCKASON", -1), ("SOURCE_SITE", 1), ("SITE_NAME", 1),
                 ("DIVISION", 1), ("SECTION", 1), ("DEPARTMENT", 1), ("VENDOR", 1),
-            ], name="stock_gap_stock_filters"),
+            ], name="stock_gap_stock_filters_v2"),
         )
         FORECAST_INDEXES_READY = True
 
@@ -570,7 +590,9 @@ async def stock_gap(
     vendor:      str = Query("All"),
     category:    str = Query("All"),
     holdingDays: int = Query(45),
+    ctx: Dict[str, Any] = Depends(_require_forecast_context),
 ):
+    tenant_id = ctx["tenant_id"]
     try:
         dt_from    = datetime.strptime(fromDate, "%Y-%m-%d")
         dt_to      = datetime.strptime(toDate,   "%Y-%m-%d")
@@ -586,7 +608,7 @@ async def stock_gap(
         # 1. SALES
         #    key = (STORE, DIV, SEC, DEPT, VENDOR)
         # ────────────────────────────────────────────
-        sales_filter: dict = {"DATE": {"$gte": dt_from, "$lt": dt_to + timedelta(days=1)}}
+        sales_filter: dict = {"tenant_id": tenant_id, "DATE": {"$gte": dt_from, "$lt": dt_to + timedelta(days=1)}}
         if store      != "All": sales_filter["STORE"]      = {"$in": mlist(store)}
         if division   != "All": sales_filter["DIVISION"]   = {"$in": mlist(division)}
         if section    != "All": sales_filter["SECTION"]    = {"$in": mlist(section)}
@@ -629,7 +651,7 @@ async def stock_gap(
         #    store_map  : (SITE_NAME, DIV, SEC, DEPT, VENDOR) → storeStock
         #    godown_map : (DIV, SEC, DEPT, VENDOR) → godownStock (combined all godowns)
         # ────────────────────────────────────────────
-        stock_filter: dict = {}
+        stock_filter: dict = {"tenant_id": tenant_id}
         if store      != "All": stock_filter["$or"] = [
             {"SITE_NAME":   {"$in": mlist(store)}},
             {"SOURCE_SITE": "GODOWN"},   # always include godowns
@@ -643,7 +665,7 @@ async def stock_gap(
         # Stock files are point-in-time snapshots — only use the most recent one
         # to avoid double-counting when multiple snapshots are uploaded
         latest_date_doc = await forecast_db["stock_data"].find_one(
-            {}, sort=[("STOCKASON", -1)]
+            {"tenant_id": tenant_id}, sort=[("STOCKASON", -1)]
         )
         latest_stock_date = latest_date_doc.get("STOCKASON") if latest_date_doc else None
 
@@ -752,7 +774,7 @@ async def stock_gap(
 # ══════════════════════════════════════════════════════════
 #  DEBUG — inspect raw data for one product
 # ══════════════════════════════════════════════════════════
-@router.get("/debug/product")
+@router.get("/debug/product", dependencies=[Depends(get_current_superadmin)])
 async def debug_product(
     division:   str = Query(...),
     section:    str = Query(...),
@@ -792,7 +814,7 @@ async def debug_product(
     }
 
 
-@router.get("/debug/counts")
+@router.get("/debug/counts", dependencies=[Depends(get_current_superadmin)])
 async def debug_counts():
     sales_count = await forecast_db["sales_data"].count_documents({})
     stock_count = await forecast_db["stock_data"].count_documents({})
@@ -811,7 +833,7 @@ async def debug_counts():
 #  ONE-TIME MIGRATION: fix string dates
 # ══════════════════════════════════════════════════════════
 
-@router.post("/migrate/fix-dates")
+@router.post("/migrate/fix-dates", dependencies=[Depends(get_current_superadmin)])
 async def migrate_fix_dates():
     fixed_s = fixed_st = errors = 0
     async for doc in forecast_db["sales_data"].find({"DATE": {"$type": "string"}}):
@@ -836,8 +858,8 @@ async def migrate_fix_dates():
 # ══════════════════════════════════════════════════════════
 
 @router.get("/files")
-async def list_uploaded_files():
-    files = await forecast_db["uploaded_files"].find().sort("uploaded_at", -1).to_list(100)
+async def list_uploaded_files(ctx: Dict[str, Any] = Depends(_require_forecast_context)):
+    files = await forecast_db["uploaded_files"].find({"tenant_id": ctx["tenant_id"]}).sort("uploaded_at", -1).to_list(100)
     cleaned = []
     for doc in files:
         path = doc.get("file_path")
@@ -860,7 +882,7 @@ async def list_uploaded_files():
 
 
 @router.get("/files/{file_id}/download")
-async def download_uploaded_file(file_id: str):
+async def download_uploaded_file(file_id: str, ctx: Dict[str, Any] = Depends(_require_forecast_context)):
     from bson import ObjectId
 
     try:
@@ -868,7 +890,7 @@ async def download_uploaded_file(file_id: str):
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid file id")
 
-    doc = await forecast_db["uploaded_files"].find_one({"_id": oid})
+    doc = await forecast_db["uploaded_files"].find_one({"_id": oid, "tenant_id": ctx["tenant_id"]})
     if not doc:
         raise HTTPException(status_code=404, detail="Uploaded file record not found")
 
@@ -888,7 +910,7 @@ async def download_uploaded_file(file_id: str):
 
 
 @router.delete("/files/{file_id}")
-async def delete_uploaded_file(file_id: str):
+async def delete_uploaded_file(file_id: str, ctx: Dict[str, Any] = Depends(_require_forecast_context)):
     from bson import ObjectId
 
     try:
@@ -896,7 +918,8 @@ async def delete_uploaded_file(file_id: str):
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid file id")
 
-    doc = await forecast_db["uploaded_files"].find_one({"_id": oid})
+    tenant_id = ctx["tenant_id"]
+    doc = await forecast_db["uploaded_files"].find_one({"_id": oid, "tenant_id": tenant_id})
     if not doc:
         raise HTTPException(status_code=404, detail="Uploaded file record not found")
 
@@ -904,7 +927,7 @@ async def delete_uploaded_file(file_id: str):
     upload_id = doc.get("upload_id")
     deleted_rows = 0
     if upload_id and collection in {"sales_data", "stock_data"}:
-        result = await forecast_db[collection].delete_many({"_upload_id": upload_id})
+        result = await forecast_db[collection].delete_many({"_upload_id": upload_id, "tenant_id": tenant_id})
         deleted_rows = result.deleted_count
 
     file_deleted = False
@@ -931,7 +954,7 @@ async def delete_uploaded_file(file_id: str):
     }
 
 
-@router.get("/test")
+@router.get("/test", dependencies=[Depends(get_current_superadmin)])
 async def test_forecast_db():
     try:
         r = await forecast_db["test_collection"].insert_one({"ping": "ok"})

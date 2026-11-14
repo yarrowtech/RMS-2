@@ -1,6 +1,6 @@
 """Vendor-to-vendor trade workflow, deliberately isolated from retailer procurement."""
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 import re
 from bson import ObjectId
@@ -62,7 +62,7 @@ def _serialise(document: dict) -> dict:
             row[key] = str(row[key])
     for key in ("created_at", "updated_at", "deadline", "quoted_at", "awarded_at", "confirmed_at", "received_at", "issued_at", "due_date", "dispatched_at"):
         if row.get(key):
-            row[key] = row[key].isoformat() if hasattr(row[key], "isoformat") else str(row[key])
+            row[key] = (row[key] if getattr(row[key], "tzinfo", True) else row[key].replace(tzinfo=timezone.utc)).isoformat() if hasattr(row[key], "isoformat") else str(row[key])
     return row
 
 
@@ -277,7 +277,7 @@ async def dispatch_order(order_id: str, payload: dict, authorization: str = Head
         "note": _text(payload.get("note"), "dispatch note", maximum=1000), "dispatched_at": datetime.utcnow(),
     }
     await vendor_b2b_orders_collection.update_one({"_id": order["_id"]}, {"$set": {"dispatch": dispatch, "updated_at": datetime.utcnow()}})
-    return {"message": "B2B dispatch saved.", "dispatch": {**dispatch, "dispatched_at": dispatch["dispatched_at"].isoformat()}}
+    return {"message": "B2B dispatch saved.", "dispatch": {**dispatch, "dispatched_at": (dispatch["dispatched_at"] if dispatch["dispatched_at"].tzinfo else dispatch["dispatched_at"].replace(tzinfo=timezone.utc)).isoformat()}}
 
 
 def _pdf_response(title: str, rows: list[tuple[str, str]], filename: str):
@@ -478,7 +478,7 @@ async def record_invoice_payment(invoice_id: str, payload: dict, authorization: 
     payment = {"payment_no": _document_number("B2B-PAY"), "amount": amount, "payment_date": _text(payload.get("payment_date"), "payment date", maximum=30) or now.strftime("%Y-%m-%d"), "payment_mode": _text(payload.get("payment_mode"), "payment mode", maximum=50) or "Bank transfer", "reference_no": _text(payload.get("reference_no"), "reference no", maximum=100), "note": _text(payload.get("note"), "note", maximum=500), "recorded_at": now}
     payment_status = "Paid" if due <= 0.000001 else "PartiallyPaid"
     await vendor_b2b_invoices_collection.update_one({"_id": invoice["_id"]}, {"$set": {"paid_amount": paid, "balance_due": max(0, due), "payment_status": payment_status, "updated_at": now}, "$push": {"payments": payment}})
-    return {"message": "B2B payment recorded.", "payment": {**payment, "recorded_at": payment["recorded_at"].isoformat()}, "balance_due": max(0, due), "payment_status": payment_status}
+    return {"message": "B2B payment recorded.", "payment": {**payment, "recorded_at": (payment["recorded_at"] if payment["recorded_at"].tzinfo else payment["recorded_at"].replace(tzinfo=timezone.utc)).isoformat()}, "balance_due": max(0, due), "payment_status": payment_status}
 
 
 @router.get("/finance-ledger")

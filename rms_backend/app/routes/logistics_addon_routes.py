@@ -9,7 +9,7 @@ tracking depends on how they operate, not their plan. This module gives
 an existing HQ retailer an in-app way to ask for it, and gives Super
 Admin a review queue instead of a purely manual process.
 """
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, Literal
 
 from bson import ObjectId
@@ -43,8 +43,8 @@ def _serialize(document: dict) -> dict:
         "note": document.get("note", ""),
         "status": document.get("status", "PENDING"),
         "internal_note": document.get("internal_note", ""),
-        "created_at": document.get("created_at").isoformat() if isinstance(document.get("created_at"), datetime) else None,
-        "reviewed_at": document.get("reviewed_at").isoformat() if isinstance(document.get("reviewed_at"), datetime) else None,
+        "created_at": (document.get("created_at") if document.get("created_at").tzinfo else document.get("created_at").replace(tzinfo=timezone.utc)).isoformat() if isinstance(document.get("created_at"), datetime) else None,
+        "reviewed_at": (document.get("reviewed_at") if document.get("reviewed_at").tzinfo else document.get("reviewed_at").replace(tzinfo=timezone.utc)).isoformat() if isinstance(document.get("reviewed_at"), datetime) else None,
     }
 
 

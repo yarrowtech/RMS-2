@@ -18,7 +18,7 @@ calling `notify()` at one extra line, after their own existing logic.
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel, Field
 from typing import Any, Dict, List, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 from bson import ObjectId
 
 from .deps import get_any_tenant
@@ -62,7 +62,7 @@ def _serialize(doc: dict, *, read: bool = False) -> dict:
         "ref_id": doc.get("ref_id") or "",
         "priority": doc.get("priority", "normal"),
         "read": read,
-        "created_at": doc.get("created_at").isoformat() if isinstance(doc.get("created_at"), datetime) else None,
+        "created_at": (doc.get("created_at") if doc.get("created_at").tzinfo else doc.get("created_at").replace(tzinfo=timezone.utc)).isoformat() if isinstance(doc.get("created_at"), datetime) else None,
     }
 
 

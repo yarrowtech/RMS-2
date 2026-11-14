@@ -25,7 +25,7 @@ or written by this file.
 from fastapi import APIRouter, HTTPException, Depends, Query
 from pydantic import BaseModel, Field
 from typing import Any, Dict, List, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from bson import ObjectId
 
 from .deps import get_any_tenant
@@ -70,7 +70,7 @@ def _serialize(doc: dict) -> dict:
         "message": "" if doc.get("deleted_at") else doc.get("message", ""),
         "attachments": [] if doc.get("deleted_at") else (doc.get("attachments") or []),
         "removed": bool(doc.get("deleted_at")),
-        "created_at": doc.get("created_at").isoformat() if isinstance(doc.get("created_at"), datetime) else None,
+        "created_at": (doc.get("created_at") if doc.get("created_at").tzinfo else doc.get("created_at").replace(tzinfo=timezone.utc)).isoformat() if isinstance(doc.get("created_at"), datetime) else None,
     }
 
 
@@ -246,7 +246,7 @@ async def list_conversations(
             "conversation_key": key, "type": "department", "department": department,
             "store_id": my_store_id, "label": f"{department}{' · ' + (ctx.get('store_name') or '') if my_store_id else ' (HQ)'}",
             "last_message": "Message removed" if last and last.get("deleted_at") else (last.get("message", "") if last else ""),
-            "last_at": last["created_at"].isoformat() if last and isinstance(last.get("created_at"), datetime) else None,
+            "last_at": (last["created_at"] if last["created_at"].tzinfo else last["created_at"].replace(tzinfo=timezone.utc)).isoformat() if last and isinstance(last.get("created_at"), datetime) else None,
             "unread_count": await _unread_count(tenant_id, ctx["admin_id"], key),
             "muted": bool((preferences.get(key) or {}).get("muted")),
             "hidden": hidden,
@@ -275,7 +275,7 @@ async def list_conversations(
             "label": (other or {}).get("name") or (other or {}).get("email") or "Unknown",
             "department": (other or {}).get("department", ""),
             "last_message": "Message removed" if last and last.get("deleted_at") else (last.get("message", "") if last else ""),
-            "last_at": last["created_at"].isoformat() if last and isinstance(last.get("created_at"), datetime) else None,
+            "last_at": (last["created_at"] if last["created_at"].tzinfo else last["created_at"].replace(tzinfo=timezone.utc)).isoformat() if last and isinstance(last.get("created_at"), datetime) else None,
             "unread_count": await _unread_count(tenant_id, ctx["admin_id"], key),
             "muted": bool((preferences.get(key) or {}).get("muted")),
             "hidden": hidden,

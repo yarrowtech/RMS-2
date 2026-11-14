@@ -1,5 +1,5 @@
 """Secure buyer-vendor conversation threads attached to RMS business documents."""
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from bson import ObjectId
@@ -42,7 +42,7 @@ def _serialize_message(row: dict) -> dict:
         "sender_type": row["sender_type"],
         "sender_name": row.get("sender_name") or ("Vendor" if row.get("sender_type") == "vendor" else "Buyer"),
         "message": row.get("message", ""),
-        "created_at": row.get("created_at").isoformat() if row.get("created_at") else "",
+        "created_at": (row.get("created_at") if getattr(row.get("created_at"), "tzinfo", True) else row.get("created_at").replace(tzinfo=timezone.utc)).isoformat() if row.get("created_at") else "",
         "read_by_buyer": bool(row.get("read_by_buyer")),
         "read_by_vendor": bool(row.get("read_by_vendor")),
     }

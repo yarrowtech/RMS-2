@@ -4,7 +4,7 @@ This layer tracks retailer-owned work-in-progress. It deliberately does not use
 GRC/GRN, which remain purchase receiving documents. Only final QC-approved
 finished goods are posted to inventory.
 """
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 import re
 import secrets
 from typing import Any
@@ -56,7 +56,7 @@ def serialize(value: Any) -> Any:
     if isinstance(value, ObjectId):
         return str(value)
     if isinstance(value, datetime):
-        return value.isoformat()
+        return (value if value.tzinfo else value.replace(tzinfo=timezone.utc)).isoformat()
     if isinstance(value, list):
         return [serialize(item) for item in value]
     if isinstance(value, dict):

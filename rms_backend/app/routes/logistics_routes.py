@@ -13,7 +13,7 @@ exists elsewhere instead of introducing a parallel tracking system:
 No new source of truth, no e-way bill/GSTN integration — just a single
 place to see what's still moving.
 """
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -161,7 +161,7 @@ async def logistics_dashboard(ctx: TenantCtx = Depends(_require_logistics)):
             "total_qty": row.get("totalQty", 0),
             "total_value": _number(row.get("totalValue")),
             "created_at": row["_id"].generation_time.isoformat() if not row.get("createdAt") else (
-                row["createdAt"].isoformat() if isinstance(row.get("createdAt"), datetime) else str(row.get("createdAt"))
+                (row["createdAt"] if row["createdAt"].tzinfo else row["createdAt"].replace(tzinfo=timezone.utc)).isoformat() if isinstance(row.get("createdAt"), datetime) else str(row.get("createdAt"))
             ),
         })
 

@@ -9,7 +9,7 @@ RetailerHelpSupport.jsx, SuperAdminSupportInbox.jsx) after the original route fi
 was found empty/never committed — the request/response shapes here are dictated by
 what those pages already call.
 """
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 from bson import ObjectId
@@ -58,7 +58,7 @@ class TicketUpdateRequest(BaseModel):
 # ── serialization ──────────────────────────────────────────────────────────
 
 def _iso(value: Any) -> Any:
-    return value.isoformat() if isinstance(value, datetime) else value
+    return (value if value.tzinfo else value.replace(tzinfo=timezone.utc)).isoformat() if isinstance(value, datetime) else value
 
 
 def _serialize_message(msg: Dict[str, Any]) -> Dict[str, Any]:

@@ -43,7 +43,7 @@ not a replacement for the formal registered-product PO flow.
 
 from fastapi import APIRouter, HTTPException, Depends, Header, Form, File, UploadFile, Request
 from fastapi.responses import JSONResponse, StreamingResponse
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict
 from bson import ObjectId
 from io import BytesIO
@@ -462,7 +462,7 @@ async def add_catalogue_item(
         "status": "success",
         "message": f"Catalogue item added. Visible until {doc['expires_at'].strftime('%d %b %Y')}.",
         "id": str(result.inserted_id),
-        "expires_at": doc["expires_at"].isoformat(),
+        "expires_at": (doc["expires_at"] if doc["expires_at"].tzinfo else doc["expires_at"].replace(tzinfo=timezone.utc)).isoformat(),
     }
 
 

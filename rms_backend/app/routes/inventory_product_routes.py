@@ -4,7 +4,7 @@
 from fastapi import APIRouter, Query, HTTPException, Depends
 from fastapi.responses import JSONResponse
 from typing import Optional, List
-from datetime import datetime
+from datetime import datetime, timezone
 from bson import ObjectId
 from ..db import product_collection, inventory_collection
 from .deps import get_hq_tenant
@@ -68,7 +68,7 @@ def _serialize(doc: dict) -> dict:
     # Datetime → string
     for field in ("createdAt", "updatedAt", "grn_date"):
         if isinstance(doc.get(field), datetime):
-            doc[field] = doc[field].isoformat()
+            doc[field] = (doc[field] if doc[field].tzinfo else doc[field].replace(tzinfo=timezone.utc)).isoformat()
 
     return doc
 

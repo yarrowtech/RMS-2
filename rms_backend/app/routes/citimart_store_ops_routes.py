@@ -27,7 +27,7 @@ derived ratios.
 """
 import io
 import uuid
-from datetime import date as ddate, datetime, time as dtime, timedelta
+from datetime import date as ddate, datetime, time as dtime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 from bson import ObjectId
@@ -721,7 +721,7 @@ async def review_override_audit(date: str = "", ctx: TenantCtx = Depends(_citima
     rows = []
     async for row in citimart_kpi_override_audit_collection.find(query).sort("changed_at", -1).limit(500):
         row["id"] = str(row.pop("_id"))
-        row["changed_at"] = row["changed_at"].isoformat()
+        row["changed_at"] = (row["changed_at"] if row["changed_at"].tzinfo else row["changed_at"].replace(tzinfo=timezone.utc)).isoformat()
         rows.append(row)
     return {"status": "success", "data": rows}
 
@@ -737,7 +737,7 @@ def _day_view(row: Optional[dict]) -> dict:
     return {
         "submitted": bool(row.get("submitted")),
         "remarks": row.get("remarks") or "",
-        "submitted_at": row["submitted_at"].isoformat() if row.get("submitted_at") else None,
+        "submitted_at": (row["submitted_at"] if getattr(row["submitted_at"], "tzinfo", True) else row["submitted_at"].replace(tzinfo=timezone.utc)).isoformat() if row.get("submitted_at") else None,
         "submitted_by": row.get("submitted_by"),
         "auto_finalized": bool(row.get("auto_finalized")),
     }

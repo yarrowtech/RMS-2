@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, status, Depends
 from pydantic import BaseModel, EmailStr
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Literal, Optional
 from bson import ObjectId
 
@@ -123,7 +123,7 @@ async def list_tenants(
             "hq_admin_email": t.get("hq_admin_email", ""),
             "hq_admin_name":  t.get("hq_admin_name", ""),
             "kyb_status":   t.get("kyb_status", "Not started"),
-            "created_at":   created.isoformat()[:10] if isinstance(created, datetime) else None,
+            "created_at":   (created if created.tzinfo else created.replace(tzinfo=timezone.utc)).isoformat()[:10] if isinstance(created, datetime) else None,
         })
     return {"count": len(tenants), "tenants": tenants}
 
@@ -475,7 +475,7 @@ async def get_tenant_summary(
             "kind":        "admin_seats",
             "quantity":    p.get("quantity"),
             "amount_inr":  p.get("amount_inr"),
-            "captured_at": p["captured_at"].isoformat() if isinstance(p.get("captured_at"), datetime) else None,
+            "captured_at": (p["captured_at"] if p["captured_at"].tzinfo else p["captured_at"].replace(tzinfo=timezone.utc)).isoformat() if isinstance(p.get("captured_at"), datetime) else None,
             "recurring":   False,
         })
     async for p in retailer_store_addon_payments_collection.find({"tenant_id": tenant_id, "status": "captured"}).sort("captured_at", -1):
@@ -484,7 +484,7 @@ async def get_tenant_summary(
             "kind":        "store_slots",
             "quantity":    p.get("quantity"),
             "amount_inr":  p.get("amount_inr"),
-            "captured_at": p["captured_at"].isoformat() if isinstance(p.get("captured_at"), datetime) else None,
+            "captured_at": (p["captured_at"] if p["captured_at"].tzinfo else p["captured_at"].replace(tzinfo=timezone.utc)).isoformat() if isinstance(p.get("captured_at"), datetime) else None,
             "recurring":   True,
         })
     addon_payments.sort(key=lambda p: p["captured_at"] or "", reverse=True)

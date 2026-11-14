@@ -4,7 +4,7 @@ Rejected quantities never enter retailer available stock. A Supplier Return Note
 records the commercial/logistics follow-up: vendor acknowledgement, dispatch,
 and closure through replacement, credit note, refund, or write-off.
 """
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from bson import ObjectId
@@ -55,7 +55,7 @@ def _serialise(document: dict) -> dict:
             row[key] = str(row[key])
     for key in ("created_at", "updated_at", "dispatched_at", "closed_at", "vendor_responded_at"):
         if row.get(key):
-            row[key] = row[key].isoformat() if hasattr(row[key], "isoformat") else str(row[key])
+            row[key] = (row[key] if getattr(row[key], "tzinfo", True) else row[key].replace(tzinfo=timezone.utc)).isoformat() if hasattr(row[key], "isoformat") else str(row[key])
     return row
 
 

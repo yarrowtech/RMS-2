@@ -2,7 +2,7 @@
 from fastapi import APIRouter, Query, HTTPException, Depends
 from fastapi.responses import JSONResponse
 from typing import Optional
-from datetime import datetime
+from datetime import datetime, timezone
 from bson import ObjectId
 from ..db import product_collection, inventory_collection, grn_collection, vendors_collection, reorder_rules_collection, stock_adjustments_collection, damage_return_collection, store_stock_collection, barcode_label_settings_collection
 from .deps import get_hq_tenant, get_any_tenant
@@ -31,7 +31,7 @@ def _label_template(document: dict | None) -> dict:
     return {
         "fields": fields,
         "label_size": "38x38",
-        "updated_at": document.get("updated_at").isoformat() if document and isinstance(document.get("updated_at"), datetime) else None,
+        "updated_at": (document.get("updated_at") if document.get("updated_at").tzinfo else document.get("updated_at").replace(tzinfo=timezone.utc)).isoformat() if document and isinstance(document.get("updated_at"), datetime) else None,
     }
 
 
