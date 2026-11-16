@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { AlertTriangle, Boxes, ChevronDown, ChevronUp, ClipboardList, Loader2, PackagePlus, RefreshCw, ShieldCheck, Truck } from "lucide-react";
+import { AlertTriangle, Boxes, ChevronDown, ChevronUp, ClipboardList, FileSpreadsheet, Loader2, PackagePlus, RefreshCw, ShieldCheck, Truck } from "lucide-react";
 import { API_BASE_URL } from "../../config/api.js";
 
 const token = () => localStorage.getItem("vendor_token") || localStorage.getItem("access_token") || localStorage.getItem("token") || "";
@@ -14,16 +14,55 @@ const qty = (value) => Number(value || 0).toLocaleString("en-IN", { maximumFract
 export default function VendorInventory() {
   const [items, setItems] = useState([]); const [orders, setOrders] = useState([]); const [loading, setLoading] = useState(true);
   const [error, setError] = useState(""); const [notice, setNotice] = useState(""); const [forms, setForms] = useState({}); const [ledger, setLedger] = useState({}); const [busy, setBusy] = useState("");
+  const [bulkFile, setBulkFile] = useState(null); const [bulkBusy, setBulkBusy] = useState(false); const [bulkResult, setBulkResult] = useState(null);
   const load = useCallback(async () => { setLoading(true); setError(""); try { const [stock, po] = await Promise.all([api("/items"), api("/purchase-orders")]); setItems(stock.data || []); setOrders(po.data || []); } catch (e) { setError(e.message); } finally { setLoading(false); } }, []);
   useEffect(() => { load(); }, [load]);
   const low = useMemo(() => items.filter((item) => item.low_stock), [items]);
   const form = (id) => forms[id] || { addQuantity: "", addNote: "", reserveQuantity: "", poId: "", reorderLevel: "" };
   const update = (id, key, value) => setForms((old) => ({ ...old, [id]: { ...form(id), [key]: value } }));
   const run = async (id, action) => { const values = form(id); setError(""); setNotice(""); setBusy(`${id}-${action}`); try { if (action === "add") { await api(`/items/${id}/add-stock`, { method: "POST", body: JSON.stringify({ quantity: values.addQuantity, note: values.addNote }) }); setNotice("Stock added and recorded in the vendor ledger."); } if (action === "reserve") { await api(`/items/${id}/reserve`, { method: "POST", body: JSON.stringify({ quantity: values.reserveQuantity, po_id: values.poId }) }); setNotice("Stock reserved. It will be deducted automatically when that PO is dispatched."); } if (action === "reorder") { await api(`/items/${id}/reorder-level`, { method: "POST", body: JSON.stringify({ reorder_level: values.reorderLevel }) }); setNotice("Low-stock warning level updated."); } await load(); } catch (e) { setError(e.message); } finally { setBusy(""); } };
+  const uploadBulk = async () => {
+    if (!bulkFile) return;
+    setError(""); setNotice(""); setBulkResult(null); setBulkBusy(true);
+    try {
+      const formData = new FormData();
+      formData.append("file", bulkFile);
+      const response = await fetch(`${API_BASE_URL}/api/vendor-inventory/items/bulk-add-stock`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token()}` },
+        body: formData,
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.detail || "Could not process this file.");
+      setBulkResult(data);
+      setNotice(data.message || "Bulk stock upload processed.");
+      setBulkFile(null);
+      await load();
+    } catch (e) { setError(e.message); } finally { setBulkBusy(false); }
+  };
   const showLedger = async (id) => { if (ledger[id]) { setLedger((old) => ({ ...old, [id]: null })); return; } try { setBusy(`${id}-ledger`); const data = await api(`/items/${id}/ledger`); setLedger((old) => ({ ...old, [id]: data.data || [] })); } catch (e) { setError(e.message); } finally { setBusy(""); } };
   return <div className="space-y-5">
     <section className="overflow-hidden rounded-3xl bg-gradient-to-br from-slate-950 via-indigo-950 to-cyan-900 p-6 text-white shadow-lg sm:p-8"><div className="flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between"><div><div className="grid h-12 w-12 place-items-center rounded-2xl bg-white/10"><Boxes className="h-6 w-6 text-cyan-200" /></div><h1 className="mt-4 text-2xl font-black sm:text-3xl">My Inventory</h1><p className="mt-2 max-w-2xl text-sm leading-6 text-slate-300">Your own available-to-sell stock. It is separate from retailer inventory, GRC, GRN and the B2B Stock Ledger.</p></div><button onClick={load} disabled={loading} className="inline-flex h-11 items-center justify-center gap-2 rounded-xl border border-white/15 bg-white/10 px-4 text-sm font-bold hover:bg-white/15 disabled:opacity-50"><RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />Refresh</button></div></section>
     <section className="rounded-2xl border border-indigo-100 bg-indigo-50/70 p-4 text-sm text-indigo-950"><div className="flex gap-3"><ShieldCheck className="mt-0.5 h-5 w-5 shrink-0 text-indigo-600" /><div><p className="font-black">How vendor stock works</p><p className="mt-1 text-xs leading-5 text-indigo-800">1. Add produced or received goods. 2. When the retailer approves a PO, RMS automatically reserves matching available stock by SKU/barcode. 3. You may reserve earlier after submitting a PO if needed. 4. When you mark that PO <b>Dispatched</b> in Purchase Orders, its reserved quantity is deducted automatically. Never use this section for retailer-received stock.</p></div></div></section>
+    <section className="rounded-2xl border border-emerald-200 bg-emerald-50/70 p-4">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex gap-3"><FileSpreadsheet className="mt-0.5 h-5 w-5 shrink-0 text-emerald-700" /><div><p className="font-black text-emerald-950">Bulk add stock from Excel/CSV</p><p className="mt-1 text-xs leading-5 text-emerald-900">Columns: SKU or Barcode (or Product Name), Quantity, and an optional Note. One row per item — matched against your own inventory.</p></div></div>
+        <div className="flex items-center gap-2">
+          <input type="file" accept=".xlsx,.xls,.csv" onChange={(e) => setBulkFile(e.target.files?.[0] || null)} className="text-xs file:mr-2 file:rounded-lg file:border-0 file:bg-emerald-600 file:px-3 file:py-2 file:text-xs file:font-bold file:text-white" />
+          <button onClick={uploadBulk} disabled={!bulkFile || bulkBusy} className="h-10 shrink-0 rounded-lg bg-emerald-700 px-4 text-xs font-bold text-white disabled:opacity-50">{bulkBusy ? "Uploading…" : "Upload"}</button>
+        </div>
+      </div>
+      {bulkResult && (
+        <div className="mt-3 rounded-xl border border-emerald-200 bg-white p-3 text-xs">
+          <p className="font-bold text-slate-800">Updated {bulkResult.updated_count} item(s), skipped {bulkResult.skipped_count}.</p>
+          {bulkResult.skipped?.length > 0 && (
+            <ul className="mt-2 space-y-1 text-rose-700">
+              {bulkResult.skipped.map((s, i) => <li key={i}>Row {s.row}: {s.sku || s.product_name || "Unnamed item"} — {s.reason}</li>)}
+            </ul>
+          )}
+        </div>
+      )}
+    </section>
     {error && <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">{error}</div>}{notice && <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-700">{notice}</div>}
     {low.length > 0 && <section className="rounded-2xl border border-amber-200 bg-amber-50 p-4"><div className="flex gap-3"><AlertTriangle className="h-5 w-5 shrink-0 text-amber-600" /><div><p className="font-black text-amber-900">Low-stock warning · {low.length} item{low.length === 1 ? "" : "s"}</p><p className="mt-1 text-xs text-amber-800">{low.map((item) => `${item.product_name}${item.variant_label ? ` (${item.variant_label})` : ""}`).join(", ")}. Add stock or revise the warning level.</p></div></div></section>}
     {loading ? <div className="grid min-h-64 place-items-center"><Loader2 className="h-8 w-8 animate-spin text-indigo-600" /></div> : !items.length ? <div className="rounded-3xl border border-dashed border-slate-300 bg-white px-6 py-16 text-center"><Boxes className="mx-auto h-10 w-10 text-slate-300" /><h2 className="mt-4 font-black text-slate-700">No inventory yet</h2><p className="mt-2 text-sm text-slate-500">Add a catalogue product with availability first. Its opening balance will appear here automatically.</p></div> : <div className="space-y-4">{items.map((item) => { const f = form(item._id); const moves = ledger[item._id]; return <article key={item._id} className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm"><div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between"><div><div className="flex flex-wrap items-center gap-2"><h2 className="text-lg font-black text-slate-900">{item.product_name}</h2>{item.variant_label && <span className="rounded-full bg-indigo-50 px-2.5 py-1 text-[10px] font-bold text-indigo-700">{item.variant_label}</span>}{item.low_stock && <span className="rounded-full bg-amber-100 px-2.5 py-1 text-[10px] font-bold text-amber-800">Low stock</span>}</div><p className="mt-1 text-xs text-slate-500">SKU: {item.sku || "Not set"} · Unit: {item.unit}</p></div><div className="grid grid-cols-3 divide-x divide-slate-200 overflow-hidden rounded-2xl border border-slate-200 bg-slate-50 text-center"><div className="px-4 py-3"><p className="text-[10px] font-black uppercase text-slate-400">On hand</p><p className="mt-1 font-black text-slate-900">{qty(item.on_hand)}</p></div><div className="px-4 py-3"><p className="text-[10px] font-black uppercase text-slate-400">Reserved</p><p className="mt-1 font-black text-indigo-700">{qty(item.reserved)}</p></div><div className="px-4 py-3"><p className="text-[10px] font-black uppercase text-slate-400">Available</p><p className="mt-1 font-black text-emerald-700">{qty(item.available)}</p></div></div></div>

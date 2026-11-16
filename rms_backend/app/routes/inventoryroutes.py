@@ -4,7 +4,7 @@ from fastapi.responses import JSONResponse
 from typing import Optional
 from datetime import datetime, timezone
 from bson import ObjectId
-from ..db import product_collection, inventory_collection, grn_collection, vendors_collection, reorder_rules_collection, stock_adjustments_collection, damage_return_collection, store_stock_collection, barcode_label_settings_collection
+from ..db import product_collection, inventory_collection, grn_collection, vendors_collection, reorder_rules_collection, stock_adjustments_collection, damage_return_collection, store_stock_collection, barcode_label_settings_collection, citimart_stock_snapshot_collection
 from .deps import get_hq_tenant, get_any_tenant
 from ..product_identity import identity_fields, stock_identity
 
@@ -1976,6 +1976,51 @@ async def get_expiry_aging(
 # GET /inventory/item-aging
 # ─────────────────────────────────────────────
 
+def _parse_category6_receipt_date(category6: str) -> Optional[str]:
+    """category6 ("Ageing") on bulk-imported garment stock is a receipt
+    month/year label like "09/25" (Sep 2025) — not a calendar expiry date.
+    Returns the 1st of that month as "YYYY-MM-DD", or None if unparseable."""
+    raw = (category6 or "").strip()
+    if not raw or "/" not in raw:
+        return None
+    try:
+        month_str, year_str = raw.split("/", 1)
+        month = int(month_str)
+        year = int(year_str)
+        year += 2000 if year < 100 else 0
+        if not (1 <= month <= 12):
+            return None
+        return datetime(year, month, 1).strftime("%Y-%m-%d")
+    except Exception:
+        return None
+
+
+async def _category6_receipt_date_map(tenant_id: str) -> dict:
+    """barcode -> most-recently-updated category6-derived receipt date, from
+    the Citimart Data Hub's staged snapshot (the only place this field is
+    kept — it's never copied onto the live inventory/store_stock docs)."""
+    out: dict = {}
+    latest_seen: dict = {}
+    async for doc in citimart_stock_snapshot_collection.find(
+        {"tenant_id": tenant_id, "category6": {"$exists": True, "$ne": ""}},
+        {"barcode": 1, "category6": 1, "updated_at": 1, "_id": 0},
+    ):
+        bc = (doc.get("barcode") or "").strip()
+        if not bc:
+            continue
+        updated_at = doc.get("updated_at")
+        if bc in latest_seen and updated_at and latest_seen[bc] and updated_at <= latest_seen[bc]:
+            continue
+        parsed = _parse_category6_receipt_date(doc.get("category6"))
+        if not parsed:
+            continue
+        out[bc] = parsed
+        latest_seen[bc] = updated_at
+
+
+    return out
+
+
 @router.get("/item-aging")
 async def get_item_aging(
     division:   Optional[str] = Query(None),
@@ -1986,10 +2031,15 @@ async def get_item_aging(
     ctx:        dict          = Depends(get_hq_tenant),
 ):
     """
-    Ages every currently-stocked item by days since its most recent Posted
-    GRN receipt — there's no other "entered stock" timestamp in this schema,
-    so a walk-in/admin item with no GRN history reports as "Unknown" rather
-    than a fabricated age. Buckets into 0-30 / 31-60 / 61-90 / 90+ days.
+    Ages every currently-stocked item by days since it was received —
+    "received" means, in priority order: (1) its most recent Posted GRN
+    receipt, (2) for garments that arrived via the Citimart Data Hub bulk
+    import rather than a GRN, the receipt month/year recorded on that
+    import ("category6"/Ageing), (3) the live stock record's own createdAt
+    as a last resort. This keeps one continuous aging number regardless of
+    which intake path brought the stock in — a walk-in/admin item with none
+    of these reports as "Unknown" rather than a fabricated age. Buckets into
+    0-30 / 31-60 / 61-90 / 90+ days.
     """
     tenant_id = ctx["tenant_id"]
     today = datetime.utcnow().date()
@@ -2010,6 +2060,8 @@ async def get_item_aging(
                 if grn_date > existing:
                     grn_date_map[bc] = grn_date
 
+    category6_date_map = await _category6_receipt_date_map(tenant_id)
+
     rows = []
     async for doc in inventory_collection.find({"tenant_id": tenant_id}):
         bc = (doc.get("barcode") or "").strip()
@@ -2017,15 +2069,30 @@ async def get_item_aging(
         if not bc or qty <= 0:
             continue
         pm = product_master.get(bc, {})
-        grn_date = grn_date_map.get(bc, "")
         rate = float(doc.get("rate", 0) or 0) or pm.get("cost_price", 0)
 
+        source = "grn"
+        received_date = grn_date_map.get(bc, "")
+        if not received_date:
+            received_date = category6_date_map.get(bc, "")
+            if received_date:
+                source = "category6"
+        if not received_date:
+            created_at = doc.get("createdAt")
+            if isinstance(created_at, datetime):
+                received_date = created_at.strftime("%Y-%m-%d")
+                source = "created_at"
+        grn_date = received_date  # kept as the existing response field name
+
         aging_days = None
-        if grn_date:
+        if received_date:
             try:
-                aging_days = (today - datetime.strptime(grn_date, "%Y-%m-%d").date()).days
+                aging_days = (today - datetime.strptime(received_date, "%Y-%m-%d").date()).days
             except ValueError:
                 aging_days = None
+                source = "unknown"
+        else:
+            source = "unknown"
 
         if aging_days is None:
             row_bucket = "Unknown"
@@ -2048,6 +2115,7 @@ async def get_item_aging(
             "vendor_name": pm.get("vendor_name") or doc.get("vendor_name", ""),
             "grn_no":      pm.get("grn_no") or doc.get("grn_no", ""),
             "grn_date":    grn_date,
+            "received_date_source": source,  # "grn" | "category6" | "created_at" | "unknown"
             "qty":         round(qty, 2),
             "rate":        round(rate, 2),
             "value":       round(qty * rate, 2),

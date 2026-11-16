@@ -1878,6 +1878,41 @@ export default function CashierPOS() {
     else showToast(`${synced} offline bill(s) synced`, "success");
   }, [showToast]);
 
+  // Pure insurance copy: this localStorage queue is the only place these
+  // bills exist until synced. A download lets the cashier keep an external
+  // copy before anything risky (device swap, a forced reset) — nothing else
+  // can protect against an actual "clear this browser's data" action, since
+  // that's outside any website's control.
+  const exportOfflineBillsBackup = useCallback(() => {
+    const pending = readOfflineBills().filter(row => ["pending", "failed"].includes(row.status));
+    if (!pending.length) return showToast("No unsynced offline bills to export", "success");
+    const blob = new Blob([JSON.stringify(pending, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `offline-bills-backup-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-")}.json`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    showToast(`Exported ${pending.length} unsynced bill(s) as backup`, "success");
+  }, [showToast]);
+
+  // Offline bills otherwise only sync when the cashier notices the pending
+  // banner and clicks it — easy to miss, and leaves bills sitting on just
+  // this one device/browser for longer than necessary. Reconnecting fires
+  // the browser's `online` event, so retry automatically right then instead
+  // of waiting on a manual click.
+  useEffect(() => {
+    const onReconnect = () => {
+      if (readOfflineBills().some(row => ["pending", "failed"].includes(row.status))) {
+        syncOfflineBills();
+      }
+    };
+    window.addEventListener("online", onReconnect);
+    return () => window.removeEventListener("online", onReconnect);
+  }, [syncOfflineBills]);
+
   const finalizeBill = useCallback(async (paidAmount = 0, changeReturn = 0, paymentMethodOverride = bill.paymentMethod, paymentSplitOverride = {}, returnReason = "", managerName = "") => {
     setSaving(true);
     try {
@@ -2044,6 +2079,17 @@ export default function CashierPOS() {
               >
                 {syncingOffline ? <FaSpinner className="animate-spin" /> : <FaExclamationTriangle size={12} />}
                 Offline {pendingOfflineCount} pending / {failedOfflineCount} failed
+              </button>
+            )}
+
+            {(pendingOfflineCount > 0 || failedOfflineCount > 0) && (
+              <button
+                type="button"
+                onClick={exportOfflineBillsBackup}
+                className="flex cursor-pointer items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs font-black uppercase tracking-widest text-slate-600 hover:bg-slate-100"
+                title="Download the unsynced bills as a backup file, in case this device is reset before they sync"
+              >
+                Export backup
               </button>
             )}
 

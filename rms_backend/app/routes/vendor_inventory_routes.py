@@ -1,8 +1,10 @@
 """Vendor-owned inventory, independent from retailer inventory and B2B stock."""
 from datetime import datetime, timezone
+from io import BytesIO
 from typing import Optional
 from bson import ObjectId
-from fastapi import APIRouter, HTTPException, Header
+from fastapi import APIRouter, HTTPException, Header, UploadFile, File
+from openpyxl import load_workbook
 
 from ..db import vendor_catalogue_collection, vendor_inventory_collection, vendor_inventory_ledger_collection, purchaseorders_collection
 from .vendor_routes import decode_token
@@ -97,6 +99,140 @@ async def add_stock(inventory_id: str, payload: dict, authorization: str = Heade
     item["on_hand"] = float(item.get("on_hand", 0)) + quantity
     await _write_ledger(item, "Stock added", quantity_in=quantity, note=note)
     return {"message": "Stock added"}
+
+
+def _normalize_header(value) -> str:
+    return "".join(ch for ch in str(value or "").strip().upper() if ch.isalnum())
+
+
+_SKU_HEADERS = {"SKU", "BARCODE", "VENDORSKU", "VENDORBARCODE", "ITEMCODE"}
+_NAME_HEADERS = {"PRODUCTNAME", "PRODUCT", "ITEMNAME", "NAME"}
+_QTY_HEADERS = {"QUANTITY", "QTY", "STOCKQTY", "STOCK"}
+_NOTE_HEADERS = {"NOTE", "NOTES", "REMARKS", "REMARK"}
+
+
+def _read_rows_from_upload(filename: str, raw: bytes) -> list:
+    """Returns a list of {sku, product_name, quantity, note} dicts from an
+    uploaded Excel/CSV sheet. Column names are matched flexibly (case/space
+    insensitive) against a small alias set, same spirit as the tenant-wide
+    bulk importers elsewhere in the app, kept lightweight here since a
+    vendor's own stock sheet is expected to be small."""
+    fname = (filename or "").lower()
+    rows: list = []
+
+    def row_to_dict(headers: list, values: tuple) -> Optional[dict]:
+        record = {}
+        for col_name, raw_value in zip(headers, values):
+            if col_name in _SKU_HEADERS and raw_value not in (None, ""):
+                record["sku"] = str(raw_value).strip()
+            elif col_name in _NAME_HEADERS and raw_value not in (None, ""):
+                record["product_name"] = str(raw_value).strip()
+            elif col_name in _QTY_HEADERS and raw_value not in (None, ""):
+                record["quantity"] = raw_value
+            elif col_name in _NOTE_HEADERS and raw_value not in (None, ""):
+                record["note"] = str(raw_value).strip()
+        if not record.get("sku") and not record.get("product_name"):
+            return None
+        return record
+
+    if fname.endswith(".csv"):
+        import csv
+        text = raw.decode("utf-8-sig", errors="replace")
+        reader = csv.reader(text.splitlines())
+        header_row = None
+        for line in reader:
+            if not any((cell or "").strip() for cell in line):
+                continue
+            if header_row is None:
+                header_row = [_normalize_header(c) for c in line]
+                continue
+            record = row_to_dict(header_row, tuple(line))
+            if record:
+                rows.append(record)
+        return rows
+
+    wb = load_workbook(BytesIO(raw), read_only=True, data_only=True)
+    try:
+        ws = wb.active
+        header_row = None
+        for line in ws.iter_rows(values_only=True):
+            if not any(cell not in (None, "") for cell in line):
+                continue
+            if header_row is None:
+                header_row = [_normalize_header(c) for c in line]
+                continue
+            record = row_to_dict(header_row, line)
+            if record:
+                rows.append(record)
+    finally:
+        wb.close()
+    return rows
+
+
+@router.post("/items/bulk-add-stock")
+async def bulk_add_stock(file: UploadFile = File(...), authorization: str = Header(None)):
+    """Add stock to many items at once from an uploaded Excel/CSV sheet —
+    expected columns (any order, flexible naming): SKU/Barcode (or Product
+    Name), Quantity, and an optional Note. Matches each row to the vendor's
+    own inventory by SKU first, falling back to an exact product name match.
+    Rows that can't be matched or have an invalid quantity are reported back
+    as skipped, never silently dropped."""
+    vendor_id = _vendor_id(authorization)
+    await _seed_from_catalogue(vendor_id)
+
+    raw = await file.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail="The selected file is empty.")
+    if len(raw) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="File must be under 10 MB.")
+
+    try:
+        parsed_rows = _read_rows_from_upload(file.filename or "", raw)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Could not read this file: {exc}")
+    if not parsed_rows:
+        raise HTTPException(status_code=400, detail="No usable rows found. Expect columns for SKU/Barcode (or Product Name) and Quantity.")
+
+    inventory = await vendor_inventory_collection.find({"vendor_id": vendor_id}).to_list(length=None)
+    by_sku = {str(row.get("sku") or "").strip().lower(): row for row in inventory if row.get("sku")}
+    by_name = {str(row.get("product_name") or "").strip().lower(): row for row in inventory if row.get("product_name")}
+
+    note_prefix = f"Bulk upload: {file.filename}" if file.filename else "Bulk upload"
+    updated = 0
+    skipped: list = []
+
+    for idx, parsed in enumerate(parsed_rows, start=2):  # row 1 is the header
+        sku = str(parsed.get("sku") or "").strip().lower()
+        name = str(parsed.get("product_name") or "").strip().lower()
+        item = by_sku.get(sku) if sku else None
+        if not item and name:
+            item = by_name.get(name)
+        if not item:
+            skipped.append({"row": idx, "sku": parsed.get("sku", ""), "product_name": parsed.get("product_name", ""), "reason": "No matching inventory item"})
+            continue
+
+        try:
+            quantity = float(parsed.get("quantity"))
+        except (TypeError, ValueError):
+            quantity = 0.0
+        if quantity <= 0:
+            skipped.append({"row": idx, "sku": parsed.get("sku", ""), "product_name": item.get("product_name", ""), "reason": "Quantity must be a number greater than zero"})
+            continue
+
+        row_note = parsed.get("note")
+        note = f"{note_prefix} — {row_note}" if row_note else note_prefix
+
+        await vendor_inventory_collection.update_one({"_id": item["_id"]}, {"$inc": {"on_hand": quantity}, "$set": {"updated_at": datetime.utcnow()}})
+        item["on_hand"] = float(item.get("on_hand", 0) or 0) + quantity
+        await _write_ledger(item, "Stock added", quantity_in=quantity, note=note[:500])
+        updated += 1
+
+    return {
+        "message": f"Bulk upload processed. Updated {updated} item(s), skipped {len(skipped)}.",
+        "updated_count": updated,
+        "skipped_count": len(skipped),
+        "skipped": skipped,
+    }
 
 
 @router.post("/items/{inventory_id}/reserve")

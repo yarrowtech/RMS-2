@@ -311,7 +311,23 @@ async def resolve_real_barcode(item: dict) -> str:
         else:
             variants = prod.get("variants", [])
             if variants:
-                real_bc = (variants[0].get("barcode") or "").strip()
+                size  = str(item.get("size") or "").strip().lower()
+                color = str(item.get("color") or "").strip().lower()
+                match = None
+                if size or color:
+                    match = next(
+                        (
+                            v for v in variants
+                            if (not size or str(v.get("size") or "").strip().lower() == size)
+                            and (not color or str(v.get("color") or "").strip().lower() == color)
+                        ),
+                        None,
+                    )
+                # Only fall back to the first variant when no size/color was
+                # specified at all — otherwise a PO line for "size L" could
+                # silently be stamped with a different size's barcode.
+                chosen = match or (variants[0] if not (size or color) else None)
+                real_bc = (chosen.get("barcode") or "").strip() if chosen else ""
                 if real_bc:
                     return real_bc
     return await generate_item_barcode()

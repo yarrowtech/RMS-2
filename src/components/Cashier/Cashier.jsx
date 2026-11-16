@@ -1,7 +1,7 @@
-import React, { Suspense, useMemo, useState } from "react";
+import React, { Suspense, useEffect, useMemo, useState } from "react";
 import { logoutOrReturnToDepartmentSelector } from "../../utils/authRedirect";
 import { FaBars } from "react-icons/fa";
-import { CircleHelp, Settings as SettingsIcon } from "lucide-react";
+import { AlertTriangle, CircleHelp, Settings as SettingsIcon } from "lucide-react";
 import InternalNotificationBell from "../InternalNotificationBell.jsx";
 import InternalChatPanel from "../InternalChatPanel.jsx";
 import CashierSidebar from "./CashierSidebar";
@@ -71,7 +71,56 @@ export default function Cashier() {
 
   const pageTitle = useMemo(() => labelFromKey(active), [active]);
 
-  const handleLogout = () => logoutOrReturnToDepartmentSelector();
+  // CashierPOS owns the offline-bills queue (localStorage), and its own
+  // on-screen badge only renders while that tab is mounted — so switching
+  // to Dashboard/Customer/Finance/Reports hides it entirely. Poll the same
+  // key here so an unsynced count stays visible from anywhere in the module.
+  const [unsyncedOfflineCount, setUnsyncedOfflineCount] = useState(0);
+  useEffect(() => {
+    const checkPending = () => {
+      try {
+        const raw = localStorage.getItem("rms_cashier_offline_bills_v1");
+        const rows = raw ? JSON.parse(raw) : [];
+        const count = Array.isArray(rows)
+          ? rows.filter((row) => ["pending", "failed"].includes(row?.status)).length
+          : 0;
+        setUnsyncedOfflineCount(count);
+      } catch {
+        setUnsyncedOfflineCount(0);
+      }
+    };
+    checkPending();
+    const interval = setInterval(checkPending, 5000);
+    window.addEventListener("storage", checkPending);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener("storage", checkPending);
+    };
+  }, []);
+
+  const handleLogout = () => {
+    // Offline-saved bills live only in this browser's localStorage until
+    // synced — logging out doesn't erase them, but if this device gets
+    // swapped, reset, or its browser data cleared before anyone syncs,
+    // those bills are gone with no server-side copy. Catch it here rather
+    // than relying on the cashier noticing the pending banner themselves.
+    try {
+      const raw = localStorage.getItem("rms_cashier_offline_bills_v1");
+      const rows = raw ? JSON.parse(raw) : [];
+      const pendingCount = Array.isArray(rows)
+        ? rows.filter((row) => ["pending", "failed"].includes(row?.status)).length
+        : 0;
+      if (pendingCount > 0) {
+        const proceed = window.confirm(
+          `${pendingCount} offline bill(s) have not been synced yet. If you log out now and this device is reset or its data cleared before syncing, those bills cannot be recovered.\n\nLog out anyway?`
+        );
+        if (!proceed) return;
+      }
+    } catch {
+      // Never let a storage-read issue block logout itself.
+    }
+    logoutOrReturnToDepartmentSelector();
+  };
 
   const onSettingsClick = () => setActive("__settings");
 
@@ -134,6 +183,17 @@ export default function Cashier() {
           </div>
 
           <div className="flex items-center gap-2">
+          {unsyncedOfflineCount > 0 && (
+            <button
+              type="button"
+              onClick={() => setActive("pointOfSale")}
+              className="flex items-center gap-1 rounded-lg border border-amber-200 bg-amber-50 px-2 py-2 text-[11px] font-black text-amber-700"
+              title={`${unsyncedOfflineCount} offline bill(s) not yet synced`}
+            >
+              <AlertTriangle size={14} />
+              {unsyncedOfflineCount}
+            </button>
+          )}
           <InternalNotificationBell />
           <InternalChatPanel />
           <button
@@ -210,6 +270,17 @@ export default function Cashier() {
             </div>
 
             <div className="flex items-center gap-3">
+              {unsyncedOfflineCount > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setActive("pointOfSale")}
+                  className="flex items-center gap-1.5 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-black text-amber-700 hover:bg-amber-100"
+                  title={`${unsyncedOfflineCount} offline bill(s) not yet synced — go to Point of Sale to sync or export a backup`}
+                >
+                  <AlertTriangle size={14} />
+                  {unsyncedOfflineCount} unsynced
+                </button>
+              )}
               <InternalNotificationBell />
               <InternalChatPanel />
               <button

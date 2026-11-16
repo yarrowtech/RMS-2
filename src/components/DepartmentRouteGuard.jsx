@@ -29,6 +29,40 @@ function getToken() {
   return localStorage.getItem("admin_token") || localStorage.getItem("access_token") || localStorage.getItem("token") || "";
 }
 
+const LAST_AUTH_CHECK_KEY = "admin_last_auth_check_at";
+// Bounds how long a device can keep working purely on a cached login once
+// the server becomes unreachable — e.g. a lost/stolen device offline for
+// days shouldn't stay usable indefinitely just because its token hasn't
+// technically expired yet. A real shift-length window (not the token's own
+// expiry) is what actually matters here.
+const OFFLINE_FALLBACK_MAX_AGE_MS = 8 * 60 * 60 * 1000; // 8 hours
+
+/** Decodes a JWT's payload without verifying its signature — enough to read
+ * its own `exp` claim locally, with no network. Returns null if it can't be
+ * read, which the caller treats as "don't trust this token offline". */
+function decodeJwtExpiryMs(token) {
+  try {
+    const payload = token.split(".")[1];
+    const json = atob(payload.replace(/-/g, "+").replace(/_/g, "/"));
+    const data = JSON.parse(json);
+    return typeof data.exp === "number" ? data.exp * 1000 : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Only true when: the token itself (decoded locally) hasn't expired, AND
+ * the server was successfully reached within the allowed offline window.
+ * Both conditions matter — a technically-unexpired token from a device that
+ * has been offline for a week is exactly the case this refuses. */
+function canTrustCachedLoginOffline(token) {
+  const exp = decodeJwtExpiryMs(token);
+  if (!exp || exp <= Date.now()) return false;
+  const lastCheck = Number(localStorage.getItem(LAST_AUTH_CHECK_KEY) || 0);
+  if (!lastCheck) return false;
+  return Date.now() - lastCheck <= OFFLINE_FALLBACK_MAX_AGE_MS;
+}
+
 export default function DepartmentRouteGuard({ department, children }) {
   const location = useLocation();
   const [state, setState] = useState({ loading: true, allowed: false, redirect: "/admin/login" });
@@ -64,6 +98,7 @@ export default function DepartmentRouteGuard({ department, children }) {
         }
 
         const profile = await response.json();
+        localStorage.setItem(LAST_AUTH_CHECK_KEY, String(Date.now()));
         const departments = Array.isArray(profile.managedDepartments)
           ? profile.managedDepartments.filter(Boolean)
           : profile.department ? [profile.department] : [];
@@ -107,7 +142,41 @@ export default function DepartmentRouteGuard({ department, children }) {
           }
         }
       } catch {
-        if (!cancelled) setState({ loading: false, allowed: false, redirect: "/admin/login" });
+        // The server couldn't be reached at all (offline/outage) — distinct
+        // from the response.ok branch above, which means the server WAS
+        // reached and said the login is invalid. Only here is it safe to
+        // fall back to the cached login instead of forcing a logout, and
+        // only within the bounds canTrustCachedLoginOffline checks. This is
+        // what lets a cashier already logged in before an outage keep using
+        // offline billing without needing the tab to have stayed open.
+        if (cancelled) return;
+        // Scoped to Cashier only — it's the one department with an actual
+        // offline-capable workflow (offline billing). Every other route
+        // keeps today's behavior: a network failure here still forces a
+        // real login, same as before this fallback existed.
+        const allowedDepartmentsForOfflineCheck = Array.isArray(department) ? department : [department];
+        if (!allowedDepartmentsForOfflineCheck.includes("Cashier") || !canTrustCachedLoginOffline(token)) {
+          setState({ loading: false, allowed: false, redirect: "/admin/login" });
+          return;
+        }
+        let cached = {};
+        try { cached = JSON.parse(localStorage.getItem("admin_login_data") || "{}"); } catch { cached = {}; }
+        const departments = Array.isArray(cached.departments) ? cached.departments.filter(Boolean) : [];
+        const activeDepartment = localStorage.getItem("admin_active_department") || "";
+        const allowedDepartments = Array.isArray(department) ? department : [department];
+        const assignedDepartment = departments.find(item => allowedDepartments.includes(item)) || "";
+        const assigned = Boolean(assignedDepartment);
+        const selected = allowedDepartments.includes(activeDepartment);
+
+        if (departments.includes("HQ") && allowedDepartments.includes("HQ")) {
+          setState({ loading: false, allowed: true, redirect: "", offline: true });
+        } else if (assigned && (selected || departments.length === 1)) {
+          setState({ loading: false, allowed: true, redirect: "", offline: true });
+        } else {
+          // Ambiguous without the server (e.g. would need the selector) —
+          // safer to require login/network here than to guess.
+          setState({ loading: false, allowed: false, redirect: "/admin/login" });
+        }
       }
     };
 
@@ -119,5 +188,14 @@ export default function DepartmentRouteGuard({ department, children }) {
     return <div className="grid min-h-screen place-items-center bg-slate-50 text-sm font-semibold text-slate-500">Verifying access…</div>;
   }
   if (!state.allowed) return <Navigate to={state.redirect} replace />;
-  return children;
+  return (
+    <>
+      {state.offline && (
+        <div className="fixed inset-x-0 top-0 z-[2000] bg-amber-500 px-4 py-1.5 text-center text-xs font-bold text-white shadow">
+          Working offline — using your cached login. Reconnect when possible to confirm it's still valid.
+        </div>
+      )}
+      {children}
+    </>
+  );
 }
