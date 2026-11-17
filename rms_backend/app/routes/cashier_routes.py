@@ -1,5 +1,5 @@
 
-from fastapi import APIRouter, Query, HTTPException, Header
+from fastapi import APIRouter, Query, HTTPException, Header, BackgroundTasks
 from fastapi.responses import JSONResponse
 from typing import Optional
 from datetime import datetime, timedelta
@@ -256,6 +256,22 @@ async def _inv_qty(barcode: str, tenant_id: str, store_id: str) -> float:
             return float(variants[0].get("stock") or 0)
 
     return 0.0
+
+
+async def _is_allocated_to_store(barcode: str, tenant_id: str, store_id: str) -> bool:
+    """True only if a store_stock_collection record exists for this exact
+    barcode+store — i.e. it was actually transferred/allocated from central,
+    not just that it exists somewhere in the tenant's catalogue. A record
+    with stockQty 0 still counts (it was allocated, just sold out); only a
+    missing record means central never sent it to this store at all, which
+    is the case that let a cashier bill an item with nothing to deduct."""
+    barcode = barcode.strip()
+    if not barcode or not store_id:
+        return False
+    doc = await store_stock_collection.find_one(
+        {"barcode": barcode, "store_id": store_id, "tenant_id": tenant_id}, {"_id": 1}
+    )
+    return doc is not None
 
 
 async def _ensure_inventory_record(
@@ -542,6 +558,11 @@ async def lookup_barcode(
                     status_code=404,
                     detail="Product not available for sale — not inducted via GRN."
                 )
+        if not await _is_allocated_to_store(barcode, tenant_id, store_id):
+            raise HTTPException(
+                status_code=409,
+                detail=f"'{p.get('product_name') or barcode}' has not been allocated/transferred to this store yet — request a Stock Transfer from HQ before selling it."
+            )
         qty = await _inv_qty(barcode, tenant_id, store_id)
         return JSONResponse({"status": "success", "data": _product_to_pos(p, qty)})
 
@@ -558,6 +579,11 @@ async def lookup_barcode(
                             status_code=404,
                             detail="Product not available for sale — not inducted via GRN."
                         )
+                if not await _is_allocated_to_store(barcode, tenant_id, store_id):
+                    raise HTTPException(
+                        status_code=409,
+                        detail=f"'{p.get('product_name') or barcode}' has not been allocated/transferred to this store yet — request a Stock Transfer from HQ before selling it."
+                    )
                 qty = await _inv_qty(barcode, tenant_id, store_id)
                 return JSONResponse({"status": "success", "data": _variant_to_pos(p, v, qty)})
 
@@ -593,6 +619,8 @@ async def search_products(
                     inv = await inventory_collection.find_one({"barcode": bc, "tenant_id": tenant_id})
                     if not inv:
                         continue
+                if not await _is_allocated_to_store(bc, tenant_id, store_id):
+                    continue
                 seen.add(bc)
                 qty = await _inv_qty(bc, tenant_id, store_id)
                 results.append(_product_to_pos(p, qty))
@@ -608,6 +636,8 @@ async def search_products(
                         inv = await inventory_collection.find_one({"barcode": bc, "tenant_id": tenant_id})
                         if not inv:
                             continue
+                    if not await _is_allocated_to_store(bc, tenant_id, store_id):
+                        continue
                     seen.add(bc)
                     qty = await _inv_qty(bc, tenant_id, store_id)
                     results.append(_variant_to_pos(p, v, qty))
@@ -623,6 +653,8 @@ async def search_products(
                         inv = await inventory_collection.find_one({"barcode": bc, "tenant_id": tenant_id})
                         if not inv:
                             continue
+                    if not await _is_allocated_to_store(bc, tenant_id, store_id):
+                        continue
                     seen.add(bc)
                     qty = await _inv_qty(bc, tenant_id, store_id)
                     results.append(_variant_to_pos(p, v, qty))
@@ -657,6 +689,8 @@ async def product_cache(
                 inv = await inventory_collection.find_one({"barcode": bc, "tenant_id": tenant_id})
                 if not inv:
                     continue
+            if not await _is_allocated_to_store(bc, tenant_id, store_id):
+                continue
             qty = await _inv_qty(bc, tenant_id, store_id)
             seen.add(bc)
             results.append(_product_to_pos(p, qty))
@@ -669,6 +703,8 @@ async def product_cache(
                     inv = await inventory_collection.find_one({"barcode": bc, "tenant_id": tenant_id})
                     if not inv:
                         continue
+                if not await _is_allocated_to_store(bc, tenant_id, store_id):
+                    continue
                 qty = await _inv_qty(bc, tenant_id, store_id)
                 seen.add(bc)
                 results.append(_variant_to_pos(p, v, qty))
@@ -722,10 +758,27 @@ async def verify_manager(payload: dict, authorization: str = Header(None)):
 # POST /cashier/bill
 # ═══════════════════════════════════════════════════════════════════════════════
 
+async def _send_bill_email_background(sale_id, customer_email, customer_name, store_name, invoice_no, date_label, net_payable, share_url, clean_items, payment_method):
+    """Runs after the bill response has already gone back to the cashier —
+    an SMTP send can take several seconds, and offline-sync was stacking
+    that wait on every single queued bill, one after another. The send
+    result is recorded on the sale afterwards instead of being returned
+    inline, since the caller no longer waits for it."""
+    email_sent = await send_customer_pos_invoice_email(
+        customer_email, customer_name, store_name, invoice_no, date_label,
+        net_payable, share_url, clean_items, payment_method,
+    )
+    await sales_collection.update_one({"_id": sale_id}, {"$set": {
+        "customer_email_sent": email_sent,
+        "customer_email_sent_at": datetime.utcnow() if email_sent else None,
+    }})
+
+
 @router.post("/bill", status_code=201)
 async def save_bill(
-    payload:       dict,
-    authorization: str = Header(None),
+    payload:         dict,
+    background_tasks: BackgroundTasks,
+    authorization:   str = Header(None),
 ):
     is_return    = bool(payload.get("isReturn", False))
     items        = payload.get("items", [])
@@ -950,9 +1003,11 @@ async def save_bill(
     })
 
     customer_email = bill_doc.get("customer_email", "")
-    email_sent = False
-    if customer_email and _valid_email(customer_email):
-        email_sent = await send_customer_pos_invoice_email(
+    email_queued = bool(customer_email and _valid_email(customer_email))
+    if email_queued:
+        background_tasks.add_task(
+            _send_bill_email_background,
+            result.inserted_id,
             customer_email,
             bill_doc.get("customer_name") or "Customer",
             store_name,
@@ -963,11 +1018,7 @@ async def save_bill(
             clean_items,
             bill_doc.get("payment_method", "Cash"),
         )
-        await sales_collection.update_one({"_id": result.inserted_id}, {"$set": {
-            "customer_email_sent": email_sent,
-            "customer_email_sent_at": datetime.utcnow() if email_sent else None,
-        }})
-        await _audit_pos(store, "bill_email_sent" if email_sent else "bill_email_failed", {
+        await _audit_pos(store, "bill_email_queued", {
             "invoice_no": invoice_no,
             "customer_email": customer_email,
         })
@@ -981,7 +1032,8 @@ async def save_bill(
         "sync_status": bill_doc["sync_status"],
         "share_url": bill_doc.get("share_url", ""),
         "customer_email": bill_doc.get("customer_email", ""),
-        "email_sent": email_sent,
+        "email_sent": False,
+        "email_queued": email_queued,
         "inventory_warnings": inventory_warnings,
         "inventory_not_found": inventory_not_found,
         "stock_conflicts": stock_conflicts,

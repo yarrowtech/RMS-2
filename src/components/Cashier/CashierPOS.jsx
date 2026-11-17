@@ -1200,8 +1200,8 @@ function ReceiptModal({ open, receipt, onClose }) {
               <p>Customer: {receipt.customerName || "Walking Customer"}</p>
               <p>Mobile: {receipt.mobile || "N/A"}</p>
               <p>Email: {receipt.customerEmail || "N/A"}</p>
-              <p className={receipt.offline ? "font-black text-amber-700" : receipt.customerEmail ? (receipt.emailSent ? "font-black text-emerald-700" : "font-black text-rose-700") : "font-bold text-slate-500"}>
-                Digital bill: {receipt.offline ? "Will send after sync" : receipt.customerEmail ? (receipt.emailSent ? "Email sent" : "Email not sent") : "No email added"}
+              <p className={receipt.offline ? "font-black text-amber-700" : receipt.customerEmail ? (receipt.emailSent ? "font-black text-emerald-700" : receipt.emailQueued ? "font-black text-amber-700" : "font-black text-rose-700") : "font-bold text-slate-500"}>
+                Digital bill: {receipt.offline ? "Will send after sync" : receipt.customerEmail ? (receipt.emailSent ? "Email sent" : receipt.emailQueued ? "Sending…" : "Email not sent") : "No email added"}
               </p>
             </div>
 
@@ -1644,6 +1644,17 @@ export default function CashierPOS() {
     try {
       const res  = await cashierFetch(`${API_BASE}/cashier/lookup/${encodeURIComponent(bc)}`);
       if (!res.ok) {
+        if (res.status === 409) {
+          // The server is reachable and explicitly refused this item (not
+          // allocated to this store) — this is a deliberate block, not a
+          // "couldn't find it" case, so it must NOT fall through to the
+          // offline cache or manual-add escape hatch, or the guard is
+          // trivially bypassed by just typing the item in by hand.
+          let detail = "This item has not been allocated to this store yet.";
+          try { detail = (await res.json())?.detail || detail; } catch {}
+          showToast(detail, "error");
+          return;
+        }
         const cached = findCachedProductByBarcode(readProductCache().products, bc);
         if (cached) {
           addProduct(cached);
@@ -1860,12 +1871,18 @@ export default function CashierPOS() {
         if (!res.ok) throw new Error(data.detail || "Sync failed");
 
         const nextRows = readOfflineBills().map(item => item.id === row.id
-          ? { ...item, status: "synced", syncedAt: new Date().toISOString(), serverInvoiceNo: data.invoice_no, shareUrl: data.share_url || item.shareUrl || "", emailSent: Boolean(data.email_sent), customerEmail: data.customer_email || item.payload?.bill?.customerEmail || "", stockConflicts: data.stock_conflicts || [], lastError: "" }
+          ? { ...item, status: "synced", syncedAt: new Date().toISOString(), serverInvoiceNo: data.invoice_no, shareUrl: data.share_url || item.shareUrl || "", emailSent: Boolean(data.email_sent), emailQueued: Boolean(data.email_queued), customerEmail: data.customer_email || item.payload?.bill?.customerEmail || "", stockConflicts: data.stock_conflicts || [], lastError: "" }
           : item
         );
         writeOfflineBills(nextRows);
         setOfflineBills(nextRows);
         synced += 1;
+        if (data.inventory_not_found?.length) {
+          data.inventory_not_found.forEach(nf => showToast(
+            `Synced offline bill ${data.invoice_no}, but stock was NOT deducted for '${nf.name}' — ${nf.reason === "not_allocated_to_store" ? "it isn't allocated to this store" : "item not found"}. Tell HQ.`,
+            "error"
+          ));
+        }
       } catch (e) {
         const nextRows = readOfflineBills().map(item => item.id === row.id
           ? { ...item, status: "failed", lastError: e.message || "Sync failed" }
@@ -1904,18 +1921,34 @@ export default function CashierPOS() {
 
   // Offline bills otherwise only sync when the cashier notices the pending
   // banner and clicks it — easy to miss, and leaves bills sitting on just
-  // this one device/browser for longer than necessary. Reconnecting fires
-  // the browser's `online` event, so retry automatically right then instead
-  // of waiting on a manual click.
+  // this one device/browser for longer than necessary. Three triggers cover
+  // this without relying on the cashier remembering anything:
+  //  1. The browser's `online` event — fires the instant the network
+  //     interface itself comes back, which is the common case.
+  //  2. A short poll while pending bills exist — `online`/navigator.onLine
+  //     only reflects the network interface, not whether the RMS server is
+  //     actually reachable again (e.g. wifi stays "connected" the whole
+  //     time the server itself was down), so a timer retry is the only way
+  //     to catch "server is back" rather than "wifi is back".
+  //  3. A check right when this screen mounts — covers reopening the tab
+  //     (or switching back to Point of Sale) after already having gone
+  //     back online, which fires no `online` event at all since nothing
+  //     transitioned while the tab/screen was closed.
   useEffect(() => {
-    const onReconnect = () => {
+    const trySyncIfPending = () => {
+      if (syncingOffline) return;
       if (readOfflineBills().some(row => ["pending", "failed"].includes(row.status))) {
         syncOfflineBills();
       }
     };
-    window.addEventListener("online", onReconnect);
-    return () => window.removeEventListener("online", onReconnect);
-  }, [syncOfflineBills]);
+    trySyncIfPending();
+    window.addEventListener("online", trySyncIfPending);
+    const interval = setInterval(trySyncIfPending, 30000);
+    return () => {
+      window.removeEventListener("online", trySyncIfPending);
+      clearInterval(interval);
+    };
+  }, [syncOfflineBills, syncingOffline]);
 
   const finalizeBill = useCallback(async (paidAmount = 0, changeReturn = 0, paymentMethodOverride = bill.paymentMethod, paymentSplitOverride = {}, returnReason = "", managerName = "") => {
     setSaving(true);
@@ -1948,6 +1981,12 @@ export default function CashierPOS() {
       if (data.inventory_warnings?.length) {
         data.inventory_warnings.forEach(w => showToast(w, "error"));
       }
+      if (data.inventory_not_found?.length) {
+        data.inventory_not_found.forEach(row => showToast(
+          `Bill saved, but stock was NOT deducted for '${row.name}' — ${row.reason === "not_allocated_to_store" ? "it isn't allocated to this store" : "item not found"}. Tell HQ.`,
+          "error"
+        ));
+      }
 
       setReceipt({
         invoiceNo:       data.invoice_no,
@@ -1957,6 +1996,7 @@ export default function CashierPOS() {
         mobile:          bill.mobile,
         customerEmail:   bill.customerEmail,
         emailSent:       Boolean(data.email_sent),
+        emailQueued:     Boolean(data.email_queued),
         paymentMethod:   paymentMethodOverride,
         paymentSplit:    paymentSplitOverride,
         shareUrl:        data.share_url || "",
