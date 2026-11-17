@@ -7,6 +7,7 @@ import {
   LogOut,
   Mail,
   Megaphone,
+  Menu,
   MessageCircle,
   MinusCircle,
   MousePointerClick,
@@ -145,6 +146,7 @@ export default function Marketing() {
   const [activeTab, setActiveTab] = useState("campaigns");
   const [redemptionFormFor, setRedemptionFormFor] = useState(null);
   const [redemptionDraft, setRedemptionDraft] = useState({ store_name: "", bill_no: "", customer_ref: "", amount: "", note: "" });
+  const [drawerOpen, setDrawerOpen] = useState(false);
 
   const adminName = getAdminName() || "Marketing team";
 
@@ -288,38 +290,71 @@ export default function Marketing() {
     }
   };
 
+  const sidebarNav = (closeOnSelect) => {
+    const hideSm = closeOnSelect ? "" : "marketing-hide-sm"; // closeOnSelect=true means this is the mobile drawer — always show labels there, never icon-only
+    return (
+    <>
+      <div className="marketing-nav rounded-2xl p-4">
+        <div className="flex items-center gap-3">
+          <div className="grid h-10 w-10 place-items-center rounded-xl bg-white/10"><Megaphone size={20} /></div>
+          <div className={hideSm}>
+            <p className="text-base font-black">RMS</p>
+            <p className="text-[11px] font-bold uppercase tracking-widest text-teal-200">Marketing</p>
+          </div>
+        </div>
+        <div className={`${hideSm} mt-4 rounded-xl bg-white/5 p-3`}>
+          <p className="text-sm font-bold">{adminName}</p>
+          <p className="mt-0.5 text-xs text-teal-200">Campaign workspace</p>
+        </div>
+      </div>
+      <nav className="mt-4 space-y-1.5">
+        {tabConfig.map((item) => (
+          <button
+            key={item.id}
+            type="button"
+            onClick={() => { setActiveTab(item.id); if (closeOnSelect) setDrawerOpen(false); }}
+            className={`flex w-full items-center gap-3 rounded-xl px-4 py-2.5 text-left text-sm font-bold transition ${activeTab === item.id ? "bg-white text-teal-900" : "text-teal-100 hover:bg-white/8"}`}
+          >
+            <item.icon size={17} /><span className={hideSm}>{item.label}</span>
+          </button>
+        ))}
+      </nav>
+      <button onClick={logoutOrReturnToDepartmentSelector} className="mt-auto flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold text-teal-100 hover:bg-white/8">
+        <LogOut size={17} /><span className={hideSm}>Logout</span>
+      </button>
+    </>
+    );
+  };
+
   return (
     <div className="marketing-shell flex min-h-screen">
       <style>{marketingStyles}</style>
-      <aside className="marketing-sidebar sticky top-0 hidden h-screen shrink-0 flex-col p-4 text-white md:flex">
-        <div className="marketing-nav rounded-2xl p-4">
-          <div className="flex items-center gap-3">
-            <div className="grid h-10 w-10 place-items-center rounded-xl bg-white/10"><Megaphone size={20} /></div>
-            <div className="marketing-hide-sm">
-              <p className="text-base font-black">RMS</p>
-              <p className="text-[11px] font-bold uppercase tracking-widest text-teal-200">Marketing</p>
-            </div>
-          </div>
-          <div className="marketing-hide-sm mt-4 rounded-xl bg-white/5 p-3">
-            <p className="text-sm font-bold">{adminName}</p>
-            <p className="mt-0.5 text-xs text-teal-200">Campaign workspace</p>
-          </div>
-        </div>
-        <nav className="mt-4 space-y-1.5">
-          {tabConfig.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              onClick={() => setActiveTab(item.id)}
-              className={`flex w-full items-center gap-3 rounded-xl px-4 py-2.5 text-left text-sm font-bold transition ${activeTab === item.id ? "bg-white text-teal-900" : "text-teal-100 hover:bg-white/8"}`}
-            >
-              <item.icon size={17} /><span className="marketing-hide-sm">{item.label}</span>
-            </button>
-          ))}
-        </nav>
-        <button onClick={logoutOrReturnToDepartmentSelector} className="mt-auto flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold text-teal-100 hover:bg-white/8">
-          <LogOut size={17} /><span className="marketing-hide-sm">Logout</span>
+
+      {/* Mobile header — the sidebar below is desktop-only (md:flex), so
+          without this there was no way at all to switch tabs or log out
+          on a phone-width screen. */}
+      <div className="sticky top-0 z-40 flex items-center justify-between border-b border-slate-200 bg-white px-4 py-3 md:hidden">
+        <button type="button" onClick={() => setDrawerOpen(true)} className="grid h-10 w-10 place-items-center rounded-xl border border-slate-200 bg-slate-50 text-slate-700" aria-label="Open menu">
+          <Menu size={20} />
         </button>
+        <div className="text-center">
+          <p className="text-sm font-black text-slate-900">RMS — Marketing</p>
+          <p className="text-xs font-bold text-teal-700">{tabConfig.find((t) => t.id === activeTab)?.label || "Settings"}</p>
+        </div>
+        <div className="h-10 w-10" />
+      </div>
+
+      {drawerOpen && (
+        <>
+          <div className="fixed inset-0 z-[1000] bg-black/40 md:hidden" onClick={() => setDrawerOpen(false)} />
+          <div className="marketing-sidebar fixed left-0 top-0 z-[1001] flex h-[100dvh] w-[80vw] max-w-[300px] flex-col p-4 text-white md:hidden" style={{ width: "min(80vw, 300px)" }}>
+            {sidebarNav(true)}
+          </div>
+        </>
+      )}
+
+      <aside className="marketing-sidebar sticky top-0 hidden h-screen shrink-0 flex-col p-4 text-white md:flex">
+        {sidebarNav(false)}
       </aside>
 
       <main className="marketing-main min-w-0 flex-1 p-5 md:p-8">
