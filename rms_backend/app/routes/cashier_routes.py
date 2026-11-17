@@ -4,6 +4,7 @@ from fastapi.responses import JSONResponse
 from typing import Optional
 from datetime import datetime, timedelta
 from bson import ObjectId
+from pymongo import ReturnDocument
 import os
 import secrets
 import re
@@ -25,6 +26,7 @@ router = APIRouter(prefix="/cashier", tags=["Cashier POS"])
 
 cashier_audit_collection = db["cashier_pos_audit_logs"]
 cashier_shift_collection = db["cashier_shifts"]
+cashier_invoice_counters_collection = db["cashier_invoice_counters"]
 
 
 def _public_invoice_url(token: str) -> str:
@@ -463,12 +465,42 @@ def _variant_to_pos(p: dict, v: dict, inv_qty: float = 0.0) -> dict:
 
 
 async def _generate_invoice_no(is_return: bool, tenant_id: str, store_id: str) -> str:
+    """Was `count_documents(...) + 1` — a read-then-use race: two cashiers at
+    the same store finalizing a bill within the same moment could both read
+    the same count and generate the identical invoice number, with no
+    unique index to even catch the collision. A MongoDB atomic
+    find_one_and_update $inc can't lose an increment under concurrency,
+    which count-then-use fundamentally can.
+
+    $setOnInsert seeds the counter from the real historical count only on
+    the very first call ever for this tenant+store+type — existing stores
+    already have thousands of real invoices under the old scheme, and this
+    keeps their next number continuing from there instead of restarting at
+    00001 and colliding with history. That seed read can itself race on the
+    very first call (two requests both computing the base before either's
+    document exists), but the upsert's insert is still atomic — only one
+    request actually creates the counter document, so the sequence is
+    still race-free from that point on; at worst the one-time seed is off
+    by the few concurrent requests that lost that single race, which is
+    far better than the unbounded, permanent duplication this replaces.
+    """
     prefix = "CN" if is_return else "INV"
-    count  = await sales_collection.count_documents(
-        {"type": "return" if is_return else "sale", "tenant_id": tenant_id, "store_id": store_id}
+    sale_type = "return" if is_return else "sale"
+    key = {"tenant_id": tenant_id, "store_id": store_id, "type": sale_type}
+
+    existing = await cashier_invoice_counters_collection.find_one(key, {"_id": 1})
+    if existing is None:
+        base_count = await sales_collection.count_documents({**key})
+        await cashier_invoice_counters_collection.update_one(
+            key, {"$setOnInsert": {**key, "seq": base_count}}, upsert=True
+        )
+
+    doc = await cashier_invoice_counters_collection.find_one_and_update(
+        key, {"$inc": {"seq": 1}}, upsert=True, return_document=ReturnDocument.AFTER
     )
+    seq = int(doc["seq"])
     now = datetime.utcnow()
-    return f"NM/{prefix}/{now.strftime('%y%m')}/{str(count + 1).zfill(5)}"
+    return f"NM/{prefix}/{now.strftime('%y%m')}/{str(seq).zfill(5)}"
 
 
 def _is_vendor_only(p: dict) -> bool:
