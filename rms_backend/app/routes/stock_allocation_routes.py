@@ -185,10 +185,22 @@ async def get_store_stock(store_id: str, authorization: str = Header(None)):
     _assert_store_access(store, store_id)
     is_single_store = await _is_single_store_tenant(tenant_id)
 
+    store_docs = await store_stock_collection.find({"store_id": store_id, "tenant_id": tenant_id}).to_list(None)
+
+    # One batched lookup instead of a central-inventory query per row — with
+    # a few thousand SKUs allocated to a store, the old per-row find_one()
+    # meant that many sequential round-trips, slow enough to blow past the
+    # reverse proxy's timeout and kill the connection before any response
+    # (including its CORS header) ever reached the browser.
+    barcodes = list({doc.get("barcode", "") for doc in store_docs if doc.get("barcode")})
+    central_by_barcode = {}
+    async for central_doc in inventory_collection.find({"barcode": {"$in": barcodes}, "tenant_id": tenant_id}):
+        central_by_barcode[central_doc.get("barcode", "")] = central_doc
+
     rows = []
-    async for doc in store_stock_collection.find({"store_id": store_id, "tenant_id": tenant_id}):
+    for doc in store_docs:
         barcode = doc.get("barcode", "")
-        central = await inventory_collection.find_one({"barcode": barcode, "tenant_id": tenant_id}) or {}
+        central = central_by_barcode.get(barcode) or {}
 
         rows.append({
             "barcode":     barcode,
