@@ -286,6 +286,7 @@ export default function RMSInventorySidebar({
             {/* HQ sees central stock list + allocation */}
             {isHQ && childItem("stock.currentList", <FaListAlt />,  "Central Stock List")}
             {isHQ && childItem("stock.allocation",  <FaBoxOpen />,  "Stock Allocation")}
+            {isHQ && childItem("stock.storeOverview", <FaMapMarkedAlt />, "Store Allocation Overview")}
 
             {/* Store sees their own store stock */}
             {isStore && childItem("stock.storeStock", <FaStore />, "Store Stock")}

@@ -21,6 +21,7 @@ import InventoryManagementWareHouseWizeStock from "./InventoryManagementWareHous
 import InventoryManagementPoGrnVariance from "./InventoryManagementPoGrnVariance";
 import InventoryManagementSettings from "./InventoryManagementSettings";
 import InventoryManagementStockAllocation from "./InventoryManagementStockAllocation";
+import AdminStoreWiseInventory from "../Admin/AdminStoreWiseInventory.jsx";
 import InventoryManagementStoreStock from "./Inventorymanagementstorestock.jsx";
 import GRRC from "./GRRC";
 import GRN from "./GRN";
@@ -58,6 +59,7 @@ function labelFromKey(key, storeName = "") {
     case "stock.adjustment":      return "Stock Adjustment";
     case "stock.transfer":        return "Stock Transfer";
     case "stock.allocation":      return "Stock Allocation";
+    case "stock.storeOverview":   return "Store Allocation Overview";
     case "stock.damagedReturned": return "Damaged / Returned Stock";
 
     // GRN (HQ only)
@@ -157,6 +159,14 @@ export default function InventoryManagement() {
       // Stock Allocation — HQ only (allocates FROM central TO store)
       case "stock.allocation":
         return isHQ ? <InventoryManagementStockAllocation /> : <HQOnly />;
+
+      // Which product went to which store, at a glance — central qty plus
+      // a per-store column, searchable by barcode/product/SKU. Reuses the
+      // same page already built for the Admin dashboard (same endpoints),
+      // just surfaced here too since this is where Inventory HQ users
+      // actually work day to day.
+      case "stock.storeOverview":
+        return isHQ ? <AdminStoreWiseInventory /> : <HQOnly />;
 
       // These show for BOTH — API is store-aware via JWT
       case "stock.ledger":
