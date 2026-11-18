@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from "react";
-import { User, IdCard, ShieldCheck, LockKeyhole, Mail, Phone } from "lucide-react";
+import { User, IdCard, ShieldCheck, LockKeyhole, Mail, Phone, Monitor } from "lucide-react";
+import { getTerminalName, setTerminalName } from "./terminalIdentity";
 
 const cn = (...a) => a.filter(Boolean).join(" ");
 
@@ -86,6 +87,18 @@ export default function SettingsProfilePage() {
     return pwd.current && pwd.next.length >= 8 && pwd.next === pwd.confirm;
   }, [pwd]);
 
+  // Identifies this physical machine, not the login — a store's shared
+  // cashier login is used on several POS terminals, so this name lives
+  // only in this device's own storage, separate from the account.
+  const [terminalName, setTerminalNameState] = useState(() => getTerminalName());
+  const [terminalSaved, setTerminalSaved] = useState(false);
+  const saveTerminalName = () => {
+    const clean = setTerminalName(terminalName);
+    setTerminalNameState(clean);
+    setTerminalSaved(true);
+    setTimeout(() => setTerminalSaved(false), 2000);
+  };
+
   return (
     <div className="w-full bg-black-50">
       <div className="w-full px-6 py-6 space-y-6">
@@ -170,6 +183,30 @@ export default function SettingsProfilePage() {
                 <li>• Enable 2FA</li>
               </ul>
             </div>
+          </div>
+        </Section>
+
+        <Section
+          icon={Monitor}
+          title="This POS Terminal"
+          subtitle="Identifies just this machine — separate from the shared login, so each terminal at this store can be told apart."
+          right={
+            <button
+              onClick={saveTerminalName}
+              disabled={!terminalName.trim()}
+              className="px-4 py-2 text-sm font-semibold rounded-xl bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40"
+            >
+              {terminalSaved ? "Saved" : "Save"}
+            </button>
+          }
+        >
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <Field
+              label="Terminal Name (e.g. Counter 1)"
+              value={terminalName}
+              editable
+              onChange={(v) => setTerminalNameState(v)}
+            />
           </div>
         </Section>
 

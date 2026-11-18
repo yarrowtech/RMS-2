@@ -816,6 +816,9 @@ async def save_bill(
     items        = payload.get("items", [])
     summary      = payload.get("summary", {})
     bill_meta    = payload.get("bill", {})
+    # Who assisted the sale on the floor — separate from the cashier
+    # operating the till, for staff-level commission/performance tracking.
+    salesman_code = str(bill_meta.get("salesmanCode") or "").strip()
     payment_split = bill_meta.get("paymentSplit") or payload.get("paymentSplit") or {}
     if not isinstance(payment_split, dict):
         payment_split = {}
@@ -829,6 +832,12 @@ async def save_bill(
     offline_invoice_no = str(payload.get("offlineInvoiceNo") or "").strip()
     created_offline_at = str(payload.get("createdOfflineAt") or "").strip()
     sync_source = str(payload.get("syncSource") or "").strip()
+    # Identifies the physical POS machine, not the login — a store's shared
+    # cashier login is used across several terminals, so this is a
+    # per-device id/name the frontend generates and stores locally, carried
+    # along on every bill independent of which shared credential signed in.
+    terminal_id = str(payload.get("terminalId") or "").strip()
+    terminal_name = str(payload.get("terminalName") or "").strip()
 
     store = await _require_store_context(authorization)
     tenant_id  = store["tenant_id"]
@@ -887,6 +896,32 @@ async def save_bill(
         if return_reason in RETURN_REASONS_NEEDING_APPROVAL and not payload.get("managerVerified"):
             raise HTTPException(status_code=403, detail="This return reason needs manager approval before it can be saved.")
 
+    # Exchange: spend an earlier return's refund value against this new
+    # purchase instead of it only ever being a standalone refund/credit
+    # note with nothing to apply it to in the moment. Only valid on a new
+    # sale, never on another return, and only once per original return —
+    # re-validated server-side rather than trusting the claimed amount the
+    # client sends, since that number drives real money.
+    exchange_payload = payload.get("exchangeCredit") if not is_return else None
+    exchange_original = None
+    exchange_claimed_amount = 0.0
+    exchange_against_invoice = ""
+    if exchange_payload:
+        exchange_against_invoice = str(exchange_payload.get("againstInvoice") or "").strip()
+        exchange_claimed_amount = _float(exchange_payload.get("amount"))
+        if not exchange_against_invoice or exchange_claimed_amount <= 0:
+            raise HTTPException(status_code=400, detail="Invalid exchange credit reference.")
+        exchange_original = await sales_collection.find_one({
+            "invoice_no": exchange_against_invoice, "type": "return", **_store_scope(store),
+        })
+        if not exchange_original:
+            raise HTTPException(status_code=404, detail="The return this exchange credit refers to was not found.")
+        if exchange_original.get("exchange_consumed"):
+            raise HTTPException(status_code=409, detail="This return's credit has already been used on another bill.")
+        allowed_amount = _float(exchange_original.get("summary", {}).get("net_payable"))
+        if exchange_claimed_amount > allowed_amount + 0.01:
+            raise HTTPException(status_code=400, detail="Exchange credit amount does not match the original return.")
+
     if not items:
         raise HTTPException(status_code=400, detail="No items in bill.")
 
@@ -935,6 +970,14 @@ async def save_bill(
                     "short_by": item["qty"] - current_qty,
                 })
 
+    # The new bill's own net payable isn't known until its summary is
+    # built below — but it's already in the incoming payload's `summary`
+    # dict (same one the response/receipt uses), so the credit applied
+    # here can never exceed what this specific bill actually costs.
+    exchange_net_payable = _float(summary.get("netPayable"))
+    exchange_applied = min(exchange_claimed_amount, exchange_net_payable) if exchange_original else 0.0
+    exchange_refund_due = max(0.0, exchange_claimed_amount - exchange_net_payable) if exchange_original else 0.0
+
     share_token = secrets.token_urlsafe(18)
     bill_doc = {
         "invoice_no": invoice_no,
@@ -942,8 +985,12 @@ async def save_bill(
         "original_invoice": payload.get("originalInvoice", ""),
         "return_reason": str(payload.get("returnReason") or "") if is_return else "",
         "return_approved_by": str(payload.get("managerName") or "") if is_return else "",
+        "exchange_against_invoice": exchange_against_invoice,
+        "exchange_credit_applied": exchange_applied,
+        "exchange_refund_due": exchange_refund_due,
         "date": now.strftime("%Y-%m-%d %H:%M"),
         "cashier_name": cashier_name,
+        "salesman_code": salesman_code,
         "customer_name": bill_meta.get("customerName", ""),
         "mobile": bill_meta.get("mobile", ""),
         "customer_email": str(bill_meta.get("customerEmail") or bill_meta.get("email") or "").strip().lower(),
@@ -959,6 +1006,8 @@ async def save_bill(
         "tenant_id": tenant_id,
         "store_id": store_id,
         "store_name": store_name,
+        "terminal_id": terminal_id,
+        "terminal_name": terminal_name,
         "client_offline_id": client_offline_id,
         "offline_invoice_no": offline_invoice_no,
         "created_offline_at": created_offline_at,
@@ -991,6 +1040,16 @@ async def save_bill(
     }
 
     result = await sales_collection.insert_one(bill_doc)
+
+    if exchange_original:
+        await sales_collection.update_one(
+            {"_id": exchange_original["_id"]},
+            {"$set": {
+                "exchange_consumed": True,
+                "exchange_consumed_by_invoice": invoice_no,
+                "exchange_consumed_amount": exchange_applied,
+            }},
+        )
 
     inventory_warnings = []
     inventory_not_found = []
@@ -1069,6 +1128,8 @@ async def save_bill(
         "inventory_warnings": inventory_warnings,
         "inventory_not_found": inventory_not_found,
         "stock_conflicts": stock_conflicts,
+        "exchange_credit_applied": exchange_applied,
+        "exchange_refund_due": exchange_refund_due,
     }
 
 
@@ -1076,10 +1137,30 @@ async def save_bill(
 # CASHIER SHIFT + BILL SHARING
 # ???????????????????????????????????????????????????????????????????????????????
 
+def _shift_scope(ctx: dict, terminal_id: str) -> dict:
+    """A store's shared cashier login runs on several physical POS
+    terminals, so a shift must be scoped per-machine, not per-store —
+    otherwise two terminals at the same store would share one shift record
+    and each would see the other's sales in its own reconciliation.
+
+    Backward compatible with shifts opened before terminal identity
+    existed: those have no terminal_id field at all, so they also match
+    here (querying None matches both an explicit null and a missing
+    field) — any terminal can still find/close that one legacy shared
+    shift, and every shift opened from here on is properly terminal-scoped.
+    """
+    scope = {**_store_scope(ctx), "status": "open"}
+    if terminal_id:
+        scope["$or"] = [{"terminal_id": terminal_id}, {"terminal_id": {"$in": [None, ""]}}]
+    else:
+        scope["terminal_id"] = {"$in": [None, ""]}
+    return scope
+
+
 @router.get("/shift/current")
-async def current_shift(authorization: str = Header(None)):
+async def current_shift(terminal_id: str = Query(""), authorization: str = Header(None)):
     ctx = await _require_store_context(authorization)
-    shift = await cashier_shift_collection.find_one({**_store_scope(ctx), "status": "open"}, sort=[("opened_at", -1)])
+    shift = await cashier_shift_collection.find_one(_shift_scope(ctx, terminal_id), sort=[("opened_at", -1)])
     if not shift:
         return {"status": "success", "shift": None}
     shift["_id"] = str(shift["_id"])
@@ -1089,7 +1170,9 @@ async def current_shift(authorization: str = Header(None)):
 @router.post("/shift/open")
 async def open_shift(payload: dict, authorization: str = Header(None)):
     ctx = await _require_store_context(authorization)
-    existing = await cashier_shift_collection.find_one({**_store_scope(ctx), "status": "open"})
+    terminal_id = str(payload.get("terminalId") or "").strip()
+    terminal_name = str(payload.get("terminalName") or "").strip()
+    existing = await cashier_shift_collection.find_one(_shift_scope(ctx, terminal_id))
     if existing:
         existing["_id"] = str(existing["_id"])
         return {"status": "success", "shift": existing, "message": "Shift already open."}
@@ -1097,6 +1180,8 @@ async def open_shift(payload: dict, authorization: str = Header(None)):
     doc = {
         **_store_scope(ctx),
         "store_name": ctx.get("store_name", ""),
+        "terminal_id": terminal_id,
+        "terminal_name": terminal_name,
         "cashier_name": ctx.get("admin_name") or ctx.get("name") or "POS",
         "opening_cash": _float(payload.get("openingCash")),
         "status": "open",
@@ -1105,19 +1190,28 @@ async def open_shift(payload: dict, authorization: str = Header(None)):
     }
     result = await cashier_shift_collection.insert_one(doc)
     doc["_id"] = str(result.inserted_id)
-    await _audit_pos(ctx, "shift_opened", {"shift_id": doc["_id"], "opening_cash": doc["opening_cash"]})
+    await _audit_pos(ctx, "shift_opened", {"shift_id": doc["_id"], "opening_cash": doc["opening_cash"], "terminal_name": terminal_name})
     return {"status": "success", "shift": doc}
 
 
 @router.post("/shift/close")
 async def close_shift(payload: dict, authorization: str = Header(None)):
     ctx = await _require_store_context(authorization)
-    shift = await cashier_shift_collection.find_one({**_store_scope(ctx), "status": "open"}, sort=[("opened_at", -1)])
+    terminal_id = str(payload.get("terminalId") or "").strip()
+    shift = await cashier_shift_collection.find_one(_shift_scope(ctx, terminal_id), sort=[("opened_at", -1)])
     if not shift:
         raise HTTPException(status_code=400, detail="No open shift found.")
     opened_at = shift.get("opened_at") or datetime.utcnow()
     now = datetime.utcnow()
     q = {**_store_scope(ctx), "type": "sale", "created_at": {"$gte": opened_at, "$lte": now}}
+    # Reconciliation must only count THIS terminal's own sales once shifts
+    # are per-machine — otherwise closing Counter 1's shift would also
+    # pull in whatever Counter 2 sold during the same window. A legacy
+    # shift (no terminal_id) predates per-terminal billing entirely, so it
+    # keeps the old store-wide total on purpose.
+    shift_terminal_id = shift.get("terminal_id") or ""
+    if shift_terminal_id:
+        q["terminal_id"] = shift_terminal_id
     cash_sales = 0.0
     total_sales = 0.0
     bill_count = 0
@@ -1452,6 +1546,7 @@ async def get_sales_report(
     min_amount:     Optional[float] = Query(None),
     max_amount:     Optional[float] = Query(None),
     store_id:       Optional[str]   = Query(None, description="HQ only — filter to one store/branch."),
+    terminal_id:    Optional[str]   = Query(None, description="Filter to one physical POS machine within the store."),
     limit:          int             = Query(500, le=2000),
     skip:           int             = Query(0, ge=0),
     authorization: str = Header(None),
@@ -1464,6 +1559,8 @@ async def get_sales_report(
     # sees every store's bills combined.
     if store_id and ctx.get("scope") == "hq":
         query["store_id"] = store_id
+    if terminal_id:
+        query["terminal_id"] = terminal_id
 
     if type_filter and type_filter.lower() not in ("all", ""):
         query["type"] = type_filter.lower()
@@ -1529,7 +1626,10 @@ async def get_sales_report(
             "date":             doc.get("date", ""),
             "store_id":         doc.get("store_id", ""),
             "store_name":       doc.get("store_name", ""),
+            "terminal_id":      doc.get("terminal_id", ""),
+            "terminal_name":    doc.get("terminal_name", ""),
             "cashier_name":     doc.get("cashier_name", ""),
+            "salesman_code":    doc.get("salesman_code", ""),
             "customer_name":    doc.get("customer_name", ""),
             "mobile":           doc.get("mobile", ""),
             "payment_method":   doc.get("payment_method", ""),
@@ -1823,6 +1923,86 @@ async def reports_cashiers(
 
     rows.sort(key=lambda x: x["net_revenue"], reverse=True)
     return JSONResponse({"status": "success", "from_date": fd, "to_date": td, "count": len(rows), "data": rows})
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# GET /cashier/reports/terminals
+# Per-machine totals, plus a day × terminal breakdown — "which POS at this
+# store did how much, and on which day" in one call. A bill with no
+# terminal_id (saved before per-terminal identity existed) is grouped
+# under "Unassigned" rather than dropped, so historical totals still add
+# up to the same grand total the other report tabs already show.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@router.get("/reports/terminals")
+async def reports_terminals(
+    from_date: Optional[str] = Query(None),
+    to_date:   Optional[str] = Query(None),
+    authorization: str = Header(None),
+):
+    ctx = await _require_report_context(authorization)
+
+    fd, td = from_date or _default_dates()[0], to_date or _default_dates()[1]
+    q = _date_query(fd, td)
+    q.update(_report_scope(ctx))
+
+    terminal_map: dict = {}
+    daily_map: dict = {}  # (terminal_key, day) -> row
+
+    async for doc in sales_collection.find(q):
+        s    = doc.get("summary", {})
+        typ  = doc.get("type", "sale")
+        terminal_id = doc.get("terminal_id") or ""
+        terminal_name = (doc.get("terminal_name") or "").strip() or "Unassigned"
+        terminal_key = terminal_id or "unassigned"
+        net  = _float(s.get("net_payable"))
+        qty  = sum(int(i.get("qty", 0) or 0) for i in doc.get("items", []))
+        day  = (doc.get("date") or "")[:10]
+
+        if terminal_key not in terminal_map:
+            terminal_map[terminal_key] = {
+                "terminal_id": terminal_id, "terminal_name": terminal_name,
+                "sale_count": 0, "return_count": 0,
+                "gross_revenue": 0.0, "return_amount": 0.0, "net_revenue": 0.0,
+                "items_sold": 0,
+            }
+        t = terminal_map[terminal_key]
+
+        daily_key = (terminal_key, day)
+        if daily_key not in daily_map:
+            daily_map[daily_key] = {
+                "terminal_id": terminal_id, "terminal_name": terminal_name, "date": day,
+                "bill_count": 0, "sale_amount": 0.0,
+            }
+        d = daily_map[daily_key]
+
+        if typ == "return":
+            t["return_count"]  += 1
+            t["return_amount"] += net
+        else:
+            t["sale_count"]    += 1
+            t["gross_revenue"] += net
+            t["items_sold"]    += qty
+            d["bill_count"]    += 1
+            d["sale_amount"]   += net
+
+    terminals = []
+    for t in terminal_map.values():
+        t["net_revenue"]   = round(t["gross_revenue"] - t["return_amount"], 2)
+        t["gross_revenue"] = round(t["gross_revenue"], 2)
+        t["return_amount"] = round(t["return_amount"], 2)
+        terminals.append(t)
+    terminals.sort(key=lambda x: x["net_revenue"], reverse=True)
+
+    daily_rows = sorted(
+        [{**v, "sale_amount": round(v["sale_amount"], 2)} for v in daily_map.values()],
+        key=lambda x: (x["date"], x["terminal_name"])
+    )
+
+    return JSONResponse({
+        "status": "success", "from_date": fd, "to_date": td,
+        "terminals": terminals, "daily": daily_rows,
+    })
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

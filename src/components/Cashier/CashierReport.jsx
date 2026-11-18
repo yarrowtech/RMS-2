@@ -536,7 +536,7 @@ import * as XLSX from "xlsx";
 import {
   FaChartBar, FaBoxes, FaFileInvoiceDollar, FaUserTie,
   FaCreditCard, FaSyncAlt, FaDownload, FaCalendarAlt,
-  FaRupeeSign, FaReceipt, FaArrowUp, FaArrowDown,
+  FaRupeeSign, FaReceipt, FaArrowUp, FaArrowDown, FaCashRegister,
 } from "react-icons/fa";
 
 import { CASHIER_API_BASE as API_BASE, cashierFetch } from "./cashierApi";
@@ -1046,6 +1046,111 @@ function CashiersTab() {
   );
 }
 
+/* ══════════════════════════ TAB: Terminals (per-POS machine) ══════════════════════════ */
+function TerminalsTab() {
+  const [from,    setFrom]    = useState(MONTH_START);
+  const [to,      setTo]      = useState(TODAY);
+  const [terminals, setTerminals] = useState([]);
+  const [daily,     setDaily]     = useState([]);
+  const [loading,   setLoading]   = useState(false);
+
+  const fetch_ = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res  = await cashierFetch(`${API_BASE}/cashier/reports/terminals?from_date=${from}&to_date=${to}`);
+      const json = await res.json();
+      setTerminals(json.terminals || []);
+      setDaily(json.daily || []);
+    } catch {}
+    finally { setLoading(false); }
+  }, [from, to]);
+
+  useEffect(() => { fetch_(); }, [fetch_]);
+
+  const downloadExcel = () => {
+    if (!terminals.length && !daily.length) return;
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(terminals.map(r => ({
+      "Terminal": r.terminal_name, "Sale Count": r.sale_count, "Return Count": r.return_count,
+      "Gross Revenue": r.gross_revenue, "Return Amount": r.return_amount,
+      "Net Revenue": r.net_revenue, "Items Sold": r.items_sold,
+    }))), "Per Terminal");
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(daily.map(r => ({
+      "Date": r.date, "Terminal": r.terminal_name, "Bill Count": r.bill_count, "Sale Amount": r.sale_amount,
+    }))), "Day-wise");
+    XLSX.writeFile(wb, `Terminal_Report_${from}_${to}.xlsx`);
+  };
+
+  const maxRev = Math.max(...terminals.map(d => d.net_revenue || 0), 1);
+
+  return (
+    <div>
+      <DateBar from={from} to={to} setFrom={setFrom} setTo={setTo} onRefresh={fetch_} loading={loading}>
+        <button onClick={downloadExcel} disabled={!terminals.length}
+          style={{ display:"flex", alignItems:"center", gap:6, padding:"7px 14px", borderRadius:9, border:"none", background:"#5B5FEF", color:"#fff", fontSize:12, fontWeight:700, cursor:"pointer" }}>
+          <FaDownload /> Export
+        </button>
+      </DateBar>
+
+      <div style={{ display:"flex", flexDirection:"column", gap:12, marginBottom:20 }}>
+        {loading ? (
+          <div style={{ background:"#fff", borderRadius:14, border:"1px solid #E4EAF3", padding:40, textAlign:"center", color:"#7A8BA4" }}>Loading…</div>
+        ) : !terminals.length ? (
+          <div style={{ background:"#fff", borderRadius:14, border:"1px solid #E4EAF3", padding:40, textAlign:"center", color:"#7A8BA4" }}>No data for this period</div>
+        ) : terminals.map((t, i) => (
+          <div key={t.terminal_id || "unassigned"} style={{ background:"#fff", borderRadius:14, border:"1px solid #E4EAF3", padding:"18px 20px", boxShadow:"0 2px 8px rgba(15,27,45,0.04)" }}>
+            <div style={{ display:"flex", alignItems:"center", gap:14, marginBottom:14 }}>
+              <div style={{ width:36, height:36, borderRadius:10, background: i===0?"#FFD700":i===1?"#C0C0C0":i===2?"#CD7F32":"#EEEFFE", display:"flex", alignItems:"center", justifyContent:"center", fontWeight:900, fontSize:14, color: i<3?"#fff":"#5B5FEF", flexShrink:0 }}>
+                {i + 1}
+              </div>
+              <div>
+                <div style={{ fontSize:16, fontWeight:800, color:"#0F1B2D" }}>{t.terminal_name}</div>
+                <div style={{ fontSize:12, color:"#7A8BA4" }}>{t.sale_count} sales · {t.return_count} returns · {t.items_sold} items</div>
+              </div>
+              <div style={{ marginLeft:"auto", textAlign:"right" }}>
+                <div style={{ fontSize:11, color:"#7A8BA4", fontWeight:600, textTransform:"uppercase" }}>Net Revenue</div>
+                <div style={{ fontSize:20, fontWeight:900, color:"#5B5FEF" }}>{money(t.net_revenue)}</div>
+              </div>
+            </div>
+            <div style={{ height:8, background:"#F1F5F9", borderRadius:4, overflow:"hidden" }}>
+              <div style={{ height:"100%", width:`${(t.net_revenue/maxRev)*100}%`, background:`linear-gradient(90deg,#5B5FEF,#7C3AED)`, borderRadius:4, transition:"width 0.5s" }} />
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Day × Terminal breakdown */}
+      <div style={{ background:"#fff", borderRadius:14, border:"1px solid #E4EAF3", overflow:"hidden" }}>
+        <div style={{ padding:"14px 18px", borderBottom:"1px solid #E4EAF3", fontSize:13, fontWeight:800, color:"#0F1B2D" }}>Day-wise, per terminal</div>
+        <div style={{ overflowX:"auto" }}>
+          <table style={{ width:"100%", fontSize:13, borderCollapse:"collapse" }}>
+            <thead>
+              <tr style={{ background:"#F8FAFD" }}>
+                {["Date", "Terminal", "Bills", "Sale Amount"].map(h => (
+                  <th key={h} style={{ padding:"10px 14px", textAlign: h === "Date" || h === "Terminal" ? "left" : "right", fontSize:11, fontWeight:700, color:"#7A8BA4", textTransform:"uppercase" }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {daily.map((r, i) => (
+                <tr key={i} style={{ borderTop:"1px solid #F1F5F9" }}>
+                  <td style={{ padding:"10px 14px" }}>{r.date}</td>
+                  <td style={{ padding:"10px 14px", fontWeight:700 }}>{r.terminal_name}</td>
+                  <td style={{ padding:"10px 14px", textAlign:"right", fontFamily:"monospace" }}>{r.bill_count}</td>
+                  <td style={{ padding:"10px 14px", textAlign:"right", fontFamily:"monospace" }}>{money(r.sale_amount)}</td>
+                </tr>
+              ))}
+              {!daily.length && (
+                <tr><td colSpan={4} style={{ padding:30, textAlign:"center", color:"#7A8BA4" }}>No data for this period</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ══════════════════════════ TAB 5: PAYMENTS ══════════════════════════ */
 function PaymentsTab() {
   const [from,    setFrom]   = useState(MONTH_START);
@@ -1134,6 +1239,7 @@ export default function CashierReports() {
     { key:"items",    label:"Item-wise",       icon:FaBoxes              },
     { key:"gst",      label:"GST Report",      icon:FaFileInvoiceDollar  },
     { key:"cashiers", label:"Cashier Report",  icon:FaUserTie            },
+    { key:"terminals",label:"Per-POS Terminal",icon:FaCashRegister       },
     { key:"payments", label:"Payments",        icon:FaCreditCard         },
   ];
 
@@ -1157,6 +1263,7 @@ export default function CashierReports() {
         {tab === "items"    && <ItemsTab    />}
         {tab === "gst"      && <GSTTab      />}
         {tab === "cashiers" && <CashiersTab />}
+        {tab === "terminals"&& <TerminalsTab/>}
         {tab === "payments" && <PaymentsTab />}
       </div>
     </div>

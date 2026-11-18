@@ -5,11 +5,12 @@ import {
   FaBarcode, FaSearch, FaPlus, FaMinus, FaTrash,
   FaCreditCard, FaTimes, FaPrint, FaSpinner, FaEnvelope,
   FaFileInvoice, FaCheckCircle, FaExclamationTriangle,
-  FaQuestionCircle, FaUndo, FaLock, FaWifi,
+  FaQuestionCircle, FaUndo, FaLock, FaWifi, FaClock, FaExchangeAlt, FaCalculator,
 } from "react-icons/fa";
 
 import { CASHIER_API_BASE as API_BASE, cashierFetch } from "./cashierApi";
 import CashierGuideModal from "./CashierGuideModal";
+import { getTerminalId, getTerminalName, hasTerminalName, setTerminalName } from "./terminalIdentity";
 
 function money(v)  { return `₹${Math.abs(Number(v || 0)).toFixed(2)}`; }
 function num(v)    { return Math.abs(Number(v || 0)).toFixed(2); }
@@ -23,23 +24,155 @@ const RETURN_REASONS = ["Customer Return", "Billing Error", "Wrong Item/Qty", "P
 const REASONS_NEEDING_APPROVAL = new Set(["Billing Error", "Wrong Item/Qty", "Price Correction", "Other"]);
 
 const OFFLINE_BILLS_KEY = "rms_cashier_offline_bills_v1";
+const POS_PRODUCT_CACHE_KEY = "rms_cashier_product_cache_v1";
+
+// ─────────────────────────────────────────────────────────────────────────
+// Offline storage: IndexedDB backing, localStorage-shaped API.
+//
+// A store's full product cache (needed for offline scanning/search) can
+// run several MB for a large catalogue — one citimart branch alone is
+// ~4.5MB of JSON for ~15,500 SKUs, right at the edge of localStorage's
+// typical ~5MB-per-origin quota, shared with the offline bills queue and
+// everything else this app stores there. A write that silently fails past
+// that quota used to mean a device quietly had an incomplete/empty offline
+// cache with zero indication to anyone. IndexedDB's practical limit is
+// hundreds of MB+, which removes that ceiling.
+//
+// Every call site in this file expects synchronous read/write (the same
+// shape localStorage gave them) — rewriting every caller to be async would
+// touch a lot of surface for one storage swap. Instead: an in-memory
+// mirror backs every read/write synchronously exactly as before, and each
+// write also persists to IndexedDB in the background. On load, memory is
+// hydrated from IndexedDB (migrating any pre-existing localStorage data in
+// once, then clearing it to free that quota for other app data). If
+// IndexedDB itself is unavailable, writes fall back to localStorage so the
+// POS keeps working exactly as it did before this change.
+const IDB_NAME = "rms_cashier_offline_db";
+const IDB_VERSION = 1;
+const IDB_STORE = "kv";
+
+let _idbPromise = null;
+function openOfflineDb() {
+  if (_idbPromise) return _idbPromise;
+  _idbPromise = new Promise((resolve, reject) => {
+    if (typeof indexedDB === "undefined") { reject(new Error("IndexedDB unavailable")); return; }
+    const req = indexedDB.open(IDB_NAME, IDB_VERSION);
+    req.onupgradeneeded = () => {
+      if (!req.result.objectStoreNames.contains(IDB_STORE)) req.result.createObjectStore(IDB_STORE);
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error || new Error("IndexedDB open failed"));
+  });
+  return _idbPromise;
+}
+
+async function idbGet(key) {
+  const db = await openOfflineDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(IDB_STORE, "readonly");
+    const req = tx.objectStore(IDB_STORE).get(key);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error || new Error("IndexedDB read failed"));
+  });
+}
+
+async function idbSet(key, value) {
+  const db = await openOfflineDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(IDB_STORE, "readwrite");
+    tx.objectStore(IDB_STORE).put(value, key);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error || new Error("IndexedDB write failed"));
+  });
+}
+
+let _persistenceListeners = [];
+function onPersistenceWarning(cb) {
+  _persistenceListeners.push(cb);
+  return () => { _persistenceListeners = _persistenceListeners.filter(fn => fn !== cb); };
+}
+function warnPersistenceFailure(message) {
+  _persistenceListeners.forEach(cb => { try { cb(message); } catch {} });
+}
+
+let _offlineBillsMemory = [];
+let _productCacheMemory = { products: [], cachedAt: "" };
+let _heldBillsMemory = [];
+const HELD_BILLS_KEY = "rms_cashier_held_bills_v1";
+
+function persistOfflineBills(rows) {
+  idbSet(OFFLINE_BILLS_KEY, rows).catch(() => {
+    try { localStorage.setItem(OFFLINE_BILLS_KEY, JSON.stringify(rows)); return; } catch {}
+    warnPersistenceFailure("Could not save this offline bill to device storage — it only exists in this tab right now. Do not close or reload until it syncs.");
+  });
+}
+
+function persistHeldBills(rows) {
+  idbSet(HELD_BILLS_KEY, rows).catch(() => {
+    try { localStorage.setItem(HELD_BILLS_KEY, JSON.stringify(rows)); return; } catch {}
+    warnPersistenceFailure("Could not save a held bill to device storage — it only exists in this tab right now.");
+  });
+}
+
+function readHeldBills() {
+  return _heldBillsMemory;
+}
+
+function writeHeldBills(rows) {
+  const safeRows = Array.isArray(rows) ? rows : [];
+  _heldBillsMemory = safeRows;
+  persistHeldBills(safeRows);
+}
+
+function persistProductCache(snapshot) {
+  idbSet(POS_PRODUCT_CACHE_KEY, snapshot).catch(() => {
+    try { localStorage.setItem(POS_PRODUCT_CACHE_KEY, JSON.stringify(snapshot)); return; } catch {}
+    warnPersistenceFailure("Could not save the offline product cache to device storage (likely out of space) — offline scanning may be incomplete until this is resolved.");
+  });
+}
+
+// Resolves once memory has been hydrated from IndexedDB (migrating any
+// older localStorage copy in on first run). Components await this once on
+// mount so a cold page load never briefly reads an empty cache that's
+// actually sitting in IndexedDB from a previous session.
+const offlineStorageReady = (async () => {
+  try {
+    const [billsFromIdb, cacheFromIdb, heldFromIdb] = await Promise.all([idbGet(OFFLINE_BILLS_KEY), idbGet(POS_PRODUCT_CACHE_KEY), idbGet(HELD_BILLS_KEY)]);
+    if (Array.isArray(billsFromIdb)) {
+      _offlineBillsMemory = billsFromIdb;
+    } else {
+      let legacy = [];
+      try { const raw = localStorage.getItem(OFFLINE_BILLS_KEY); const parsed = raw ? JSON.parse(raw) : []; legacy = Array.isArray(parsed) ? parsed : []; } catch {}
+      _offlineBillsMemory = legacy;
+      if (legacy.length) persistOfflineBills(legacy);
+    }
+    if (cacheFromIdb && Array.isArray(cacheFromIdb.products)) {
+      _productCacheMemory = cacheFromIdb;
+    } else {
+      let legacy = { products: [], cachedAt: "" };
+      try { const raw = localStorage.getItem(POS_PRODUCT_CACHE_KEY); const parsed = raw ? JSON.parse(raw) : null; if (parsed && Array.isArray(parsed.products)) legacy = parsed; } catch {}
+      _productCacheMemory = legacy;
+      if (legacy.products.length) persistProductCache(legacy);
+    }
+    _heldBillsMemory = Array.isArray(heldFromIdb) ? heldFromIdb : [];
+    // Free the old localStorage quota now that IndexedDB holds the data.
+    try { localStorage.removeItem(OFFLINE_BILLS_KEY); localStorage.removeItem(POS_PRODUCT_CACHE_KEY); } catch {}
+  } catch {
+    // IndexedDB unavailable entirely — fall back to whatever localStorage has, same as before this change.
+    try { const raw = localStorage.getItem(OFFLINE_BILLS_KEY); const parsed = raw ? JSON.parse(raw) : []; _offlineBillsMemory = Array.isArray(parsed) ? parsed : []; } catch {}
+    try { const raw = localStorage.getItem(POS_PRODUCT_CACHE_KEY); const parsed = raw ? JSON.parse(raw) : null; _productCacheMemory = parsed && Array.isArray(parsed.products) ? parsed : { products: [], cachedAt: "" }; } catch {}
+    try { const raw = localStorage.getItem(HELD_BILLS_KEY); const parsed = raw ? JSON.parse(raw) : []; _heldBillsMemory = Array.isArray(parsed) ? parsed : []; } catch {}
+  }
+})();
 
 function readOfflineBills() {
-  try {
-    const raw = localStorage.getItem(OFFLINE_BILLS_KEY);
-    const rows = raw ? JSON.parse(raw) : [];
-    return Array.isArray(rows) ? rows : [];
-  } catch {
-    return [];
-  }
+  return _offlineBillsMemory;
 }
 
 function writeOfflineBills(rows) {
-  try {
-    localStorage.setItem(OFFLINE_BILLS_KEY, JSON.stringify(Array.isArray(rows) ? rows : []));
-  } catch {
-    // Keep POS usable even if browser storage is full or blocked.
-  }
+  const safeRows = Array.isArray(rows) ? rows : [];
+  _offlineBillsMemory = safeRows;
+  persistOfflineBills(safeRows);
 }
 
 function makeOfflineInvoiceNo(isReturn = false) {
@@ -94,25 +227,15 @@ function clearDraftCart() {
 }
 
 
-const POS_PRODUCT_CACHE_KEY = "rms_cashier_product_cache_v1";
-
 function readProductCache() {
-  try {
-    const raw = localStorage.getItem(POS_PRODUCT_CACHE_KEY);
-    const parsed = raw ? JSON.parse(raw) : null;
-    return parsed && Array.isArray(parsed.products) ? parsed : { products: [], cachedAt: "" };
-  } catch {
-    return { products: [], cachedAt: "" };
-  }
+  return _productCacheMemory;
 }
 
 function writeProductCache(products, cachedAt = new Date().toISOString()) {
-  try {
-    const safeProducts = Array.isArray(products) ? products : [];
-    localStorage.setItem(POS_PRODUCT_CACHE_KEY, JSON.stringify({ products: safeProducts, cachedAt }));
-  } catch {
-    // Offline cache is helpful, but it must never break cashier billing.
-  }
+  const safeProducts = Array.isArray(products) ? products : [];
+  const snapshot = { products: safeProducts, cachedAt };
+  _productCacheMemory = snapshot;
+  persistProductCache(snapshot);
 }
 
 function mergeProductCache(existingProducts, nextProducts) {
@@ -420,7 +543,41 @@ const POS_GUIDE_NOTES = [
   { tone: "info", icon: FaExclamationTriangle, title: "If you must switch devices before syncing", text: "Use the \"Export backup\" button next to the offline counter to download the unsynced bills as a file first. It's the only way to recover them if this device is reset or its data is cleared before they sync." },
   { tone: "caution", icon: FaExclamationTriangle, title: "Two things RMS will not stop you from doing", text: "It does not block a sale that goes beyond what's actually in stock, and there's no automatic discount limit. Keep an eye on the shelf, and follow your store's discount policy yourself — the system trusts the cashier here." },
   { tone: "info", icon: FaExclamationTriangle, title: "If the screen freezes mid-bill", text: "An in-progress cart autosaves every second or so. If the tab has to be reloaded, an amber banner offers to restore the last unsaved cart — check it before re-scanning everything from scratch." },
+  { tone: "info", icon: FaCalculator, title: "Keyboard shortcuts (physical keyboard only, not while typing)", text: "F2 jumps to the barcode field. F4 opens payment. F6 switches Sale/Return. F8 holds the current cart. Ctrl+P reopens the last receipt to print. Esc closes whichever popup is open. F1 or ? reopens this guide. These only fire when you're not typing in a text field." },
 ];
+
+// Large-button on-screen numpad for a touchscreen POS that also has a
+// physical keyboard attached — the OS already pops its own numeric pad on
+// tap for `type="number"` inputs, so this isn't needed everywhere, only on
+// the couple of fields a cashier taps most often mid-sale (paid amount,
+// discount %), where a bigger dedicated keypad beats reaching for the
+// device's own on-screen keyboard every time.
+function TouchNumpad({ value, onChange, onClose }) {
+  const append = (ch) => {
+    const str = String(value ?? "");
+    if (ch === "." && str.includes(".")) return;
+    onChange(str + ch);
+  };
+  const backspace = () => onChange(String(value ?? "").slice(0, -1));
+  const keys = ["7", "8", "9", "4", "5", "6", "1", "2", "3", ".", "0", "⌫"];
+  return (
+    <div onMouseDown={e => e.stopPropagation()}
+      className="absolute left-0 right-0 top-full z-50 mt-2 rounded-2xl border border-slate-200 bg-white p-3 shadow-2xl">
+      <div className="grid grid-cols-3 gap-2">
+        {keys.map(k => (
+          <button key={k} type="button" onClick={() => (k === "⌫" ? backspace() : append(k))}
+            className="rounded-xl border border-slate-200 bg-slate-50 py-3 text-base font-black text-slate-800 hover:bg-slate-100 active:bg-slate-200">
+            {k}
+          </button>
+        ))}
+      </div>
+      <div className="mt-2 grid grid-cols-2 gap-2">
+        <button type="button" onClick={() => onChange("")} className="rounded-xl border border-rose-200 bg-rose-50 py-2.5 text-xs font-black uppercase text-rose-600 hover:bg-rose-100">Clear</button>
+        <button type="button" onClick={onClose} className="rounded-xl bg-emerald-600 py-2.5 text-xs font-black uppercase text-white hover:bg-emerald-700">Done</button>
+      </div>
+    </div>
+  );
+}
 
 /* ─── Generate Bill Popup ─── */
 
@@ -514,7 +671,7 @@ function ManualOfflineItemModal({ open, barcode, onClose, onAdd }) {
   );
 }
 
-function GenerateBillPopup({ open, isReturn, items, bill, setBill, summary, onClose, onFinalize, onSaveOffline, saving, originalInvoice }) {
+function GenerateBillPopup({ open, isReturn, items, bill, setBill, summary, onClose, onFinalize, onSaveOffline, saving, originalInvoice, exchangeCredit }) {
   const [paid, setPaid] = useState("");
   const [splitEnabled, setSplitEnabled] = useState(false);
   const [split, setSplit] = useState({ Cash: "", Card: "", UPI: "" });
@@ -525,6 +682,7 @@ function GenerateBillPopup({ open, isReturn, items, bill, setBill, summary, onCl
   const [managerVerifying, setManagerVerifying] = useState(false);
   const [managerError, setManagerError] = useState("");
   const [managerVerifiedName, setManagerVerifiedName] = useState("");
+  const [numpadField, setNumpadField] = useState(null); // "paid" | "discount" | null
 
   const needsApproval = isReturn && REASONS_NEEDING_APPROVAL.has(returnReason);
 
@@ -575,20 +733,29 @@ function GenerateBillPopup({ open, isReturn, items, bill, setBill, summary, onCl
   if (!open) return null;
 
   const payable = Math.abs(summary.netPayable);
+  // Exchange: a prior return's credit can cover part or all of what's
+  // actually owed on THIS cart — the cashier only needs to collect
+  // whatever's left after it, and if the credit is worth more than this
+  // purchase, the difference is a cash refund due back right now rather
+  // than something to keep collecting payment against.
+  const creditApplied = !isReturn && exchangeCredit ? Math.min(exchangeCredit.amount, payable) : 0;
+  const payableAfterCredit = Math.max(0, payable - creditApplied);
+  const refundDueNow = !isReturn && exchangeCredit ? Math.max(0, exchangeCredit.amount - payable) : 0;
   const splitClean = cleanPaymentSplit(split);
-  const paidTotal = splitEnabled ? paymentSplitTotal(splitClean) : Number(paid || (bill.paymentMethod === "Cash" ? 0 : payable));
-  const change  = paidTotal > payable ? paidTotal - payable : 0;
+  const paidTotal = splitEnabled ? paymentSplitTotal(splitClean) : Number(paid || (bill.paymentMethod === "Cash" ? 0 : payableAfterCredit));
+  const change  = paidTotal > payableAfterCredit ? paidTotal - payableAfterCredit : 0;
   const selectedPaymentMethod = splitEnabled ? "Split" : bill.paymentMethod;
   const validateCash = () => {
     if (isReturn) return true;
+    if (payableAfterCredit <= 0) return true;
     if (splitEnabled) {
-      if (paidTotal < payable) {
-        alert(`Split payment is short by ?${(payable - paidTotal).toFixed(2)}`);
+      if (paidTotal < payableAfterCredit) {
+        alert(`Split payment is short by ?${(payableAfterCredit - paidTotal).toFixed(2)}`);
         return false;
       }
       return true;
     }
-    if (bill.paymentMethod === "Cash" && (!paid || Number(paid) < payable)) {
+    if (bill.paymentMethod === "Cash" && (!paid || Number(paid) < payableAfterCredit)) {
       alert("Insufficient paid amount");
       return false;
     }
@@ -630,6 +797,7 @@ function GenerateBillPopup({ open, isReturn, items, bill, setBill, summary, onCl
               <div className="space-y-3">
                 {[
                   { label: "Cashier Name",  key: "cashierName" },
+                  { label: "Salesman Code (optional)", key: "salesmanCode" },
                   { label: "Customer Name", key: "customerName" },
                   { label: "Mobile Number", key: "mobile" },
                   { label: "Email for invoice", key: "customerEmail", type: "email" },
@@ -656,10 +824,19 @@ function GenerateBillPopup({ open, isReturn, items, bill, setBill, summary, onCl
                       className="h-11 rounded-xl bg-violet-600 px-4 text-[10px] font-black uppercase tracking-widest text-white hover:bg-violet-700">Apply</button>
                   </div>
                 </div>
-                <div className="space-y-1">
+                <div className="relative space-y-1">
                   <label className="ml-1 text-[10px] font-black uppercase tracking-widest text-black">Additional Disc. %</label>
-                  <input type="number" value={bill.discount} onChange={e => setBill({ ...bill, discount: e.target.value })}
-                    className="h-11 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm font-bold outline-none focus:border-violet-500" />
+                  <div className="flex gap-1.5">
+                    <input type="number" value={bill.discount} onFocus={() => setNumpadField("discount")} onChange={e => setBill({ ...bill, discount: e.target.value })}
+                      className="h-11 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm font-bold outline-none focus:border-violet-500" />
+                    <button type="button" onClick={() => setNumpadField(f => f === "discount" ? null : "discount")}
+                      className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-slate-50 text-slate-500 hover:bg-slate-100" title="Touch keypad">
+                      <FaCalculator size={14} />
+                    </button>
+                  </div>
+                  {numpadField === "discount" && (
+                    <TouchNumpad value={bill.discount} onChange={v => setBill({ ...bill, discount: v })} onClose={() => setNumpadField(null)} />
+                  )}
                 </div>
                 <div className="grid gap-3 sm:grid-cols-2">
                   <div className="space-y-1">
@@ -781,10 +958,19 @@ function GenerateBillPopup({ open, isReturn, items, bill, setBill, summary, onCl
                 ))}
               </div>
               {bill.paymentMethod === "Cash" && !isReturn && (
-                <div className="mt-3 space-y-1">
+                <div className="relative mt-3 space-y-1">
                   <label className="ml-1 text-[10px] font-black uppercase tracking-widest text-black">Customer Paid</label>
-                  <input type="number" value={paid} onChange={e => setPaid(e.target.value)}
-                    className="h-11 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm font-bold outline-none focus:border-violet-500" />
+                  <div className="flex gap-1.5">
+                    <input type="number" value={paid} onFocus={() => setNumpadField("paid")} onChange={e => setPaid(e.target.value)}
+                      className="h-11 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm font-bold outline-none focus:border-violet-500" />
+                    <button type="button" onClick={() => setNumpadField(f => f === "paid" ? null : "paid")}
+                      className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-slate-50 text-slate-500 hover:bg-slate-100" title="Touch keypad">
+                      <FaCalculator size={14} />
+                    </button>
+                  </div>
+                  {numpadField === "paid" && (
+                    <TouchNumpad value={paid} onChange={setPaid} onClose={() => setNumpadField(null)} />
+                  )}
                   {change > 0 && <p className="mt-2 rounded-xl bg-emerald-50 px-4 py-2 text-sm font-black text-emerald-600">Change Return: ₹{change.toFixed(2)}</p>}
                 </div>
               )}
@@ -812,6 +998,22 @@ function GenerateBillPopup({ open, isReturn, items, bill, setBill, summary, onCl
                   <span className="uppercase">{isReturn ? "Refund Total" : "Net Payable"}</span>
                   <span>{money(summary.netPayable)}</span>
                 </div>
+                {creditApplied > 0 && (
+                  <div className="flex justify-between text-amber-700">
+                    <span className="font-medium">Exchange credit applied</span><span>- {money(creditApplied)}</span>
+                  </div>
+                )}
+                {!isReturn && exchangeCredit && (
+                  <div className="flex justify-between border-t border-dashed border-slate-200 pt-2 text-base font-black text-slate-950">
+                    <span className="uppercase">Amount due now</span>
+                    <span>{money(payableAfterCredit)}</span>
+                  </div>
+                )}
+                {refundDueNow > 0 && (
+                  <p className="rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-black text-amber-800">
+                    Hand back {money(refundDueNow)} to the customer in cash — the exchange credit was worth more than this purchase.
+                  </p>
+                )}
               </div>
             </div>
           </div>
@@ -819,7 +1021,7 @@ function GenerateBillPopup({ open, isReturn, items, bill, setBill, summary, onCl
 
         <div className="border-t border-slate-100 bg-white p-5">
           <div className="grid gap-3 sm:grid-cols-[0.75fr_1.25fr]">
-            {!isReturn && (
+            {!isReturn && !exchangeCredit && (
               <button
                 type="button"
                 onClick={() => {
@@ -856,7 +1058,7 @@ function GenerateBillPopup({ open, isReturn, items, bill, setBill, summary, onCl
 }
 
 /* ─── Receipt Modal ─── */
-function ReceiptModal({ open, receipt, onClose }) {
+function ReceiptModal({ open, receipt, onClose, onStartExchange }) {
   const [shareInfo, setShareInfo] = useState(null);
   const [sharing, setSharing] = useState(false);
   const [emailing, setEmailing] = useState(false);
@@ -1410,6 +1612,16 @@ function ReceiptModal({ open, receipt, onClose }) {
                 {shareInfo.whatsapp_url && <a className="mt-2 inline-block font-black text-emerald-700" href={shareInfo.whatsapp_url} target="_blank" rel="noreferrer">Open WhatsApp message</a>}
               </div>
             )}
+
+            {/* Exchange: let the customer spend this return's refund value
+                on a new purchase right now, instead of only handing back
+                cash/credit with nothing to apply it to in the moment. */}
+            {isReturn && !receipt.offline && (
+              <button onClick={() => onStartExchange?.(receipt)}
+                className="flex w-full items-center justify-center gap-2 rounded-2xl border border-amber-300 bg-amber-50 py-3 text-[11px] font-black uppercase tracking-widest text-amber-700 hover:bg-amber-100">
+                <FaExchangeAlt /> Use {money(receipt.summary?.netPayable)} as credit for a new purchase
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -1456,12 +1668,33 @@ export default function CashierPOS() {
   const [manualOfflineBarcode, setManualOfflineBarcode] = useState("");
   const [currentShift, setCurrentShift] = useState(null);
   const [shiftBusy, setShiftBusy] = useState(false);
+  const [serverReachable, setServerReachable] = useState(true);
+  const [heldBills, setHeldBills] = useState(() => readHeldBills());
+  const [heldPanelOpen, setHeldPanelOpen] = useState(false);
+  // Exchange: { amount, againstInvoice } — an earlier return's refund
+  // value, offered as spendable credit on the NEXT sale built on this
+  // screen. One-shot: cleared the moment it's actually applied to a bill,
+  // or if the cashier cancels it.
+  const [exchangeCredit, setExchangeCredit] = useState(null);
+  const [terminalNamePrompt, setTerminalNamePrompt] = useState(false);
+  const [terminalNameDraft, setTerminalNameDraft] = useState("");
+
+  useEffect(() => {
+    if (!hasTerminalName()) setTerminalNamePrompt(true);
+  }, []);
+
+  const confirmTerminalName = useCallback(() => {
+    const clean = terminalNameDraft.trim();
+    if (!clean) return;
+    setTerminalName(clean);
+    setTerminalNamePrompt(false);
+  }, [terminalNameDraft]);
 
   // The cashier name belongs to the authenticated session, never a generic
   // POS default. `admin_name` is written by authRedirect immediately after
   // login and is shared by store cashiers and store owners.
   const [bill, setBill] = useState(() => ({
-    cashierName: localStorage.getItem("admin_name") || "Cashier", customerName: "", mobile: "", customerEmail: "",
+    cashierName: localStorage.getItem("admin_name") || "Cashier", salesmanCode: "", customerName: "", mobile: "", customerEmail: "",
     offer: "", appliedOffer: 0, discount: "", promotionName: "", promotionType: "",
     paymentMethod: "Cash",
   }));
@@ -1497,7 +1730,7 @@ export default function CashierPOS() {
 
   const loadCurrentShift = useCallback(async () => {
     try {
-      const res = await cashierFetch(`${API_BASE}/cashier/shift/current`);
+      const res = await cashierFetch(`${API_BASE}/cashier/shift/current?terminal_id=${encodeURIComponent(getTerminalId())}`);
       const json = await res.json();
       if (res.ok) setCurrentShift(json.shift || null);
     } catch {
@@ -1517,7 +1750,7 @@ export default function CashierPOS() {
       const res = await cashierFetch(`${API_BASE}/cashier/shift/open`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ openingCash: Number(openingCash || 0) }),
+        body: JSON.stringify({ openingCash: Number(openingCash || 0), terminalId: getTerminalId(), terminalName: getTerminalName() }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.detail || "Could not open shift");
@@ -1539,7 +1772,7 @@ export default function CashierPOS() {
       const res = await cashierFetch(`${API_BASE}/cashier/shift/close`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ countedCash: Number(countedCash || 0), notes }),
+        body: JSON.stringify({ countedCash: Number(countedCash || 0), notes, terminalId: getTerminalId() }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.detail || "Could not close shift");
@@ -1575,6 +1808,30 @@ export default function CashierPOS() {
   useEffect(() => {
     refreshProductCache(true);
   }, [refreshProductCache]);
+
+  // The component's initial state reads the in-memory cache mirror
+  // synchronously, same as it always did — but on a fresh page load that
+  // mirror hasn't been hydrated from IndexedDB yet (that's async). Once
+  // hydration resolves, re-read both caches so a cold load picks up
+  // whatever was actually saved from a previous session instead of
+  // silently showing empty until the next online refresh.
+  useEffect(() => {
+    let cancelled = false;
+    offlineStorageReady.then(() => {
+      if (cancelled) return;
+      setOfflineBills(readOfflineBills());
+      setProductCache(readProductCache());
+      setHeldBills(readHeldBills());
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  // Surface a storage-persistence failure (IndexedDB AND localStorage both
+  // failed — most likely the device is genuinely out of space) as a loud,
+  // specific toast instead of it being invisible, since for the offline
+  // bills queue this means a sale currently exists only in this tab's
+  // memory with nothing backing it up.
+  useEffect(() => onPersistenceWarning((message) => showToast(message, "error")), [showToast]);
 
   /* ── Search (debounced) ── */
   useEffect(() => {
@@ -1743,10 +2000,72 @@ export default function CashierPOS() {
   const clearAll = () => {
     setItems([]); setBarcode(""); setSearch(""); setSearchRes([]);
     setOriginalInvoice("");
-    setBill(prev => ({ ...prev, customerName: "", mobile: "", customerEmail: "", offer: "", appliedOffer: 0, discount: "", promotionName: "", promotionType: "", paymentMethod: "Cash" }));
+    setBill(prev => ({ ...prev, salesmanCode: "", customerName: "", mobile: "", customerEmail: "", offer: "", appliedOffer: 0, discount: "", promotionName: "", promotionType: "", paymentMethod: "Cash" }));
     setCartId(makeOfflineId());
     clearDraftCart();
   };
+
+  // Hold Bill — a queue can back up mid-sale (customer remembers another
+  // item, steps away, etc.) and real POS flows need to serve the next few
+  // customers without losing that first cart. Unlike the single draft-cart
+  // autosave slot (crash-recovery only), this is a genuine list: several
+  // carts can be held at once, each resumed independently by whoever's
+  // ready, in any order.
+  const holdCurrentBill = useCallback(() => {
+    if (!items.length) { showToast("Nothing in the cart to hold", "error"); return; }
+    const label = bill.customerName?.trim() || `Hold ${new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}`;
+    const entry = {
+      id: cartId, label, heldAt: new Date().toISOString(),
+      items, bill, mode, originalInvoice,
+      itemCount: items.length,
+    };
+    writeHeldBills([entry, ...readHeldBills()]);
+    setHeldBills(readHeldBills());
+    clearAll();
+    showToast(`Held — "${label}"`, "success");
+  }, [items, bill, mode, originalInvoice, cartId, showToast]);
+
+  const resumeHeldBill = useCallback((id) => {
+    const target = readHeldBills().find(row => row.id === id);
+    if (!target) return;
+    // Don't silently drop whatever the cashier was already mid-way on —
+    // auto-hold it first so switching between queued customers never
+    // loses a cart, it just adds another one to the list.
+    if (items.length) {
+      const autoLabel = bill.customerName?.trim() || `Hold ${new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}`;
+      const autoEntry = { id: cartId, label: autoLabel, heldAt: new Date().toISOString(), items, bill, mode, originalInvoice, itemCount: items.length };
+      writeHeldBills([autoEntry, ...readHeldBills().filter(row => row.id !== id)]);
+    } else {
+      writeHeldBills(readHeldBills().filter(row => row.id !== id));
+    }
+    setItems(target.items || []);
+    setBill(prev => ({ ...prev, ...(target.bill || {}) }));
+    setMode(target.mode || "sale");
+    setOriginalInvoice(target.originalInvoice || "");
+    setCartId(target.id || makeOfflineId());
+    setHeldBills(readHeldBills());
+    setHeldPanelOpen(false);
+    showToast(`Resumed — "${target.label}"`, "success");
+  }, [items, bill, mode, originalInvoice, cartId, showToast]);
+
+  const discardHeldBill = useCallback((id) => {
+    writeHeldBills(readHeldBills().filter(row => row.id !== id));
+    setHeldBills(readHeldBills());
+  }, []);
+
+  // Exchange: offered right after a return is saved — jump straight into
+  // a fresh sale with that return's refund value ready to spend, instead
+  // of the cashier having to separately remember the amount and manually
+  // adjust payment themselves.
+  const startExchange = useCallback((receipt) => {
+    setExchangeCredit({ amount: Number(receipt?.summary?.netPayable || 0), againstInvoice: receipt?.invoiceNo || "" });
+    setMode("sale");
+    clearAll();
+    setReceiptOpen(false);
+    showToast(`Exchange credit ready — ${money(receipt?.summary?.netPayable || 0)} available`, "success");
+  }, [showToast]);
+
+  const cancelExchangeCredit = useCallback(() => setExchangeCredit(null), []);
 
   // Debounced draft autosave — covers a freeze/crash while the cashier is
   // still building the bill (before Finalize/Save offline, where nothing
@@ -1785,6 +2104,10 @@ export default function CashierPOS() {
       showToast("No items to save offline", "error");
       return;
     }
+    if (exchangeCredit) {
+      showToast("Exchange credit needs a live connection to validate — can't save this one offline.", "error");
+      return;
+    }
 
     const clientOfflineId = makeOfflineId();
     const offlineInvoiceNo = makeOfflineInvoiceNo(false);
@@ -1813,6 +2136,8 @@ export default function CashierPOS() {
         offlineInvoiceNo,
         createdOfflineAt,
         syncSource: "offline_pos",
+        terminalId: getTerminalId(),
+        terminalName: getTerminalName(),
       },
     };
 
@@ -1842,7 +2167,7 @@ export default function CashierPOS() {
     setReceiptOpen(true);
     clearAll();
     showToast("Bill saved offline. Sync when backend is back.", "success");
-  }, [isReturn, items, summary, bill, showToast]); // eslint-disable-line
+  }, [isReturn, items, summary, bill, showToast, exchangeCredit]); // eslint-disable-line
 
   const syncOfflineBills = useCallback(async () => {
     const pending = readOfflineBills().filter(row => ["pending", "failed"].includes(row.status));
@@ -1934,13 +2259,14 @@ export default function CashierPOS() {
   //     (or switching back to Point of Sale) after already having gone
   //     back online, which fires no `online` event at all since nothing
   //     transitioned while the tab/screen was closed.
+  const trySyncIfPending = useCallback(() => {
+    if (syncingOffline) return;
+    if (readOfflineBills().some(row => ["pending", "failed"].includes(row.status))) {
+      syncOfflineBills();
+    }
+  }, [syncingOffline, syncOfflineBills]);
+
   useEffect(() => {
-    const trySyncIfPending = () => {
-      if (syncingOffline) return;
-      if (readOfflineBills().some(row => ["pending", "failed"].includes(row.status))) {
-        syncOfflineBills();
-      }
-    };
     trySyncIfPending();
     window.addEventListener("online", trySyncIfPending);
     const interval = setInterval(trySyncIfPending, 30000);
@@ -1948,7 +2274,81 @@ export default function CashierPOS() {
       window.removeEventListener("online", trySyncIfPending);
       clearInterval(interval);
     };
-  }, [syncOfflineBills, syncingOffline]);
+  }, [trySyncIfPending]);
+
+  // Proactive connectivity alert. The sync triggers above only reveal
+  // themselves when the cashier tries to DO something and it fails — there
+  // is otherwise zero indication that the connection (or just the server)
+  // went down. `navigator.onLine`/`online`/`offline` events are no good
+  // for this alone: they only reflect the device's own network interface,
+  // so a server crash with wifi/LAN still up would show nothing. A real
+  // reachability ping against the backend itself is the only way to catch
+  // both "no network" and "network's fine, server's dead" the same way.
+  useEffect(() => {
+    let cancelled = false;
+    const pingServer = async () => {
+      try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 6000);
+        const res = await fetch(`${API_BASE}/`, { signal: controller.signal });
+        clearTimeout(timeout);
+        if (cancelled) return;
+        const reachable = res.ok;
+        setServerReachable(prev => {
+          if (!prev && reachable) trySyncIfPending();
+          return reachable;
+        });
+      } catch {
+        if (!cancelled) setServerReachable(false);
+      }
+    };
+    pingServer();
+    const interval = setInterval(pingServer, 15000);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, [trySyncIfPending]);
+
+  // Keyboard shortcuts for a terminal that has a physical keyboard
+  // attached — only active when the cashier isn't typing in a text field,
+  // so a shortcut key never fires mid-entry in a customer-name/discount/
+  // barcode input (that would be worse than not having shortcuts at all).
+  useEffect(() => {
+    const isTypingTarget = (el) => {
+      if (!el) return false;
+      const tag = el.tagName;
+      return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || el.isContentEditable;
+    };
+    const onKeyDown = (event) => {
+      if (isTypingTarget(document.activeElement)) return;
+      if (event.key === "F1" || event.key === "?") {
+        event.preventDefault();
+        setShowGuide(v => !v);
+      } else if (event.key === "F2") {
+        event.preventDefault();
+        barcodeRef.current?.focus();
+      } else if (event.key === "F4") {
+        event.preventDefault();
+        if (items.length) setBillOpen(true);
+      } else if (event.key === "F6") {
+        event.preventDefault();
+        if (isReturn) { setMode("sale"); clearAll(); }
+        else { setMode("return"); clearAll(); setInvoiceLookup(true); }
+      } else if (event.key === "F8") {
+        event.preventDefault();
+        if (!isReturn) holdCurrentBill();
+      } else if (event.ctrlKey && (event.key === "p" || event.key === "P")) {
+        event.preventDefault();
+        if (receipt) setReceiptOpen(true);
+      } else if (event.key === "Escape") {
+        if (billOpen) setBillOpen(false);
+        else if (heldPanelOpen) setHeldPanelOpen(false);
+        else if (invoiceLookup) setInvoiceLookup(false);
+        else if (manualOfflineOpen) setManualOfflineOpen(false);
+        else if (showGuide) setShowGuide(false);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [items.length, isReturn, receipt, billOpen, heldPanelOpen, invoiceLookup, manualOfflineOpen, showGuide, holdCurrentBill]);
 
   const finalizeBill = useCallback(async (paidAmount = 0, changeReturn = 0, paymentMethodOverride = bill.paymentMethod, paymentSplitOverride = {}, returnReason = "", managerName = "") => {
     setSaving(true);
@@ -1968,6 +2368,9 @@ export default function CashierPOS() {
           managerVerified: Boolean(managerName),
           managerName,
           clientOfflineId: cartId,
+          terminalId: getTerminalId(),
+          terminalName: getTerminalName(),
+          exchangeCredit: !isReturn && exchangeCredit ? { amount: exchangeCredit.amount, againstInvoice: exchangeCredit.againstInvoice } : null,
         }),
       });
       let data = {};
@@ -2014,9 +2417,26 @@ export default function CashierPOS() {
       setBillOpen(false);
       setReceiptOpen(true);
       clearAll();
-      showToast(isReturn ? "Return bill generated ✓" : "Bill generated ✓", "success");
+      if (!isReturn && exchangeCredit) {
+        setExchangeCredit(null);
+        const refundDue = Number(data.exchange_refund_due || 0);
+        if (refundDue > 0.009) {
+          showToast(`Exchange applied — hand back ₹${refundDue.toFixed(2)} cash to the customer`, "success");
+        } else {
+          showToast("Exchange applied to this bill ✓", "success");
+        }
+      } else {
+        showToast(isReturn ? "Return bill generated ✓" : "Bill generated ✓", "success");
+      }
     } catch (e) {
-      if (!isReturn && !e.serverRejected) {
+      if (!isReturn && exchangeCredit) {
+        // Can't fall back to offline here — validating/consuming the
+        // original return's credit needs the server, and letting this
+        // queue offline risks the same credit being spent twice from two
+        // different devices before either ever syncs.
+        showToast("Could not reach the server — exchange needs a connection. The cart was not cleared; try again once it's back.", "error");
+        setBillOpen(false);
+      } else if (!isReturn && !e.serverRejected) {
         saveOfflineBill(paidAmount, changeReturn, e.message || "Network/backend unavailable", paymentMethodOverride, paymentSplitOverride);
       } else {
         showToast(e.message || "Failed to save bill", "error");
@@ -2024,11 +2444,98 @@ export default function CashierPOS() {
     } finally {
       setSaving(false);
     }
-  }, [isReturn, items, summary, bill, showToast, originalInvoice, saveOfflineBill, cartId]); // eslint-disable-line
+  }, [isReturn, items, summary, bill, showToast, originalInvoice, saveOfflineBill, cartId, exchangeCredit]); // eslint-disable-line
 
   return (
     <div className="min-h-screen bg-[#f4f7fb] text-slate-900">
       <Toast message={toast.msg} type={toast.type} />
+
+      {/* One-time per-machine naming — HQ gives a store one shared login
+          used across several physical POS terminals there, so the login
+          can't tell them apart. This name lives only in this device's own
+          storage and is asked once per machine, never per login. */}
+      {terminalNamePrompt && (
+        <div className="fixed inset-0 z-[3000] grid place-items-center bg-black/50 p-4">
+          <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-2xl">
+            <h2 className="text-base font-black text-slate-900">Name this POS terminal</h2>
+            <p className="mt-1.5 text-xs text-slate-500">
+              This identifies just this machine (e.g. "Counter 1") — separate from the login. You'll only see this once on this device.
+            </p>
+            <input
+              autoFocus
+              value={terminalNameDraft}
+              onChange={e => setTerminalNameDraft(e.target.value)}
+              onKeyDown={e => e.key === "Enter" && confirmTerminalName()}
+              placeholder="e.g. Counter 1"
+              className="mt-4 h-11 w-full rounded-xl border border-slate-200 px-4 text-sm font-bold outline-none focus:border-emerald-500"
+            />
+            <button
+              onClick={confirmTerminalName}
+              disabled={!terminalNameDraft.trim()}
+              className="mt-4 w-full rounded-xl bg-emerald-600 py-3 text-sm font-black text-white disabled:opacity-40"
+            >
+              Save terminal name
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Held Bills panel — resume or discard any parked cart. */}
+      {heldPanelOpen && (
+        <div className="fixed inset-0 z-[2500] grid place-items-center bg-black/50 p-4" onClick={() => setHeldPanelOpen(false)}>
+          <div className="max-h-[80vh] w-full max-w-md overflow-y-auto rounded-2xl bg-white p-5 shadow-2xl" onClick={e => e.stopPropagation()}>
+            <div className="mb-3 flex items-center justify-between">
+              <h2 className="text-base font-black text-slate-900">Held Bills</h2>
+              <button onClick={() => setHeldPanelOpen(false)} className="text-slate-400 hover:text-slate-700"><FaTimes /></button>
+            </div>
+            {heldBills.length === 0 ? (
+              <p className="py-6 text-center text-sm text-slate-400">Nothing held right now.</p>
+            ) : (
+              <div className="space-y-2">
+                {heldBills.map(row => (
+                  <div key={row.id} className="flex items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 p-3">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-bold text-slate-900">{row.label}</p>
+                      <p className="text-[11px] text-slate-500">{row.itemCount} item{row.itemCount === 1 ? "" : "s"} · held {new Date(row.heldAt).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}</p>
+                    </div>
+                    <div className="flex shrink-0 gap-2">
+                      <button onClick={() => resumeHeldBill(row.id)} className="rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-black text-white hover:bg-amber-700">Resume</button>
+                      <button onClick={() => { if (window.confirm(`Discard held bill "${row.label}"? This cannot be undone.`)) discardHeldBill(row.id); }} className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-black text-slate-500 hover:bg-slate-50">Discard</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Active exchange credit — shown until it's spent on a bill or cancelled. */}
+      {exchangeCredit && !isReturn && (
+        <div className="sticky top-0 z-50 border-b border-amber-300 bg-amber-100 px-4 py-2.5 sm:px-6">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-xs font-bold text-amber-900">
+              <FaExchangeAlt className="mr-1.5 inline" />
+              Exchange credit of {money(exchangeCredit.amount)} ready (from {exchangeCredit.againstInvoice}) — add items, it'll be applied at payment.
+            </p>
+            <button onClick={cancelExchangeCredit} className="rounded-lg border border-amber-400 bg-white px-3 py-1.5 text-xs font-black text-amber-800 hover:bg-amber-50">Cancel</button>
+          </div>
+        </div>
+      )}
+
+      {/* Persistent, proactive connectivity banner — unlike the reactive
+          "offline cache" toasts elsewhere, this appears the instant a
+          background reachability ping to the server fails, whether that's
+          a real network drop or just the server itself being unreachable,
+          without the cashier having to attempt a scan/bill first. */}
+      {!serverReachable && (
+        <div className="sticky top-0 z-50 border-b border-rose-300 bg-rose-600 px-4 py-2 sm:px-6">
+          <p className="text-center text-xs font-black text-white">
+            <FaWifi className="mr-1.5 inline" />
+            No connection to the server — billing will save on this device and sync automatically once it's back.
+          </p>
+        </div>
+      )}
 
       {/* Recovered draft cart — shown when a previous session left an
           unsaved in-progress bill behind (tab freeze/crash/accidental close). */}
@@ -2107,10 +2614,10 @@ export default function CashierPOS() {
               onClick={currentShift ? closeShift : openShift}
               disabled={shiftBusy}
               className={`flex cursor-pointer items-center gap-2 rounded-xl border px-4 py-2.5 text-xs font-black uppercase tracking-widest disabled:opacity-60 ${currentShift ? "border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100" : "border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100"}`}
-              title={currentShift ? `Opened ${currentShift.opened_at_label || "today"}` : "Open cashier shift"}
+              title={currentShift ? `${getTerminalName() || "This terminal"} — opened ${currentShift.opened_at_label || "today"}` : `Open shift for ${getTerminalName() || "this terminal"}`}
             >
               {shiftBusy ? <FaSpinner className="animate-spin" /> : <FaCheckCircle size={12} />}
-              {currentShift ? "Close shift" : "Open shift"}
+              {currentShift ? `Close shift${getTerminalName() ? ` (${getTerminalName()})` : ""}` : "Open shift"}
             </button>
 
             {(pendingOfflineCount > 0 || failedOfflineCount > 0) && (
@@ -2147,6 +2654,22 @@ export default function CashierPOS() {
               {cacheRefreshing ? <FaSpinner className="animate-spin" /> : <FaBarcode size={12} />}
               Offline products {cachedProductCount ? `(${cachedProductCount})` : ""}
             </button>
+
+            {!isReturn && (
+              <button type="button" disabled={!items.length} onClick={holdCurrentBill}
+                title="Park this cart and start the next customer — resume it later from Held Bills"
+                className={`flex items-center gap-2 rounded-xl border px-4 py-2.5 text-xs font-black uppercase tracking-widest ${!items.length ? "cursor-not-allowed border-slate-100 bg-slate-50 text-slate-300" : "cursor-pointer border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100"}`}>
+                <FaClock size={12} /> Hold
+              </button>
+            )}
+
+            {heldBills.length > 0 && (
+              <button type="button" onClick={() => setHeldPanelOpen(true)}
+                className="flex items-center gap-2 rounded-xl border border-amber-300 bg-amber-100 px-4 py-2.5 text-xs font-black uppercase tracking-widest text-amber-800 hover:bg-amber-200"
+                title={`${heldBills.length} held bill(s) waiting to be resumed`}>
+                <FaClock size={12} /> Held ({heldBills.length})
+              </button>
+            )}
 
             <button disabled={!items.length} onClick={() => setBillOpen(true)}
               className={`flex items-center gap-2 rounded-xl px-5 py-2.5 text-xs font-black uppercase tracking-widest ${
@@ -2345,8 +2868,9 @@ export default function CashierPOS() {
         onClose={() => setBillOpen(false)} onFinalize={finalizeBill}
         onSaveOffline={saveOfflineBill}
         saving={saving} originalInvoice={originalInvoice}
+        exchangeCredit={exchangeCredit}
       />
-      <ReceiptModal open={receiptOpen} receipt={receipt} onClose={() => setReceiptOpen(false)} />
+      <ReceiptModal open={receiptOpen} receipt={receipt} onClose={() => setReceiptOpen(false)} onStartExchange={startExchange} />
     </div>
   );
 }
