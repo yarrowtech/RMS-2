@@ -10,7 +10,7 @@ import {
 
 import { CASHIER_API_BASE as API_BASE, cashierFetch } from "./cashierApi";
 import CashierGuideModal from "./CashierGuideModal";
-import { getTerminalId, getTerminalName, hasTerminalName, setTerminalName } from "./terminalIdentity";
+import { getTerminalId, getTerminalName, setTerminalName } from "./terminalIdentity";
 
 function money(v)  { return `₹${Math.abs(Number(v || 0)).toFixed(2)}`; }
 function num(v)    { return Math.abs(Number(v || 0)).toFixed(2); }
@@ -337,14 +337,12 @@ function InvoiceLookupModal({ open, onClose, onLoadItems }) {
       if (!res.ok) { setError(json.detail || "Invoice not found."); return; }
       const bill = json.data;
       if (bill.type === "return") { setError("This is already a return bill — cannot return again."); return; }
-      if (bill.already_returned) {
-        setError(`Already returned against invoice ${bill.return_invoice}. Cannot return again.`);
-        return;
-      }
+      bill.items = bill.items.map(item => ({ ...item, returnableQty: Math.max(0, Number(item.qty) - Number(bill.returned_quantities?.[item.barcode] || 0)) }));
+      if (!bill.items.some(item => item.returnableQty > 0)) { setError("All items on this invoice have already been returned."); return; }
       setFoundBill(bill);
       // Default: select all items at their full qty
       const sel = {};
-      bill.items.forEach(item => { sel[item.barcode] = item.qty; });
+      bill.items.forEach(item => { sel[item.barcode] = item.returnableQty; });
       setSelected(sel);
     } catch { setError("Network error. Check backend."); }
     finally { setLoading(false); }
@@ -352,6 +350,11 @@ function InvoiceLookupModal({ open, onClose, onLoadItems }) {
 
   const handleConfirm = () => {
     if (!foundBill) return;
+    const originalTotal = foundBill.items.reduce((sum, item) => sum + Number(item.price || 0) * Number(item.qty || 0), 0);
+    const selectedTotal = foundBill.items.reduce((sum, item) => sum + Number(item.price || 0) * Number(selected[item.barcode] || 0), 0);
+    const originalPaid = Number(foundBill.summary?.net_payable || 0);
+    const creditValue = Math.min(Math.round(selectedTotal * originalPaid / (originalTotal || 1)), Math.max(0, originalPaid - Number(foundBill.returned_credit || 0)));
+    const creditRatio = selectedTotal > 0 ? creditValue / selectedTotal : 0;
     const returnItems = foundBill.items
       .filter(item => (selected[item.barcode] || 0) > 0)
       .map(item => ({
@@ -360,14 +363,14 @@ function InvoiceLookupModal({ open, onClose, onLoadItems }) {
         name:         item.name,
         hsn:          item.hsn,
         sku:          item.sku,
-        price:        item.price,
+        price:        item.price * creditRatio,
         mrp:          item.mrp || item.price,
         cost_price:   item.cost_price || 0,
         gst:          item.gst,
         itemDiscount: item.itemDiscount || 0,
         stock:        null,
         qty:          -(selected[item.barcode]),           // negative for return
-        total:        -(selected[item.barcode] * item.price),
+        total:        -(selected[item.barcode] * item.price * creditRatio),
       }));
 
     if (!returnItems.length) { setError("Select at least one item to return."); return; }
@@ -455,7 +458,8 @@ function InvoiceLookupModal({ open, onClose, onLoadItems }) {
                       {/* Checkbox */}
                       <input type="checkbox"
                         checked={selQty > 0}
-                        onChange={e => setSelected(s => ({ ...s, [item.barcode]: e.target.checked ? item.qty : 0 }))}
+                        disabled={!item.returnableQty}
+                        onChange={e => setSelected(s => ({ ...s, [item.barcode]: e.target.checked ? item.returnableQty : 0 }))}
                         className="w-4 h-4 accent-rose-600 shrink-0"
                       />
                       {/* Product info */}
@@ -465,7 +469,7 @@ function InvoiceLookupModal({ open, onClose, onLoadItems }) {
                       </div>
                       {/* Original qty & price */}
                       <div className="text-right shrink-0">
-                        <p className="text-xs text-slate-500">Bought: {item.qty} × ₹{num(item.price)}</p>
+                        <p className="text-xs text-slate-500">Bought: {item.qty} × ₹{num(item.price)} · Returnable: {item.returnableQty}</p>
                         <p className="text-xs font-bold text-slate-700">= ₹{num(item.qty * item.price)}</p>
                       </div>
                       {/* Return qty selector */}
@@ -478,7 +482,7 @@ function InvoiceLookupModal({ open, onClose, onLoadItems }) {
                           </button>
                           <span className="w-8 text-center text-sm font-black text-rose-600">{selQty}</span>
                           <button
-                            onClick={() => setSelected(s => ({ ...s, [item.barcode]: Math.min(item.qty, selQty + 1) }))}
+                            onClick={() => setSelected(s => ({ ...s, [item.barcode]: Math.min(item.returnableQty, selQty + 1) }))}
                             className="grid h-7 w-7 place-items-center rounded-lg border border-rose-200 bg-white hover:bg-rose-50 text-rose-600">
                             <FaPlus size={8} />
                           </button>
@@ -492,10 +496,10 @@ function InvoiceLookupModal({ open, onClose, onLoadItems }) {
               {/* Return total preview */}
               {Object.values(selected).some(v => v > 0) && (
                 <div className="mt-4 rounded-xl bg-rose-600 text-white px-4 py-3 flex items-center justify-between">
-                  <span className="text-xs font-black uppercase tracking-widest">Refund Total</span>
+                  <span className="text-xs font-black uppercase tracking-widest">Credit note total</span>
                   <span className="text-xl font-black">
                     ₹{num(
-                      foundBill.items.reduce((s, item) => s + (selected[item.barcode] || 0) * item.price, 0)
+                      Math.min(Math.round(foundBill.items.reduce((s, item) => s + (selected[item.barcode] || 0) * item.price, 0) * Number(foundBill.summary?.net_payable || 0) / (foundBill.items.reduce((s, item) => s + item.qty * item.price, 0) || 1)), Math.max(0, Number(foundBill.summary?.net_payable || 0) - Number(foundBill.returned_credit || 0)))
                     )}
                   </span>
                 </div>
@@ -543,7 +547,15 @@ const POS_GUIDE_NOTES = [
   { tone: "info", icon: FaExclamationTriangle, title: "If you must switch devices before syncing", text: "Use the \"Export backup\" button next to the offline counter to download the unsynced bills as a file first. It's the only way to recover them if this device is reset or its data is cleared before they sync." },
   { tone: "caution", icon: FaExclamationTriangle, title: "Two things RMS will not stop you from doing", text: "It does not block a sale that goes beyond what's actually in stock, and there's no automatic discount limit. Keep an eye on the shelf, and follow your store's discount policy yourself — the system trusts the cashier here." },
   { tone: "info", icon: FaExclamationTriangle, title: "If the screen freezes mid-bill", text: "An in-progress cart autosaves every second or so. If the tab has to be reloaded, an amber banner offers to restore the last unsaved cart — check it before re-scanning everything from scratch." },
-  { tone: "info", icon: FaCalculator, title: "Keyboard shortcuts (physical keyboard only, not while typing)", text: "F2 jumps to the barcode field. F4 opens payment. F6 switches Sale/Return. F8 holds the current cart. Ctrl+P reopens the last receipt to print. Esc closes whichever popup is open. F1 or ? reopens this guide. These only fire when you're not typing in a text field." },
+  { tone: "info", icon: FaCalculator, title: "Keyboard shortcuts — the one rule first", text: "Every shortcut below only works when you are NOT typing in a text field — click or tap anywhere outside an input first (or press Esc to close whatever's open), then use the key. This is deliberate: it stops a shortcut from firing by accident while you're typing a customer name or a discount value." },
+  { tone: "info", icon: FaSearch, title: "F2 / F3 — product and customer", text: "F2 focuses product search. F3 opens customer details for the current bill." },
+  { tone: "info", icon: FaPrint, title: "F4 / F8 — receipts and payment", text: "F4 searches saved bills to reprint. F8 opens the payment window for the current cart." },
+  { tone: "info", icon: FaClock, title: "F5 — Drawer Summary", text: "Shows opening cash, today's Cash/Card/UPI totals so far, and the expected cash in the drawer right now — without closing your shift. Type in what you've actually counted to see any mismatch instantly; that number is only shown to you, it is never saved. The real recorded reconciliation still only happens when you actually close the shift." },
+  { tone: "info", icon: FaLock, title: "F6 — rename this terminal", text: "Opens the \"Name this terminal\" box so you can rename this specific machine (e.g. if it's replaced or moved to a different counter). This name is stored on this device only, separate from your login, and is what Reports uses to tell POS machines apart." },
+  { tone: "info", icon: FaUndo, title: "F7 — start a return", text: "Switches to Return mode and opens invoice lookup in one step, so you can search the original bill and pick a return reason immediately. If you're already in Return mode, F7 just reopens the lookup." },
+  { tone: "info", icon: FaCalculator, title: "Alt+D — percentage or flat-amount discount", text: "Opens the discount field. Use the switch beside it to select percentage or amount." },
+  { tone: "caution", icon: FaPrint, title: "Alt+I — save and print in one step", text: "Does exactly what \"Finalize Bill\" does, but skips the extra click on \"Print Receipt\" afterward — the receipt prints the instant it's saved. The normal Finalize button still only saves, so nothing changes unless you actually use this shortcut." },
+  { tone: "info", icon: FaClock, title: "Ctrl+7 / Ctrl+8 — hold and recall", text: "Ctrl+7 holds the current cart and clears the screen for the next customer, same as the \"Hold\" button. Ctrl+8 opens the Held Bills list — if more than one is held, a filter box appears so you can find the right one by the name/label you gave it." },
 ];
 
 // Large-button on-screen numpad for a touchscreen POS that also has a
@@ -552,6 +564,46 @@ const POS_GUIDE_NOTES = [
 // the couple of fields a cashier taps most often mid-sale (paid amount,
 // discount %), where a bigger dedicated keypad beats reaching for the
 // device's own on-screen keyboard every time.
+function TouchKeyboard({ target, onClose }) {
+  const [shift, setShift] = useState(false);
+  const [capsLock, setCapsLock] = useState(false);
+  const [symbols, setSymbols] = useState(false);
+  const uppercase = shift !== capsLock;
+  const rows = symbols ? ["1234567890", "!@#$%&*()", "-_+=/\\:;", "?,.'\"[]{}", "<>^|~`"] : ["1234567890", "qwertyuiop", "asdfghjkl", "zxcvbnm"];
+  const press = (key) => {
+    if (!target || !target.isConnected || target.disabled || target.readOnly) return;
+    if (key === "Enter") {
+      target.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", bubbles: true }));
+      return;
+    }
+    const value = target.value || "";
+    let start = value.length, end = value.length;
+    try { start = target.selectionStart ?? value.length; end = target.selectionEnd ?? start; } catch { /* number inputs do not expose a selection */ }
+    let next, cursor;
+    if (key === "Backspace") {
+      const from = start === end ? Math.max(0, start - 1) : start;
+      next = value.slice(0, from) + value.slice(end); cursor = from;
+    } else {
+      const char = key === "Space" ? " " : uppercase ? key.toUpperCase() : key;
+      next = value.slice(0, start) + char + value.slice(end); cursor = start + char.length;
+    }
+    const proto = target instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+    Object.getOwnPropertyDescriptor(proto, "value").set.call(target, next);
+    target.dispatchEvent(new Event("input", { bubbles: true }));
+    target.focus({ preventScroll: true });
+    try { target.setSelectionRange(cursor, cursor); } catch { /* number inputs */ }
+    if (shift && key !== "Backspace") setShift(false);
+  };
+  return ReactDOM.createPortal(
+    <div role="group" aria-label="On-screen keyboard" onPointerDown={e => e.preventDefault()} className="fixed inset-x-0 bottom-0 z-[12000] mx-auto w-full max-w-4xl rounded-t-2xl border border-slate-300 bg-slate-200 p-2 shadow-2xl sm:p-3">
+      <div className="mb-2 flex items-center justify-between px-1 text-xs font-bold text-slate-700"><span>Touch keyboard</span><button type="button" onClick={onClose} className="rounded-lg bg-slate-700 px-3 py-1.5 text-white">Close</button></div>
+      <div className="space-y-1.5">{rows.map(row => <div key={row} className="flex justify-center gap-1">{Array.from(row).map(key => <button type="button" key={key} onClick={() => press(key)} className="h-10 min-w-0 flex-1 rounded-lg bg-white text-base font-bold text-slate-900 shadow-sm active:bg-violet-200 sm:h-12">{uppercase ? key.toUpperCase() : key}</button>)}</div>)}
+        <div className="flex gap-1"><button type="button" onClick={() => setCapsLock(v => !v)} aria-pressed={capsLock} className={`h-10 rounded-lg px-2 text-xs font-bold sm:h-12 sm:px-3 ${capsLock ? 'bg-violet-600 text-white' : 'bg-white text-slate-900'}`}>Caps Lock</button><button type="button" onClick={() => setShift(v => !v)} aria-pressed={shift} className={`h-10 rounded-lg px-2 text-xs font-bold sm:h-12 sm:px-3 ${shift ? 'bg-violet-600 text-white' : 'bg-white text-slate-900'}`}>Shift</button><button type="button" onClick={() => setSymbols(v => !v)} className="h-10 rounded-lg bg-white px-2 text-xs font-bold sm:h-12 sm:px-3">{symbols ? 'ABC' : '?123'}</button>{["-", "/", "@", "."].map(key => <button type="button" key={key} onClick={() => press(key)} className="h-10 flex-1 rounded-lg bg-white font-bold sm:h-12">{key}</button>)}<button type="button" onClick={() => press("Space")} className="h-10 flex-[4] rounded-lg bg-white font-bold sm:h-12">Space</button><button type="button" onClick={() => press("Backspace")} className="h-10 rounded-lg bg-white px-3 font-bold sm:h-12">⌫</button><button type="button" onClick={() => press("Enter")} className="h-10 rounded-lg bg-violet-600 px-3 font-bold text-white sm:h-12">Enter</button></div>
+      </div>
+    </div>, document.body
+  );
+}
+
 function TouchNumpad({ value, onChange, onClose }) {
   const append = (ch) => {
     const str = String(value ?? "");
@@ -671,7 +723,8 @@ function ManualOfflineItemModal({ open, barcode, onClose, onAdd }) {
   );
 }
 
-function GenerateBillPopup({ open, isReturn, items, bill, setBill, summary, onClose, onFinalize, onSaveOffline, saving, originalInvoice, exchangeCredit }) {
+const GenerateBillPopup = React.forwardRef(function GenerateBillPopup({ open, isReturn, items, bill, setBill, summary, onClose, onFinalize, onSaveOffline, saving, originalInvoice, exchangeCredit }, ref) {
+  const discountInputRef = useRef(null);
   const [paid, setPaid] = useState("");
   const [splitEnabled, setSplitEnabled] = useState(false);
   const [split, setSplit] = useState({ Cash: "", Card: "", UPI: "" });
@@ -730,8 +783,6 @@ function GenerateBillPopup({ open, isReturn, items, bill, setBill, summary, onCl
     }
   };
 
-  if (!open) return null;
-
   const payable = Math.abs(summary.netPayable);
   // Exchange: a prior return's credit can cover part or all of what's
   // actually owed on THIS cart — the cashier only needs to collect
@@ -744,9 +795,13 @@ function GenerateBillPopup({ open, isReturn, items, bill, setBill, summary, onCl
   const splitClean = cleanPaymentSplit(split);
   const paidTotal = splitEnabled ? paymentSplitTotal(splitClean) : Number(paid || (bill.paymentMethod === "Cash" ? 0 : payableAfterCredit));
   const change  = paidTotal > payableAfterCredit ? paidTotal - payableAfterCredit : 0;
-  const selectedPaymentMethod = splitEnabled ? "Split" : bill.paymentMethod;
+  const selectedPaymentMethod = isReturn ? "Credit Note" : splitEnabled ? "Split" : bill.paymentMethod;
   const validateCash = () => {
     if (isReturn) return true;
+    if (exchangeCredit && payable + 0.009 < Number(exchangeCredit.amount)) {
+      alert(`Add ${money(Number(exchangeCredit.amount) - payable)} more to use this credit note.`);
+      return false;
+    }
     if (payableAfterCredit <= 0) return true;
     if (splitEnabled) {
       if (paidTotal < payableAfterCredit) {
@@ -762,12 +817,38 @@ function GenerateBillPopup({ open, isReturn, items, bill, setBill, summary, onCl
     return true;
   };
 
+  const doFinalize = (autoPrint = false) => {
+    if (saving || !items.length) return false;
+    const discountValue = Number(bill.discount || 0);
+    const offerValue = Number(bill.appliedOffer || 0);
+    if (!Number.isFinite(discountValue) || discountValue < 0 || (bill.discountType !== 'amount' && discountValue > 100) || !Number.isFinite(offerValue) || offerValue < 0 || summary.totalSavings > summary.totalSale + 0.001) {
+      alert("Enter a valid discount that does not exceed the bill total."); return false;
+    }
+    if (isReturn && (discountValue || offerValue)) { alert("Credit notes use the original bill's discounts. Remove the additional discount."); return false; }
+    if (!validateCash()) return false;
+    if (isReturn && !returnReason) { setManagerError("Select a reason for this return first."); return false; }
+    if (needsApproval && !managerVerifiedName) { setManagerError("Manager approval is required before this return can be saved."); return false; }
+    onFinalize(paidTotal, change, selectedPaymentMethod, splitEnabled ? splitClean : {}, returnReason, managerVerifiedName, autoPrint);
+    return true;
+  };
+
+  // Alt+I ("save and print") is a global keyboard shortcut handled by the
+  // parent screen, but the payment/split/return-reason state it needs to
+  // validate against only exists inside this popup — exposing just this
+  // one action avoids lifting all of that state up.
+  React.useImperativeHandle(ref, () => ({
+    finalizeWithPrint: () => { if (open) doFinalize(true); },
+    focusDiscount: () => discountInputRef.current?.focus(),
+  }), [open, paidTotal, change, selectedPaymentMethod, splitClean, returnReason, managerVerifiedName, isReturn, needsApproval, payable, exchangeCredit, saving]);
+
+  if (!open) return null;
+
   return ReactDOM.createPortal(
     <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/55 p-3">
       <div className="flex max-h-[94vh] w-full max-w-3xl flex-col overflow-hidden rounded-3xl bg-white shadow-2xl">
         <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
           <div>
-            <h2 className="text-lg font-black text-slate-950">{isReturn ? "Generate Return Bill" : "Generate Bill"}</h2>
+            <h2 className="text-lg font-black text-slate-950">{isReturn ? "Generate Credit Note" : "Generate Bill"}</h2>
             {isReturn && originalInvoice && (
               <p className="text-xs font-semibold text-rose-500 mt-0.5">Against Invoice: {originalInvoice}</p>
             )}
@@ -778,7 +859,7 @@ function GenerateBillPopup({ open, isReturn, items, bill, setBill, summary, onCl
         <div className="flex-1 overflow-y-auto p-5">
           <div className={`relative mb-6 overflow-hidden rounded-3xl p-6 text-white shadow-lg ${isReturn ? "bg-gradient-to-br from-rose-600 to-rose-700" : "bg-gradient-to-br from-violet-600 to-violet-700"}`}>
             <div className="relative z-10">
-              <p className="text-[10px] font-black uppercase tracking-[0.2em] opacity-70">{isReturn ? "Refund Total" : "Net Payable Amount"}</p>
+              <p className="text-[10px] font-black uppercase tracking-[0.2em] opacity-70">{isReturn ? "Credit Note Total" : "Net Payable Amount"}</p>
               <h1 className="mt-2 text-5xl font-black tracking-tight">{money(summary.netPayable)}</h1>
             </div>
             <div className="absolute -right-10 -top-10 h-40 w-40 rounded-full bg-white/10 blur-2xl" />
@@ -825,9 +906,17 @@ function GenerateBillPopup({ open, isReturn, items, bill, setBill, summary, onCl
                   </div>
                 </div>
                 <div className="relative space-y-1">
-                  <label className="ml-1 text-[10px] font-black uppercase tracking-widest text-black">Additional Disc. %</label>
+                  <div className="flex items-center justify-between">
+                    <label className="ml-1 text-[10px] font-black uppercase tracking-widest text-black">
+                      Additional Disc. ({bill.discountType === "amount" ? "₹" : "%"})
+                    </label>
+                    <button type="button" onClick={() => setBill({ ...bill, discountType: bill.discountType === "amount" ? "percent" : "amount" })}
+                      className="text-[10px] font-black uppercase tracking-widest text-violet-600 hover:text-violet-800">
+                      Switch to {bill.discountType === "amount" ? "%" : "₹"}
+                    </button>
+                  </div>
                   <div className="flex gap-1.5">
-                    <input type="number" value={bill.discount} onFocus={() => setNumpadField("discount")} onChange={e => setBill({ ...bill, discount: e.target.value })}
+                    <input ref={discountInputRef} type="number" value={bill.discount} onFocus={() => setNumpadField("discount")} onChange={e => setBill({ ...bill, discount: e.target.value })}
                       className="h-11 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm font-bold outline-none focus:border-violet-500" />
                     <button type="button" onClick={() => setNumpadField(f => f === "discount" ? null : "discount")}
                       className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-slate-50 text-slate-500 hover:bg-slate-100" title="Touch keypad">
@@ -945,7 +1034,7 @@ function GenerateBillPopup({ open, isReturn, items, bill, setBill, summary, onCl
             )}
 
             {/* Payment method */}
-            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+            {!isReturn && <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
               <h3 className="mb-3 text-xs font-black uppercase tracking-widest text-black">
                 {isReturn ? "Refund Method" : "Payment Method"}
               </h3>
@@ -974,7 +1063,7 @@ function GenerateBillPopup({ open, isReturn, items, bill, setBill, summary, onCl
                   {change > 0 && <p className="mt-2 rounded-xl bg-emerald-50 px-4 py-2 text-sm font-black text-emerald-600">Change Return: ₹{change.toFixed(2)}</p>}
                 </div>
               )}
-            </div>
+            </div>}
 
             {/* Bill summary */}
             <div className="group rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -984,7 +1073,7 @@ function GenerateBillPopup({ open, isReturn, items, bill, setBill, summary, onCl
                   ["Items",                      items.length,                                                "slate"],
                   ["Total Sale",                 money(summary.totalSale),                                   "slate"],
                   ["Offer",                      `- ${money(bill.appliedOffer || 0)}`,                       "emerald"],
-                  [`Discount (${bill.discount||0}%)`, `- ${money(summary.totalSavings - (bill.appliedOffer||0))}`, "emerald"],
+                  [`Discount (${bill.discountType === "amount" ? money(bill.discount||0) : `${bill.discount||0}%`})`, `- ${money(summary.totalSavings - (bill.appliedOffer||0))}`, "emerald"],
                   ["CGST",                       money(summary.cgstAmount),                                  "slate"],
                   ["SGST",                       money(summary.sgstAmount),                                  "slate"],
                   ["Total Tax",                  money(summary.totalGstAmount),                              "slate"],
@@ -995,7 +1084,7 @@ function GenerateBillPopup({ open, isReturn, items, bill, setBill, summary, onCl
                   </div>
                 ))}
                 <div className="flex justify-between border-t border-slate-200 pt-3 text-lg font-black text-slate-950">
-                  <span className="uppercase">{isReturn ? "Refund Total" : "Net Payable"}</span>
+                  <span className="uppercase">{isReturn ? "Credit Note Total" : "Net Payable"}</span>
                   <span>{money(summary.netPayable)}</span>
                 </div>
                 {creditApplied > 0 && (
@@ -1011,7 +1100,7 @@ function GenerateBillPopup({ open, isReturn, items, bill, setBill, summary, onCl
                 )}
                 {refundDueNow > 0 && (
                   <p className="rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-black text-amber-800">
-                    Hand back {money(refundDueNow)} to the customer in cash — the exchange credit was worth more than this purchase.
+                    Add {money(refundDueNow)} more to use this credit note.
                   </p>
                 )}
               </div>
@@ -1034,15 +1123,10 @@ function GenerateBillPopup({ open, isReturn, items, bill, setBill, summary, onCl
                 <FaExclamationTriangle /> Save offline
               </button>
             )}
-            <button onClick={() => {
-              if (!validateCash()) return;
-              if (isReturn && !returnReason) return setManagerError("Select a reason for this return first.");
-              if (needsApproval && !managerVerifiedName) return setManagerError("Manager approval is required before this return can be saved.");
-              onFinalize(paidTotal, change, selectedPaymentMethod, splitEnabled ? splitClean : {}, returnReason, managerVerifiedName);
-            }} disabled={saving || (isReturn && (!returnReason || (needsApproval && !managerVerifiedName)))}
+            <button onClick={() => doFinalize(false)} disabled={saving || (isReturn && (!returnReason || (needsApproval && !managerVerifiedName)))}
               className={`flex w-full cursor-pointer items-center justify-center gap-2 rounded-2xl py-4 text-xs font-black uppercase tracking-widest text-white disabled:opacity-60 ${isReturn ? "bg-rose-600 sm:col-span-2" : "bg-violet-600"}`}>
               {saving ? <FaSpinner className="animate-spin" /> : <FaPrint />}
-              {saving ? "Saving..." : isReturn ? "Finalize Return Bill" : "Finalize Bill"}
+              {saving ? "Saving..." : isReturn ? "Finalize Credit Note" : "Finalize Bill"}
             </button>
           </div>
           {!isReturn && (
@@ -1055,10 +1139,10 @@ function GenerateBillPopup({ open, isReturn, items, bill, setBill, summary, onCl
     </div>,
     document.body
   );
-}
+});
 
 /* ─── Receipt Modal ─── */
-function ReceiptModal({ open, receipt, onClose, onStartExchange }) {
+function ReceiptModal({ open, receipt, onClose, onStartExchange, autoPrint, onAutoPrinted }) {
   const [shareInfo, setShareInfo] = useState(null);
   const [sharing, setSharing] = useState(false);
   const [emailing, setEmailing] = useState(false);
@@ -1075,6 +1159,17 @@ function ReceiptModal({ open, receipt, onClose, onStartExchange }) {
   useEffect(() => {
     if (!open) setShareInfo(null);
   }, [open]);
+
+  // Alt+I ("save and print") finalizes the bill and should immediately
+  // print it without the cashier having to click "Print Receipt"
+  // themselves — this fires once, right when the receipt opens, only if
+  // the finalize call that got us here asked for it.
+  useEffect(() => {
+    if (!open || !receipt || !autoPrint) return;
+    handlePrint();
+    onAutoPrinted?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, receipt, autoPrint]);
 
   if (!open || !receipt) return null;
   const isReturn = receipt.isReturn;
@@ -1272,7 +1367,8 @@ function ReceiptModal({ open, receipt, onClose, onStartExchange }) {
 
   <!-- Payment -->
   <table class="summary">
-    ${splitRows.length ? splitRows.map(([mode, amount]) => `<tr><td>${mode}</td><td class="val">${num(amount)}</td></tr>`).join("") : `<tr><td>${receipt.paymentMethod}</td><td class="val">${num(s.netPayable)}</td></tr>`}
+    ${receipt.exchangeCredit ? `<tr><td>Credit note ${receipt.exchangeInvoice || ""}</td><td class="val">${num(receipt.exchangeCredit)}</td></tr>` : ""}
+    ${splitRows.length ? splitRows.map(([mode, amount]) => `<tr><td>${mode}</td><td class="val">${num(amount)}</td></tr>`).join("") : `<tr><td>${receipt.paymentMethod}</td><td class="val">${num(Math.max(0, s.netPayable - (receipt.exchangeCredit || 0)))}</td></tr>`}
     <tr><td>Customer Paid :</td><td class="val">${num(receipt.paidAmount)}</td></tr>
     <tr><td>Balance Refund :</td><td class="val">${num(receipt.changeReturn)}</td></tr>
   </table>
@@ -1293,7 +1389,7 @@ function ReceiptModal({ open, receipt, onClose, onStartExchange }) {
   </table>
   <table class="summary">
     <tr class="net-row">
-      <td>${isReturn ? "REFUND AMOUNT :" : "NET PAYABLE :"}</td>
+      <td>${isReturn ? "CREDIT NOTE AMOUNT :" : "NET PAYABLE :"}</td>
       <td class="val">${num(s.netPayable)}</td>
     </tr>
   </table>
@@ -1465,6 +1561,7 @@ function ReceiptModal({ open, receipt, onClose, onStartExchange }) {
 
             {/* Payment */}
             <div className="space-y-1">
+              {receipt.exchangeCredit > 0 && <div className="flex justify-between"><span>Credit note {receipt.exchangeInvoice}</span><span>{num(receipt.exchangeCredit)}</span></div>}
               {splitRows.length ? splitRows.map(([mode, amount]) => (
                 <div key={mode} className="flex justify-between">
                   <span>{mode}</span>
@@ -1473,7 +1570,7 @@ function ReceiptModal({ open, receipt, onClose, onStartExchange }) {
               )) : (
                 <div className="flex justify-between">
                   <span>{receipt.paymentMethod}</span>
-                  <span>{num(s.netPayable)}</span>
+                  <span>{num(Math.max(0, s.netPayable - (receipt.exchangeCredit || 0)))}</span>
                 </div>
               )}
               <div className="flex justify-between">
@@ -1527,7 +1624,7 @@ function ReceiptModal({ open, receipt, onClose, onStartExchange }) {
                 <span>{num(s.roundOff)}</span>
               </div>
               <div className="flex justify-between text-[14px] font-black">
-                <span>{isReturn ? "Refund Amount :" : "Net Payable :"}</span>
+                <span>{isReturn ? "Credit Note Amount :" : "Net Payable :"}</span>
                 <span>{num(s.netPayable)}</span>
               </div>
                <div className="text-[9px] italic text-slate-500 mt-0.5">
@@ -1633,8 +1730,32 @@ function ReceiptModal({ open, receipt, onClose, onStartExchange }) {
 /* ═══════════════════════════════════════════════════════════════════════════ */
 export default function CashierPOS() {
   const barcodeRef = useRef(null);
+  const searchRef  = useRef(null);
+  const generateBillRef = useRef(null);
   const scrollRef  = useRef(null);
   const scannerFallbackRef = useRef(null);
+  const [touchKeyboardTarget, setTouchKeyboardTarget] = useState(null);
+  const [touchKeyboardOpen, setTouchKeyboardOpen] = useState(false);
+  const lastInputRef = useRef(null);
+
+  useEffect(() => {
+    const isEditable = (target) => (target instanceof HTMLTextAreaElement || (target instanceof HTMLInputElement && !["checkbox", "radio", "button", "submit", "file", "hidden"].includes(target.type))) && !target.readOnly && !target.disabled;
+    const onFocus = (event) => {
+      if (!isEditable(event.target)) return;
+      lastInputRef.current = event.target;
+      setTouchKeyboardTarget(event.target);
+    };
+    const onPointer = (event) => {
+      if (event.pointerType === "touch" && isEditable(event.target)) {
+        lastInputRef.current = event.target;
+        setTouchKeyboardTarget(event.target);
+        setTouchKeyboardOpen(true);
+      }
+    };
+    document.addEventListener("focusin", onFocus);
+    document.addEventListener("pointerdown", onPointer, true);
+    return () => { document.removeEventListener("focusin", onFocus); document.removeEventListener("pointerdown", onPointer, true); };
+  }, []);
 
   const [mode,           setMode]           = useState("sale");
   const [items,          setItems]          = useState([]);
@@ -1654,6 +1775,10 @@ export default function CashierPOS() {
   const [scanning,       setScanning]       = useState(false);
   const [toast,          setToast]          = useState({ msg: "", type: "default" });
   const [billOpen,       setBillOpen]       = useState(false);
+  const [customerOpen, setCustomerOpen] = useState(false);
+  const [reprintOpen, setReprintOpen] = useState(false);
+  const [reprintSearch, setReprintSearch] = useState("");
+  const [reprintBills, setReprintBills] = useState([]);
   const [receiptOpen,    setReceiptOpen]    = useState(false);
   const [receipt,        setReceipt]        = useState(null);
   const [saving,         setSaving]         = useState(false);
@@ -1669,8 +1794,14 @@ export default function CashierPOS() {
   const [currentShift, setCurrentShift] = useState(null);
   const [shiftBusy, setShiftBusy] = useState(false);
   const [serverReachable, setServerReachable] = useState(true);
+  const [pendingAutoPrint, setPendingAutoPrint] = useState(false);
+  const [drawerSummaryOpen, setDrawerSummaryOpen] = useState(false);
+  const [drawerSummaryData, setDrawerSummaryData] = useState(null);
+  const [drawerSummaryLoading, setDrawerSummaryLoading] = useState(false);
+  const [drawerCountedCash, setDrawerCountedCash] = useState("");
   const [heldBills, setHeldBills] = useState(() => readHeldBills());
   const [heldPanelOpen, setHeldPanelOpen] = useState(false);
+  const [heldFilter, setHeldFilter] = useState("");
   // Exchange: { amount, againstInvoice } — an earlier return's refund
   // value, offered as spendable credit on the NEXT sale built on this
   // screen. One-shot: cleared the moment it's actually applied to a bill,
@@ -1678,24 +1809,56 @@ export default function CashierPOS() {
   const [exchangeCredit, setExchangeCredit] = useState(null);
   const [terminalNamePrompt, setTerminalNamePrompt] = useState(false);
   const [terminalNameDraft, setTerminalNameDraft] = useState("");
+  const [terminalSetupRequired, setTerminalSetupRequired] = useState(false);
+  const [terminalSetupError, setTerminalSetupError] = useState("");
 
-  useEffect(() => {
-    if (!hasTerminalName()) setTerminalNamePrompt(true);
-  }, []);
+  const findReprintBills = async () => {
+    try {
+      const res = await cashierFetch(`${API_BASE}/cashier/bills?search=${encodeURIComponent(reprintSearch)}`);
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.detail || "Could not find bills");
+      setReprintBills(json.data || []);
+    } catch (e) { showToast(e.message || "Could not find bills", "error"); }
+  };
+  const reprintBill = async (invoiceNo) => {
+    try {
+      const res = await cashierFetch(`${API_BASE}/cashier/bill/${encodeURIComponent(invoiceNo)}`);
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.detail || "Could not load bill");
+      const b = json.data, s = b.summary || {};
+      setReceipt({ invoiceNo: b.invoice_no, date: b.date, cashierName: b.cashier_name, customerName: b.customer_name, mobile: b.mobile, paymentMethod: b.payment_method, paymentSplit: b.payment_split || {}, paidAmount: b.paid_amount, changeReturn: b.change_return, appliedOffer: b.applied_offer, discount: b.discount_pct, originalInvoice: b.original_invoice, items: b.items || [], isReturn: b.type === 'return', exchangeCredit: b.exchange_credit_applied || 0, exchangeInvoice: b.exchange_against_invoice || '', summary: { totalSale: s.total_sale, totalSavings: s.total_savings, taxableAmount: s.taxable_amount, cgstAmount: s.cgst_amount, sgstAmount: s.sgst_amount, igstAmount: s.igst_amount, totalGstAmount: s.total_gst, roundOff: s.round_off, netPayable: s.net_payable } });
+      setReprintOpen(false); setReceiptOpen(true);
+    } catch (e) { showToast(e.message || "Could not load bill", "error"); }
+  };
 
   const confirmTerminalName = useCallback(() => {
     const clean = terminalNameDraft.trim();
     if (!clean) return;
     setTerminalName(clean);
+    if (getTerminalName() !== clean.slice(0, 40)) {
+      setTerminalSetupError("Could not save the terminal name on this device. Check browser storage and try again.");
+      return;
+    }
+    setTerminalSetupError("");
+    setTerminalSetupRequired(false);
     setTerminalNamePrompt(false);
   }, [terminalNameDraft]);
+
+  const requireTerminal = useCallback(() => {
+    if (getTerminalName().trim()) return true;
+    setTerminalNameDraft("");
+    setTerminalSetupError("");
+    setTerminalSetupRequired(true);
+    setTerminalNamePrompt(true);
+    return false;
+  }, []);
 
   // The cashier name belongs to the authenticated session, never a generic
   // POS default. `admin_name` is written by authRedirect immediately after
   // login and is shared by store cashiers and store owners.
   const [bill, setBill] = useState(() => ({
     cashierName: localStorage.getItem("admin_name") || "Cashier", salesmanCode: "", customerName: "", mobile: "", customerEmail: "",
-    offer: "", appliedOffer: 0, discount: "", promotionName: "", promotionType: "",
+    offer: "", appliedOffer: 0, discount: "", discountType: "percent", promotionName: "", promotionType: "",
     paymentMethod: "Cash",
   }));
 
@@ -1785,6 +1948,23 @@ export default function CashierPOS() {
       setShiftBusy(false);
     }
   }, [currentShift, showToast]);
+
+  const openDrawerSummary = useCallback(async () => {
+    setDrawerSummaryLoading(true);
+    setDrawerSummaryOpen(true);
+    setDrawerCountedCash("");
+    try {
+      const res = await cashierFetch(`${API_BASE}/cashier/shift/drawer-summary?terminal_id=${encodeURIComponent(getTerminalId())}`);
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.detail || "Could not load drawer summary");
+      setDrawerSummaryData(json);
+    } catch (e) {
+      setDrawerSummaryData(null);
+      showToast(e.message || "Could not load drawer summary", "error");
+    } finally {
+      setDrawerSummaryLoading(false);
+    }
+  }, [showToast]);
 
   const refreshProductCache = useCallback(async (silent = false) => {
     setCacheRefreshing(true);
@@ -1959,6 +2139,7 @@ export default function CashierPOS() {
   }, [showToast]);
 
   const updateQty = (id, delta) => {
+    if (isReturn) { showToast("Change return quantities using Load Invoice.", "error"); return; }
     setItems(prev => prev.map(item => {
       if (item._id !== id) return item;
       const qty = item.qty + delta;
@@ -1972,7 +2153,9 @@ export default function CashierPOS() {
   const summary = useMemo(() => {
     const totalSale      = items.reduce((s, i) => s + Math.abs(i.total), 0);
     const offerDiscount  = Number(bill.appliedOffer || 0);
-    const additionalDisc = (totalSale * Number(bill.discount || 0)) / 100;
+    const additionalDisc = bill.discountType === "amount"
+      ? Math.min(Number(bill.discount || 0), totalSale)
+      : (totalSale * Number(bill.discount || 0)) / 100;
     const totalSavings   = offerDiscount + additionalDisc;
     const discountedSale = Math.max(0, totalSale - totalSavings);
 
@@ -2000,7 +2183,7 @@ export default function CashierPOS() {
   const clearAll = () => {
     setItems([]); setBarcode(""); setSearch(""); setSearchRes([]);
     setOriginalInvoice("");
-    setBill(prev => ({ ...prev, salesmanCode: "", customerName: "", mobile: "", customerEmail: "", offer: "", appliedOffer: 0, discount: "", promotionName: "", promotionType: "", paymentMethod: "Cash" }));
+    setBill(prev => ({ ...prev, salesmanCode: "", customerName: "", mobile: "", customerEmail: "", offer: "", appliedOffer: 0, discount: "", discountType: "percent", promotionName: "", promotionType: "", paymentMethod: "Cash" }));
     setCartId(makeOfflineId());
     clearDraftCart();
   };
@@ -2016,14 +2199,15 @@ export default function CashierPOS() {
     const label = bill.customerName?.trim() || `Hold ${new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}`;
     const entry = {
       id: cartId, label, heldAt: new Date().toISOString(),
-      items, bill, mode, originalInvoice,
+      items, bill, mode, originalInvoice, exchangeCredit,
       itemCount: items.length,
     };
     writeHeldBills([entry, ...readHeldBills()]);
     setHeldBills(readHeldBills());
     clearAll();
+    setExchangeCredit(null);
     showToast(`Held — "${label}"`, "success");
-  }, [items, bill, mode, originalInvoice, cartId, showToast]);
+  }, [items, bill, mode, originalInvoice, cartId, exchangeCredit, showToast]);
 
   const resumeHeldBill = useCallback((id) => {
     const target = readHeldBills().find(row => row.id === id);
@@ -2033,7 +2217,7 @@ export default function CashierPOS() {
     // loses a cart, it just adds another one to the list.
     if (items.length) {
       const autoLabel = bill.customerName?.trim() || `Hold ${new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}`;
-      const autoEntry = { id: cartId, label: autoLabel, heldAt: new Date().toISOString(), items, bill, mode, originalInvoice, itemCount: items.length };
+      const autoEntry = { id: cartId, label: autoLabel, heldAt: new Date().toISOString(), items, bill, mode, originalInvoice, exchangeCredit, itemCount: items.length };
       writeHeldBills([autoEntry, ...readHeldBills().filter(row => row.id !== id)]);
     } else {
       writeHeldBills(readHeldBills().filter(row => row.id !== id));
@@ -2042,11 +2226,12 @@ export default function CashierPOS() {
     setBill(prev => ({ ...prev, ...(target.bill || {}) }));
     setMode(target.mode || "sale");
     setOriginalInvoice(target.originalInvoice || "");
+    setExchangeCredit(target.exchangeCredit || null);
     setCartId(target.id || makeOfflineId());
     setHeldBills(readHeldBills());
     setHeldPanelOpen(false);
     showToast(`Resumed — "${target.label}"`, "success");
-  }, [items, bill, mode, originalInvoice, cartId, showToast]);
+  }, [items, bill, mode, originalInvoice, cartId, exchangeCredit, showToast]);
 
   const discardHeldBill = useCallback((id) => {
     writeHeldBills(readHeldBills().filter(row => row.id !== id));
@@ -2066,6 +2251,23 @@ export default function CashierPOS() {
   }, [showToast]);
 
   const cancelExchangeCredit = useCallback(() => setExchangeCredit(null), []);
+  const lookupCreditNote = async () => {
+    const invoice = window.prompt("Enter or scan the credit note number:");
+    if (!invoice?.trim()) return;
+    try {
+      const res = await cashierFetch(`${API_BASE}/cashier/bill/${encodeURIComponent(invoice.trim())}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "Credit note not found");
+      const note = data.data;
+      if (note.type !== "return") throw new Error("This number is not a credit note.");
+      if (!note.credit_note_only) throw new Error("This older return needs manager review before it can be used as credit.");
+      if (note.exchange_consumed) throw new Error("This credit note has already been used.");
+      const amount = Number(note.summary?.net_payable || 0);
+      if (amount <= 0) throw new Error("This credit note has no usable value.");
+      setExchangeCredit({ amount, againstInvoice: note.invoice_no });
+      showToast(`Credit note ${note.invoice_no} ready`, "success");
+    } catch (error) { showToast(error.message || "Could not load credit note", "error"); }
+  };
 
   // Debounced draft autosave — covers a freeze/crash while the cashier is
   // still building the bill (before Finalize/Save offline, where nothing
@@ -2075,16 +2277,17 @@ export default function CashierPOS() {
   useEffect(() => {
     if (isReturn || items.length === 0) return undefined;
     const timer = setTimeout(() => {
-      writeDraftCart({ items, bill, mode, originalInvoice, cartId, savedAt: new Date().toISOString() });
+      writeDraftCart({ items, bill, mode, originalInvoice, exchangeCredit, cartId, savedAt: new Date().toISOString() });
     }, 800);
     return () => clearTimeout(timer);
-  }, [items, bill, mode, originalInvoice, cartId, isReturn]);
+  }, [items, bill, mode, originalInvoice, exchangeCredit, cartId, isReturn]);
 
   const restoreDraftCart = () => {
     if (!draftPrompt) return;
     setItems(draftPrompt.items || []);
     setBill(prev => ({ ...prev, ...(draftPrompt.bill || {}) }));
     setOriginalInvoice(draftPrompt.originalInvoice || "");
+    setExchangeCredit(draftPrompt.exchangeCredit || null);
     setCartId(draftPrompt.cartId || makeOfflineId());
     setDraftPrompt(null);
     showToast("Cart restored", "success");
@@ -2096,6 +2299,7 @@ export default function CashierPOS() {
   };
 
   const saveOfflineBill = useCallback((paidAmount = 0, changeReturn = 0, reason = "Backend unavailable", paymentMethodOverride = bill.paymentMethod, paymentSplitOverride = {}) => {
+    if (!requireTerminal()) { setBillOpen(false); return; }
     if (isReturn) {
       showToast("Returns need online invoice validation", "error");
       return;
@@ -2167,7 +2371,7 @@ export default function CashierPOS() {
     setReceiptOpen(true);
     clearAll();
     showToast("Bill saved offline. Sync when backend is back.", "success");
-  }, [isReturn, items, summary, bill, showToast, exchangeCredit]); // eslint-disable-line
+  }, [isReturn, items, summary, bill, showToast, exchangeCredit, requireTerminal]); // eslint-disable-line
 
   const syncOfflineBills = useCallback(async () => {
     const pending = readOfflineBills().filter(row => ["pending", "failed"].includes(row.status));
@@ -2318,39 +2522,68 @@ export default function CashierPOS() {
       return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || el.isContentEditable;
     };
     const onKeyDown = (event) => {
-      if (isTypingTarget(document.activeElement)) return;
+      if (isTypingTarget(document.activeElement) && event.key !== 'Escape' && !/^F[2-8]$/.test(event.key) && event.code !== 'F6' && !(event.altKey && ['d', 'i'].includes(event.key.toLowerCase())) && !(event.ctrlKey && ['7', '8'].includes(event.key))) return;
+      if ((billOpen || customerOpen || reprintOpen || drawerSummaryOpen || heldPanelOpen || invoiceLookup || receiptOpen || terminalNamePrompt) && event.key !== 'Escape' && !(billOpen && event.altKey && ['d', 'i'].includes(event.key.toLowerCase()))) {
+        if (/^F[2-8]$/.test(event.key) || (event.ctrlKey && ['7', '8'].includes(event.key))) event.preventDefault();
+        return;
+      }
       if (event.key === "F1" || event.key === "?") {
         event.preventDefault();
         setShowGuide(v => !v);
       } else if (event.key === "F2") {
         event.preventDefault();
-        barcodeRef.current?.focus();
+        searchRef.current?.focus();
+      } else if (event.key === "F3") {
+        event.preventDefault();
+        setCustomerOpen(true);
       } else if (event.key === "F4") {
         event.preventDefault();
-        if (items.length) setBillOpen(true);
-      } else if (event.key === "F6") {
+        setReprintOpen(true);
+      } else if (event.key === "F5") {
         event.preventDefault();
-        if (isReturn) { setMode("sale"); clearAll(); }
-        else { setMode("return"); clearAll(); setInvoiceLookup(true); }
+        openDrawerSummary();
+      } else if (event.key === "F6" || event.code === "F6") {
+        event.preventDefault();
+        setTerminalNameDraft(getTerminalName());
+        setTerminalNamePrompt(true);
+      } else if (event.key === "F7") {
+        event.preventDefault();
+        if (isReturn) setInvoiceLookup(true);
+        else if (exchangeCredit && !items.length) showToast("Add items and hold this credit-note sale before starting a return.", "error");
+        else { if (items.length) holdCurrentBill(); setMode("return"); clearAll(); setInvoiceLookup(true); }
       } else if (event.key === "F8") {
         event.preventDefault();
-        if (!isReturn) holdCurrentBill();
-      } else if (event.ctrlKey && (event.key === "p" || event.key === "P")) {
+        if (items.length && requireTerminal()) setBillOpen(true);
+      } else if (event.altKey && (event.key === "d" || event.key === "D")) {
         event.preventDefault();
-        if (receipt) setReceiptOpen(true);
+        if (items.length && !isReturn && requireTerminal()) { setBillOpen(true); setTimeout(() => generateBillRef.current?.focusDiscount(), 50); }
+      } else if (event.altKey && (event.key === "i" || event.key === "I")) {
+        event.preventDefault();
+        generateBillRef.current?.finalizeWithPrint();
+      } else if (event.ctrlKey && event.key === "7") {
+        event.preventDefault();
+        if (!isReturn) holdCurrentBill();
+      } else if (event.ctrlKey && event.key === "8") {
+        event.preventDefault();
+        setHeldPanelOpen(true);
       } else if (event.key === "Escape") {
-        if (billOpen) setBillOpen(false);
+        if (reprintOpen) setReprintOpen(false);
+        else if (customerOpen) setCustomerOpen(false);
+        else if (terminalNamePrompt) setTerminalNamePrompt(false);
+        else if (billOpen) setBillOpen(false);
+        else if (drawerSummaryOpen) setDrawerSummaryOpen(false);
         else if (heldPanelOpen) setHeldPanelOpen(false);
         else if (invoiceLookup) setInvoiceLookup(false);
         else if (manualOfflineOpen) setManualOfflineOpen(false);
         else if (showGuide) setShowGuide(false);
       }
     };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [items.length, isReturn, receipt, billOpen, heldPanelOpen, invoiceLookup, manualOfflineOpen, showGuide, holdCurrentBill]);
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [items.length, isReturn, receipt, receiptOpen, billOpen, customerOpen, reprintOpen, drawerSummaryOpen, heldPanelOpen, invoiceLookup, terminalNamePrompt, exchangeCredit, manualOfflineOpen, showGuide, holdCurrentBill, openDrawerSummary, showToast, requireTerminal]);
 
-  const finalizeBill = useCallback(async (paidAmount = 0, changeReturn = 0, paymentMethodOverride = bill.paymentMethod, paymentSplitOverride = {}, returnReason = "", managerName = "") => {
+  const finalizeBill = useCallback(async (paidAmount = 0, changeReturn = 0, paymentMethodOverride = bill.paymentMethod, paymentSplitOverride = {}, returnReason = "", managerName = "", autoPrint = false) => {
+    if (!requireTerminal()) { setBillOpen(false); return; }
     setSaving(true);
     try {
       const res = await cashierFetch(`${API_BASE}/cashier/bill`, {
@@ -2408,6 +2641,8 @@ export default function CashierPOS() {
         changeReturn,
         appliedOffer:    bill.appliedOffer,
         discount:        bill.discount,
+        exchangeCredit:  data.exchange_credit_applied || 0,
+        exchangeInvoice: exchangeCredit?.againstInvoice || "",
         originalInvoice,
         items,
         summary,
@@ -2416,6 +2651,7 @@ export default function CashierPOS() {
 
       setBillOpen(false);
       setReceiptOpen(true);
+      setPendingAutoPrint(autoPrint);
       clearAll();
       if (!isReturn && exchangeCredit) {
         setExchangeCredit(null);
@@ -2444,11 +2680,23 @@ export default function CashierPOS() {
     } finally {
       setSaving(false);
     }
-  }, [isReturn, items, summary, bill, showToast, originalInvoice, saveOfflineBill, cartId, exchangeCredit]); // eslint-disable-line
+  }, [isReturn, items, summary, bill, showToast, originalInvoice, saveOfflineBill, cartId, exchangeCredit, requireTerminal]); // eslint-disable-line
 
   return (
     <div className="min-h-screen bg-[#f4f7fb] text-slate-900">
       <Toast message={toast.msg} type={toast.type} />
+      {touchKeyboardOpen && <TouchKeyboard target={touchKeyboardTarget} onClose={() => setTouchKeyboardOpen(false)} />}
+      <div className="flex flex-wrap gap-x-4 gap-y-1 bg-slate-900 px-4 py-2 text-[11px] font-bold text-white sm:px-6" aria-label="Cashier keyboard shortcuts">
+        <span>F2 Search</span><span>F3 Customer</span><span>F4 Reprint</span><span>F5 Drawer</span><button type="button" onClick={() => { setTerminalNameDraft(getTerminalName()); setTerminalNamePrompt(true); }} className="rounded underline underline-offset-2 hover:text-emerald-300" title="Open terminal and device configuration">F6 Terminal</button><span>F7 Return</span><span>F8 Payment</span><span>Alt+D Discount</span><span>Alt+I Save &amp; print</span><span>Ctrl+7 Hold</span><span>Ctrl+8 Recall</span><button type="button" onClick={() => { const input = lastInputRef.current?.isConnected ? lastInputRef.current : searchRef.current; if (!input) { showToast('Select a text field first', 'error'); return; } setTouchKeyboardTarget(input); setTouchKeyboardOpen(true); input.focus(); }} className="rounded underline underline-offset-2 hover:text-emerald-300">Touch keyboard</button>
+      </div>
+      {reprintOpen && <div className="fixed inset-0 z-[2500] grid place-items-center bg-black/50 p-4" onClick={() => setReprintOpen(false)}><div className="w-full max-w-xl space-y-4 rounded-2xl bg-white p-6" onClick={e => e.stopPropagation()}><h2 className="text-lg font-black">Find a bill to reprint</h2><div className="flex gap-2"><input autoFocus value={reprintSearch} onChange={e => setReprintSearch(e.target.value)} onKeyDown={e => e.key === 'Enter' && findReprintBills()} placeholder="Invoice, customer name or mobile" className="h-11 flex-1 rounded-xl border px-3"/><button onClick={findReprintBills} className="rounded-xl bg-violet-600 px-4 font-bold text-white">Search</button></div><div className="max-h-80 space-y-2 overflow-auto">{reprintBills.map(b => <button key={b.id} onClick={() => reprintBill(b.invoice_no)} className="block w-full rounded-xl border p-3 text-left"><strong>{b.invoice_no}</strong> · {b.customer_name || 'Walking Customer'} · {b.date} · {money(b.net_payable)}</button>)}</div><button onClick={() => setReprintOpen(false)} className="font-bold">Close</button></div></div>}
+      {customerOpen && <div className="fixed inset-0 z-[2500] grid place-items-center bg-black/50 p-4" onClick={() => setCustomerOpen(false)}>
+        <div className="w-full max-w-md space-y-4 rounded-2xl bg-white p-6" onClick={e => e.stopPropagation()}>
+          <h2 className="text-lg font-black">Customer details</h2>
+          {[['customerName', 'Customer name'], ['mobile', 'Mobile number'], ['customerEmail', 'Email']].map(([key, label]) => <label key={key} className="block text-sm font-bold">{label}<input autoFocus={key === 'customerName'} value={bill[key]} onChange={e => setBill(b => ({ ...b, [key]: e.target.value }))} className="mt-1 h-11 w-full rounded-xl border border-slate-300 px-3" /></label>)}
+          <button onClick={() => setCustomerOpen(false)} className="w-full rounded-xl bg-violet-600 p-3 font-bold text-white">Done</button>
+        </div>
+      </div>}
 
       {/* One-time per-machine naming — HQ gives a store one shared login
           used across several physical POS terminals there, so the login
@@ -2457,10 +2705,11 @@ export default function CashierPOS() {
       {terminalNamePrompt && (
         <div className="fixed inset-0 z-[3000] grid place-items-center bg-black/50 p-4">
           <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-2xl">
-            <h2 className="text-base font-black text-slate-900">Name this POS terminal</h2>
+            <h2 className="text-base font-black text-slate-900">Terminal setup</h2>
             <p className="mt-1.5 text-xs text-slate-500">
-              This identifies just this machine (e.g. "Counter 1") — separate from the login. You'll only see this once on this device.
+              {terminalSetupRequired ? "Set up this terminal to continue billing. Your current cart will be kept." : "Give this POS machine a name, such as Counter 1."}
             </p>
+            {terminalSetupError && <p role="alert" className="mt-2 text-xs font-bold text-rose-700">{terminalSetupError}</p>}
             <input
               autoFocus
               value={terminalNameDraft}
@@ -2476,6 +2725,8 @@ export default function CashierPOS() {
             >
               Save terminal name
             </button>
+            <button type="button" onClick={() => { if (lastInputRef.current?.isConnected) { setTouchKeyboardTarget(lastInputRef.current); setTouchKeyboardOpen(true); } }} className="mt-3 w-full rounded-xl border border-violet-200 bg-violet-50 py-2 text-sm font-bold text-violet-700">Open touch keyboard</button>
+            <button onClick={() => setTerminalNamePrompt(false)} className="mt-3 w-full rounded-xl border py-2 text-sm font-bold">Close</button>
           </div>
         </div>
       )}
@@ -2488,11 +2739,15 @@ export default function CashierPOS() {
               <h2 className="text-base font-black text-slate-900">Held Bills</h2>
               <button onClick={() => setHeldPanelOpen(false)} className="text-slate-400 hover:text-slate-700"><FaTimes /></button>
             </div>
+            {heldBills.length > 1 && (
+              <input autoFocus value={heldFilter} onChange={e => setHeldFilter(e.target.value)} placeholder="Find by name…"
+                className="mb-3 h-10 w-full rounded-xl border border-slate-200 px-3 text-sm font-bold outline-none focus:border-amber-500" />
+            )}
             {heldBills.length === 0 ? (
               <p className="py-6 text-center text-sm text-slate-400">Nothing held right now.</p>
             ) : (
               <div className="space-y-2">
-                {heldBills.map(row => (
+                {heldBills.filter(row => !heldFilter.trim() || row.label.toLowerCase().includes(heldFilter.trim().toLowerCase())).map(row => (
                   <div key={row.id} className="flex items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 p-3">
                     <div className="min-w-0">
                       <p className="truncate text-sm font-bold text-slate-900">{row.label}</p>
@@ -2510,9 +2765,51 @@ export default function CashierPOS() {
         </div>
       )}
 
+      {/* Drawer Summary (F5) — live, read-only preview of the current
+          shift's reconciliation, without closing it. */}
+      {drawerSummaryOpen && (
+        <div className="fixed inset-0 z-[2500] grid place-items-center bg-black/50 p-4" onClick={() => setDrawerSummaryOpen(false)}>
+          <div className="w-full max-w-sm rounded-2xl bg-white p-5 shadow-2xl" onClick={e => e.stopPropagation()}>
+            <div className="mb-3 flex items-center justify-between">
+              <h2 className="text-base font-black text-slate-900">Drawer Summary</h2>
+              <button onClick={() => setDrawerSummaryOpen(false)} className="text-slate-400 hover:text-slate-700"><FaTimes /></button>
+            </div>
+            {drawerSummaryLoading ? (
+              <p className="py-10 text-center text-sm text-slate-400">Loading…</p>
+            ) : !drawerSummaryData ? (
+              <p className="py-10 text-center text-sm text-slate-400">No open shift on this terminal.</p>
+            ) : (
+              <div className="space-y-2 text-sm">
+                <div className="flex justify-between"><span className="text-slate-500">Terminal</span><span className="font-bold text-slate-900">{drawerSummaryData.terminal_name || "This terminal"}</span></div>
+                <div className="flex justify-between"><span className="text-slate-500">Shift opened</span><span className="font-bold text-slate-900">{drawerSummaryData.opened_at_label}</span></div>
+                <div className="flex justify-between"><span className="text-slate-500">Opening cash</span><span className="font-bold text-slate-900">{money(drawerSummaryData.opening_cash)}</span></div>
+                <div className="my-2 border-t border-dashed border-slate-200" />
+                {Object.entries(drawerSummaryData.payment_totals || {}).map(([method, amt]) => (
+                  <div key={method} className="flex justify-between"><span className="text-slate-500">{method} sales</span><span className="font-bold text-slate-900">{money(amt)}</span></div>
+                ))}
+                <div className="flex justify-between"><span className="text-slate-500">Bills this shift</span><span className="font-bold text-slate-900">{drawerSummaryData.bill_count}</span></div>
+                <div className="flex justify-between"><span className="text-slate-500">Credit notes ({drawerSummaryData.return_count || 0})</span><span className="font-bold text-slate-900">{money(drawerSummaryData.return_total)}</span></div>
+                <div className="flex justify-between border-t border-slate-200 pt-2 text-base font-black text-slate-950"><span>Expected cash</span><span>{money(drawerSummaryData.expected_cash)}</span></div>
+                <div className="my-2 border-t border-dashed border-slate-200" />
+                <label className="ml-1 text-[10px] font-black uppercase tracking-widest text-slate-500">Counted cash (just to check — not saved)</label>
+                <input type="number" value={drawerCountedCash} onChange={e => setDrawerCountedCash(e.target.value)}
+                  className="h-11 w-full rounded-xl border border-slate-200 px-4 text-sm font-bold outline-none focus:border-emerald-500" />
+                {drawerCountedCash !== "" && (
+                  <p className={`rounded-xl px-3 py-2 text-xs font-black ${Math.abs(Number(drawerCountedCash) - drawerSummaryData.expected_cash) < 0.01 ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700"}`}>
+                    {Math.abs(Number(drawerCountedCash) - drawerSummaryData.expected_cash) < 0.01
+                      ? "Matches expected cash ✓"
+                      : `Mismatch: ${money(Number(drawerCountedCash) - drawerSummaryData.expected_cash)}`}
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Active exchange credit — shown until it's spent on a bill or cancelled. */}
       {exchangeCredit && !isReturn && (
-        <div className="sticky top-0 z-50 border-b border-amber-300 bg-amber-100 px-4 py-2.5 sm:px-6">
+        <div className="border-b border-amber-300 bg-amber-100 px-4 py-2.5 sm:px-6">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <p className="text-xs font-bold text-amber-900">
               <FaExchangeAlt className="mr-1.5 inline" />
@@ -2522,6 +2819,7 @@ export default function CashierPOS() {
           </div>
         </div>
       )}
+      {!exchangeCredit && !isReturn && <div className="px-4 pt-2 sm:px-6"><button onClick={lookupCreditNote} className="rounded-xl border border-amber-400 bg-amber-50 px-4 py-2 text-xs font-black text-amber-800">Apply credit note</button></div>}
 
       {/* Persistent, proactive connectivity banner — unlike the reactive
           "offline cache" toasts elsewhere, this appears the instant a
@@ -2529,7 +2827,7 @@ export default function CashierPOS() {
           a real network drop or just the server itself being unreachable,
           without the cashier having to attempt a scan/bill first. */}
       {!serverReachable && (
-        <div className="sticky top-0 z-50 border-b border-rose-300 bg-rose-600 px-4 py-2 sm:px-6">
+        <div className="border-b border-rose-300 bg-rose-600 px-4 py-2 sm:px-6">
           <p className="text-center text-xs font-black text-white">
             <FaWifi className="mr-1.5 inline" />
             No connection to the server — billing will save on this device and sync automatically once it's back.
@@ -2540,7 +2838,7 @@ export default function CashierPOS() {
       {/* Recovered draft cart — shown when a previous session left an
           unsaved in-progress bill behind (tab freeze/crash/accidental close). */}
       {draftPrompt && (
-        <div className="sticky top-0 z-50 border-b border-amber-300 bg-amber-100 px-4 py-2.5 sm:px-6">
+        <div className="border-b border-amber-300 bg-amber-100 px-4 py-2.5 sm:px-6">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <p className="text-xs font-bold text-amber-900">
               <FaExclamationTriangle className="mr-1.5 inline" />
@@ -2572,7 +2870,7 @@ export default function CashierPOS() {
       />
 
       {/* Header */}
-      <header className="sticky top-0 z-40 border-b border-slate-200 bg-white/95 px-4 py-3 backdrop-blur sm:px-6">
+      <header className="border-b border-slate-200 bg-white px-4 py-3 sm:px-6">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div className="flex items-center gap-3">
             <div>
@@ -2595,7 +2893,7 @@ export default function CashierPOS() {
             </button>
 
             {/* Return mode — opens invoice lookup */}
-            <button onClick={() => { setMode("return"); clearAll(); setInvoiceLookup(true); }}
+            <button onClick={() => { if (!isReturn && exchangeCredit && !items.length) { showToast("Add items and hold this credit-note sale before starting a return.", "error"); return; } if (!isReturn && items.length) holdCurrentBill(); setMode("return"); clearAll(); setInvoiceLookup(true); }}
               className={`cursor-pointer rounded-xl px-5 py-2.5 text-xs font-black uppercase tracking-widest ${mode === "return" ? "bg-rose-600 text-white" : "bg-slate-100 text-slate-500 hover:bg-slate-200"}`}>
               Return
             </button>
@@ -2671,7 +2969,7 @@ export default function CashierPOS() {
               </button>
             )}
 
-            <button disabled={!items.length} onClick={() => setBillOpen(true)}
+            <button disabled={!items.length} onClick={() => { if (requireTerminal()) setBillOpen(true); }}
               className={`flex items-center gap-2 rounded-xl px-5 py-2.5 text-xs font-black uppercase tracking-widest ${
                 !items.length
                   ? "cursor-not-allowed bg-slate-100 text-slate-300"
@@ -2687,7 +2985,7 @@ export default function CashierPOS() {
 
       {/* Scan / Search — hidden in return mode (items come from invoice) */}
       {!isReturn && (
-        <section className="sticky top-[73px] z-30 border-b border-slate-200 bg-white px-4 py-3 sm:px-6">
+        <section className="border-b border-slate-200 bg-white px-4 py-3 sm:px-6">
           <div className="grid gap-3 md:grid-cols-2">
             <div className="relative">
               <FaBarcode className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
@@ -2703,7 +3001,7 @@ export default function CashierPOS() {
             <div className="relative">
               <FaSearch className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
               {searching && <FaSpinner className="absolute right-4 top-1/2 -translate-y-1/2 animate-spin text-violet-500" />}
-              <input value={search} onChange={e => setSearch(e.target.value)}
+              <input ref={searchRef} value={search} onChange={e => setSearch(e.target.value)}
                 placeholder="Search by product name or barcode"
                 className="h-12 w-full rounded-2xl border border-slate-200 bg-slate-50 pl-11 pr-10 text-sm font-bold outline-none focus:border-violet-500" />
               {searchRes.length > 0 && (
@@ -2736,7 +3034,7 @@ export default function CashierPOS() {
 
       {/* Return mode banner */}
       {isReturn && (
-        <section className="sticky top-[73px] z-30 border-b border-rose-200 bg-rose-50 px-4 py-3 sm:px-6">
+        <section className="border-b border-rose-200 bg-rose-50 px-4 py-3 sm:px-6">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               <FaFileInvoice className="text-rose-600" />
@@ -2773,7 +3071,7 @@ export default function CashierPOS() {
             </div>
             <div className="rounded-xl bg-white px-4 py-2 text-right shadow-sm">
               <p className="text-[10px] font-black uppercase text-slate-400">
-                {isReturn ? "Refund Total" : "Current Total"}
+                {isReturn ? "Credit Note Total" : "Current Total"}
               </p>
               <p className={`text-lg font-black ${isReturn ? "text-rose-600" : "text-violet-600"}`}>{money(summary.netPayable)}</p>
             </div>
@@ -2863,6 +3161,7 @@ export default function CashierPOS() {
       />
 
       <GenerateBillPopup
+        ref={generateBillRef}
         open={billOpen} isReturn={isReturn} items={items}
         bill={bill} setBill={setBill} summary={summary}
         onClose={() => setBillOpen(false)} onFinalize={finalizeBill}
@@ -2870,7 +3169,10 @@ export default function CashierPOS() {
         saving={saving} originalInvoice={originalInvoice}
         exchangeCredit={exchangeCredit}
       />
-      <ReceiptModal open={receiptOpen} receipt={receipt} onClose={() => setReceiptOpen(false)} onStartExchange={startExchange} />
+      <ReceiptModal
+        open={receiptOpen} receipt={receipt} onClose={() => setReceiptOpen(false)} onStartExchange={startExchange}
+        autoPrint={pendingAutoPrint} onAutoPrinted={() => setPendingAutoPrint(false)}
+      />
     </div>
   );
 }

@@ -869,6 +869,11 @@ async def save_bill(
                 "stock_conflicts": existing.get("stock_conflicts", []),
             }
 
+    if not terminal_id or not terminal_name:
+        raise HTTPException(status_code=400, detail="Set up this terminal with a name before saving a bill or credit note.")
+    if len(terminal_name) > 40:
+        raise HTTPException(status_code=400, detail="Terminal name must be 40 characters or fewer.")
+
     cashier_name = (store.get("admin_name") or bill_meta.get("cashierName") or "POS").strip()
 
     if is_return:
@@ -882,13 +887,30 @@ async def save_bill(
         })
         if not original:
             raise HTTPException(status_code=404, detail="Original invoice was not found in this store.")
-        duplicate_return = await sales_collection.find_one({
-            "type": "return",
-            "original_invoice": original_invoice,
-            **_store_scope(store),
-        })
-        if duplicate_return:
-            raise HTTPException(status_code=400, detail="This invoice has already been returned.")
+        original_items = {str(i.get("barcode") or ""): i for i in original.get("items", [])}
+        original_total = sum(_float(i.get("price")) * abs(_int(i.get("qty"))) for i in original.get("items", []))
+        if original_total <= 0:
+            raise HTTPException(status_code=400, detail="The original bill has no valid item value.")
+        requested = {}
+        for item in items:
+            barcode = str(item.get("barcode") or "").strip()
+            requested[barcode] = requested.get(barcode, 0) + abs(_int(item.get("qty")))
+        if not requested or any(b not in original_items or qty <= 0 or qty > abs(_int(original_items[b].get("qty"))) for b, qty in requested.items()):
+            raise HTTPException(status_code=400, detail="Return items and quantities must match the original bill.")
+        returned_quantities = {}
+        previous_credit = 0.0
+        async for previous in sales_collection.find({"type": "return", "original_invoice": original_invoice, **_store_scope(store)}):
+            previous_credit += _float(previous.get("summary", {}).get("net_payable"))
+            for line in previous.get("items", []):
+                barcode = str(line.get("barcode") or "")
+                returned_quantities[barcode] = returned_quantities.get(barcode, 0) + abs(_int(line.get("qty")))
+        if any(qty + returned_quantities.get(b, 0) > abs(_int(original_items[b].get("qty"))) for b, qty in requested.items()):
+            raise HTTPException(status_code=400, detail="Return quantity exceeds the remaining quantity on the original bill.")
+        returned_value = sum(_float(original_items[b].get("price")) * qty for b, qty in requested.items())
+        original_paid = _float(original.get("summary", {}).get("net_payable"))
+        expected_credit = min(int(returned_value * original_paid / original_total + 0.5), max(0.0, original_paid - previous_credit))
+        if abs(_float(summary.get("netPayable")) - expected_credit) > 0.01:
+            raise HTTPException(status_code=400, detail="Credit note value must match the amount paid for the returned items.")
 
         return_reason = str(payload.get("returnReason") or "").strip()
         if not return_reason:
@@ -916,11 +938,15 @@ async def save_bill(
         })
         if not exchange_original:
             raise HTTPException(status_code=404, detail="The return this exchange credit refers to was not found.")
+        if not exchange_original.get("credit_note_only"):
+            raise HTTPException(status_code=400, detail="This older return is not marked as an unused credit note; ask a manager to review it.")
         if exchange_original.get("exchange_consumed"):
             raise HTTPException(status_code=409, detail="This return's credit has already been used on another bill.")
         allowed_amount = _float(exchange_original.get("summary", {}).get("net_payable"))
-        if exchange_claimed_amount > allowed_amount + 0.01:
+        if abs(exchange_claimed_amount - allowed_amount) > 0.01:
             raise HTTPException(status_code=400, detail="Exchange credit amount does not match the original return.")
+        if _float(summary.get("netPayable")) + 0.009 < allowed_amount:
+            raise HTTPException(status_code=400, detail="The replacement purchase must be at least the credit note value.")
 
     if not items:
         raise HTTPException(status_code=400, detail="No items in bill.")
@@ -957,6 +983,26 @@ async def save_bill(
     if not clean_items:
         raise HTTPException(status_code=400, detail="No valid line items.")
 
+    if exchange_original:
+        gross = sum(item["qty"] * item["price"] for item in clean_items)
+        discount = _float(bill_meta.get("discount"))
+        offer = _float(bill_meta.get("appliedOffer"))
+        if gross < 0 or discount < 0 or offer < 0 or (bill_meta.get("discountType") != "amount" and discount > 100):
+            raise HTTPException(status_code=400, detail="Invalid bill discount.")
+        deduction = min(discount, gross) if bill_meta.get("discountType") == "amount" else gross * discount / 100
+        if deduction + offer > gross + 0.001:
+            raise HTTPException(status_code=400, detail="Discount cannot exceed the bill total.")
+        calculated_net = int(max(0.0, gross - deduction - offer) + 0.5)
+        if abs(calculated_net - _float(summary.get("netPayable"))) > 0.01:
+            raise HTTPException(status_code=400, detail="Bill total does not match its items and discount.")
+        due = calculated_net - exchange_claimed_amount
+        if due < -0.009:
+            raise HTTPException(status_code=400, detail="The replacement purchase must be at least the credit note value.")
+        if split_total > 0 and abs(split_total - due) > 0.01:
+            raise HTTPException(status_code=400, detail="Split payments must match the amount due after credit.")
+        if split_total <= 0 and bill_meta.get("paymentMethod", "Cash") == "Cash" and _float(payload.get("paidAmount")) + 0.01 < due:
+            raise HTTPException(status_code=400, detail="Cash paid is less than the amount due after credit.")
+
     stock_conflicts = []
     if client_offline_id and not is_return:
         for item in clean_items:
@@ -982,6 +1028,7 @@ async def save_bill(
     bill_doc = {
         "invoice_no": invoice_no,
         "type": "return" if is_return else "sale",
+        "credit_note_only": is_return,
         "original_invoice": payload.get("originalInvoice", ""),
         "return_reason": str(payload.get("returnReason") or "") if is_return else "",
         "return_approved_by": str(payload.get("managerName") or "") if is_return else "",
@@ -994,10 +1041,11 @@ async def save_bill(
         "customer_name": bill_meta.get("customerName", ""),
         "mobile": bill_meta.get("mobile", ""),
         "customer_email": str(bill_meta.get("customerEmail") or bill_meta.get("email") or "").strip().lower(),
-        "payment_method": bill_meta.get("paymentMethod", "Cash"),
+        "payment_method": "Credit Note" if is_return else bill_meta.get("paymentMethod", "Cash"),
         "payment_split": clean_payment_split if split_total > 0 else {},
         "applied_offer": _float(bill_meta.get("appliedOffer")),
         "discount_pct": _float(bill_meta.get("discount")),
+        "discount_type": str(bill_meta.get("discountType") or "percent"),
         "promotion_name": str(bill_meta.get("promotionName") or "").strip()[:120],
         "promotion_type": str(bill_meta.get("promotionType") or "").strip().lower()[:40],
         "paid_amount": _float(payload.get("paidAmount")),
@@ -1039,17 +1087,51 @@ async def save_bill(
         "created_at": now,
     }
 
-    result = await sales_collection.insert_one(bill_doc)
-
     if exchange_original:
-        await sales_collection.update_one(
-            {"_id": exchange_original["_id"]},
+        claimed = await sales_collection.update_one(
+            {"_id": exchange_original["_id"], "exchange_consumed": {"$ne": True}},
             {"$set": {
                 "exchange_consumed": True,
                 "exchange_consumed_by_invoice": invoice_no,
                 "exchange_consumed_amount": exchange_applied,
             }},
         )
+        if not claimed.modified_count:
+            raise HTTPException(status_code=409, detail="This return's credit has already been used on another bill.")
+
+    return_locked = False
+    if is_return:
+        lock = await sales_collection.update_one(
+            {"_id": original["_id"], "return_processing": {"$exists": False}},
+            {"$set": {"return_processing": invoice_no}},
+        )
+        if not lock.modified_count:
+            raise HTTPException(status_code=409, detail="Another return is being processed for this invoice. Try again shortly.")
+        return_locked = True
+    try:
+        if is_return:
+            returned_quantities = {}
+            previous_credit = 0.0
+            async for previous in sales_collection.find({"type": "return", "original_invoice": original_invoice, **_store_scope(store)}):
+                previous_credit += _float(previous.get("summary", {}).get("net_payable"))
+                for line in previous.get("items", []):
+                    barcode = str(line.get("barcode") or "")
+                    returned_quantities[barcode] = returned_quantities.get(barcode, 0) + abs(_int(line.get("qty")))
+            if any(qty + returned_quantities.get(b, 0) > abs(_int(original_items[b].get("qty"))) for b, qty in requested.items()):
+                raise HTTPException(status_code=409, detail="Return quantity exceeds the remaining quantity on the original bill.")
+            if expected_credit > max(0.0, original_paid - previous_credit) + 0.01:
+                raise HTTPException(status_code=409, detail="Credit available changed. Reload the original bill.")
+        result = await sales_collection.insert_one(bill_doc)
+    except Exception:
+        if exchange_original:
+            await sales_collection.update_one(
+                {"_id": exchange_original["_id"], "exchange_consumed_by_invoice": invoice_no},
+                {"$unset": {"exchange_consumed": "", "exchange_consumed_by_invoice": "", "exchange_consumed_amount": ""}},
+            )
+        raise
+    finally:
+        if return_locked:
+            await sales_collection.update_one({"_id": original["_id"], "return_processing": invoice_no}, {"$unset": {"return_processing": ""}})
 
     inventory_warnings = []
     inventory_not_found = []
@@ -1223,7 +1305,7 @@ async def close_shift(payload: dict, authorization: str = Header(None)):
         if split:
             cash_sales += _float(split.get("Cash"))
         elif (doc.get("payment_method") or "Cash") == "Cash":
-            cash_sales += amount
+            cash_sales += max(0.0, amount - _float(doc.get("exchange_credit_applied")))
     expected_cash = _float(shift.get("opening_cash")) + cash_sales
     counted_cash = _float(payload.get("countedCash"))
     mismatch = counted_cash - expected_cash
@@ -1244,6 +1326,61 @@ async def close_shift(payload: dict, authorization: str = Header(None)):
     shift.update(update)
     shift["_id"] = str(shift["_id"])
     return {"status": "success", "shift": shift}
+
+
+@router.get("/shift/drawer-summary")
+async def drawer_summary(terminal_id: str = Query(""), authorization: str = Header(None)):
+    """Read-only preview of the SAME reconciliation close_shift computes —
+    a cashier can check what's in the drawer mid-shift without actually
+    closing it. Nothing here is written anywhere; the real recorded
+    reconciliation still only happens at an actual shift close."""
+    ctx = await _require_store_context(authorization)
+    shift = await cashier_shift_collection.find_one(_shift_scope(ctx, terminal_id), sort=[("opened_at", -1)])
+    if not shift:
+        raise HTTPException(status_code=400, detail="No open shift found for this terminal.")
+    opened_at = shift.get("opened_at") or datetime.utcnow()
+    now = datetime.utcnow()
+    q = {**_store_scope(ctx), "type": "sale", "created_at": {"$gte": opened_at, "$lte": now}}
+    shift_terminal_id = shift.get("terminal_id") or ""
+    if shift_terminal_id:
+        q["terminal_id"] = shift_terminal_id
+
+    payment_totals = {"Cash": 0.0, "Card": 0.0, "UPI": 0.0}
+    total_sales = 0.0
+    bill_count = 0
+    async for doc in sales_collection.find(q):
+        bill_count += 1
+        amount = _float(doc.get("summary", {}).get("net_payable"))
+        total_sales += amount
+        split = doc.get("payment_split") or {}
+        if split:
+            for method in ("Cash", "Card", "UPI"):
+                payment_totals[method] += _float(split.get(method))
+        else:
+            method = doc.get("payment_method") or "Cash"
+            payment_totals[method] = payment_totals.get(method, 0.0) + max(0.0, amount - _float(doc.get("exchange_credit_applied")))
+
+    expected_cash = _float(shift.get("opening_cash")) + payment_totals["Cash"]
+    return_query = {**q, "type": "return"}
+    return_count = 0
+    return_total = 0.0
+    async for doc in sales_collection.find(return_query):
+        return_count += 1
+        return_total += _float(doc.get("summary", {}).get("net_payable"))
+    return {
+        "status": "success",
+        "shift_id": str(shift["_id"]),
+        "terminal_id": shift_terminal_id,
+        "terminal_name": shift.get("terminal_name", ""),
+        "opened_at_label": shift.get("opened_at_label", ""),
+        "opening_cash": _float(shift.get("opening_cash")),
+        "payment_totals": {k: round(v, 2) for k, v in payment_totals.items()},
+        "total_sales": round(total_sales, 2),
+        "bill_count": bill_count,
+        "return_count": return_count,
+        "return_total": round(return_total, 2),
+        "expected_cash": round(expected_cash, 2),
+    }
 
 
 @router.post("/bill/{invoice_no:path}/share")
@@ -1361,9 +1498,13 @@ async def get_bill_by_invoice(invoice_no: str, authorization: str = Header(None)
     if not doc:
         raise HTTPException(status_code=404, detail=f"Invoice '{invoice_no}' not found.")
 
-    existing_return = await sales_collection.find_one({
-        "type": "return", "original_invoice": invoice_no, **_store_scope(ctx),
-    })
+    returned = {}
+    returned_credit = 0.0
+    async for previous in sales_collection.find({"type": "return", "original_invoice": invoice_no, **_store_scope(ctx)}):
+        returned_credit += _float(previous.get("summary", {}).get("net_payable"))
+        for item in previous.get("items", []):
+            barcode = str(item.get("barcode") or "")
+            returned[barcode] = returned.get(barcode, 0) + abs(_int(item.get("qty")))
 
     return JSONResponse({
         "status": "success",
@@ -1378,8 +1519,18 @@ async def get_bill_by_invoice(invoice_no: str, authorization: str = Header(None)
             "payment_method":   doc.get("payment_method", ""),
             "items":            doc.get("items", []),
             "summary":          doc.get("summary", {}),
-            "already_returned": existing_return is not None,
-            "return_invoice":   existing_return.get("invoice_no") if existing_return else None,
+            "payment_split":    doc.get("payment_split", {}),
+            "paid_amount":      doc.get("paid_amount", 0),
+            "change_return":    doc.get("change_return", 0),
+            "applied_offer":    doc.get("applied_offer", 0),
+            "discount_pct":     doc.get("discount_pct", 0),
+            "original_invoice": doc.get("original_invoice", ""),
+            "exchange_credit_applied": doc.get("exchange_credit_applied", 0),
+            "exchange_against_invoice": doc.get("exchange_against_invoice", ""),
+            "exchange_consumed": bool(doc.get("exchange_consumed")),
+            "credit_note_only": bool(doc.get("credit_note_only")),
+            "returned_quantities": returned,
+            "returned_credit": returned_credit,
         }
     })
 
