@@ -1328,6 +1328,27 @@ async def close_shift(payload: dict, authorization: str = Header(None)):
     return {"status": "success", "shift": shift}
 
 
+@router.get("/shift/last-closed")
+async def last_closed_shift(terminal_id: str = Query(""), authorization: str = Header(None)):
+    """What a cashier counted in the drawer when THIS terminal last closed
+    — offered as a suggested opening cash for the new shift, since in
+    practice that's usually the same float carried forward day to day.
+    Always just a suggestion: the open-shift screen still lets it be
+    edited before confirming, it's never applied automatically."""
+    ctx = await _require_store_context(authorization)
+    query = {**_store_scope(ctx), "status": "closed"}
+    if terminal_id:
+        query["terminal_id"] = terminal_id
+    shift = await cashier_shift_collection.find_one(query, sort=[("closed_at", -1)])
+    if not shift:
+        return {"status": "success", "found": False}
+    return {
+        "status": "success", "found": True,
+        "counted_cash": _float(shift.get("counted_cash")),
+        "closed_at_label": shift.get("closed_at_label", ""),
+    }
+
+
 @router.get("/shift/drawer-summary")
 async def drawer_summary(terminal_id: str = Query(""), authorization: str = Header(None)):
     """Read-only preview of the SAME reconciliation close_shift computes —

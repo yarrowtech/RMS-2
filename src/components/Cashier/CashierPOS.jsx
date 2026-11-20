@@ -1793,6 +1793,12 @@ export default function CashierPOS() {
   const [manualOfflineBarcode, setManualOfflineBarcode] = useState("");
   const [currentShift, setCurrentShift] = useState(null);
   const [shiftBusy, setShiftBusy] = useState(false);
+  const [openShiftModalOpen, setOpenShiftModalOpen] = useState(false);
+  const [openingCashInput, setOpeningCashInput] = useState("0");
+  const [openingCashHint, setOpeningCashHint] = useState(null);
+  const [closeShiftModalOpen, setCloseShiftModalOpen] = useState(false);
+  const [closingCashInput, setClosingCashInput] = useState("");
+  const [closingNotesInput, setClosingNotesInput] = useState("");
   const [serverReachable, setServerReachable] = useState(true);
   const [pendingAutoPrint, setPendingAutoPrint] = useState(false);
   const [drawerSummaryOpen, setDrawerSummaryOpen] = useState(false);
@@ -1905,49 +1911,73 @@ export default function CashierPOS() {
     loadCurrentShift();
   }, [loadCurrentShift]);
 
+  // Replaces a raw window.prompt() with a real modal, and offers yesterday's
+  // counted closing cash on THIS terminal as a suggested opening figure —
+  // in practice the float carried forward is usually the same amount, so
+  // defaulting to "0" every morning just made the cashier retype it. It's
+  // only ever a suggestion: still editable, never applied automatically.
   const openShift = useCallback(async () => {
-    const openingCash = window.prompt("Opening cash in drawer?", "0");
-    if (openingCash === null) return;
+    setOpenShiftModalOpen(true);
+    setOpeningCashInput("0");
+    setOpeningCashHint(null);
+    try {
+      const res = await cashierFetch(`${API_BASE}/cashier/shift/last-closed?terminal_id=${encodeURIComponent(getTerminalId())}`);
+      const json = await res.json();
+      if (res.ok && json.found) {
+        setOpeningCashInput(String(json.counted_cash));
+        setOpeningCashHint(json);
+      }
+    } catch {
+      // No hint available — the field just stays at the plain default.
+    }
+  }, []);
+
+  const confirmOpenShift = useCallback(async () => {
     setShiftBusy(true);
     try {
       const res = await cashierFetch(`${API_BASE}/cashier/shift/open`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ openingCash: Number(openingCash || 0), terminalId: getTerminalId(), terminalName: getTerminalName() }),
+        body: JSON.stringify({ openingCash: Number(openingCashInput || 0), terminalId: getTerminalId(), terminalName: getTerminalName() }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.detail || "Could not open shift");
       setCurrentShift(json.shift || null);
+      setOpenShiftModalOpen(false);
       showToast("Shift opened", "success");
     } catch (e) {
       showToast(e.message || "Could not open shift", "error");
     } finally {
       setShiftBusy(false);
     }
-  }, [showToast]);
+  }, [openingCashInput, showToast]);
 
-  const closeShift = useCallback(async () => {
-    const countedCash = window.prompt("Counted cash in drawer?", String(currentShift?.expected_cash || ""));
-    if (countedCash === null) return;
-    const notes = window.prompt("Closing note (optional)", "") || "";
+  const closeShift = useCallback(() => {
+    setClosingCashInput(String(currentShift?.expected_cash || ""));
+    setClosingNotesInput("");
+    setCloseShiftModalOpen(true);
+  }, [currentShift]);
+
+  const confirmCloseShift = useCallback(async () => {
     setShiftBusy(true);
     try {
       const res = await cashierFetch(`${API_BASE}/cashier/shift/close`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ countedCash: Number(countedCash || 0), notes, terminalId: getTerminalId() }),
+        body: JSON.stringify({ countedCash: Number(closingCashInput || 0), notes: closingNotesInput, terminalId: getTerminalId() }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.detail || "Could not close shift");
       setCurrentShift(null);
+      setCloseShiftModalOpen(false);
       const mismatch = Number(json.shift?.cash_mismatch || 0);
-      showToast(`Shift closed. Mismatch ?${mismatch.toFixed(2)}`, Math.abs(mismatch) > 0.01 ? "error" : "success");
+      showToast(`Shift closed. Mismatch ₹${mismatch.toFixed(2)}`, Math.abs(mismatch) > 0.01 ? "error" : "success");
     } catch (e) {
       showToast(e.message || "Could not close shift", "error");
     } finally {
       setShiftBusy(false);
     }
-  }, [currentShift, showToast]);
+  }, [closingCashInput, closingNotesInput, showToast]);
 
   const openDrawerSummary = useCallback(async () => {
     setDrawerSummaryLoading(true);
@@ -2251,11 +2281,24 @@ export default function CashierPOS() {
   }, [showToast]);
 
   const cancelExchangeCredit = useCallback(() => setExchangeCredit(null), []);
-  const lookupCreditNote = async () => {
-    const invoice = window.prompt("Enter or scan the credit note number:");
-    if (!invoice?.trim()) return;
+
+  // Scanning a credit note's barcode/number should feel exactly like
+  // scanning a product — a dedicated, auto-focused field that the
+  // scanner's trailing Enter submits on its own, not a raw browser
+  // prompt() (which has no app styling and nothing marking it as
+  // scan-ready).
+  const [creditNoteModalOpen, setCreditNoteModalOpen] = useState(false);
+  const [creditNoteInput, setCreditNoteInput] = useState("");
+  const [creditNoteBusy, setCreditNoteBusy] = useState(false);
+
+  const openCreditNoteLookup = () => { setCreditNoteInput(""); setCreditNoteModalOpen(true); };
+
+  const submitCreditNote = async () => {
+    const invoice = creditNoteInput.trim();
+    if (!invoice) return;
+    setCreditNoteBusy(true);
     try {
-      const res = await cashierFetch(`${API_BASE}/cashier/bill/${encodeURIComponent(invoice.trim())}`);
+      const res = await cashierFetch(`${API_BASE}/cashier/bill/${encodeURIComponent(invoice)}`);
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || "Credit note not found");
       const note = data.data;
@@ -2266,7 +2309,12 @@ export default function CashierPOS() {
       if (amount <= 0) throw new Error("This credit note has no usable value.");
       setExchangeCredit({ amount, againstInvoice: note.invoice_no });
       showToast(`Credit note ${note.invoice_no} ready`, "success");
-    } catch (error) { showToast(error.message || "Could not load credit note", "error"); }
+      setCreditNoteModalOpen(false);
+    } catch (error) {
+      showToast(error.message || "Could not load credit note", "error");
+    } finally {
+      setCreditNoteBusy(false);
+    }
   };
 
   // Debounced draft autosave — covers a freeze/crash while the cashier is
@@ -2570,6 +2618,9 @@ export default function CashierPOS() {
         if (reprintOpen) setReprintOpen(false);
         else if (customerOpen) setCustomerOpen(false);
         else if (terminalNamePrompt) setTerminalNamePrompt(false);
+        else if (creditNoteModalOpen) setCreditNoteModalOpen(false);
+        else if (openShiftModalOpen && !shiftBusy) setOpenShiftModalOpen(false);
+        else if (closeShiftModalOpen && !shiftBusy) setCloseShiftModalOpen(false);
         else if (billOpen) setBillOpen(false);
         else if (drawerSummaryOpen) setDrawerSummaryOpen(false);
         else if (heldPanelOpen) setHeldPanelOpen(false);
@@ -2580,7 +2631,7 @@ export default function CashierPOS() {
     };
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
-  }, [items.length, isReturn, receipt, receiptOpen, billOpen, customerOpen, reprintOpen, drawerSummaryOpen, heldPanelOpen, invoiceLookup, terminalNamePrompt, exchangeCredit, manualOfflineOpen, showGuide, holdCurrentBill, openDrawerSummary, showToast, requireTerminal]);
+  }, [items.length, isReturn, receipt, receiptOpen, billOpen, customerOpen, reprintOpen, drawerSummaryOpen, heldPanelOpen, invoiceLookup, terminalNamePrompt, creditNoteModalOpen, openShiftModalOpen, closeShiftModalOpen, shiftBusy, exchangeCredit, manualOfflineOpen, showGuide, holdCurrentBill, openDrawerSummary, showToast, requireTerminal]);
 
   const finalizeBill = useCallback(async (paidAmount = 0, changeReturn = 0, paymentMethodOverride = bill.paymentMethod, paymentSplitOverride = {}, returnReason = "", managerName = "", autoPrint = false) => {
     if (!requireTerminal()) { setBillOpen(false); return; }
@@ -2765,6 +2816,80 @@ export default function CashierPOS() {
         </div>
       )}
 
+      {/* Open Shift — replaces a raw window.prompt() with a real modal,
+          pre-filled with yesterday's closing cash on this terminal as a
+          suggestion (still freely editable). */}
+      {openShiftModalOpen && (
+        <div className="fixed inset-0 z-[2600] grid place-items-center bg-black/50 p-4" onClick={() => !shiftBusy && setOpenShiftModalOpen(false)}>
+          <div className="w-full max-w-sm rounded-2xl bg-white p-5 shadow-2xl" onClick={e => e.stopPropagation()}>
+            <div className="mb-1 flex items-center justify-between">
+              <h2 className="text-base font-black text-slate-900">Open Shift</h2>
+              <button onClick={() => setOpenShiftModalOpen(false)} className="text-slate-400 hover:text-slate-700"><FaTimes /></button>
+            </div>
+            <p className="mb-4 text-xs text-slate-500">
+              {openingCashHint
+                ? `Pre-filled from this terminal's last close (${openingCashHint.closed_at_label}) — change it if the float's different today.`
+                : "How much cash is in the drawer right now?"}
+            </p>
+            <label className="ml-1 text-[10px] font-black uppercase tracking-widest text-slate-500">Opening cash</label>
+            <input
+              autoFocus type="number" value={openingCashInput} onChange={e => setOpeningCashInput(e.target.value)}
+              onKeyDown={e => e.key === "Enter" && confirmOpenShift()}
+              disabled={shiftBusy}
+              className="mt-1 h-12 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-sm font-bold outline-none focus:border-emerald-500 disabled:opacity-60"
+            />
+            <div className="mt-4 grid grid-cols-2 gap-2">
+              <button onClick={() => setOpenShiftModalOpen(false)} disabled={shiftBusy}
+                className="rounded-xl border border-slate-200 py-3 text-xs font-black uppercase tracking-widest text-slate-600 hover:bg-slate-50 disabled:opacity-60">
+                Cancel
+              </button>
+              <button onClick={confirmOpenShift} disabled={shiftBusy}
+                className="flex items-center justify-center gap-2 rounded-xl bg-emerald-600 py-3 text-xs font-black uppercase tracking-widest text-white hover:bg-emerald-700 disabled:opacity-60">
+                {shiftBusy ? <FaSpinner className="animate-spin" /> : null}
+                {shiftBusy ? "Opening…" : "Open Shift"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Close Shift */}
+      {closeShiftModalOpen && (
+        <div className="fixed inset-0 z-[2600] grid place-items-center bg-black/50 p-4" onClick={() => !shiftBusy && setCloseShiftModalOpen(false)}>
+          <div className="w-full max-w-sm rounded-2xl bg-white p-5 shadow-2xl" onClick={e => e.stopPropagation()}>
+            <div className="mb-1 flex items-center justify-between">
+              <h2 className="text-base font-black text-slate-900">Close Shift</h2>
+              <button onClick={() => setCloseShiftModalOpen(false)} className="text-slate-400 hover:text-slate-700"><FaTimes /></button>
+            </div>
+            <p className="mb-4 text-xs text-slate-500">Expected cash: {money(currentShift?.expected_cash || 0)}. Count the drawer and enter what you actually found.</p>
+            <label className="ml-1 text-[10px] font-black uppercase tracking-widest text-slate-500">Counted cash</label>
+            <input
+              autoFocus type="number" value={closingCashInput} onChange={e => setClosingCashInput(e.target.value)}
+              disabled={shiftBusy}
+              className="mt-1 h-12 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-sm font-bold outline-none focus:border-emerald-500 disabled:opacity-60"
+            />
+            <label className="ml-1 mt-3 block text-[10px] font-black uppercase tracking-widest text-slate-500">Closing note (optional)</label>
+            <input
+              value={closingNotesInput} onChange={e => setClosingNotesInput(e.target.value)}
+              onKeyDown={e => e.key === "Enter" && confirmCloseShift()}
+              disabled={shiftBusy}
+              className="mt-1 h-11 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 text-sm font-bold outline-none focus:border-emerald-500 disabled:opacity-60"
+            />
+            <div className="mt-4 grid grid-cols-2 gap-2">
+              <button onClick={() => setCloseShiftModalOpen(false)} disabled={shiftBusy}
+                className="rounded-xl border border-slate-200 py-3 text-xs font-black uppercase tracking-widest text-slate-600 hover:bg-slate-50 disabled:opacity-60">
+                Cancel
+              </button>
+              <button onClick={confirmCloseShift} disabled={shiftBusy}
+                className="flex items-center justify-center gap-2 rounded-xl bg-rose-600 py-3 text-xs font-black uppercase tracking-widest text-white hover:bg-rose-700 disabled:opacity-60">
+                {shiftBusy ? <FaSpinner className="animate-spin" /> : null}
+                {shiftBusy ? "Closing…" : "Close Shift"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Drawer Summary (F5) — live, read-only preview of the current
           shift's reconciliation, without closing it. */}
       {drawerSummaryOpen && (
@@ -2819,7 +2944,45 @@ export default function CashierPOS() {
           </div>
         </div>
       )}
-      {!exchangeCredit && !isReturn && <div className="px-4 pt-2 sm:px-6"><button onClick={lookupCreditNote} className="rounded-xl border border-amber-400 bg-amber-50 px-4 py-2 text-xs font-black text-amber-800">Apply credit note</button></div>}
+      {!exchangeCredit && !isReturn && <div className="px-4 pt-2 sm:px-6"><button onClick={openCreditNoteLookup} className="rounded-xl border border-amber-400 bg-amber-50 px-4 py-2 text-xs font-black text-amber-800">Apply credit note</button></div>}
+
+      {/* Credit note lookup — a dedicated, scan-ready field instead of a
+          raw browser prompt(). Auto-focused, and Enter submits it, same as
+          a barcode scanner finishing a scan. */}
+      {creditNoteModalOpen && (
+        <div className="fixed inset-0 z-[2600] grid place-items-center bg-black/50 p-4" onClick={() => !creditNoteBusy && setCreditNoteModalOpen(false)}>
+          <div className="w-full max-w-sm rounded-2xl bg-white p-5 shadow-2xl" onClick={e => e.stopPropagation()}>
+            <div className="mb-1 flex items-center justify-between">
+              <h2 className="text-base font-black text-slate-900">Apply credit note</h2>
+              <button onClick={() => setCreditNoteModalOpen(false)} className="text-slate-400 hover:text-slate-700"><FaTimes /></button>
+            </div>
+            <p className="mb-4 text-xs text-slate-500">Scan the credit note's barcode, or type its invoice number, then press Enter.</p>
+            <div className="relative">
+              <FaBarcode className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input
+                autoFocus
+                value={creditNoteInput}
+                onChange={e => setCreditNoteInput(e.target.value)}
+                onKeyDown={e => e.key === "Enter" && submitCreditNote()}
+                placeholder="Scan or type credit note number"
+                disabled={creditNoteBusy}
+                className="h-12 w-full rounded-2xl border border-slate-200 bg-slate-50 pl-11 pr-4 text-sm font-bold outline-none focus:border-amber-500 disabled:opacity-60"
+              />
+            </div>
+            <div className="mt-4 grid grid-cols-2 gap-2">
+              <button onClick={() => setCreditNoteModalOpen(false)} disabled={creditNoteBusy}
+                className="rounded-xl border border-slate-200 py-3 text-xs font-black uppercase tracking-widest text-slate-600 hover:bg-slate-50 disabled:opacity-60">
+                Cancel
+              </button>
+              <button onClick={submitCreditNote} disabled={creditNoteBusy || !creditNoteInput.trim()}
+                className="flex items-center justify-center gap-2 rounded-xl bg-amber-600 py-3 text-xs font-black uppercase tracking-widest text-white hover:bg-amber-700 disabled:opacity-40">
+                {creditNoteBusy ? <FaSpinner className="animate-spin" /> : null}
+                {creditNoteBusy ? "Checking…" : "Apply"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Persistent, proactive connectivity banner — unlike the reactive
           "offline cache" toasts elsewhere, this appears the instant a

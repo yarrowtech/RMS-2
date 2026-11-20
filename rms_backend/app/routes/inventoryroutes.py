@@ -223,7 +223,7 @@ async def build_product_master(tenant_id: str) -> dict:
 # ─────────────────────────────────────────────
 
 @router.get("/filter-tree")
-async def get_inventory_filter_tree(ctx: dict = Depends(get_hq_tenant)):
+async def get_inventory_filter_tree(ctx: dict = Depends(get_any_tenant)):
     """Division -> section -> [departments], built directly from what's
     actually on products in this tenant's catalog.
 
@@ -237,6 +237,14 @@ async def get_inventory_filter_tree(ctx: dict = Depends(get_hq_tenant)):
     the wrong source of truth. This reads the real catalog instead, so
     the dropdowns always match reality regardless of whether that
     separate settings screen was ever touched.
+
+    Gated by get_any_tenant, not get_hq_tenant: this is read-only,
+    tenant-wide reference data (the catalog's own division/section/
+    department structure), not an HQ-only operation — a store-scoped
+    login (e.g. a store's own Stock Ledger/Adjustment/Store Stock
+    screens) needs these same filter options and was getting a flat 403
+    from this endpoint before, leaving every Division/Section/Department
+    dropdown empty for any store-scoped admin.
     """
     tree: dict = {}
     cursor = product_collection.find(
@@ -1001,6 +1009,7 @@ async def _collect_ledger_rows(tenant_id: str, store_id: Optional[str], ctx: dic
 
             source = adj.get("source", "")
             doc_type = "POS Return" if source == "pos_sale" and qty_change > 0 else "POS Sale" if source == "pos_sale" else "Adjustment"
+            rate = float(doc.get("rate", 0))
             rows.append({
                 "date":       adjusted_at,
                 "doc_type":   doc_type,
@@ -1014,8 +1023,14 @@ async def _collect_ledger_rows(tenant_id: str, store_id: Optional[str], ctx: dic
                 "warehouse":  doc.get("store_name", "") or (ctx.get("store_name") if store_id else "Main Warehouse") or "Store",
                 "in_qty":     round(in_qty, 3),
                 "out_qty":    round(out_qty, 3),
-                "rate":       float(doc.get("rate", 0)),
-                "value":      0.0,
+                "rate":       rate,
+                # Was hardcoded to 0.0 regardless of rate — every POS
+                # Sale/Return and manual adjustment row showed ₹0.00 in
+                # Value no matter what the item actually sold for. The
+                # GRN branch right above already computes this correctly
+                # (inward * rate); adjustments just never got the same
+                # treatment.
+                "value":      round(abs(qty_change) * rate, 2),
                 "ref":        f"By: {adjusted_by}" if adjusted_by else "Manual",
                 "remarks":    reason,
                 "source":     "adjustment",

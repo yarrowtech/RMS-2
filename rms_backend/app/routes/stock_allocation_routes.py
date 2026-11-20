@@ -197,10 +197,25 @@ async def get_store_stock(store_id: str, authorization: str = Header(None)):
     async for central_doc in inventory_collection.find({"barcode": {"$in": barcodes}, "tenant_id": tenant_id}):
         central_by_barcode[central_doc.get("barcode", "")] = central_doc
 
+    # Data-hub-synced stock (e.g. citimart) writes division/section/
+    # department onto the Product Master only, never onto the central
+    # inventory record itself — central_by_barcode is missing this
+    # classification entirely for that stock, which is why it showed up
+    # blank here. Product Master is the real source for it, so it's the
+    # next fallback after central, batched the same way to avoid a
+    # per-row query.
+    product_by_barcode = {}
+    async for product_doc in product_collection.find(
+        {"barcode": {"$in": barcodes}, "tenant_id": tenant_id},
+        {"barcode": 1, "division": 1, "section": 1, "department": 1, "sku": 1, "product_name": 1},
+    ):
+        product_by_barcode[product_doc.get("barcode", "")] = product_doc
+
     rows = []
     for doc in store_docs:
         barcode = doc.get("barcode", "")
         central = central_by_barcode.get(barcode) or {}
+        product = product_by_barcode.get(barcode) or {}
 
         rows.append({
             "barcode":     barcode,
@@ -209,11 +224,11 @@ async def get_store_stock(store_id: str, authorization: str = Header(None)):
             "store_name":  doc.get("store_name", ""),
             # Existing retailer stores continue to use central product master
             # data. A single-store owner may maintain local item details.
-            "description": (doc.get("description") if is_single_store else None) or central.get("description") or central.get("product") or barcode,
-            "sku":         (doc.get("sku") if is_single_store else None) or central.get("sku", ""),
-            "division":    (doc.get("division") if is_single_store else None) or central.get("division", ""),
-            "section":     (doc.get("section") if is_single_store else None) or central.get("section", ""),
-            "department":  (doc.get("department") if is_single_store else None) or central.get("department", ""),
+            "description": (doc.get("description") if is_single_store else None) or central.get("description") or central.get("product") or product.get("product_name") or barcode,
+            "sku":         (doc.get("sku") if is_single_store else None) or central.get("sku") or product.get("sku") or "",
+            "division":    (doc.get("division") if is_single_store else None) or central.get("division") or product.get("division") or "",
+            "section":     (doc.get("section") if is_single_store else None) or central.get("section") or product.get("section") or "",
+            "department":  (doc.get("department") if is_single_store else None) or central.get("department") or product.get("department") or "",
             "mrp":         float(((doc.get("mrp") or doc.get("rate")) if is_single_store else None) or central.get("mrp") or central.get("rate") or 0),
             "rate":        float(((doc.get("rate") or doc.get("mrp")) if is_single_store else None) or central.get("rate") or central.get("mrp") or 0),
             "vendor_name": (doc.get("vendor_name") if is_single_store else None) or central.get("vendor_name", ""),
