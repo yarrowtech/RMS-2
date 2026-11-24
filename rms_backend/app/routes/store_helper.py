@@ -150,4 +150,5 @@ async def get_store_context(authorization: Optional[str] = None) -> dict:
         "tenant_id":  tenant_id,
         "permissions": permissions,
         "query":      query,
+        "admin_id":   user_id,
     }

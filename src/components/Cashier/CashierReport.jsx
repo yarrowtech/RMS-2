@@ -540,6 +540,7 @@ import {
 } from "react-icons/fa";
 
 import { CASHIER_API_BASE as API_BASE, cashierFetch } from "./cashierApi";
+import { getTerminalId } from "./terminalIdentity";
 const money = v => `₹${Math.abs(Number(v || 0)).toFixed(2)}`;
 const num   = v =>  Math.abs(Number(v || 0)).toFixed(2);
 const pct   = (a, b) => b ? (((a - b) / b) * 100).toFixed(1) : null;
@@ -647,7 +648,7 @@ function SummaryTab() {
   const fetch_ = useCallback(async () => {
     setLoading(true);
     try {
-      const res  = await cashierFetch(`${API_BASE}/cashier/reports/summary?from_date=${from}&to_date=${to}`);
+      const res  = await cashierFetch(`${API_BASE}/cashier/reports/summary?from_date=${from}&to_date=${to}&terminal_id=${encodeURIComponent(getTerminalId())}`);
       const json = await res.json();
       setData(json);
     } catch {}
@@ -745,7 +746,7 @@ function ItemsTab() {
   const fetch_ = useCallback(async () => {
     setLoading(true);
     try {
-      const res  = await cashierFetch(`${API_BASE}/cashier/reports/items?from_date=${from}&to_date=${to}&sort_by=${sortBy}&limit=100`);
+      const res  = await cashierFetch(`${API_BASE}/cashier/reports/items?from_date=${from}&to_date=${to}&terminal_id=${encodeURIComponent(getTerminalId())}&sort_by=${sortBy}&limit=100`);
       const json = await res.json();
       setData(json.data || []);
     } catch {}
@@ -845,7 +846,7 @@ function GSTTab() {
   const fetch_ = useCallback(async () => {
     setLoading(true);
     try {
-      const res  = await cashierFetch(`${API_BASE}/cashier/reports/gst?from_date=${from}&to_date=${to}`);
+      const res  = await cashierFetch(`${API_BASE}/cashier/reports/gst?from_date=${from}&to_date=${to}&terminal_id=${encodeURIComponent(getTerminalId())}`);
       const json = await res.json();
       setData(json);
     } catch {}
@@ -955,7 +956,7 @@ function CashiersTab() {
   const fetch_ = useCallback(async () => {
     setLoading(true);
     try {
-      const res  = await cashierFetch(`${API_BASE}/cashier/reports/cashiers?from_date=${from}&to_date=${to}`);
+      const res  = await cashierFetch(`${API_BASE}/cashier/reports/cashiers?from_date=${from}&to_date=${to}&terminal_id=${encodeURIComponent(getTerminalId())}`);
       const json = await res.json();
       setData(json.data || []);
     } catch {}
@@ -1057,7 +1058,7 @@ function TerminalsTab() {
   const fetch_ = useCallback(async () => {
     setLoading(true);
     try {
-      const res  = await cashierFetch(`${API_BASE}/cashier/reports/terminals?from_date=${from}&to_date=${to}`);
+      const res  = await cashierFetch(`${API_BASE}/cashier/reports/terminals?from_date=${from}&to_date=${to}&terminal_id=${encodeURIComponent(getTerminalId())}`);
       const json = await res.json();
       setTerminals(json.terminals || []);
       setDaily(json.daily || []);
@@ -1161,7 +1162,7 @@ function PaymentsTab() {
   const fetch_ = useCallback(async () => {
     setLoading(true);
     try {
-      const res  = await cashierFetch(`${API_BASE}/cashier/reports/payments?from_date=${from}&to_date=${to}`);
+      const res  = await cashierFetch(`${API_BASE}/cashier/reports/payments?from_date=${from}&to_date=${to}&terminal_id=${encodeURIComponent(getTerminalId())}`);
       const json = await res.json();
       setData(json);
     } catch {}

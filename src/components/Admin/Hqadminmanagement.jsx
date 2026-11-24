@@ -293,6 +293,17 @@ function AddAdminModal({ onClose, onCreated, stores = [], deptConfig, admins = [
         }),
       });
       toast.success(`Admin created! Setup email sent to ${form.email}`);
+      // Cashier is a shared login used across every physical POS terminal
+      // at the store, so individual tab access (Dashboard/Finance/Reports)
+      // can't be set here — it has to be assigned per-device, after each
+      // terminal has signed in at least once. Flag that follow-up now,
+      // while it's still top of mind, instead of leaving it undiscoverable.
+      if (isStoreScope && form.managedDepartments.includes("Cashier")) {
+        toast(
+          "This Cashier login will be shared across every POS terminal at the store. Once it's used to sign in on each machine, go to the Cashier app → Settings → POS Terminal Access to grant Dashboard/Finance/Reports access to specific terminals.",
+          { duration: 9000, icon: "ℹ️" }
+        );
+      }
       onCreated();
       onClose();
     } catch (e) { toast.error(e.message); }
@@ -1339,6 +1350,128 @@ function BuySeatsModal({ onClose, onPurchased }) {
   );
 }
 
+function BuyPosModal({ onClose, onPurchased }) {
+  const [status, setStatus] = useState(null);
+  const [quantity, setQuantity] = useState(1);
+  const [loading, setLoading] = useState(true);
+  const [paying, setPaying] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    api("/api/retailer-pos-addons/me")
+      .then(setStatus)
+      .catch((e) => setError(e.message || "Could not load POS terminal info."))
+      .finally(() => setLoading(false));
+  }, []);
+
+  const pay = async () => {
+    setPaying(true); setError("");
+    try {
+      const checkout = await api("/api/retailer-pos-addons/checkout", {
+        method: "POST",
+        body: JSON.stringify({ quantity }),
+      });
+      await loadRazorpayCheckout();
+      if (!window.Razorpay) throw new Error("Secure payment checkout is unavailable. Please try again.");
+      const razorpay = new window.Razorpay({
+        key: checkout.key_id,
+        amount: checkout.amount,
+        currency: checkout.currency,
+        name: "RMS POS Terminals",
+        description: `${checkout.quantity} extra POS terminal${checkout.quantity !== 1 ? "s" : ""}`,
+        order_id: checkout.order_id,
+        theme: { color: "#4f46e5" },
+        handler: async (response) => {
+          try {
+            const result = await api("/api/retailer-pos-addons/verify-payment", {
+              method: "POST",
+              body: JSON.stringify(response),
+            });
+            if (result.bonus_pos_added > 0) {
+              toast.success(result.message);
+              onPurchased();
+              onClose();
+            } else {
+              toast(result.message);
+              setPaying(false);
+            }
+          } catch (e) {
+            toast.error(e.message || "Could not verify payment.");
+            setPaying(false);
+          }
+        },
+        modal: { ondismiss: () => setPaying(false) },
+      });
+      razorpay.open();
+    } catch (e) {
+      setError(e.message || "Could not start checkout.");
+      setPaying(false);
+    }
+  };
+
+  const total = status ? status.price_per_pos_inr * quantity : 0;
+
+  return createPortal(
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4" style={{ zIndex: 99999 }}>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
+        <div className="bg-gradient-to-r from-indigo-600 to-indigo-700 px-6 py-5 flex items-center justify-between">
+          <div>
+            <h2 className="text-lg font-bold text-white">Buy Extra POS Terminals</h2>
+            <p className="text-indigo-100 text-xs mt-0.5">One-time cost per terminal — never expires</p>
+          </div>
+          <button onClick={onClose} className="text-white/80 hover:text-white"><X className="w-5 h-5" /></button>
+        </div>
+        <div className="p-6 space-y-4">
+          {error && <div className="bg-red-50 border border-red-200 text-red-600 text-sm rounded-md px-3 py-2">{error}</div>}
+          {loading ? (
+            <p className="text-sm text-slate-400 text-center py-6">Loading…</p>
+          ) : status ? (
+            <>
+              <div className="rounded-xl bg-slate-50 border border-slate-200 p-4 text-sm">
+                <p className="text-slate-600">
+                  {status.plan_label} plan · {status.used} / {status.unlimited ? "Unlimited" : status.effective_limit} POS terminals used
+                </p>
+                {status.bonus_pos > 0 && (
+                  <p className="text-xs text-indigo-600 mt-1 font-semibold">
+                    {status.bonus_pos} add-on terminal{status.bonus_pos !== 1 ? "s" : ""} already purchased
+                  </p>
+                )}
+              </div>
+              {status.unlimited ? (
+                <p className="text-sm text-slate-500 text-center py-4">Your plan already has unlimited POS terminals — no add-on needed.</p>
+              ) : (
+                <>
+                  <label className="block">
+                    <span className="text-sm font-bold text-slate-700">How many extra POS terminals?</span>
+                    <input
+                      type="number" min="1" max={status.max_pos_per_purchase} value={quantity}
+                      onChange={(e) => setQuantity(Math.max(1, Math.min(status.max_pos_per_purchase, Number(e.target.value) || 1)))}
+                      className="mt-1.5 w-full h-11 rounded-xl border border-slate-200 px-3 text-sm focus:ring-2 focus:ring-indigo-400 outline-none"
+                    />
+                  </label>
+                  <div className="flex items-center justify-between rounded-xl bg-indigo-50 border border-indigo-100 px-4 py-3">
+                    <span className="text-sm font-semibold text-indigo-800">
+                      ₹{status.price_per_pos_inr.toLocaleString("en-IN")} × {quantity} terminal{quantity !== 1 ? "s" : ""}
+                    </span>
+                    <span className="text-lg font-black text-indigo-900">₹{total.toLocaleString("en-IN")}</span>
+                  </div>
+                  <button
+                    onClick={pay} disabled={paying}
+                    className="w-full h-11 rounded-xl bg-gradient-to-r from-indigo-600 to-indigo-700 text-white text-sm font-bold hover:opacity-90 disabled:opacity-50 transition"
+                  >
+                    {paying ? "Opening secure payment…" : `Pay ₹${total.toLocaleString("en-IN")} & Add Terminals`}
+                  </button>
+                </>
+              )}
+            </>
+          ) : null}
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
 const TASK_PRIORITY_CFG = {
   low: "bg-slate-100 text-slate-600", medium: "bg-blue-50 text-blue-700",
   high: "bg-amber-50 text-amber-700", urgent: "bg-rose-50 text-rose-700",
@@ -1554,6 +1687,7 @@ export default function HQAdminManagement() {
   const [showAdd,   setShowAdd]   = useState(false);
   const [showBulkImport, setShowBulkImport] = useState(false);
   const [showBuySeats, setShowBuySeats] = useState(false);
+  const [showBuyPos, setShowBuyPos] = useState(false);
   const [viewAdmin, setViewAdmin] = useState(null);
   const [editAdmin, setEditAdmin] = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(null);
@@ -1635,6 +1769,10 @@ export default function HQAdminManagement() {
             className="inline-flex items-center gap-2 px-4 py-2 border border-indigo-200 bg-indigo-50 text-indigo-700 rounded-xl text-sm font-bold hover:bg-indigo-100 transition">
             <CreditCard className="w-4 h-4"/> Buy Seats
           </button>
+          <button onClick={() => setShowBuyPos(true)}
+            className="inline-flex items-center gap-2 px-4 py-2 border border-indigo-200 bg-indigo-50 text-indigo-700 rounded-xl text-sm font-bold hover:bg-indigo-100 transition">
+            <CreditCard className="w-4 h-4"/> Buy POS Terminals
+          </button>
           <button onClick={() => setShowBulkImport(true)}
             className="inline-flex items-center gap-2 px-4 py-2 border border-teal-200 bg-teal-50 text-teal-700 rounded-xl text-sm font-bold hover:bg-teal-100 transition">
             <UploadCloud className="w-4 h-4"/> Bulk Import
@@ -1648,6 +1786,10 @@ export default function HQAdminManagement() {
 
       {showBuySeats && (
         <BuySeatsModal onClose={() => setShowBuySeats(false)} onPurchased={fetchAll} />
+      )}
+
+      {showBuyPos && (
+        <BuyPosModal onClose={() => setShowBuyPos(false)} onPurchased={fetchAll} />
       )}
 
       {/* Stats */}

@@ -865,6 +865,34 @@ async def send_seat_addon_receipt_email(
     )
 
 
+async def send_pos_addon_receipt_email(
+    email: EmailStr, name: str, quantity: int, price_inr: int, new_total_pos,
+) -> bool:
+    """Sent right after an HQ Admin's Razorpay payment for extra POS-terminal
+    slots is captured — see retailer_pos_addon_routes.py. Same one-time,
+    permanent-unlock shape as the admin-seat add-on above, just for POS count."""
+    pos_text = f"{quantity} extra POS terminal{'s' if quantity != 1 else ''}"
+    total_text = "Unlimited" if new_total_pos is None else str(new_total_pos)
+    body = f"""
+      <h2 style="color:#222;margin-bottom:8px;">Hi {name},</h2>
+      <p style="font-size:15px;color:#444;">
+        Your payment for <strong style="color:{SUCCESS};">{pos_text}</strong> was received and applied immediately.
+      </p>
+      <div style="margin:20px 0;padding:16px;border:1px solid #bbf7d0;background:#f0fdf4;border-radius:10px;">
+        <p style="margin:0;color:#166534;font-size:13px;font-weight:700;">Amount charged</p>
+        <p style="margin:6px 0 0;color:#052e16;font-size:20px;font-weight:800;">Rs. {price_inr:,.0f}</p>
+        <p style="margin:10px 0 0;color:#166534;font-size:13px;">New total POS terminals allowed: {total_text}</p>
+      </div>
+      {_divider()}
+      {_note("This is an automated payment receipt from CitiMart RMS.")}
+    """
+    return await _send(
+        subject=f"Payment received — {pos_text} added",
+        recipients=[email],
+        html=_wrap(SUCCESS, "Payment Received", body, "© CitiMart RMS · Retailer POS Add-on"),
+    )
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # 16. RETAILER — Extra store/branch add-on payment receipt (recurring)
 # ─────────────────────────────────────────────────────────────────────────────

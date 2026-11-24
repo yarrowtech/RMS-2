@@ -12,6 +12,52 @@ import RetailerHelpSupport from "../RetailerHelpSupport";
 import CashierCustomer from "./CashierCustomer";
 import CashierFinance from "./CashierFinance";
 import CashierReport from "./CashierReport";
+import CashierGuideModal, { GuideButton } from "./CashierGuideModal";
+import { Lock, ShieldCheck, MonitorCog, Info } from "lucide-react";
+import { CASHIER_API_BASE } from "./cashierApi";
+import { getCachedTerminalRole, registerTerminal, fetchTerminalRole } from "./terminalIdentity";
+
+const TERMINAL_ACCESS_GUIDE_STEPS = [
+  {
+    icon: MonitorCog,
+    badgeClass: "bg-violet-100 text-violet-600",
+    title: "Access is per-terminal, not per-login",
+    text: "The Cashier login is shared across every POS machine at this store, so it can't tell devices apart. Instead, each physical terminal is given its own 'Cashier' or 'Supervisor' access level, independent of who's signed in.",
+  },
+  {
+    icon: Lock,
+    badgeClass: "bg-rose-100 text-rose-600",
+    title: "'Cashier' terminals only see POS + Customer",
+    text: "Dashboard, Finance and Reports are hidden on a Cashier-level terminal — this is the default for every new device, so a sales counter can't see store-wide numbers by default.",
+  },
+  {
+    icon: ShieldCheck,
+    badgeClass: "bg-emerald-100 text-emerald-600",
+    title: "Grant 'Supervisor' to specific machines",
+    text: "Go to Settings → POS Terminal Access, find the device (e.g. the manager's counter), and switch its dropdown from Cashier to Supervisor. That device immediately sees every tab — no re-login needed.",
+  },
+];
+
+const TERMINAL_ACCESS_GUIDE_NOTES = [
+  {
+    icon: Info,
+    tone: "info",
+    title: "Takes effect instantly",
+    text: "A role change in Settings applies the next time that terminal loads or switches tabs — it doesn't require logging out.",
+  },
+  {
+    icon: ShieldCheck,
+    tone: "caution",
+    title: "Enforced on the server too",
+    text: "This isn't just hidden tabs — the backend itself rejects Dashboard/Finance/Reports requests from a non-Supervisor terminal, so the restriction holds even if someone tries to call the API directly.",
+  },
+];
+
+// Tabs hidden from a "cashier"-role terminal. A "supervisor"-role terminal
+// (assigned by a store/HQ admin under Settings) sees everything — the
+// restriction is per-device, not per-login, since the login is shared
+// across every POS machine at a store.
+const RESTRICTED_TABS = new Set(["dashboard", "finance", "reports"]);
 
 const COMPANY_NAME = "RMS";
 
@@ -68,6 +114,25 @@ export default function Cashier() {
   const [active, setActive] = useState("dashboard");
   const [desktopSidebarOpen, setDesktopSidebarOpen] = useState(true);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [terminalRole, setTerminalRole] = useState(getCachedTerminalRole());
+  const [showTerminalGuide, setShowTerminalGuide] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      await registerTerminal(CASHIER_API_BASE);
+      const role = await fetchTerminalRole(CASHIER_API_BASE);
+      setTerminalRole(role);
+    })();
+  }, []);
+
+  // A restricted terminal landing on (or stuck on) a tab it just lost
+  // access to — e.g. its role was downgraded by an admin mid-session —
+  // gets bounced to Point of Sale rather than left on a blank/stale page.
+  useEffect(() => {
+    if (terminalRole !== "supervisor" && RESTRICTED_TABS.has(active)) {
+      setActive("pointOfSale");
+    }
+  }, [terminalRole, active]);
 
   const pageTitle = useMemo(() => labelFromKey(active), [active]);
 
@@ -125,6 +190,44 @@ export default function Cashier() {
   const onSettingsClick = () => setActive("__settings");
 
   const renderPage = () => {
+    if (terminalRole !== "supervisor" && RESTRICTED_TABS.has(active)) {
+      return (
+        <div className="h-full w-full overflow-y-auto p-6">
+          <div className="rounded-3xl bg-white/90 p-6 shadow-sm">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-rose-50 text-rose-600">
+                  <Lock size={18} />
+                </div>
+                <div>
+                  <h2 className="text-xl font-bold text-slate-900">Restricted on this terminal</h2>
+                  <p className="mt-1 text-sm text-slate-700">
+                    This POS terminal doesn't have access to {labelFromKey(active)}. Ask a store admin to grant it
+                    Supervisor access under <span className="font-semibold">Settings → POS Terminal Access</span>.
+                  </p>
+                </div>
+              </div>
+              <GuideButton onClick={() => setShowTerminalGuide(true)} />
+            </div>
+            <button
+              type="button"
+              onClick={() => setActive("pointOfSale")}
+              className="mt-5 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700"
+            >
+              Go to Point of Sale
+            </button>
+          </div>
+          <CashierGuideModal
+            open={showTerminalGuide}
+            onClose={() => setShowTerminalGuide(false)}
+            title="POS Terminal Access"
+            subtitle="Why this tab is hidden, and how to unlock it"
+            steps={TERMINAL_ACCESS_GUIDE_STEPS}
+            notes={TERMINAL_ACCESS_GUIDE_NOTES}
+          />
+        </div>
+      );
+    }
     switch (active) {
       case "dashboard":
         return (
@@ -230,6 +333,7 @@ export default function Cashier() {
             subtitle="Cashier"
             sidebarOpen={desktopSidebarOpen}
             setSidebarOpen={setDesktopSidebarOpen}
+            terminalRole={terminalRole}
           />
         </aside>
 
@@ -254,6 +358,7 @@ export default function Cashier() {
                 subtitle="Cashier"
                 sidebarOpen={true}
                 setSidebarOpen={() => setDrawerOpen(false)}
+                terminalRole={terminalRole}
               />
             </div>
           </>

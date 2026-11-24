@@ -1,6 +1,30 @@
-import React, { useMemo, useState } from "react";
-import { User, IdCard, ShieldCheck, LockKeyhole, Mail, Phone, Monitor } from "lucide-react";
-import { getTerminalName, setTerminalName } from "./terminalIdentity";
+import React, { useEffect, useMemo, useState } from "react";
+import { User, IdCard, ShieldCheck, LockKeyhole, Mail, Phone, Monitor, Users } from "lucide-react";
+import { getTerminalName, setTerminalName, getTerminalId } from "./terminalIdentity";
+import { CASHIER_API_BASE as API_BASE, cashierFetch } from "./cashierApi";
+import CashierGuideModal, { GuideButton } from "./CashierGuideModal";
+import { Lock, MonitorCog } from "lucide-react";
+
+const TERMINAL_ACCESS_GUIDE_STEPS = [
+  {
+    icon: MonitorCog,
+    badgeClass: "bg-violet-100 text-violet-600",
+    title: "Access is per-terminal, not per-login",
+    text: "The Cashier login is shared across every POS machine at this store, so it can't tell devices apart. Each physical terminal below is given its own access level instead, independent of who's signed in on it.",
+  },
+  {
+    icon: Lock,
+    badgeClass: "bg-rose-100 text-rose-600",
+    title: "'Cashier' is the safe default",
+    text: "Every new terminal starts as Cashier — Point of Sale + Customer only. Dashboard, Finance and Reports stay hidden until you explicitly upgrade that one machine.",
+  },
+  {
+    icon: ShieldCheck,
+    badgeClass: "bg-emerald-100 text-emerald-600",
+    title: "Switch a specific machine to Supervisor",
+    text: "Use the dropdown next to a terminal (e.g. the manager's counter) to grant it full access. It takes effect the next time that device loads or switches tabs — no re-login needed, and it's enforced on the server too, not just hidden in the UI.",
+  },
+];
 
 const cn = (...a) => a.filter(Boolean).join(" ");
 
@@ -97,6 +121,55 @@ export default function SettingsProfilePage() {
     setTerminalNameState(clean);
     setTerminalSaved(true);
     setTimeout(() => setTerminalSaved(false), 2000);
+  };
+
+  // Access roles for every POS terminal registered at this store — lets a
+  // store/HQ admin grant a specific machine (e.g. the manager's counter)
+  // full Dashboard/Finance/Reports access, while every other terminal
+  // stays locked to Point of Sale + Customer, regardless of which shared
+  // cashier login is used to sign in on it.
+  const [terminals, setTerminals] = useState([]);
+  const [terminalsLoading, setTerminalsLoading] = useState(true);
+  const [terminalsError, setTerminalsError] = useState("");
+  const [savingTerminalId, setSavingTerminalId] = useState("");
+  const [showTerminalGuide, setShowTerminalGuide] = useState(false);
+  const thisTerminalId = getTerminalId();
+
+  const loadTerminals = async () => {
+    setTerminalsLoading(true);
+    setTerminalsError("");
+    try {
+      const res = await cashierFetch(`${API_BASE}/cashier/terminals`);
+      if (!res.ok) throw new Error("Failed to load terminals");
+      const json = await res.json();
+      setTerminals(json?.data || []);
+    } catch (e) {
+      setTerminalsError(e.message || "Failed to load terminals");
+    } finally {
+      setTerminalsLoading(false);
+    }
+  };
+
+  useEffect(() => { loadTerminals(); }, []);
+
+  const changeRole = async (terminalId, role) => {
+    setSavingTerminalId(terminalId);
+    try {
+      const res = await cashierFetch(`${API_BASE}/cashier/terminals/${encodeURIComponent(terminalId)}/role`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ role }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.detail || "Failed to update role");
+      }
+      setTerminals((prev) => prev.map((t) => (t.terminal_id === terminalId ? { ...t, role } : t)));
+    } catch (e) {
+      setTerminalsError(e.message || "Failed to update role");
+    } finally {
+      setSavingTerminalId("");
+    }
   };
 
   return (
@@ -208,6 +281,74 @@ export default function SettingsProfilePage() {
               onChange={(v) => setTerminalNameState(v)}
             />
           </div>
+        </Section>
+
+        <Section
+          icon={Users}
+          title="POS Terminal Access"
+          subtitle="Dashboard, Finance and Reports are hidden by default on every POS terminal. Grant 'Supervisor' here to the specific machine(s) that should see them."
+          right={<GuideButton onClick={() => setShowTerminalGuide(true)} />}
+        >
+          <CashierGuideModal
+            open={showTerminalGuide}
+            onClose={() => setShowTerminalGuide(false)}
+            title="POS Terminal Access"
+            subtitle="How per-terminal roles work"
+            steps={TERMINAL_ACCESS_GUIDE_STEPS}
+          />
+
+          <div className="mb-4 rounded-2xl border border-amber-300 bg-amber-50 p-4">
+            <div className="flex items-center gap-2 text-sm font-bold text-amber-900">
+              <ShieldCheck className="w-4 h-4 text-amber-700" />
+              Admin instructions
+            </div>
+            <ol className="mt-2 list-decimal space-y-1 pl-5 text-xs text-amber-900">
+              <li>Only a Store Ops / Finance / HQ login can change roles here — the shared Cashier login (and every other store department) can view this list, but any change it tries will be rejected by the server.</li>
+              <li>Every new POS device starts as <span className="font-semibold">Cashier</span> (Point of Sale + Customer tabs only) the first time it's opened — nothing needs to be configured for that.</li>
+              <li>To let one specific machine see Dashboard, Finance and Reports (e.g. the manager's counter, or a back-office terminal), find it in the list below by its terminal name and switch its dropdown to <span className="font-semibold">Supervisor</span>.</li>
+              <li>If you don't recognize a terminal name, rename it first from <span className="font-semibold">that device</span> under Settings → This POS Terminal, then come back here — roles are easiest to assign once every device has a clear name (e.g. "Counter 1", "Billing Desk 2").</li>
+              <li>A role change applies the moment that terminal reloads or switches tabs — no logout required on either side.</li>
+            </ol>
+          </div>
+
+          {terminalsError && (
+            <div className="mb-3 rounded-xl border border-red-300 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700">
+              {terminalsError}
+            </div>
+          )}
+          {terminalsLoading ? (
+            <p className="text-xs text-black-500">Loading terminals…</p>
+          ) : terminals.length === 0 ? (
+            <p className="text-xs text-black-500">No terminals registered yet — open the POS on a device once and it will appear here.</p>
+          ) : (
+            <div className="space-y-2">
+              {terminals.map((t) => (
+                <div
+                  key={t.terminal_id}
+                  className="flex items-center justify-between gap-3 rounded-2xl border border-blue-500 bg-blue-50/40 px-4 py-3"
+                >
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-semibold text-black-900">
+                      {t.terminal_name}
+                      {t.terminal_id === thisTerminalId && (
+                        <span className="ml-2 rounded-full bg-blue-600/10 px-2 py-0.5 text-[10px] font-bold text-blue-700">THIS DEVICE</span>
+                      )}
+                    </p>
+                    <p className="text-[11px] text-black-500">{t.role === "supervisor" ? "Supervisor — full access" : "Cashier — POS + Customer only"}</p>
+                  </div>
+                  <select
+                    value={t.role}
+                    disabled={savingTerminalId === t.terminal_id}
+                    onChange={(e) => changeRole(t.terminal_id, e.target.value)}
+                    className="rounded-xl border border-blue-500 bg-white px-3 py-2 text-xs font-semibold outline-none focus:ring-2 focus:ring-blue-500/30"
+                  >
+                    <option value="cashier">Cashier</option>
+                    <option value="supervisor">Supervisor</option>
+                  </select>
+                </div>
+              ))}
+            </div>
+          )}
         </Section>
 
         <Section

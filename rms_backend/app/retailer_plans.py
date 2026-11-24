@@ -16,6 +16,7 @@ PAID_RETAILER_PLANS: Final[dict[str, dict]] = {
         "label": "Basic",
         "stores": 1,
         "admins": 3,
+        "pos": 3,
         "price_inr": 50000,
         "billing_period_days": 30,
     },
@@ -23,6 +24,7 @@ PAID_RETAILER_PLANS: Final[dict[str, dict]] = {
         "label": "Professional",
         "stores": 5,
         "admins": 15,
+        "pos": 8,
         "price_inr": 90000,
         "billing_period_days": 30,
     },
@@ -30,6 +32,10 @@ PAID_RETAILER_PLANS: Final[dict[str, dict]] = {
         "label": "Enterprise",
         "stores": None,
         "admins": None,
+        # Unlike stores/admins, Enterprise's POS count is a real number, not
+        # unlimited — a retailer on Enterprise can still buy the extra-POS
+        # add-on past 15 (see retailer_pos_addon_routes.py).
+        "pos": 15,
         "price_inr": 125000,
         "billing_period_days": 30,
     },
@@ -43,6 +49,7 @@ RETAILER_PLAN_LIMITS: Final[dict[str, dict]] = {
         "label": "Internal Free Enterprise",
         "stores": None,
         "admins": None,
+        "pos": None,
         "price_inr": 0,
         "billing_period_days": None,
     },

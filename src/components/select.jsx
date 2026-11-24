@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
 import {
   ArrowRight, BadgeCheck, BarChart3, Boxes, Building2, CheckCircle2,
@@ -24,19 +25,67 @@ const portals = [
   },
 ];
 
+// Small, deliberately fake-data mock-UI swatches for the capability-preview
+// modal ? give a visual feel of each department without using real data.
+function MockPreview({ index }) {
+  const accent = ["text-indigo-600 bg-indigo-50 border-indigo-100", "text-violet-600 bg-violet-50 border-violet-100", "text-emerald-600 bg-emerald-50 border-emerald-100", "text-amber-600 bg-amber-50 border-amber-100"][index % 4];
+  const bar = ["bg-indigo-400", "bg-violet-400", "bg-emerald-400", "bg-amber-400"][index % 4];
+  switch (index) {
+    case 0: return <div className="space-y-1.5">{[["Rahul Dey", "Store Admin"], ["Priya Sen", "Inventory"], ["Amit Roy", "Finance"]].map(([n, r]) => <div key={n} className="flex items-center justify-between rounded-lg border border-slate-100 bg-slate-50 px-3 py-1.5 text-xs"><span className="font-bold text-slate-700">{n}</span><span className={`rounded-full border px-2 py-0.5 text-[10px] font-black ${accent}`}>{r}</span></div>)}</div>;
+    case 1: return <div className="space-y-1.5">{[["PO-2041", "Fabrico Mills", "Pending"], ["PO-2042", "Kolkata Trims", "Approved"]].map(([id, vendor, status]) => <div key={id} className="flex items-center justify-between rounded-lg border border-slate-100 bg-slate-50 px-3 py-1.5 text-xs"><span className="font-bold text-slate-700">{id} ? {vendor}</span><span className={`rounded-full border px-2 py-0.5 text-[10px] font-black ${accent}`}>{status}</span></div>)}</div>;
+    case 2: return <div className="flex items-end gap-3 px-1">{[["Store A", 70], ["Store B", 40], ["Store C", 90], ["Godown", 55]].map(([label, h]) => <div key={label} className="flex flex-1 flex-col items-center gap-1"><div className="flex h-16 w-full items-end rounded-md bg-slate-100"><div className={`w-full rounded-md ${bar}`} style={{ height: `${h}%` }} /></div><span className="text-[10px] font-bold text-slate-500">{label}</span></div>)}</div>;
+    case 3: return <div className="space-y-1.5">{[["Invoice #4821", "+?12,400"], ["Vendor Payment", "-?8,200"], ["Debit Note", "-?650"]].map(([label, amt]) => <div key={label} className="flex items-center justify-between rounded-lg border border-slate-100 bg-slate-50 px-3 py-1.5 text-xs"><span className="font-bold text-slate-700">{label}</span><span className={`font-black ${amt.startsWith("+") ? "text-emerald-600" : "text-rose-500"}`}>{amt}</span></div>)}</div>;
+    case 4: return <div className="rounded-xl border border-slate-100 bg-slate-50 p-3 text-xs">{[["Cotton Shirt", "?899"], ["Denim Jeans", "?1,499"], ["Socks (2)", "?198"]].map(([item, price]) => <div key={item} className="flex items-center justify-between py-1 text-slate-600"><span>{item}</span><span className="font-bold">{price}</span></div>)}<div className="mt-1.5 flex items-center justify-between border-t border-slate-200 pt-1.5"><span className="font-black text-slate-800">Total</span><span className="font-black text-cyan-600">?2,596</span></div></div>;
+    case 5: return <div className="flex items-center justify-between">{["Concept", "Pattern", "Sample", "Approved"].map((step, i) => <React.Fragment key={step}><div className="flex flex-col items-center gap-1"><div className={`grid h-7 w-7 place-items-center rounded-full text-[10px] font-black ${i < 3 ? "bg-fuchsia-500 text-white" : "border-2 border-fuchsia-300 text-fuchsia-500"}`}>{i < 3 ? "?" : i + 1}</div><span className="text-[9px] font-bold text-slate-500">{step}</span></div>{i < 3 && <div className="mx-1 h-0.5 flex-1 bg-fuchsia-200" />}</React.Fragment>)}</div>;
+    case 6: return <div className="space-y-1.5">{[["JW-118 ? Stitching", 80], ["JW-119 ? Finishing", 35]].map(([label, pct]) => <div key={label} className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-1.5"><div className="flex items-center justify-between text-xs font-bold text-slate-700"><span>{label}</span><span>{pct}%</span></div><div className="mt-1 h-1.5 w-full rounded-full bg-slate-200"><div className="h-1.5 rounded-full bg-amber-400" style={{ width: `${pct}%` }} /></div></div>)}</div>;
+    case 7: return <div className="space-y-1.5">{[["Weekly stock count", true], ["Vendor follow-up call", false], ["Shift roster ? next week", false]].map(([task, done]) => <div key={task} className="flex items-center gap-2 rounded-lg border border-slate-100 bg-slate-50 px-3 py-1.5 text-xs"><span className={`grid h-4 w-4 shrink-0 place-items-center rounded-full border ${done ? "border-rose-400 bg-rose-400 text-white" : "border-slate-300"}`}>{done ? "?" : ""}</span><span className={done ? "text-slate-400 line-through" : "font-bold text-slate-700"}>{task}</span></div>)}</div>;
+    case 8: return <div className="flex items-center gap-3 rounded-xl border border-dashed border-violet-300 bg-violet-50 p-3"><div className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-violet-500 text-sm font-black text-white">20%</div><div><p className="text-xs font-black text-violet-800">FESTIVE20 ? festive season offer</p><p className="text-[10px] text-violet-500">312 redemptions this week</p></div></div>;
+    case 9: return <div className="flex items-center gap-3 rounded-xl border border-slate-100 bg-slate-50 p-3"><div className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-rose-100 text-sm font-black text-rose-600">AS</div><div className="flex-1"><p className="text-xs font-black text-slate-800">Anita Sharma</p><p className="text-[10px] text-slate-500">14 visits ? Last purchase 3 days ago</p></div><span className="rounded-full border border-rose-200 bg-rose-50 px-2 py-0.5 text-[10px] font-black text-rose-600">VIP</span></div>;
+    case 10: return <div className="flex items-end gap-2 px-1">{[["Shirts", -30], ["Jeans", 15], ["Jackets", -55], ["Kids", 10]].map(([label, v]) => <div key={label} className="flex flex-1 flex-col items-center gap-1"><div className="flex h-14 w-full items-end justify-center"><div className={`w-4 rounded-t-md ${v < 0 ? "bg-rose-400" : "bg-emerald-400"}`} style={{ height: `${Math.abs(v)}%` }} /></div><span className="text-[9px] font-bold text-slate-500">{label}</span></div>)}</div>;
+    default: return <div className="grid grid-cols-3 gap-2">{[["Today's Sales", "?48.2K"], ["Returns", "3"], ["Footfall", "162"]].map(([label, val]) => <div key={label} className="rounded-lg border border-slate-100 bg-slate-50 p-2 text-center"><p className="text-sm font-black text-slate-800">{val}</p><p className="text-[9px] font-bold text-slate-500">{label}</p></div>)}</div>;
+  }
+}
+
+// `tabs` and `flow` back the capability-preview modal — an overview ("what
+// screens exist, how data flows between them"), not a live demo login. Kept
+// as real tab/workflow names from the actual department, not mockup copy.
 const capabilities = [
-  ["Administration & IT", "Users, permissions, stores, product masters and platform controls", ShieldCheck, "indigo"],
-  ["Merchandising & Buying", "Vendor discovery, catalogues, purchase orders, planning and comparisons", ShoppingCart, "violet"],
-  ["Inventory & Warehouse", "GRN/GRC, stock allocation, transfers, adjustments and item movement", Boxes, "emerald"],
-  ["Finance", "Invoices, payments, debit notes, vouchers, revenue and financial reporting", BarChart3, "amber"],
-  ["Cashier & Store", "Store-based POS, billing, returns, customer records and daily operations", Store, "cyan"],
-  ["Design & Pattern", "Design projects from idea through pattern and sample approval to release-for-production", Palette, "fuchsia"],
-  ["Production & Job Work", "Job-work orders to external workers, receipts and production tracking", Factory, "amber"],
-  ["HR & Operations", "Employees, staff tasks, logistics and third-party coordination", Users, "rose"],
-  ["Marketing", "Campaigns, offers, redemptions and engagement tracking", Megaphone, "violet"],
-  ["Customer CRM", "Customer profiles, follow-ups and feedback — beyond the POS bill", HeartHandshake, "rose"],
-  ["Planning & Forecasting", "Demand planning, stock gaps, purchase plans and replenishment insights", Workflow, "blue"],
-  ["Reports & Visibility", "Role-scoped dashboards, performance indicators and operational reports", Layers3, "slate"],
+  ["Administration & IT", "Users, permissions, stores, product masters and platform controls", ShieldCheck, "indigo",
+    ["Admin Management", "Store/Branch Setup", "Product Master", "Platform Settings"],
+    "HQ creates administrators and assigns them only the departments, stores and permissions they manage — every other screen in RMS reads this setup to decide what a user can see."],
+  ["Merchandising & Buying", "Vendor discovery, catalogues, purchase orders, planning and comparisons", ShoppingCart, "violet",
+    ["Vendor Directory", "Purchase Orders", "Catalogue Comparison", "Buying Plans"],
+    "A buyer discovers vendors and catalogues, raises a purchase order, and that order flows straight into Inventory as an expected GRN receipt."],
+  ["Inventory & Warehouse", "GRN/GRC, stock allocation, transfers, adjustments and item movement", Boxes, "emerald",
+    ["GRN / GRC Receiving", "Stock Allocation", "Store Stock", "Stock Ledger / Movement"],
+    "Stock is received against a purchase order, allocated out to specific stores, and every movement after that — sale, return, adjustment — lands in one shared stock ledger."],
+  ["Finance", "Invoices, payments, debit notes, vouchers, revenue and financial reporting", BarChart3, "amber",
+    ["Invoices & Payments", "Debit/Credit Notes", "Vouchers", "Revenue Reports"],
+    "Every billable event elsewhere in RMS — a sale, a purchase, a return — posts here automatically, so Finance reviews real transactions instead of re-entering them."],
+  ["Cashier & Store", "Store-based POS, billing, returns, customer records and daily operations", Store, "cyan",
+    ["Point of Sale", "Customer", "Shift & Drawer Summary", "Sales Reports"],
+    "A cashier opens a shift, bills and returns at the counter, and closes out at day's end — each sale updates store stock and customer history in real time."],
+  ["Design & Pattern", "Design projects from idea through pattern and sample approval to release-for-production", Palette, "fuchsia",
+    ["Design Projects", "Tech Pack", "Sample Approval", "Release to Production"],
+    "A design moves from concept through pattern-making and sample sign-off, then hands off to Production the moment it's approved — no separate re-entry."],
+  ["Production & Job Work", "Job-work orders to external workers, receipts and production tracking", Factory, "amber",
+    ["Job Work Orders", "Daily Floor Log", "Production Receipts", "Tracking"],
+    "Work is assigned out to external job-work partners, tracked daily on the floor, and reconciled against what actually comes back in."],
+  ["HR & Operations", "Employees, staff tasks, logistics and third-party coordination", Users, "rose",
+    ["Employee Records", "Staff Tasks", "Logistics", "Third-Party Coordination"],
+    "HR manages people and task assignment while Logistics coordinates movement between stores and partners — both scoped to the same store/HQ structure as everything else."],
+  ["Marketing", "Campaigns, offers, redemptions and engagement tracking", Megaphone, "violet",
+    ["Campaigns", "Offers & Coupons", "Redemptions", "Engagement Tracking"],
+    "A campaign or coupon created here is redeemable directly at the Cashier POS, and redemption counts feed straight back into this same tracking view."],
+  ["Customer CRM", "Customer profiles, follow-ups and feedback — beyond the POS bill", HeartHandshake, "rose",
+    ["Customer Profiles", "Follow-ups", "Feedback", "Lucky Draw / Loyalty"],
+    "Every POS bill links back to a customer profile here, so follow-ups and loyalty activity build on real purchase history, not a separate contact list."],
+  ["Planning & Forecasting", "Demand planning, stock gaps, purchase plans and replenishment insights", Workflow, "blue",
+    ["Stock Gap Report", "Forecast & Analytics", "Replenishment Plans", "Data Upload"],
+    "Sales and stock data already in the system get compared store-by-store to flag what's overstocked or running out, driving the next purchase plan."],
+  ["Reports & Visibility", "Role-scoped dashboards, performance indicators and operational reports", Layers3, "slate",
+    ["Dashboards", "Performance Indicators", "Operational Reports", "Export"],
+    "Every department's own data rolls up here — what a user sees is scoped to their assigned departments and stores, same access rules as everywhere else."],
 ];
 
 const partners = [
@@ -88,10 +137,11 @@ const VENDOR_THEME = {
   premium:  { icon: Crown,      accent: "from-amber-400 to-orange-500",  badge: "bg-amber-50 text-amber-700 ring-amber-200" },
 };
 
-// Static — mirrors PRICE_PER_SEAT_INR (retailer_seat_addon_routes.py) and
-// PRICE_PER_STORE_INR_PER_MONTH (retailer_store_addon_routes.py). Both
-// routes are HQ-authenticated, so this public page can't fetch them live;
-// keep these two numbers in sync with the backend constants by hand.
+// Static — mirrors PRICE_PER_SEAT_INR (retailer_seat_addon_routes.py),
+// PRICE_PER_STORE_INR_PER_MONTH (retailer_store_addon_routes.py), and
+// PRICE_PER_POS_INR (retailer_pos_addon_routes.py). All three routes are
+// HQ-authenticated, so this public page can't fetch them live; keep these
+// numbers in sync with the backend constants by hand.
 const RETAILER_ADDONS = [
   {
     key: "seats", icon: UserPlus, price: 5000, unit: "one-time / seat",
@@ -102,6 +152,11 @@ const RETAILER_ADDONS = [
     key: "stores", icon: GitBranch, price: 15000, unit: "/month / store",
     title: "Extra store/branch slots", accent: "from-violet-600 to-fuchsia-600",
     description: "Need one more location than your plan includes? Add store slots on a recurring monthly basis, on Basic or Professional.",
+  },
+  {
+    key: "pos", icon: Store, price: 15000, unit: "one-time / terminal",
+    title: "Extra POS terminals", accent: "from-cyan-500 to-blue-600",
+    description: "Need more checkout counters than your plan includes? Add POS terminals one at a time — permanent, never expires, available on any plan including Enterprise.",
   },
 ];
 
@@ -133,9 +188,9 @@ const FALLBACK_VENDOR_TIERS = {
 };
 
 const FALLBACK_STORE_PLANS = {
-  basic: { label: "Basic", price_inr: 50000, max_stores: 1, new_permissions: [] },
-  professional: { label: "Professional", price_inr: 90000, max_stores: 5, new_permissions: ["inventory", "finance", "logistics", "merchandiser_buyer"] },
-  enterprise: { label: "Enterprise", price_inr: 125000, max_stores: null, new_permissions: ["inventory", "finance", "logistics", "merchandiser_buyer", "hr"] },
+  basic: { label: "Basic", price_inr: 50000, max_stores: 1, max_pos: 3, new_permissions: [] },
+  professional: { label: "Professional", price_inr: 90000, max_stores: 5, max_pos: 8, new_permissions: ["inventory", "finance", "logistics", "merchandiser_buyer"] },
+  enterprise: { label: "Enterprise", price_inr: 125000, max_stores: null, max_pos: 15, new_permissions: ["inventory", "finance", "logistics", "merchandiser_buyer", "hr"] },
 };
 
 function vendorBullets(cfg) {
@@ -150,15 +205,18 @@ function vendorBullets(cfg) {
 }
 
 function storeBullets(cfg, key) {
+  const posBullet = cfg.max_pos ? `Up to ${cfg.max_pos} POS terminals (extra terminals available as a one-time add-on)` : "Unlimited POS terminals";
   if (key === "basic") {
     return [
       "Single store workspace",
       "Products, stock, purchasing & POS",
+      posBullet,
       "Everything a single-store retailer needs day to day",
     ];
   }
   return [
     cfg.max_stores ? `Up to ${cfg.max_stores} stores` : "Unlimited stores",
+    posBullet,
     "HQ Admin workspace + delegated department teams",
     (cfg.new_permissions || []).includes("hr")
       ? "All departments — Inventory, Finance, Logistics, HR, Job Work, Design & Third Party"
@@ -228,6 +286,7 @@ export default function ProfessionalRoleSelector() {
   const [vendorTiers, setVendorTiers] = useState(null);
   const [storePlans, setStorePlans] = useState(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [activeCapability, setActiveCapability] = useState(null);
 
   useEffect(() => {
     setVendorTiers(FALLBACK_VENDOR_TIERS);
@@ -330,10 +389,48 @@ export default function ProfessionalRoleSelector() {
           <div className="pointer-events-none absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-cyan-400 via-violet-500 to-emerald-400" />
           <div className="relative mx-auto max-w-7xl px-5 sm:px-8 lg:px-10">
             <div className="grid gap-8 lg:grid-cols-[1fr_auto] lg:items-end"><div className="max-w-3xl"><p className="text-xs font-extrabold uppercase tracking-[0.2em] text-cyan-300">Retail capabilities</p><h2 className="mt-4 text-3xl font-black tracking-tight sm:text-4xl">Departments work independently, data works together.</h2><p className="mt-4 leading-7 text-slate-300">These are platform capabilities - not public login options. After authentication, a user sees only the departments assigned by their retailer administrator.</p></div><span className="inline-flex h-fit items-center gap-2 rounded-full border border-emerald-300/30 bg-emerald-300/10 px-4 py-2 text-xs font-bold text-emerald-200 shadow-lg shadow-emerald-950/20"><ShieldCheck size={15}/> Access controlled</span></div>
-            <div className="mt-10 grid gap-5 md:grid-cols-2 xl:grid-cols-4">{capabilities.map(([title,text,Icon,color], index) => <div key={title} className="group relative overflow-hidden rounded-3xl border border-white/10 bg-white/[0.07] p-5 shadow-[0_20px_70px_rgba(0,0,0,0.18)] backdrop-blur transition duration-300 hover:-translate-y-1 hover:bg-white/[0.11]"><span className={`absolute inset-x-0 top-0 h-1 bg-gradient-to-r ${index % 4 === 0 ? "from-indigo-400 to-violet-400" : index % 4 === 1 ? "from-violet-400 to-fuchsia-400" : index % 4 === 2 ? "from-emerald-400 to-teal-400" : "from-amber-300 to-orange-400"}`} /><span className={`grid h-12 w-12 place-items-center rounded-2xl bg-white text-slate-900 ring-1 ${tone[color]}`}><Icon size={20}/></span><h3 className="mt-5 font-extrabold text-white">{title}</h3><p className="mt-2 text-sm leading-6 text-slate-300">{text}</p><div className="mt-5 flex items-center justify-between border-t border-white/10 pt-4"><span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Module {String(index + 1).padStart(2, "0")}</span><span className="grid h-7 w-7 place-items-center rounded-full bg-white/10 text-cyan-200 transition group-hover:translate-x-1"><ArrowRight size={13}/></span></div></div>)}</div>
+            <div className="mt-10 grid gap-5 md:grid-cols-2 xl:grid-cols-4">{capabilities.map(([title,text,Icon,color,tabs,flow], index) => <button type="button" key={title} onClick={() => setActiveCapability({ title, text, Icon, color, tabs, flow, index })} className="group relative overflow-hidden rounded-3xl border border-white/10 bg-white/[0.07] p-5 text-left shadow-[0_20px_70px_rgba(0,0,0,0.18)] backdrop-blur transition duration-300 hover:-translate-y-1 hover:bg-white/[0.11]"><span className={`absolute inset-x-0 top-0 h-1 bg-gradient-to-r ${index % 4 === 0 ? "from-indigo-400 to-violet-400" : index % 4 === 1 ? "from-violet-400 to-fuchsia-400" : index % 4 === 2 ? "from-emerald-400 to-teal-400" : "from-amber-300 to-orange-400"}`} /><span className={`grid h-12 w-12 place-items-center rounded-2xl bg-white text-slate-900 ring-1 ${tone[color]}`}><Icon size={20}/></span><h3 className="mt-5 font-extrabold text-white">{title}</h3><p className="mt-2 text-sm leading-6 text-slate-300">{text}</p><div className="mt-5 flex items-center justify-between border-t border-white/10 pt-4"><span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Module {String(index + 1).padStart(2, "0")}</span><span className="grid h-7 w-7 place-items-center rounded-full bg-white/10 text-cyan-200 transition group-hover:translate-x-1"><ArrowRight size={13}/></span></div></button>)}</div>
             <p className="mx-auto mt-8 max-w-2xl text-center text-xs leading-5 text-slate-400">Production & Job Work and Logistics are opt-in modules any HQ Admin can request in-app after signup — not tied to a plan tier and not a separate charge.</p>
           </div>
         </section>
+
+        {activeCapability && createPortal(
+          <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 p-4" onClick={() => setActiveCapability(null)}>
+            <div className="w-full max-w-lg overflow-hidden rounded-3xl bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
+              <div className={`flex items-start justify-between gap-3 bg-gradient-to-r ${activeCapability.index % 4 === 0 ? "from-indigo-600 to-violet-600" : activeCapability.index % 4 === 1 ? "from-violet-600 to-fuchsia-600" : activeCapability.index % 4 === 2 ? "from-emerald-600 to-teal-600" : "from-amber-500 to-orange-600"} px-6 py-5 text-white`}>
+                <div className="flex items-center gap-3">
+                  <span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-white/15"><activeCapability.Icon size={20} /></span>
+                  <div>
+                    <p className="text-[10px] font-black uppercase tracking-widest text-white/70">Module {String(activeCapability.index + 1).padStart(2, "0")} overview</p>
+                    <h3 className="text-lg font-black">{activeCapability.title}</h3>
+                  </div>
+                </div>
+                <button type="button" onClick={() => setActiveCapability(null)} className="grid h-8 w-8 shrink-0 place-items-center rounded-xl bg-white/15 text-white hover:bg-white/25"><X size={16} /></button>
+              </div>
+              <div className="space-y-4 p-6">
+                <p className="text-sm leading-6 text-slate-600">{activeCapability.text}</p>
+                <div>
+                  <p className="mb-2 text-[11px] font-black uppercase tracking-widest text-slate-400">A glimpse inside</p>
+                  <MockPreview index={activeCapability.index} />
+                </div>
+                <div>
+                  <p className="text-[11px] font-black uppercase tracking-widest text-slate-400">Screens in this department</p>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {activeCapability.tabs.map((tab) => (
+                      <span key={tab} className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-bold text-slate-700">{tab}</span>
+                    ))}
+                  </div>
+                </div>
+                <div className="rounded-2xl border border-indigo-100 bg-indigo-50/70 p-4">
+                  <p className="text-[11px] font-black uppercase tracking-widest text-indigo-500">How it connects</p>
+                  <p className="mt-1.5 text-sm leading-6 text-slate-700">{activeCapability.flow}</p>
+                </div>
+                <p className="text-[11px] leading-5 text-slate-400">This is an overview of real screens and workflow — not a live demo login. Access inside RMS is scoped to the departments your administrator assigns you.</p>
+              </div>
+            </div>
+          </div>,
+          document.body
+        )}
 
         <section id="pricing" className="relative overflow-hidden bg-gradient-to-b from-slate-50 via-white to-white py-20">
           <div className="pointer-events-none absolute inset-x-0 top-0 h-[420px] bg-[radial-gradient(circle_at_top,rgba(99,102,241,0.10),transparent_60%)]" />

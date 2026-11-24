@@ -79,6 +79,7 @@ export default function CashierSidebar({
   subtitle = "Cashier",
   sidebarOpen = true,
   setSidebarOpen = () => {},
+  terminalRole = "cashier",
 }) {
   const isDrawer = mode === "drawer";
   const showText = sidebarOpen;
@@ -118,13 +119,14 @@ export default function CashierSidebar({
     [isDrawer, setActive, setSidebarOpen]
   );
 
+  const RESTRICTED_TABS = new Set(["dashboard", "finance", "reports"]);
   const navItems = [
     { key: "dashboard", icon: <FaChartPie />, label: "Dashboard" },
     { key: "pointOfSale", icon: <FaCashRegister />, label: "Point of Sale" },
     { key: "customer", icon: <FaUserShield />, label: "Customer" },
     { key: "finance", icon: <FaReceipt />, label: "Finance" },
     { key: "reports", icon: <FaChartLine />, label: "Reports" },
-  ];
+  ].filter((item) => terminalRole === "supervisor" || !RESTRICTED_TABS.has(item.key));
 
   return (
     <aside

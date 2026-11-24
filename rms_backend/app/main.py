@@ -64,6 +64,7 @@ from .routes.analytics_routes import router as analytics_router
 from .routes.analytics_hub_routes import router as analytics_hub_router
 from .routes.tenant_departments_routes import router as tenant_departments_router, superadmin_router as tenant_departments_superadmin_router
 from .routes.retailer_seat_addon_routes import router as retailer_seat_addon_router
+from .routes.retailer_pos_addon_routes import router as retailer_pos_addon_router
 from .routes.retailer_store_addon_routes import router as retailer_store_addon_router
 from .routes.marketing_routes import router as marketing_router, superadmin_router as superadmin_marketing_router
 from .routes.customer_crm_routes import router as customer_crm_router
@@ -218,6 +219,7 @@ app.include_router(analytics_hub_router)
 app.include_router(tenant_departments_router)
 app.include_router(tenant_departments_superadmin_router)
 app.include_router(retailer_seat_addon_router)
+app.include_router(retailer_pos_addon_router)
 app.include_router(retailer_store_addon_router)
 app.include_router(marketing_router)
 app.include_router(superadmin_marketing_router)

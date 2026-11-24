@@ -44,9 +44,12 @@ MULTI_STORE_PLANS = {"professional", "enterprise"}
 # workspace) — it is never an upgrade target, only Professional/Enterprise
 # are (see MULTI_STORE_PLANS below).
 STORE_PLAN_CONFIG = {
-    "basic":        {"label": "Basic",        "price_inr": 50000,  "max_stores": 1},
-    "professional": {"label": "Professional", "price_inr": 90000,  "max_stores": 5},
-    "enterprise":   {"label": "Enterprise",   "price_inr": 125000, "max_stores": None},
+    "basic":        {"label": "Basic",        "price_inr": 50000,  "max_stores": 1,    "max_pos": 3},
+    "professional": {"label": "Professional", "price_inr": 90000,  "max_stores": 5,    "max_pos": 8},
+    # Unlike max_stores, max_pos is a real number even on Enterprise — extra
+    # POS terminals beyond it are sold as a one-time add-on instead of being
+    # unlimited by default (see retailer_pos_addon_routes.py).
+    "enterprise":   {"label": "Enterprise",   "price_inr": 125000, "max_stores": None, "max_pos": 15},
 }
 
 RAZORPAY_ORDER_URL = "https://api.razorpay.com/v1/orders"

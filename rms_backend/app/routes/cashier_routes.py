@@ -1,6 +1,7 @@
 
 from fastapi import APIRouter, Query, HTTPException, Header, BackgroundTasks
 from fastapi.responses import JSONResponse
+from fastapi.encoders import jsonable_encoder
 from typing import Optional
 from datetime import datetime, timedelta
 from bson import ObjectId
@@ -9,7 +10,8 @@ import os
 import secrets
 import re
 
-from ..db import db, product_collection, inventory_collection, sales_collection, store_stock_collection, admins_collection
+from ..db import db, product_collection, inventory_collection, sales_collection, store_stock_collection, admins_collection, tenants_collection
+from ..retailer_plans import retailer_plan_config
 from .store_helper import get_store_context
 from ..error_log import log_error
 from ..email_utils import send_customer_pos_invoice_email
@@ -27,6 +29,14 @@ router = APIRouter(prefix="/cashier", tags=["Cashier POS"])
 cashier_audit_collection = db["cashier_pos_audit_logs"]
 cashier_shift_collection = db["cashier_shifts"]
 cashier_invoice_counters_collection = db["cashier_invoice_counters"]
+pos_terminals_collection = db["pos_terminals"]
+
+# Tab-level access roles a physical POS terminal can hold. The login at a
+# store is shared across every terminal, so restricted tabs (Dashboard,
+# Finance, Reports) can't be gated per-login — they're gated per-device
+# instead, keyed by the terminal_id each device already persists locally.
+TERMINAL_ROLES = {"cashier", "supervisor"}
+DEFAULT_TERMINAL_ROLE = "cashier"
 
 
 def _public_invoice_url(token: str) -> str:
@@ -1557,15 +1567,159 @@ async def get_bill_by_invoice(invoice_no: str, authorization: str = Header(None)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# POS TERMINALS — per-device identity + tab-access role
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Departments allowed to assign terminal roles at store scope. Deliberately
+# an allowlist, not "anything except Cashier" — HR, Customer CRM and Visual
+# Merchandising have no operational reason to control which POS terminal can
+# see Dashboard/Finance/Reports. Store Ops is the closest thing this system
+# has to floor-level supervision; Finance already sees those same tabs by
+# department default, so letting them also gate terminal access isn't a
+# scope increase.
+TERMINAL_MANAGER_DEPARTMENTS = {"Store Ops", "Finance"}
+
+
+async def _is_terminal_manager(ctx: dict) -> bool:
+    """HQ logins can always manage terminal roles. A store-scoped login can
+    too, but only from one of TERMINAL_MANAGER_DEPARTMENTS — the shared
+    'Cashier' login (and every other store department) is excluded."""
+    if ctx.get("scope") == "hq":
+        return True
+    admin_id = ctx.get("admin_id")
+    if not admin_id:
+        return True  # legacy tokens with no resolvable admin — fail open as before
+    try:
+        admin = await admins_collection.find_one({"_id": ObjectId(admin_id)})
+    except Exception:
+        admin = None
+    return bool(admin) and admin.get("department") in TERMINAL_MANAGER_DEPARTMENTS
+
+
+async def _enforce_terminal_restriction(ctx: dict, terminal_id: Optional[str]):
+    """Backend half of the tab-access gate — the frontend already hides these
+    tabs for a non-supervisor terminal, but that's cosmetic. This is what
+    actually blocks the request if someone calls the API directly. Only
+    enforced when the caller identifies itself as a POS terminal (terminal_id
+    present) — HQ/admin-dashboard callers that aren't a POS device at all
+    don't send one, and are governed by their own login's scope instead."""
+    if not terminal_id:
+        return
+    doc = await pos_terminals_collection.find_one({**_store_scope(ctx), "terminal_id": terminal_id})
+    role = (doc or {}).get("role", DEFAULT_TERMINAL_ROLE)
+    if role != "supervisor":
+        raise HTTPException(status_code=403, detail="This POS terminal doesn't have access to this data. Ask a store admin to grant it Supervisor access.")
+
+
+@router.post("/terminals/register")
+async def register_terminal(payload: dict, authorization: str = Header(None)):
+    """Called by the POS app whenever a terminal is named/renamed, so HQ/store
+    admins have a central list of devices to assign roles to. Idempotent —
+    the role is only set on first insert, never overwritten here."""
+    ctx = await _require_store_context(authorization)
+    terminal_id = str(payload.get("terminal_id") or "").strip()
+    terminal_name = str(payload.get("terminal_name") or "").strip()
+    if not terminal_id:
+        raise HTTPException(status_code=400, detail="terminal_id is required.")
+
+    now = datetime.utcnow()
+    existing = await pos_terminals_collection.find_one({**_store_scope(ctx), "terminal_id": terminal_id})
+
+    if not existing:
+        # Plan/add-on limit only blocks a BRAND-NEW device — a terminal
+        # already registered keeps working even if the tenant later drops
+        # to a smaller plan than its current device count.
+        tenant = await tenants_collection.find_one({"tenant_id": ctx["tenant_id"]}, {"plan": 1, "bonus_pos_seats": 1})
+        plan_cfg = retailer_plan_config((tenant or {}).get("plan", "basic"))
+        base_limit = plan_cfg.get("pos")
+        if base_limit is not None:
+            bonus_pos = int((tenant or {}).get("bonus_pos_seats") or 0)
+            limit = base_limit + bonus_pos
+            current_count = await pos_terminals_collection.count_documents({"tenant_id": ctx["tenant_id"]})
+            if current_count >= limit:
+                raise HTTPException(
+                    status_code=402,
+                    detail=f"POS terminal limit reached ({limit} on the {plan_cfg.get('label')} plan). "
+                           "Buy an extra-POS add-on or upgrade your plan to register another device.",
+                )
+
+    await pos_terminals_collection.update_one(
+        {**_store_scope(ctx), "terminal_id": terminal_id},
+        {
+            "$set": {
+                "terminal_name": terminal_name,
+                "store_name": ctx.get("store_name"),
+                "last_seen_at": now,
+            },
+            "$setOnInsert": {
+                "tenant_id": ctx["tenant_id"],
+                "store_id": ctx["store_id"],
+                "terminal_id": terminal_id,
+                "role": DEFAULT_TERMINAL_ROLE,
+                "created_at": now,
+            },
+        },
+        upsert=True,
+    )
+    role = existing.get("role", DEFAULT_TERMINAL_ROLE) if existing else DEFAULT_TERMINAL_ROLE
+    return {"status": "success", "role": role}
+
+
+@router.get("/terminals")
+async def list_terminals(authorization: str = Header(None)):
+    ctx = await _require_store_context(authorization)
+    rows = []
+    async for doc in pos_terminals_collection.find(_store_scope(ctx)).sort("terminal_name", 1):
+        rows.append({
+            "terminal_id":   doc.get("terminal_id"),
+            "terminal_name": doc.get("terminal_name") or "Unnamed terminal",
+            "role":          doc.get("role", DEFAULT_TERMINAL_ROLE),
+            "last_seen_at":  doc.get("last_seen_at"),
+        })
+    return JSONResponse(content=jsonable_encoder({"status": "success", "data": rows}))
+
+
+@router.get("/terminals/role")
+async def get_terminal_role(terminal_id: str = Query(...), authorization: str = Header(None)):
+    """Read-only, called by the POS app itself on load/after rename to decide
+    which tabs this device is allowed to show. Any store-scoped login
+    (including the shared Cashier login) may read this — only ASSIGNING a
+    role is restricted."""
+    ctx = await _require_store_context(authorization)
+    doc = await pos_terminals_collection.find_one({**_store_scope(ctx), "terminal_id": terminal_id})
+    return {"status": "success", "role": (doc or {}).get("role", DEFAULT_TERMINAL_ROLE)}
+
+
+@router.post("/terminals/{terminal_id}/role")
+async def set_terminal_role(terminal_id: str, payload: dict, authorization: str = Header(None)):
+    ctx = await _require_store_context(authorization)
+    if not await _is_terminal_manager(ctx):
+        raise HTTPException(status_code=403, detail="Only a store admin can assign terminal roles.")
+    role = str(payload.get("role") or "").strip().lower()
+    if role not in TERMINAL_ROLES:
+        raise HTTPException(status_code=400, detail=f"role must be one of {sorted(TERMINAL_ROLES)}.")
+    result = await pos_terminals_collection.update_one(
+        {**_store_scope(ctx), "terminal_id": terminal_id},
+        {"$set": {"role": role}},
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Terminal not found — it must open the POS once before a role can be assigned.")
+    await _audit_pos(ctx, "terminal_role_changed", {"terminal_id": terminal_id, "role": role})
+    return {"status": "success", "role": role}
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # GET /cashier/dashboard
 # ═══════════════════════════════════════════════════════════════════════════════
 
 @router.get("/dashboard")
 async def get_cashier_dashboard(
     date: Optional[str] = Query(None),
+    terminal_id: Optional[str] = Query(None),
     authorization: str = Header(None),
 ):
     ctx = await _require_store_context(authorization)
+    await _enforce_terminal_restriction(ctx, terminal_id)
     today_str = date or datetime.utcnow().strftime("%Y-%m-%d")
 
     today_dt      = datetime.strptime(today_str, "%Y-%m-%d")
@@ -1724,6 +1878,7 @@ async def get_sales_report(
     authorization: str = Header(None),
 ):
     ctx = await _require_report_context(authorization)
+    await _enforce_terminal_restriction(ctx, terminal_id)
 
     query: dict = _report_scope(ctx)
     # A store-scoped caller is already locked to their own store by
@@ -1873,8 +2028,10 @@ async def reports_summary(
     from_date: Optional[str] = Query(None),
     to_date:   Optional[str] = Query(None),
     authorization: str = Header(None),
+    terminal_id: Optional[str] = Query(None),
 ):
     ctx = await _require_report_context(authorization)
+    await _enforce_terminal_restriction(ctx, terminal_id)
 
     fd, td = from_date or _default_dates()[0], to_date or _default_dates()[1]
     q = _date_query(fd, td)
@@ -1940,8 +2097,10 @@ async def reports_items(
     sort_by:   Optional[str] = Query("qty"),
     limit:     int           = Query(50, le=200),
     authorization: str = Header(None),
+    terminal_id: Optional[str] = Query(None),
 ):
     ctx = await _require_report_context(authorization)
+    await _enforce_terminal_restriction(ctx, terminal_id)
 
     fd, td = from_date or _default_dates()[0], to_date or _default_dates()[1]
     q = _date_query(fd, td)
@@ -1992,8 +2151,10 @@ async def reports_gst(
     from_date: Optional[str] = Query(None),
     to_date:   Optional[str] = Query(None),
     authorization: str = Header(None),
+    terminal_id: Optional[str] = Query(None),
 ):
     ctx = await _require_report_context(authorization)
+    await _enforce_terminal_restriction(ctx, terminal_id)
 
     fd, td = from_date or _default_dates()[0], to_date or _default_dates()[1]
     q = {**_date_query(fd, td), "type": "sale", **_report_scope(ctx)}
@@ -2050,8 +2211,10 @@ async def reports_cashiers(
     from_date: Optional[str] = Query(None),
     to_date:   Optional[str] = Query(None),
     authorization: str = Header(None),
+    terminal_id: Optional[str] = Query(None),
 ):
     ctx = await _require_report_context(authorization)
+    await _enforce_terminal_restriction(ctx, terminal_id)
 
     fd, td = from_date or _default_dates()[0], to_date or _default_dates()[1]
     q = _date_query(fd, td)
@@ -2111,8 +2274,10 @@ async def reports_terminals(
     from_date: Optional[str] = Query(None),
     to_date:   Optional[str] = Query(None),
     authorization: str = Header(None),
+    terminal_id: Optional[str] = Query(None),
 ):
     ctx = await _require_report_context(authorization)
+    await _enforce_terminal_restriction(ctx, terminal_id)
 
     fd, td = from_date or _default_dates()[0], to_date or _default_dates()[1]
     q = _date_query(fd, td)
@@ -2189,8 +2354,10 @@ async def reports_by_store(
     from_date: Optional[str] = Query(None),
     to_date:   Optional[str] = Query(None),
     authorization: str = Header(None),
+    terminal_id: Optional[str] = Query(None),
 ):
     ctx = await _require_report_context(authorization)
+    await _enforce_terminal_restriction(ctx, terminal_id)
     if ctx.get("scope") != "hq":
         raise HTTPException(status_code=403, detail="Store-wise summary is an HQ view.")
 
@@ -2240,8 +2407,10 @@ async def reports_payments(
     from_date: Optional[str] = Query(None),
     to_date:   Optional[str] = Query(None),
     authorization: str = Header(None),
+    terminal_id: Optional[str] = Query(None),
 ):
     ctx = await _require_report_context(authorization)
+    await _enforce_terminal_restriction(ctx, terminal_id)
 
     fd, td = from_date or _default_dates()[0], to_date or _default_dates()[1]
     q = {**_date_query(fd, td), "type": "sale", **_report_scope(ctx)}

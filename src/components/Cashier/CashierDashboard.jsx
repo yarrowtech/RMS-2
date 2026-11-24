@@ -9,6 +9,7 @@ import {
 } from "react-icons/fa";
 
 import { CASHIER_API_BASE as API_BASE, cashierFetch } from "./cashierApi";
+import { getTerminalId } from "./terminalIdentity";
 import CashierGuideModal, { GuideButton } from "./CashierGuideModal";
 
 const DASHBOARD_GUIDE_STEPS = [
@@ -290,7 +291,7 @@ export default function CashierDashboard() {
   const fetchDashboard = useCallback(async () => {
     setLoading(true); setError(null);
     try {
-      const res  = await cashierFetch(`${API_BASE}/cashier/dashboard?date=${date}`);
+      const res  = await cashierFetch(`${API_BASE}/cashier/dashboard?date=${date}&terminal_id=${encodeURIComponent(getTerminalId())}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const json = await res.json();
       setData(json.data);
