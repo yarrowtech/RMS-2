@@ -364,11 +364,24 @@ export default function ProfessionalRoleSelector() {
           </div>
         </section>
 
-        <section id="about" className="border-y border-slate-200 bg-white py-20">
-          <div className="mx-auto grid max-w-7xl gap-12 px-5 sm:px-8 lg:grid-cols-[0.8fr_1.2fr] lg:px-10">
-            <div><p className="text-xs font-extrabold uppercase tracking-[0.2em] text-indigo-600">What is RMS?</p><h2 className="mt-4 text-3xl font-black tracking-tight text-slate-950 sm:text-4xl">A digital operating system for modern retail.</h2><p className="mt-5 text-base leading-7 text-slate-600">Instead of running stores, orders, stock and finance in disconnected files, RMS gives every authorized team a dedicated workspace while keeping information connected across the business.</p></div>
+        <section id="about" className="relative overflow-hidden border-y border-slate-200/80 bg-[#f8faff] py-20 sm:py-24">
+          <div aria-hidden="true" className="pointer-events-none absolute -left-32 top-0 h-80 w-80 rounded-full bg-indigo-100/70 blur-3xl" />
+          <div aria-hidden="true" className="pointer-events-none absolute -right-24 bottom-0 h-80 w-80 rounded-full bg-cyan-100/60 blur-3xl" />
+          <div className="relative mx-auto grid max-w-7xl items-center gap-12 px-5 sm:px-8 lg:grid-cols-[0.85fr_1.15fr] lg:gap-16 lg:px-10">
+            <div className="max-w-xl">
+              <span className="inline-flex items-center gap-2 rounded-full border border-indigo-100 bg-white px-3.5 py-2 text-[11px] font-extrabold uppercase tracking-[0.18em] text-indigo-600 shadow-sm"><span className="h-2 w-2 rounded-full bg-indigo-500" />What is RMS?</span>
+              <h2 className="mt-6 text-4xl font-black leading-[1.12] tracking-tight text-slate-950 sm:text-5xl">A connected home for <span className="text-indigo-600">modern retail.</span></h2>
+              <p className="mt-6 max-w-lg text-base leading-8 text-slate-600">Instead of running stores, orders, stock and finance in disconnected files, RMS gives every authorized team a dedicated workspace while keeping information connected across the business.</p>
+              <div className="mt-8 flex flex-wrap items-center gap-3 text-xs font-bold text-slate-500"><span className="rounded-full border border-slate-200 bg-white px-3 py-2">Your stores</span><span aria-hidden="true" className="text-indigo-300">/</span><span className="rounded-full border border-slate-200 bg-white px-3 py-2">Your teams</span><span aria-hidden="true" className="text-indigo-300">/</span><span className="rounded-full border border-slate-200 bg-white px-3 py-2">One workspace</span></div>
+            </div>
             <div className="grid gap-4 sm:grid-cols-2">
-              {[[Building2,"Multi-store structure","Manage HQ, stores and branches within one retailer account."],[Users,"Department workspaces","Each team sees only its assigned modules and responsibilities."],[Handshake,"Partner collaboration","Retailers and approved vendors coordinate catalogues and orders."],[BarChart3,"Management visibility","Track activity, inventory and performance with scoped reporting."]].map(([Icon,title,text]) => <div key={title} className="rounded-2xl border border-slate-200 bg-slate-50/70 p-5"><span className="grid h-10 w-10 place-items-center rounded-xl bg-white text-indigo-600 shadow-sm ring-1 ring-slate-200"><Icon size={19}/></span><h3 className="mt-4 font-extrabold text-slate-900">{title}</h3><p className="mt-2 text-sm leading-6 text-slate-600">{text}</p></div>)}
+              {[[Building2,"Multi-store structure","Manage HQ, stores and branches within one retailer account.","bg-indigo-50 text-indigo-600","01"],[Users,"Department workspaces","Each team sees only its assigned modules and responsibilities.","bg-violet-50 text-violet-600","02"],[Handshake,"Partner collaboration","Retailers and approved vendors coordinate catalogues and orders.","bg-teal-50 text-teal-600","03"],[BarChart3,"Management visibility","Track activity, inventory and performance with scoped reporting.","bg-amber-50 text-amber-600","04"]].map(([Icon,title,text,iconTone,number]) => (
+                <article key={title} className="group relative overflow-hidden rounded-3xl border border-slate-200/80 bg-white p-6 shadow-[0_12px_40px_rgba(30,41,59,0.05)] transition duration-300 hover:-translate-y-1 hover:border-indigo-200 hover:shadow-[0_20px_50px_rgba(79,70,229,0.10)] sm:p-7">
+                  <div className="flex items-start justify-between gap-4"><span className={`grid h-12 w-12 place-items-center rounded-2xl ${iconTone}`}>{React.createElement(Icon, { size: 22, strokeWidth: 1.8 })}</span><span aria-hidden="true" className="text-xs font-black tracking-wider text-slate-300">{number}</span></div>
+                  <h3 className="mt-6 text-base font-extrabold tracking-tight text-slate-900">{title}</h3><p className="mt-2 text-sm leading-6 text-slate-500">{text}</p>
+                  <span aria-hidden="true" className="mt-6 block h-1 w-9 rounded-full bg-slate-100 transition-all duration-300 group-hover:w-16 group-hover:bg-indigo-400" />
+                </article>
+              ))}
             </div>
           </div>
         </section>
