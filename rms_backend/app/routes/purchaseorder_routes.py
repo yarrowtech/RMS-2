@@ -105,6 +105,7 @@ class ItemModel(BaseModel):
     brand: Optional[str] = ""
     manufacturer: Optional[str] = ""
     pack_size: Optional[str] = ""
+    hsn_code: Optional[str] = ""
     requires_expiry: Optional[bool] = False
     batch_tracking: Optional[bool] = False
     shelf_life_days: Optional[int] = 0
@@ -333,8 +334,41 @@ async def resolve_real_barcode(item: dict) -> str:
     return await generate_item_barcode()
 
 
-def calculate_po_totals(po_dict: dict):
+def _gst_state_code(gstin: str) -> Optional[str]:
+    """First 2 digits of a GSTIN are the registered state code. Returns None
+    for a missing/malformed GSTIN rather than raising — callers treat an
+    unresolved state as "assume intra-state", the same simplifying default
+    Cashier POS billing already uses for its own CGST/SGST split."""
+    gstin = (gstin or "").strip().upper()
+    if len(gstin) >= 2 and gstin[:2].isdigit():
+        return gstin[:2]
+    return None
+
+
+async def _po_is_interstate(po_dict: dict, tenant_id: str) -> bool:
+    """True only when BOTH the buyer's and vendor's GSTIN state codes are
+    known and differ. Either side missing a GSTIN (common for a walk-in
+    vendor, or a tenant that hasn't completed KYB yet) falls back to
+    intra-state — matching the existing Cashier POS assumption rather than
+    inventing a stricter standard unused elsewhere in the app."""
+    tenant = await tenants_collection.find_one({"tenant_id": tenant_id}, {"gstin": 1})
+    buyer_state = _gst_state_code((tenant or {}).get("gstin"))
+
+    vendor_gstin = ""
+    if po_dict.get("vendor_type") == "walkin":
+        vendor_gstin = (po_dict.get("walkinVendor") or {}).get("gstin", "")
+    elif po_dict.get("vendor_id"):
+        vendor = await vendors_collection.find_one({"_id": po_dict["vendor_id"]}, {"gstin": 1})
+        vendor_gstin = (vendor or {}).get("gstin", "")
+    vendor_state = _gst_state_code(vendor_gstin)
+
+    return bool(buyer_state and vendor_state and buyer_state != vendor_state)
+
+
+async def calculate_po_totals(po_dict: dict, tenant_id: str):
+    interstate = await _po_is_interstate(po_dict, tenant_id)
     total_basic = total_tax = total_discount = 0.0
+    total_cgst = total_sgst = total_igst = 0.0
     for item in po_dict.get("items", []):
         qty      = float(item.get("quantity", 0))
         rate     = float(item.get("rate", 0))
@@ -344,13 +378,23 @@ def calculate_po_totals(po_dict: dict):
         discount = basic * (disc_pct / 100)
         taxable  = basic - discount
         tax      = taxable * (tax_pct / 100)
+        if interstate:
+            cgst, sgst, igst = 0.0, 0.0, tax
+        else:
+            cgst, sgst, igst = tax / 2, tax / 2, 0.0
         line_total = taxable + tax
         item["discountAmount"] = round(discount, 2)
         item["taxAmount"]      = round(tax, 2)
+        item["cgstAmount"]     = round(cgst, 2)
+        item["sgstAmount"]     = round(sgst, 2)
+        item["igstAmount"]     = round(igst, 2)
         item["amount"]         = round(line_total, 2)
         total_basic    += basic
         total_tax      += tax
         total_discount += discount
+        total_cgst     += cgst
+        total_sgst     += sgst
+        total_igst     += igst
         tolerance = float(item.get("tolerancePct", 0))
         original  = float(item.get("originalQty", 0))
         if original > 0 and tolerance >= 0:
@@ -367,10 +411,18 @@ def calculate_po_totals(po_dict: dict):
     # Order-level tax comes from the buyer form. It is never combined with legacy item taxes.
     if overall_tax_pct > 0:
         total_tax = gross_before_tax * (overall_tax_pct / 100)
+        if interstate:
+            total_cgst, total_sgst, total_igst = 0.0, 0.0, total_tax
+        else:
+            total_cgst, total_sgst, total_igst = total_tax / 2, total_tax / 2, 0.0
     gross_amount = gross_before_tax
     net_amount   = gross_amount + total_tax
     po_dict["basicValue"]  = round(total_basic, 2)
     po_dict["taxAmount"]   = round(total_tax, 2)
+    po_dict["cgstAmount"]  = round(total_cgst, 2)
+    po_dict["sgstAmount"]  = round(total_sgst, 2)
+    po_dict["igstAmount"]  = round(total_igst, 2)
+    po_dict["isInterstate"] = interstate
     po_dict["grossAmount"] = round(gross_amount, 2)
     po_dict["netAmount"]   = round(net_amount, 2)
 
@@ -690,7 +742,7 @@ async def create_po(po: PurchaseOrderModel, ctx: dict = Depends(get_hq_tenant)):
             po_dict["vendor_id"] = vendor["_id"]
         share_link = None
 
-    calculate_po_totals(po_dict)
+    await calculate_po_totals(po_dict, ctx["tenant_id"])
     po_dict["_id"]       = ObjectId()
     po_dict["createdAt"] = datetime.utcnow()
     po_dict["updatedAt"] = datetime.utcnow()
@@ -870,7 +922,7 @@ async def create_po(po: PurchaseOrderModel, ctx: dict = Depends(get_hq_tenant)):
                 po_dict["orderType"] = "Fabric / Raw Material"
                 po_dict["purchaseType"] = "Fabric / Raw Material"
 
-    calculate_po_totals(po_dict)
+    await calculate_po_totals(po_dict, ctx["tenant_id"])
     po_dict["_id"]       = ObjectId()
     po_dict["createdAt"] = datetime.utcnow()
     po_dict["updatedAt"] = datetime.utcnow()
@@ -1040,7 +1092,7 @@ async def update_purchase_order(po_id: str, po: PurchaseOrderModel, ctx: dict = 
             )
         po_dict["vendor_id"] = vendor["_id"]
 
-    calculate_po_totals(po_dict)
+    await calculate_po_totals(po_dict, ctx["tenant_id"])
 
     try:
         result = await purchaseorders_collection.update_one(
@@ -1122,7 +1174,7 @@ async def update_purchase_order(po_id: str, po: PurchaseOrderModel, ctx: dict = 
     for item in po_dict.get("items", []):
         item["barcode"] = await resolve_real_barcode(item)
         _ensure_buyer_line_snapshot(item)
-    calculate_po_totals(po_dict)
+    await calculate_po_totals(po_dict, ctx["tenant_id"])
 
     try:
         result = await purchaseorders_collection.update_one(

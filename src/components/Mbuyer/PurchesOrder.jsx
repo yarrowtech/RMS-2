@@ -6,8 +6,36 @@ import { createPortal } from "react-dom";
 import VendorCatalogueBrowserModal from "./Vendorcataloguebrowsermodal.jsx";
 import VendorCompareSearch from "./Vendorcomparesearch.jsx";
 import { downloadFabricSheetCsv, downloadFabricSheetExcel, downloadFabricSheetPdf } from "../../utils/fabricSheetExport.js";
+import { downloadPoSheetCsv, downloadPoSheetExcel, downloadPoSheetPdf } from "../../utils/poSheetExport.js";
 
 const API_BASE = `${APP_API_URL}/purchaseorders`;
+
+// Owner Site / Owner Site Short Name are the buyer's own company details —
+// the same on every PO this device raises. Remembered locally so a buyer
+// doesn't retype it on every new order; editing an existing order still
+// loads that order's own saved values instead (see the initialOrder effect
+// below), and whatever's typed here is only (re)saved once a PO is actually
+// saved, so an abandoned draft never overwrites a good remembered value.
+const OWNER_SITE_KEY = "rms_mbuyer_owner_site_v1";
+
+function getSavedOwnerSite() {
+  try {
+    const raw = localStorage.getItem(OWNER_SITE_KEY);
+    const parsed = raw ? JSON.parse(raw) : null;
+    return { ownerSite: parsed?.ownerSite || "", ownerSiteShortName: parsed?.ownerSiteShortName || "" };
+  } catch {
+    return { ownerSite: "", ownerSiteShortName: "" };
+  }
+}
+
+function saveOwnerSite(ownerSite, ownerSiteShortName) {
+  try {
+    if (!ownerSite) return;
+    localStorage.setItem(OWNER_SITE_KEY, JSON.stringify({ ownerSite, ownerSiteShortName: ownerSiteShortName || "" }));
+  } catch {
+    // Non-fatal — just means next new PO won't be pre-filled.
+  }
+}
 
 // â”€â”€ Shared auth helper â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Every route this file calls (purchaseorders, /api/vendors/approved,
@@ -63,6 +91,18 @@ const EMPTY_ITEM = () => ({
   dueDate: "",
   remarks: "",
   removed: false,
+  // FMCG / perishable details — otherwise only ever arrived via a vendor
+  // catalogue direct-purchase line, never a manually typed PO item, so a
+  // walk-in vendor's FMCG goods had no way to declare expiry/batch tracking
+  // up front. The backend (ItemModel, grn_routes.py's product
+  // auto-creation) already reads these fields when present; this was only
+  // ever missing from the manual entry form.
+  hsn_code: "",
+  product_type: "",
+  pack_size: "",
+  requires_expiry: false,
+  batch_tracking: false,
+  shelf_life_days: "0",
 });
 
 const EMPTY_SCHEDULE_ROW = (seq = 1) => ({ seq, date: "", percentage: "", quantity: "" });
@@ -263,6 +303,53 @@ function DownloadFabricSheetModal({ po, onClose }) {
           <div className="flex items-start justify-between">
             <div>
               <p className="text-[10px] font-bold text-cyan-200 uppercase tracking-widest mb-1">Download Fabric PO Sheet</p>
+              <p className="text-xl font-black text-white">{po.orderNo}</p>
+              <p className="text-xs text-cyan-100 mt-1">{po.vendorName} · {po.orderDate}</p>
+            </div>
+            <button onClick={onClose} className="h-8 w-8 rounded-lg flex items-center justify-center text-white hover:bg-white/20 transition text-xl font-bold">×</button>
+          </div>
+        </div>
+        <div className="p-5 space-y-3">
+          {options.map((option) => (
+            <button key={option.label} type="button" disabled={Boolean(busy)} onClick={() => runOption(option)}
+              className="w-full rounded-xl border border-slate-200 bg-white p-4 text-left transition hover:border-cyan-300 hover:bg-cyan-50/40 disabled:opacity-60">
+              <p className="font-black text-slate-900">{busy === option.label ? "Preparing…" : option.label}</p>
+              <p className="mt-1 text-xs text-slate-500">{option.hint}</p>
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+function DownloadPoSheetModal({ po, onClose }) {
+  const [busy, setBusy] = useState("");
+  const meta = {
+    purchase_order_no: po.orderNo, vendor_name: po.vendorName, order_date: po.orderDate, items: po.items || [],
+    expected_delivery_date: po.expectedDeliveryDate, payment_terms: po.paymentTerms,
+    vendor_gstin: po.vendorGstin, vendor_mobile: po.vendorMobile, vendor_address: po.vendorAddress,
+    company_name: po.ownerSite, company_gstin: po.ownerGstin, company_address: po.ownerAddress,
+    subtotal_amount: po.basicValue, tax_amount: po.taxAmount, net_amount: po.netAmount,
+    cgst_amount: po.cgstAmount, sgst_amount: po.sgstAmount, igst_amount: po.igstAmount,
+  };
+  const options = [
+    { label: "PDF", hint: "Best for sharing or printing", run: () => downloadPoSheetPdf(meta) },
+    { label: "Excel (.xlsx)", hint: "Best for editing before sending", run: () => downloadPoSheetExcel(meta) },
+    { label: "CSV", hint: "Best for importing elsewhere", run: () => downloadPoSheetCsv(meta) },
+  ];
+  const runOption = async (option) => {
+    setBusy(option.label);
+    try { await option.run(); } finally { setBusy(""); }
+  };
+  return createPortal(
+    <div className="fixed inset-0 z-[99999] bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
+      <div className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white shadow-2xl overflow-hidden">
+        <div className="px-5 py-4" style={{ background: "linear-gradient(135deg,#0891b2,#0e7490)" }}>
+          <div className="flex items-start justify-between">
+            <div>
+              <p className="text-[10px] font-bold text-cyan-200 uppercase tracking-widest mb-1">Download Purchase Order</p>
               <p className="text-xl font-black text-white">{po.orderNo}</p>
               <p className="text-xs text-cyan-100 mt-1">{po.vendorName} · {po.orderDate}</p>
             </div>
@@ -521,7 +608,17 @@ export default function PurchaseOrderManager() {
                     <TD>{o.ownerSiteShortName || "-"}</TD>
                     <TD>{o.tradeGroupName || "-"}</TD>
                     <TD>{o.termName || "-"}</TD>
-                    <TD className="text-right font-bold tabular-nums">₹{money(o.netAmount)}</TD>
+                    <TD className="text-right font-bold tabular-nums">
+                      ₹{money(o.netAmount)}
+                      {o.taxAmount > 0 && (
+                        <div className="mt-0.5 flex justify-end">
+                          <span className={["px-1.5 py-0.5 rounded text-[9px] font-bold border whitespace-nowrap",
+                            o.isInterstate ? "bg-violet-50 text-violet-700 border-violet-200" : "bg-emerald-50 text-emerald-700 border-emerald-200"].join(" ")}>
+                            {o.isInterstate ? "IGST" : "CGST+SGST"}
+                          </span>
+                        </div>
+                      )}
+                    </TD>
                     <TD className="text-center">
                       <span className={["px-2 py-1 rounded-full text-[11px] font-bold border",
                         o.setApplicable ? "bg-violet-50 text-violet-700 border-violet-200" : "bg-slate-100 text-slate-500 border-slate-200"].join(" ")}>
@@ -532,9 +629,7 @@ export default function PurchaseOrderManager() {
                       <div className="flex flex-wrap justify-end gap-1.5">
                         <ActionBtn color="sky" onClick={() => openEdit(o)}>Edit</ActionBtn>
                         <ActionBtn color="rose" onClick={() => openDelete(o)}>Delete</ActionBtn>
-                        {o.orderType === "Fabric / Raw Material" && (
-                          <ActionBtn color="sky" onClick={() => setDownloadOrder(o)}>Download</ActionBtn>
-                        )}
+                        <ActionBtn color="sky" onClick={() => setDownloadOrder(o)}>Download</ActionBtn>
 
                         {o.vendor_type !== "walkin" && (
                           <ActionBtn color="emerald" disabled={o.status !== "Pending"} onClick={() => sendToVendor(o)}>
@@ -593,7 +688,9 @@ export default function PurchaseOrderManager() {
         <SharePOModal po={shareOrder} onClose={() => setShareOrder(null)} />
       )}
       {downloadOrder && (
-        <DownloadFabricSheetModal po={downloadOrder} onClose={() => setDownloadOrder(null)} />
+        downloadOrder.orderType === "Fabric / Raw Material"
+          ? <DownloadFabricSheetModal po={downloadOrder} onClose={() => setDownloadOrder(null)} />
+          : <DownloadPoSheetModal po={downloadOrder} onClose={() => setDownloadOrder(null)} />
       )}
     </div>
   );
@@ -1036,7 +1133,7 @@ function PurchaseOrderForm({ onClose, onSave, initialOrder }) {
   }, []);
 
   const [general, setGeneral] = useState({
-    vendorId: "", ownerSite: "", ownerSiteShortName: "",
+    vendorId: "", ownerSite: getSavedOwnerSite().ownerSite, ownerSiteShortName: getSavedOwnerSite().ownerSiteShortName,
     date: new Date().toISOString().slice(0, 10), orderNo: "", documentNo: "",
     vendorName: "", purchaseType: "", validFrom: new Date().toISOString().slice(0, 10),
     validTill: "", currency: "", exchangeRate: "", agent: "", teamName: "",
@@ -1130,6 +1227,16 @@ function PurchaseOrderForm({ onClose, onSave, initialOrder }) {
       row.barcode     = product.barcode     || "";
       // Product stock is only a reference; the buyer requested quantity is set from Order Qty.
       row.rate        = String(product.rate        ?? "");
+      // Carried over from the product master whenever it's already known —
+      // generic across every product type (garments, FMCG, anything else),
+      // not just FMCG-looking fields. A previously-bought item no longer
+      // needs HSN/pack size/expiry-tracking retyped on every new PO.
+      if (product.hsn_code)                row.hsn_code        = product.hsn_code;
+      if (product.product_type)            row.product_type    = product.product_type;
+      if (product.pack_size)               row.pack_size       = product.pack_size;
+      if (product.requires_expiry != null) row.requires_expiry = Boolean(product.requires_expiry);
+      if (product.batch_tracking != null)  row.batch_tracking  = Boolean(product.batch_tracking);
+      if (product.shelf_life_days)         row.shelf_life_days = String(product.shelf_life_days);
       const q = clamp0(row.quantity), r = clamp0(row.receivedQty), c = clamp0(row.cancelledQty);
       row.pendingQty = clamp0(q - r - c);
       copy[idx] = row;
@@ -1193,6 +1300,7 @@ function PurchaseOrderForm({ onClose, onSave, initialOrder }) {
 
   const handleSaveOrder = () => {
     if (!validateStep()) return;
+    saveOwnerSite(general.ownerSite, general.ownerSiteShortName);
     const activeItems = items.filter((it) => !it.removed);
     const newOrder = {
       id:                 initialOrder?.id || `PO-${Date.now()}`,
@@ -1621,6 +1729,55 @@ function PurchaseOrderForm({ onClose, onSave, initialOrder }) {
                             className={["h-8 w-full rounded-lg border border-slate-200 bg-white px-2 text-xs outline-none transition focus:border-sky-400 focus:ring-2 focus:ring-sky-100",
                               isRemoved ? "bg-slate-50 text-slate-400 cursor-not-allowed" : ""].join(" ")}
                             placeholder="Remarks…" />
+                        </div>
+                      </div>
+
+                      <div className="px-3 pb-3 pt-2.5 grid grid-cols-2 sm:grid-cols-5 gap-2.5 border-t border-slate-50">
+                        <div>
+                          <label className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide block mb-1">HSN Code</label>
+                          <input value={it.hsn_code} disabled={isRemoved}
+                            onChange={(e) => updateItem(idx, "hsn_code", e.target.value)}
+                            className={["h-8 w-full rounded-lg border border-slate-200 bg-white px-2 text-xs outline-none transition focus:border-sky-400 focus:ring-2 focus:ring-sky-100",
+                              isRemoved ? "bg-slate-50 text-slate-400 cursor-not-allowed" : ""].join(" ")}
+                            placeholder="e.g. 2106" />
+                        </div>
+                        <div>
+                          <label className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide block mb-1">Product Type</label>
+                          <input value={it.product_type} disabled={isRemoved}
+                            onChange={(e) => updateItem(idx, "product_type", e.target.value)}
+                            className={["h-8 w-full rounded-lg border border-slate-200 bg-white px-2 text-xs outline-none transition focus:border-sky-400 focus:ring-2 focus:ring-sky-100",
+                              isRemoved ? "bg-slate-50 text-slate-400 cursor-not-allowed" : ""].join(" ")}
+                            placeholder="e.g. FMCG" />
+                        </div>
+                        <div>
+                          <label className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide block mb-1">Pack Size</label>
+                          <input value={it.pack_size} disabled={isRemoved}
+                            onChange={(e) => updateItem(idx, "pack_size", e.target.value)}
+                            className={["h-8 w-full rounded-lg border border-slate-200 bg-white px-2 text-xs outline-none transition focus:border-sky-400 focus:ring-2 focus:ring-sky-100",
+                              isRemoved ? "bg-slate-50 text-slate-400 cursor-not-allowed" : ""].join(" ")}
+                            placeholder="e.g. 500g" />
+                        </div>
+                        <div>
+                          <label className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide block mb-1">Shelf Life (days)</label>
+                          <input type="number" min="0" value={it.shelf_life_days} disabled={isRemoved || !it.requires_expiry}
+                            onChange={(e) => updateItem(idx, "shelf_life_days", String(clamp0(e.target.value)))}
+                            className={["h-8 w-full rounded-lg border border-slate-200 bg-white px-2 text-xs text-right tabular-nums outline-none transition focus:border-sky-400 focus:ring-2 focus:ring-sky-100",
+                              (isRemoved || !it.requires_expiry) ? "bg-slate-50 text-slate-400 cursor-not-allowed" : ""].join(" ")}
+                            placeholder="0" />
+                        </div>
+                        <div className="flex items-end gap-3 pb-1.5">
+                          <label className="flex items-center gap-1.5 text-[11px] font-semibold text-slate-600">
+                            <input type="checkbox" checked={it.requires_expiry} disabled={isRemoved}
+                              onChange={(e) => updateItem(idx, "requires_expiry", e.target.checked)}
+                              className="h-3.5 w-3.5 accent-sky-600" />
+                            Expiry
+                          </label>
+                          <label className="flex items-center gap-1.5 text-[11px] font-semibold text-slate-600">
+                            <input type="checkbox" checked={it.batch_tracking} disabled={isRemoved}
+                              onChange={(e) => updateItem(idx, "batch_tracking", e.target.checked)}
+                              className="h-3.5 w-3.5 accent-sky-600" />
+                            Batch
+                          </label>
                         </div>
                       </div>
                     </div>

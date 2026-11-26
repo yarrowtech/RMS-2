@@ -12,6 +12,7 @@ from app.db import (
     purchaseorders_collection,
     vendors_collection,
     finance_vouchers_collection,
+    tenants_collection,
 )
 
 from .deps import get_tenant
@@ -128,6 +129,7 @@ VALID_STATUSES = {
 class InvoiceItemModel(BaseModel):
     barcode:        str   = ""
     description:    str   = ""
+    hsn_code:       str   = ""
     grnQty:         float = 0
     invoicedQty:    float = 0
     rate:           float = 0
@@ -316,8 +318,40 @@ def compute_due_date(invoice_date: str, payment_terms: str) -> str:
 # Computation
 # ─────────────────────────────────────────────────────────────────────────────
 
-def compute_invoice_totals(inv_dict: dict):
+def _gst_state_code(gstin: str) -> Optional[str]:
+    """Same rule as purchaseorder_routes.py's helper of the same name — the
+    first 2 digits of a GSTIN are the registered state code. Duplicated
+    locally rather than imported to avoid a cross-route import; keep both
+    in sync if this logic ever changes."""
+    gstin = (gstin or "").strip().upper()
+    if len(gstin) >= 2 and gstin[:2].isdigit():
+        return gstin[:2]
+    return None
+
+
+async def _invoice_is_interstate(inv_dict: dict, po: dict | None) -> bool:
+    """Same buyer-vs-vendor GSTIN-state comparison used for Purchase Orders
+    — either side missing a GSTIN falls back to intra-state."""
+    tenant_id = inv_dict.get("tenant_id") or _invoice_scope.get().get("tenant_id")
+    tenant = await tenants_collection.find_one({"tenant_id": tenant_id}, {"gstin": 1}) if tenant_id else None
+    buyer_state = _gst_state_code((tenant or {}).get("gstin"))
+
+    vendor_gstin = ""
+    vendor_id = inv_dict.get("vendor_id")
+    if vendor_id and ObjectId.is_valid(str(vendor_id)):
+        vendor = await vendors_collection.find_one({"_id": ObjectId(str(vendor_id))}, {"gstin": 1})
+        vendor_gstin = (vendor or {}).get("gstin", "")
+    elif po:
+        vendor_gstin = (po.get("walkinVendor") or {}).get("gstin", "")
+    vendor_state = _gst_state_code(vendor_gstin)
+
+    return bool(buyer_state and vendor_state and buyer_state != vendor_state)
+
+
+async def compute_invoice_totals(inv_dict: dict, po: dict | None = None):
+    interstate = await _invoice_is_interstate(inv_dict, po)
     subtotal = tax_total = discount_total = 0.0
+    cgst_total = sgst_total = igst_total = 0.0
 
     for item in inv_dict.get("items", []):
         qty      = max(0.0, safe_float(item.get("invoicedQty")))
@@ -329,11 +363,21 @@ def compute_invoice_totals(inv_dict: dict):
         discount = gross * (disc_pct / 100)
         taxable  = gross - discount
         tax      = taxable * (tax_pct / 100)
+        if interstate:
+            cgst, sgst, igst = 0.0, 0.0, tax
+        else:
+            cgst, sgst, igst = tax / 2, tax / 2, 0.0
         line_amt = taxable + tax
 
         item["discountAmount"] = round(discount, 2)
         item["taxAmount"]      = round(tax, 2)
+        item["cgstAmount"]     = round(cgst, 2)
+        item["sgstAmount"]     = round(sgst, 2)
+        item["igstAmount"]     = round(igst, 2)
         item["lineAmount"]     = round(line_amt, 2)
+        cgst_total += cgst
+        sgst_total += sgst
+        igst_total += igst
 
         po_rate  = safe_float(item.get("poRate"))
         grn_qty  = safe_float(item.get("grnQty"))
@@ -363,6 +407,10 @@ def compute_invoice_totals(inv_dict: dict):
 
     inv_dict["subtotal"]      = round(subtotal, 2)
     inv_dict["totalTax"]      = round(tax_total, 2)
+    inv_dict["totalCgst"]     = round(cgst_total, 2)
+    inv_dict["totalSgst"]     = round(sgst_total, 2)
+    inv_dict["totalIgst"]     = round(igst_total, 2)
+    inv_dict["isInterstate"]  = interstate
     inv_dict["totalDiscount"] = round(discount_total, 2)
     inv_dict["invoiceTotal"]  = round(net, 2)
     inv_dict["balanceDue"]    = round(max(0.0, net - paid), 2)
@@ -706,7 +754,8 @@ def build_payment_schedule(inv_dict: dict, payment_mode: str, payment_terms: str
 # Prefill items from GRNs
 # ─────────────────────────────────────────────────────────────────────────────
 
-def prefill_items_from_grns(grns: list, po_rate_map: Dict[str, float]) -> list:
+def prefill_items_from_grns(grns: list, po_rate_map: Dict[str, float], po_tax_map: Dict[str, float] | None = None) -> list:
+    po_tax_map = po_tax_map or {}
     grn_qty_map: Dict[str, Any] = {}
     for grn in grns:
         for it in grn.get("items", []):
@@ -727,7 +776,10 @@ def prefill_items_from_grns(grns: list, po_rate_map: Dict[str, float]) -> list:
             "invoicedQty":    data["qty"],
             "rate":           data["rate"],
             "poRate":         po_rate_map.get(bc, data["rate"]),
-            "taxPct":         0,
+            # Was hardcoded to 0 regardless of what the originating PO had —
+            # every invoice drafted from a GRN started with zero tax even
+            # when the PO line it came from had a real GST rate on it.
+            "taxPct":         po_tax_map.get(bc, 0),
             "discountPct":    0,
             "taxAmount":      0,
             "discountAmount": 0,
@@ -761,14 +813,19 @@ async def create_invoice(inv: PurchaseInvoiceModel):
 
     if not inv_dict.get("items"):
         po_rate_map = {}
+        po_tax_map = {}
         if po:
             po_rate_map = {
                 (it.get("barcode") or "").strip(): safe_float(it.get("rate"))
                 for it in po.get("items", [])
             }
-        inv_dict["items"] = prefill_items_from_grns(grns, po_rate_map)
+            po_tax_map = {
+                (it.get("barcode") or "").strip(): safe_float(it.get("taxPct"))
+                for it in po.get("items", [])
+            }
+        inv_dict["items"] = prefill_items_from_grns(grns, po_rate_map, po_tax_map)
 
-    compute_invoice_totals(inv_dict)
+    await compute_invoice_totals(inv_dict, po)
     match_result = run_three_way_match(inv_dict, po, grns)
     inv_dict["threeWayMatch"] = match_result
 
@@ -1145,7 +1202,7 @@ async def update_invoice(inv_id: str, inv: PurchaseInvoiceModel):
     inv_dict["updatedAt"] = datetime.utcnow()
 
     po, grns = await resolve_invoice_links(inv_dict)
-    compute_invoice_totals(inv_dict)
+    await compute_invoice_totals(inv_dict, po)
     match_result = run_three_way_match(inv_dict, po, grns)
     inv_dict["threeWayMatch"] = match_result
 

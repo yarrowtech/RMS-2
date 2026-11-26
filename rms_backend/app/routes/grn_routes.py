@@ -276,13 +276,20 @@ async def ensure_product_exists(item: dict, grn_dict: dict, initial_quantity: fl
     grn_no     = grn_dict.get("grnNo", "")
     is_fabric  = bool(item.get("fabric_type") or item.get("gsm"))
     image_url  = (item.get("image_url") or "").strip()
+    # A PO/GRN line never carries a division classification (that's a
+    # Product Master concept), so this falls into generate_base_sku's own
+    # "GEN" prefix fallback — same auto-generation used by bulk import, just
+    # not previously wired up here, so a GRN-created product sat with a
+    # permanently blank SKU unless someone typed one by hand on the PO line.
+    from .products import generate_base_sku  # local import — products.py imports from this module at load time
+    sku = (item.get("sku") or "").strip() or await generate_base_sku("", desc, tenant_id)
 
     await product_collection.insert_one({
         "product_name":    desc,
         "division":        "",
         "section":         "",
         "department":      "",
-        "hsn_code":        "",
+        "hsn_code":        item.get("hsn_code") or "",
         "gst_rate":        0.0,
         "cgst_rate":       0.0,
         "sgst_rate":       0.0,
@@ -295,7 +302,7 @@ async def ensure_product_exists(item: dict, grn_dict: dict, initial_quantity: fl
         "batch_tracking":  bool(item.get("batch_tracking")),
         "expiry_date":     item.get("expiryDate") or "",
         "shelf_life_days": int(item.get("shelf_life_days") or 0),
-        "sku":             item.get("sku") or "",
+        "sku":             sku,
         "vendor_barcode":  item.get("vendor_barcode") or item.get("vendorBarcode") or "",
         "barcode_policy":  item.get("barcode_policy") or "",
         "stock_identity":  item.get("stock_identity") or "",
@@ -914,6 +921,12 @@ async def backfill_posted_grns(payload: dict = {}, ctx: dict = Depends(get_hq_te
                     "grn_no":    grn_no,
                     "vendor":    vendor,
                     "is_walkin": is_walkin,
+                    "hsn_code":        (item.get("hsn_code") or "").strip(),
+                    "product_type":    item.get("product_type") or "",
+                    "pack_size":       item.get("pack_size") or "",
+                    "requires_expiry": bool(item.get("requires_expiry")),
+                    "batch_tracking":  bool(item.get("batch_tracking")),
+                    "shelf_life_days": int(item.get("shelf_life_days") or 0),
                 }
             barcode_data[barcode]["qty"] = round(
                 barcode_data[barcode]["qty"] + (factor * inward), 4
@@ -935,6 +948,12 @@ async def backfill_posted_grns(payload: dict = {}, ctx: dict = Depends(get_hq_te
         grn_no    = data["grn_no"]
         vendor    = data["vendor"]
         is_walkin = data["is_walkin"]
+        fmcg_hsn_code        = data.get("hsn_code", "")
+        fmcg_product_type    = data.get("product_type", "")
+        fmcg_pack_size       = data.get("pack_size", "")
+        fmcg_requires_expiry = data.get("requires_expiry", False)
+        fmcg_batch_tracking  = data.get("batch_tracking", False)
+        fmcg_shelf_life_days = data.get("shelf_life_days", 0)
 
         meta            = {} if is_walkin else await get_product_meta(barcode, ctx["tenant_id"])
         display_name    = meta.get("product_name") or desc or barcode
@@ -971,20 +990,25 @@ async def backfill_posted_grns(payload: dict = {}, ctx: dict = Depends(get_hq_te
 
         try:
             if not await barcode_in_products(barcode, ctx["tenant_id"]):
+                from .products import generate_base_sku
+                resync_sku = await generate_base_sku("", desc or barcode, ctx["tenant_id"])
                 await product_collection.insert_one({
                     "product_name":    desc or barcode,
                     "division":        "",
                     "section":         "",
                     "department":      "",
-                    "hsn_code":        "",
+                    "hsn_code":        fmcg_hsn_code,
                     "gst_rate":        0.0,
                     "cgst_rate":       0.0,
                     "sgst_rate":       0.0,
                     "igst_rate":       0.0,
-                    "requires_expiry": False,
+                    "product_type":    fmcg_product_type,
+                    "pack_size":       fmcg_pack_size,
+                    "requires_expiry": fmcg_requires_expiry,
+                    "batch_tracking":  fmcg_batch_tracking,
                     "expiry_date":     "",
-                    "shelf_life_days": 0,
-                    "sku":             "",
+                    "shelf_life_days": fmcg_shelf_life_days,
+                    "sku":             resync_sku,
                     "barcode":         barcode,
                     "cost_price":      rate,
                     "mrp":             rate,

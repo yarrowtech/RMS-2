@@ -373,13 +373,26 @@ function PIForm({ initialPI, onClose, onSave }) {
     const hasQty = items.some((i) => clamp0(i.invoicedQty) > 0);
     if (!hasQty) return alert("Please enter invoiced quantity for at least one item.");
 
+    // The backend only has a single taxPct per item (it derives the real
+    // CGST/SGST/IGST split itself from buyer/vendor GSTIN, same as Purchase
+    // Orders) — it has no cgstPct/sgstPct/igstPct fields at all, so those
+    // were being silently dropped on save and every invoice was recorded
+    // with zero tax regardless of what was typed here. Sending their sum as
+    // taxPct is what actually makes the backend compute real tax; hsn is
+    // renamed to hsn_code to match the field the backend persists.
+    const itemsForSave = items.map((it) => ({
+      ...it,
+      taxPct: clamp0(it.cgstPct) + clamp0(it.sgstPct) + clamp0(it.igstPct),
+      hsn_code: it.hsn || "",
+    }));
+
     const pi = {
       id:        initialPI?.id || `PI-${Date.now()}`,
       invoiceNo: header.invoiceNo || `PI-${Date.now()}`,
       ...header,
       ...totals,
       extraCharges,
-      items,
+      items: itemsForSave,
     };
     onSave(pi);
   };

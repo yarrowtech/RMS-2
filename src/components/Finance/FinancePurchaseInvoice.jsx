@@ -1,9 +1,10 @@
 import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
 import React, { useState, useEffect, useMemo, useCallback } from "react"; // Hot reload trigger 2
 import {
-  FileText, Search, Plus, X, Coins, ArrowUpRight, ShieldCheck, CheckCircle2, Clock, HelpCircle, AlertTriangle, Building2, User, Link, AlertOctagon
+  FileText, Search, Plus, X, Coins, ArrowUpRight, ShieldCheck, CheckCircle2, Clock, HelpCircle, AlertTriangle, Building2, User, Link, AlertOctagon, Download
 } from "lucide-react";
 import { toast } from "react-hot-toast";
+import { downloadInvoiceSheetCsv, downloadInvoiceSheetExcel, downloadInvoiceSheetPdf } from "../../utils/invoiceSheetExport.js";
 
 /* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
    API CONSTANTS
@@ -1592,6 +1593,48 @@ function PaymentForm({ inv, onClose, showToast }) {
 /* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
    INVOICE VIEW MODAL — with Notify tab
 â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
+function DownloadInvoiceSheetModal({ inv, onClose }) {
+  const [busy, setBusy] = useState("");
+  const meta = {
+    invoice_no: inv.invoiceNo, vendor_name: inv.vendorName, invoice_date: inv.invoiceDate, due_date: inv.dueDate,
+    po_no: inv.poNo, grn_no: (inv.grnNos || []).join(", "), items: inv.items || [],
+    subtotal: inv.subtotal, tax_amount: inv.totalTax, net_amount: inv.invoiceTotal,
+    cgst_amount: inv.totalCgst, sgst_amount: inv.totalSgst, igst_amount: inv.totalIgst,
+  };
+  const options = [
+    { label: "PDF", hint: "Best for sharing or printing", run: () => downloadInvoiceSheetPdf(meta) },
+    { label: "Excel (.xlsx)", hint: "Best for records or reconciliation", run: () => downloadInvoiceSheetExcel(meta) },
+    { label: "CSV", hint: "Best for importing elsewhere", run: () => downloadInvoiceSheetCsv(meta) },
+  ];
+  const runOption = async (option) => {
+    setBusy(option.label);
+    try { await option.run(); } finally { setBusy(""); }
+  };
+  return (
+    <div className="fixed inset-0 z-[99999] bg-black/40 backdrop-blur-sm flex items-center justify-center p-4" onClick={onClose}>
+      <div className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white shadow-2xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
+        <div className="px-6 py-5 flex items-start justify-between" style={{ background: "linear-gradient(135deg,#0891b2,#0e7490)" }}>
+          <div>
+            <p className="text-[10px] font-bold text-cyan-200 uppercase tracking-widest mb-1">Download Purchase Invoice</p>
+            <p className="text-xl font-black text-white">{inv.invoiceNo}</p>
+            <p className="text-xs text-cyan-100 mt-1">{inv.vendorName} · {inv.invoiceDate}</p>
+          </div>
+          <button onClick={onClose} className="text-white/80 hover:text-white"><X className="w-5 h-5" /></button>
+        </div>
+        <div className="p-5 space-y-3">
+          {options.map((option) => (
+            <button key={option.label} type="button" disabled={Boolean(busy)} onClick={() => runOption(option)}
+              className="w-full rounded-xl border border-slate-200 bg-white p-4 text-left transition hover:border-cyan-300 hover:bg-cyan-50/40 disabled:opacity-60">
+              <p className="font-black text-slate-900">{busy === option.label ? "Preparing…" : option.label}</p>
+              <p className="mt-1 text-xs text-slate-500">{option.hint}</p>
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function InvoiceViewModal({ inv: initialInv, onClose, showToast, onRefresh }) {
   const [inv, setInv] = useState(initialInv);
   const [tab, setTab] = useState("details");
@@ -1599,6 +1642,7 @@ function InvoiceViewModal({ inv: initialInv, onClose, showToast, onRefresh }) {
   const [replyText, setReplyText] = useState({});
   const [submitting, setSubmitting] = useState(false);
   const [showNotify, setShowNotify] = useState(false);
+  const [showDownload, setShowDownload] = useState(false);
 
   const match = inv.threeWayMatch || {};
   const queries = inv.vendorQueries || [];
@@ -1654,8 +1698,14 @@ function InvoiceViewModal({ inv: initialInv, onClose, showToast, onRefresh }) {
             {!inv.isRegisteredVendor && inv.vendorPhone && <span> · 📱 {inv.vendorPhone}</span>}
           </p>
         </div>
-        <button className="btn" onClick={onClose} style={{ padding: "7px 14px", background: C.card, color: C.muted, border: `1px solid ${C.border}`, fontSize: 12 }}>Close</button>
+        <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+          <button className="btn" onClick={() => setShowDownload(true)} style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 14px", background: C.card, color: C.accent, border: `1px solid ${C.border}`, fontSize: 12, fontWeight: 600 }}>
+            <Download size={13} /> Download
+          </button>
+          <button className="btn" onClick={onClose} style={{ padding: "7px 14px", background: C.card, color: C.muted, border: `1px solid ${C.border}`, fontSize: 12 }}>Close</button>
+        </div>
       </div>
+      {showDownload && <DownloadInvoiceSheetModal inv={inv} onClose={() => setShowDownload(false)} />}
 
       {/* Tab bar */}
       <div style={{ display: "flex", gap: 0, borderBottom: `1px solid ${C.border}`, background: C.card, padding: "0 24px", overflowX: "auto" }}>
