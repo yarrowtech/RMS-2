@@ -53,26 +53,47 @@ export default function BudgetOTB() {
   const [data,    setData]    = useState([]);
   const [summary, setSummary] = useState({});
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
   const [form,    setForm]    = useState(emptyForm());
   const [editId,  setEditId]  = useState(null);
   const [showForm,setShowForm]= useState(false);
   const [saving,  setSaving]  = useState(false);
   const [search,  setSearch]  = useState("");
+  const [taxonomy, setTaxonomy] = useState({});
+  const [taxonomyLoading, setTaxonomyLoading] = useState(true);
+  const [taxonomyError, setTaxonomyError] = useState("");
+  const [section, setSection] = useState("");
+  const [poGroup, setPoGroup] = useState(null);
+
+  const loadTaxonomy = async () => {
+    setTaxonomyLoading(true); setTaxonomyError("");
+    try {
+      const res = await axios.get(`${APP_API_URL}/inventory/filter-tree`, { headers: buyerHeaders() });
+      setTaxonomy(res.data.data || {});
+    } catch {
+      setTaxonomy({});
+      setTaxonomyError("Could not load the product hierarchy. Please retry.");
+    } finally { setTaxonomyLoading(false); }
+  };
 
   const fetch = async () => {
     try {
-      setLoading(true);
+      setLoading(true); setLoadError("");
       const res = await axios.get(`${API}/budgets`, { headers: buyerHeaders() });
       setData(res.data.data || []);
       setSummary(res.data.summary || {});
-    } catch {} finally { setLoading(false); }
+    } catch { setLoadError("Could not load budgets. Please try again."); } finally { setLoading(false); }
   };
 
-  useEffect(() => { fetch(); }, []);
+  useEffect(() => { fetch(); loadTaxonomy(); }, []);
 
   const handleSave = async () => {
     if (!form.season || !form.division || !form.totalBudget) {
       alert("Season, Division and Budget Amount are required."); return;
+    }
+    const matchesPoGroup = poGroup && form.division === poGroup.division && form.department === poGroup.department;
+    if (!editId && !matchesPoGroup && (!divisions.includes(form.division) || (section && !sections.includes(section)) || (form.department && !departments.includes(form.department)))) {
+      alert("Choose a division, section and department from the available suggestions."); return;
     }
     try {
       setSaving(true);
@@ -96,7 +117,15 @@ export default function BudgetOTB() {
 
   const handleEdit = (row) => {
     setForm({ season:row.season, division:row.division, department:row.department||"", totalBudget:row.totalBudget, notes:row.notes||"" });
-    setEditId(row.id); setShowForm(true);
+    setSection(""); setPoGroup(null); setEditId(row.id); setShowForm(true);
+  };
+
+  const handleSetBudget = (row) => {
+    const department = row.department === "Unassigned" ? "" : (row.department || "");
+    setForm({ ...emptyForm(), division: row.division, department });
+    setPoGroup({ division: row.division, department });
+    setSection(""); setEditId(null); setShowForm(true);
+    window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
   const filtered = data.filter(row => {
@@ -105,6 +134,11 @@ export default function BudgetOTB() {
     return row.division?.toLowerCase().includes(s) || row.department?.toLowerCase().includes(s) || row.season?.toLowerCase().includes(s);
   });
 
+  const divisions = Object.keys(taxonomy).sort((a, b) => a.localeCompare(b));
+  const sections = Object.keys(taxonomy[form.division] || {}).sort((a, b) => a.localeCompare(b));
+  const departments = [...new Set(section
+    ? (taxonomy[form.division]?.[section] || [])
+    : Object.values(taxonomy[form.division] || {}).flat())].sort((a, b) => a.localeCompare(b));
   const INP = { width:"100%", padding:"9px 12px", borderRadius:10, border:"1.5px solid #E4EAF3", fontSize:13, outline:"none", boxSizing:"border-box", fontFamily:"inherit" };
 
   return (
@@ -117,11 +151,13 @@ export default function BudgetOTB() {
           <h2 style={{ margin:0, fontSize:22, fontWeight:800, color:"#0F1B2D" }}>Budget & OTB</h2>
           <p style={{ margin:"4px 0 0", fontSize:13, color:"#64748B" }}>Open To Buy = Budget − Committed PO Value</p>
         </div>
-        <button onClick={() => { setShowForm(true); setEditId(null); setForm(emptyForm()); }}
+        <button onClick={() => { setShowForm(true); setEditId(null); setSection(""); setPoGroup(null); setForm(emptyForm()); }}
           style={{ padding:"9px 18px", borderRadius:10, background:"linear-gradient(135deg,#6366F1,#4F46E5)", color:"#fff", fontWeight:700, fontSize:13, border:"none", cursor:"pointer" }}>
           + Add Budget
         </button>
       </div>
+
+      {loadError && <p role="alert" style={{ color:"#B91C1C", fontSize:13 }}>{loadError} <button type="button" onClick={fetch}>Retry</button></p>}
 
       {/* Summary */}
       <div style={{ display:"flex", gap:10, flexWrap:"wrap", marginBottom:20 }}>
@@ -156,31 +192,27 @@ export default function BudgetOTB() {
             {editId ? "Edit Budget" : "New Budget"}
           </h3>
           <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))", gap:12, marginBottom:12 }}>
-            {[
-              ["Season *",    "season",      "e.g. SS-2026"],
-              ["Division *",  "division",    "e.g. Apparel"],
-              ["Department",  "department",  "e.g. Kids"],
-              ["Budget (₹) *","totalBudget", "0"],
-            ].map(([label, field, ph]) => (
-              <div key={field}>
-                <label style={{ fontSize:11, fontWeight:700, color:"#64748B", textTransform:"uppercase", letterSpacing:"0.06em", display:"block", marginBottom:5 }}>{label}</label>
-                <input style={INP} placeholder={ph} value={form[field]}
-                  onChange={e => setForm(f=>({...f,[field]:e.target.value}))}
-                  type={field==="totalBudget"?"number":"text"} min="0" disabled={editId && (field==="division"||field==="department")}/>
-              </div>
-            ))}
+            <div><label htmlFor="budget-season" style={{ fontSize:11, fontWeight:700, color:"#64748B", textTransform:"uppercase", display:"block", marginBottom:5 }}>Season *</label><input id="budget-season" style={INP} placeholder="e.g. SS-2026" value={form.season} onChange={e => setForm(f => ({...f, season:e.target.value}))} /></div>
+            <div><label htmlFor="budget-division" style={{ fontSize:11, fontWeight:700, color:"#64748B", textTransform:"uppercase", display:"block", marginBottom:5 }}>Division *</label><input id="budget-division" list="budget-divisions" style={INP} value={form.division} placeholder={taxonomyLoading ? "Loading..." : "Type or select division"} disabled={!!editId || taxonomyLoading || !!taxonomyError} onChange={e => { setSection(""); setForm(f => ({...f, division:e.target.value, department:""})); }} /><datalist id="budget-divisions">{divisions.map(value => <option key={value} value={value} />)}</datalist></div>
+            <div><label htmlFor="budget-section" style={{ fontSize:11, fontWeight:700, color:"#64748B", textTransform:"uppercase", display:"block", marginBottom:5 }}>Section</label><input id="budget-section" list="budget-sections" style={INP} value={section} placeholder="Type or select; blank for all" disabled={!!editId || !divisions.includes(form.division) || taxonomyLoading || !!taxonomyError} onChange={e => { setSection(e.target.value); setForm(f => ({...f, department:""})); }} /><datalist id="budget-sections">{sections.map(value => <option key={value} value={value} />)}</datalist></div>
+            <div><label htmlFor="budget-department" style={{ fontSize:11, fontWeight:700, color:"#64748B", textTransform:"uppercase", display:"block", marginBottom:5 }}>Department</label><input id="budget-department" list="budget-departments" style={INP} value={form.department} placeholder="Type or select; blank for unassigned" disabled={!!editId || !divisions.includes(form.division) || (section && !sections.includes(section)) || taxonomyLoading || !!taxonomyError} onChange={e => setForm(f => ({...f, department:e.target.value}))} /><datalist id="budget-departments">{departments.map(value => <option key={value} value={value} />)}</datalist></div>
+            <div><label htmlFor="budget-amount" style={{ fontSize:11, fontWeight:700, color:"#64748B", textTransform:"uppercase", display:"block", marginBottom:5 }}>Budget (&#8377;) *</label><input id="budget-amount" style={INP} type="number" min="0" placeholder="0" value={form.totalBudget} onChange={e => setForm(f => ({...f, totalBudget:e.target.value}))}/></div>
           </div>
+          {taxonomyError && <p role="alert" style={{fontSize:12,color:"#B91C1C"}}>{taxonomyError} <button type="button" onClick={loadTaxonomy}>Retry</button></p>}
+          {!taxonomyLoading && !taxonomyError && divisions.length === 0 && <p style={{fontSize:12,color:"#92400E"}}>No division hierarchy found in the product catalogue.</p>}
+          {poGroup && <p style={{fontSize:12,color:"#64748B"}}>Division and department are prefilled from the PO spend group; add a season and budget amount.</p>}
+          <p style={{fontSize:12,color:"#64748B"}}>Section filters departments. Budgets and PO commitments are grouped by division and department.</p>
           <div style={{ marginBottom:12 }}>
             <label style={{ fontSize:11, fontWeight:700, color:"#64748B", textTransform:"uppercase", letterSpacing:"0.06em", display:"block", marginBottom:5 }}>Notes</label>
             <textarea style={{ ...INP, height:60, resize:"vertical" }} placeholder="Optional notes…"
               value={form.notes} onChange={e=>setForm(f=>({...f,notes:e.target.value}))}/>
           </div>
           <div style={{ display:"flex", gap:10 }}>
-            <button onClick={handleSave} disabled={saving}
+            <button onClick={handleSave} disabled={saving || (!editId && !poGroup && (taxonomyLoading || !!taxonomyError || !divisions.length))}
               style={{ padding:"9px 20px", borderRadius:10, background:"#6366F1", color:"#fff", fontWeight:700, fontSize:13, border:"none", cursor:"pointer", opacity:saving?0.6:1 }}>
               {saving ? "Saving…" : editId ? "Update" : "Create"}
             </button>
-            <button onClick={() => { setShowForm(false); setEditId(null); setForm(emptyForm()); }}
+            <button onClick={() => { setShowForm(false); setEditId(null); setSection(""); setPoGroup(null); setForm(emptyForm()); }}
               style={{ padding:"9px 16px", borderRadius:10, background:"#F1F5F9", color:"#64748B", fontWeight:600, fontSize:13, border:"none", cursor:"pointer" }}>
               Cancel
             </button>
@@ -227,7 +259,7 @@ export default function BudgetOTB() {
                   <td style={{ padding:"10px 14px" }}><StatusBadge status={row.status}/></td>
                   <td style={{ padding:"10px 14px", whiteSpace:"nowrap" }}>
                     <div style={{ display:"flex", gap:8 }}>
-                      {row.id && (
+                      {row.id ? (
                         <>
                           <button onClick={() => handleEdit(row)}
                             style={{ padding:"4px 12px", borderRadius:8, background:"#EFF6FF", color:"#1E40AF", fontWeight:600, fontSize:12, border:"1px solid #BFDBFE", cursor:"pointer" }}>
@@ -238,7 +270,12 @@ export default function BudgetOTB() {
                             Delete
                           </button>
                         </>
-                      )}
+                      ) : row.status === "no-budget" ? (
+                        <button onClick={() => handleSetBudget(row)}
+                          style={{ padding:"4px 12px", borderRadius:8, background:"#EEF2FF", color:"#4338CA", fontWeight:600, fontSize:12, border:"1px solid #C7D2FE", cursor:"pointer" }}>
+                          Set budget
+                        </button>
+                      ) : <span style={{color:"#64748B", fontSize:12}}>Unavailable</span>}
                     </div>
                   </td>
                 </tr>

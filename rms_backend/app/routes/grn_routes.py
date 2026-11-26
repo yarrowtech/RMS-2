@@ -16,7 +16,7 @@ from app.db import (
     stores_collection,
     tenants_collection,
 )
-from app.product_identity import check_fmcg_receipt, identity_fields
+from app.product_identity import check_fmcg_receipt, identity_fields, derive_style_key
 from .deps import get_hq_tenant, get_receiving_tenant
 
 router = APIRouter(prefix="/grn", tags=["Goods Receipt Note"])
@@ -261,6 +261,30 @@ async def barcode_in_products(barcode: str, tenant_id: str) -> bool:
     return False
 
 
+async def _style_group_design_no(explicit_design_no: str | None, description: str, tenant_id: str) -> str:
+    """Vendor-blind style grouping for a brand-new GRN-auto-created product.
+    Never overrides a real, explicitly-supplied design_no. Otherwise derives
+    a style_key from the description (size/colour stripped) and either
+    inherits an existing sibling product's design_no (so "Half Pant Mens
+    Black XL" joins the same group as an already-existing "...Black M"
+    regardless of which vendor supplied either one) or, if this is a
+    genuinely new style, mints design_no = style_key so future repeats of
+    this same style have something to match against. Matching is scoped to
+    products that already carry a style_key — doesn't reach into products
+    created through other flows (Add Product, bulk import) in this slice."""
+    explicit = (explicit_design_no or "").strip()
+    if explicit:
+        return explicit
+    style_key = derive_style_key(description)
+    if not style_key:
+        return ""
+    sibling = await product_collection.find_one(
+        {"tenant_id": tenant_id, "style_key": style_key, "design_no": {"$nin": ["", None]}},
+        {"design_no": 1},
+    )
+    return (sibling or {}).get("design_no") or style_key
+
+
 async def ensure_product_exists(item: dict, grn_dict: dict, initial_quantity: float | None = None) -> None:
     barcode = (item.get("_effective_barcode") or item.get("barcode") or "").strip()
     if not barcode:
@@ -283,9 +307,12 @@ async def ensure_product_exists(item: dict, grn_dict: dict, initial_quantity: fl
     # permanently blank SKU unless someone typed one by hand on the PO line.
     from .products import generate_base_sku  # local import — products.py imports from this module at load time
     sku = (item.get("sku") or "").strip() or await generate_base_sku("", desc, tenant_id)
+    design_no = await _style_group_design_no(item.get("design_no"), desc, tenant_id)
 
     await product_collection.insert_one({
         "product_name":    desc,
+        "design_no":       design_no,
+        "style_key":       derive_style_key(desc),
         "division":        "",
         "section":         "",
         "department":      "",
@@ -992,8 +1019,11 @@ async def backfill_posted_grns(payload: dict = {}, ctx: dict = Depends(get_hq_te
             if not await barcode_in_products(barcode, ctx["tenant_id"]):
                 from .products import generate_base_sku
                 resync_sku = await generate_base_sku("", desc or barcode, ctx["tenant_id"])
+                resync_design_no = await _style_group_design_no(None, desc or barcode, ctx["tenant_id"])
                 await product_collection.insert_one({
                     "product_name":    desc or barcode,
+                    "design_no":       resync_design_no,
+                    "style_key":       derive_style_key(desc or barcode),
                     "division":        "",
                     "section":         "",
                     "department":      "",

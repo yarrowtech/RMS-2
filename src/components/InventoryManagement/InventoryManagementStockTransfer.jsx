@@ -1013,6 +1013,19 @@ const emptyOut = () => ({
    automatically when a Pending receipt is confirmed via /receive.
 ══════════════════════════════════════════════════════════════════ */
 export default function StockTransfer() {
+  // Shadows the module-level storeId/storeName/isHQ/authHdr (computed once,
+  // at first import of this file, in a browser tab that can easily outlive
+  // a login/logout or account switch). Re-read on every render instead, so
+  // this component can never act on a stale "isHQ" derived from whatever
+  // localStorage happened to hold the moment this module first loaded —
+  // this was why Pending Receipts could silently query "central" instead of
+  // the real store_id for a genuinely store-scoped session.
+  const storeId   = localStorage.getItem("store_id")   || "";
+  const storeName = localStorage.getItem("store_name") || "";
+  const isHQ      = !storeId;
+  const token     = localStorage.getItem("admin_token") || localStorage.getItem("access_token") || localStorage.getItem("token") || "";
+  const authHdr   = { Authorization: `Bearer ${token}` };
+
   const [activeTab,   setActiveTab]   = useState("out");
   const [records,     setRecords]     = useState([]);
   const [pending,     setPending]     = useState([]);

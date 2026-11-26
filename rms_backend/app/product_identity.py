@@ -1,4 +1,5 @@
 """Stable replenishment identity helpers with legacy barcode fallback."""
+import re
 from typing import Any
 from datetime import date, timedelta
 
@@ -7,6 +8,35 @@ GTIN_LENGTHS = {8, 12, 13, 14}
 
 def clean(value: Any) -> str:
     return str(value or "").strip()
+
+# Deliberately vendor-blind — a repeat purchase of the identical style from a
+# different vendor must still resolve to the same style_key. Vendor stays a
+# purchase-event/ledger attribute (already tracked on each stock adjustment),
+# never a matching key here; folding it in would fragment one real stock-
+# keeping unit into vendor-flavored duplicates, the exact bug this exists to
+# avoid. Size/colour tokens are stripped so "Half Pant Mens Black M" and
+# "Half Pant Mens Black XL" collapse to the same key; anything else in the
+# description (brand, style words) is kept, so genuinely different products
+# don't collide just for sharing a colour.
+_STYLE_KEY_SIZE_TOKENS = {
+    "XS", "S", "M", "L", "XL", "XXL", "XXXL", "2XL", "3XL", "4XL", "5XL",
+    "FREE", "FREESIZE", "FS", "ONESIZE",
+}
+_STYLE_KEY_COLOR_TOKENS = {
+    "WHITE", "BLACK", "NAVY", "RED", "BLUE", "GREEN", "YELLOW", "PINK",
+    "GREY", "GRAY", "MAROON", "BEIGE", "MULTI", "MULTICOLOUR", "MULTICOLOR",
+    "BROWN", "ORANGE", "PURPLE", "CREAM", "OLIVE", "TEAL", "GOLD", "SILVER",
+}
+
+def derive_style_key(description: str) -> str:
+    """Normalize a product description into a style-level grouping key by
+    stripping trailing size/colour tokens — "Half Pant Mens Black M" and
+    "Half Pant Mens Black-XL" both reduce to "HALF PANT MENS". Returns ""
+    for an empty/all-token input (caller should skip matching in that case,
+    not treat "" as a shared style across unrelated products)."""
+    words = re.findall(r"[A-Za-z0-9]+", clean(description).upper())
+    kept = [w for w in words if w not in _STYLE_KEY_SIZE_TOKENS and w not in _STYLE_KEY_COLOR_TOKENS]
+    return " ".join(kept).strip()
 
 def normalize_gtin(value: Any) -> str:
     """Return digits-only GTIN text; separators are not silently accepted."""

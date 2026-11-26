@@ -306,3 +306,6 @@ async def reports(ctx: dict = Depends(get_finance_context)):
             "ar_source": "Accounts receivable comes from credit POS bills and receipt vouchers.",
         },
     }
+
+# Register master endpoints on the existing finance router.
+from . import finance_master_routes  # noqa: E402,F401

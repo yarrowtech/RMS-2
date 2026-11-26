@@ -6,6 +6,13 @@ import {
 } from "lucide-react";
 import { apiUrl } from "../../config/api.js";
 import { logoutOrReturnToDepartmentSelector } from "../../utils/authRedirect";
+import FinancePaymentReconciliation from "./FinancePaymentReconciliation.jsx";
+import FinanceCreditorAccounts from "./FinanceCreditorAccounts.jsx";
+import FinanceCashBankOpenings from "./FinanceCashBankOpenings.jsx";
+import FinanceOpeningBalances from "./FinanceOpeningBalances.jsx";
+import FinanceInvoiceLinks from "./FinanceInvoiceLinks.jsx";
+import FinanceBalancedVouchers from "./FinanceBalancedVouchers.jsx";
+import FinanceMasters from "./FinanceMasters.jsx";
 import FinanceVendorLedger from "./FinanceVendorLedger.jsx";
 import InternalNotificationBell from "../InternalNotificationBell.jsx";
 import InternalChatPanel from "../InternalChatPanel.jsx";
@@ -19,6 +26,14 @@ const navItems = [
   { id: "dashboard", label: "Finance dashboard", icon: LayoutDashboard },
   { id: "payables", label: "Accounts payable", icon: ArrowUpRight },
   { id: "receivables", label: "Accounts receivable", icon: ArrowDownLeft },
+  { id: "vendorMaster", label: "Vendor master", icon: Building2 },
+  { id: "accountMaster", label: "Cash & bank accounts", icon: Landmark },
+  { id: "balancedVouchers", label: "Journal & contra", icon: BookOpen },
+  { id: "invoiceVendorLinks", label: "Link payable vendors", icon: Building2 },
+  { id: "cashBankOpening", label: "Cash & bank openings", icon: Landmark },
+  { id: "vendorOpening", label: "Vendor opening balances", icon: Scale },
+  { id: "creditorAccounts", label: "Vendor creditor accounts", icon: Building2 },
+  { id: "paymentReconciliation", label: "Payment reconciliation", icon: Scale },
   { id: "vendorLedger", label: "Vendor ledger", icon: Building2 },
   { id: "vouchers", label: "Vouchers & notes", icon: BookOpen },
   { id: "aging", label: "Outstanding aging", icon: Scale },
@@ -103,7 +118,7 @@ function PaymentForm({ invoice, onClose, onSaved }) {
     const body = await response.json(); if (!response.ok) throw new Error(body.detail || "Payment could not be recorded"); onSaved(); onClose();
   } catch (err) { setError(err.message || "Payment could not be recorded"); } finally { setSaving(false); } };
   const field = "mt-1 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100";
-  return <form onSubmit={save} className="space-y-4"><div className="rounded-2xl bg-indigo-50 p-4"><p className="font-black text-indigo-950">{invoice.invoice_no}</p><p className="mt-1 text-sm text-indigo-700">{invoice.vendor} · Balance due {money(invoice.balance_due)}</p></div>{error && <div className="rounded-xl bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-700">{error}</div>}<div className="grid gap-4 sm:grid-cols-2"><label className="text-sm font-bold text-slate-700">Amount<input type="number" min="0.01" max={invoice.balance_due} step="0.01" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} className={field} required /></label><label className="text-sm font-bold text-slate-700">Payment date<input type="date" value={form.paymentDate} onChange={(e) => setForm({ ...form, paymentDate: e.target.value })} className={field} required /></label><label className="text-sm font-bold text-slate-700">Mode<select value={form.paymentMode} onChange={(e) => setForm({ ...form, paymentMode: e.target.value })} className={field}>{["NEFT", "RTGS", "UPI", "Cheque", "Cash", "DD", "Other"].map((item) => <option key={item}>{item}</option>)}</select></label><label className="text-sm font-bold text-slate-700">Reference / UTR<input value={form.referenceNo} onChange={(e) => setForm({ ...form, referenceNo: e.target.value })} className={field} /></label></div><label className="block text-sm font-bold text-slate-700">Narration<textarea value={form.remarks} onChange={(e) => setForm({ ...form, remarks: e.target.value })} className={field} rows="3" /></label><div className="flex justify-end gap-3"><button type="button" onClick={onClose} className="rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-bold text-slate-600">Cancel</button><button disabled={saving} className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-bold text-white disabled:opacity-60">{saving && <Loader2 size={16} className="animate-spin" />}Record payment</button></div></form>;
+  return <form onSubmit={save} className="space-y-4"><div className="rounded-2xl bg-indigo-50 p-4"><p className="font-black text-indigo-950">{invoice.invoice_no}</p><p className="mt-1 text-sm text-indigo-700">{invoice.vendor} · Balance due {money(invoice.balance_due)}</p>{invoice.finance_vendor_code && <p className="mt-1 text-sm text-indigo-700">Finance vendor: {invoice.finance_vendor_code} - {invoice.finance_vendor_name}</p>}</div>{error && <div className="rounded-xl bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-700">{error}</div>}<div className="grid gap-4 sm:grid-cols-2"><label className="text-sm font-bold text-slate-700">Amount<input type="number" min="0.01" max={invoice.balance_due} step="0.01" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} className={field} required /></label><label className="text-sm font-bold text-slate-700">Payment date<input type="date" value={form.paymentDate} onChange={(e) => setForm({ ...form, paymentDate: e.target.value })} className={field} required /></label><label className="text-sm font-bold text-slate-700">Mode<select value={form.paymentMode} onChange={(e) => setForm({ ...form, paymentMode: e.target.value })} className={field}>{["NEFT", "RTGS", "UPI", "Cheque", "Cash", "DD", "Other"].map((item) => <option key={item}>{item}</option>)}</select></label><label className="text-sm font-bold text-slate-700">Reference / UTR<input value={form.referenceNo} onChange={(e) => setForm({ ...form, referenceNo: e.target.value })} className={field} /></label></div><label className="block text-sm font-bold text-slate-700">Narration<textarea value={form.remarks} onChange={(e) => setForm({ ...form, remarks: e.target.value })} className={field} rows="3" /></label><div className="flex justify-end gap-3"><button type="button" onClick={onClose} className="rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-bold text-slate-600">Cancel</button><button disabled={saving} className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-bold text-white disabled:opacity-60">{saving && <Loader2 size={16} className="animate-spin" />}Record payment</button></div></form>;
 }
 
 export default function FinanceWorkspace() {
@@ -121,6 +136,14 @@ export default function FinanceWorkspace() {
   const currentRows = useMemo(() => data.vouchers?.rows || [], [data.vouchers]);
   const content = () => {
     if (active === "settings") return <AdminSettings departmentMode />;
+    if (active === "vendorMaster") return <FinanceMasters mode="vendors" />;
+    if (active === "accountMaster") return <FinanceMasters mode="accounts" />;
+    if (active === "balancedVouchers") return <FinanceBalancedVouchers />;
+    if (active === "invoiceVendorLinks") return <FinanceInvoiceLinks onPay={setPaymentInvoice} refresh={data.payables} />;
+    if (active === "cashBankOpening") return <FinanceCashBankOpenings />;
+    if (active === "vendorOpening") return <FinanceOpeningBalances />;
+    if (active === "creditorAccounts") return <FinanceCreditorAccounts />;
+    if (active === "paymentReconciliation") return <FinancePaymentReconciliation />;
     if (active === "vendorLedger") return <FinanceVendorLedger />;
     if (loading) return <div className="grid min-h-[440px] place-items-center"><div className="flex items-center gap-2 text-sm font-bold text-slate-500"><Loader2 className="animate-spin" size={19} />Loading tenant finance data…</div></div>;
     if (error) return <div className="m-6 rounded-2xl border border-rose-200 bg-rose-50 p-6 text-center"><p className="font-black text-rose-800">Finance workspace could not load</p><p className="mt-1 text-sm text-rose-700">{error}</p><button onClick={load} className="mt-4 rounded-xl bg-rose-700 px-4 py-2 text-sm font-bold text-white">Try again</button></div>;

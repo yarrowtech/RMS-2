@@ -1905,6 +1905,45 @@ export default function InventoryCurrentStockList() {
     return rows;
   }, [data]);
 
+  // Group by style (design_no) — purely a display transform over rows the
+  // server already returns; design_no has been set on new GRN-created
+  // products since the walk-in/vendor-blind style-matching fix, so repeat
+  // purchases of the same style (any size/colour, any vendor) now share one.
+  // A row with no design_no, or a design_no only one row has, renders
+  // exactly as it always has — this never changes default behaviour, it
+  // only adds an optional banner over rows that already share a style.
+  const [groupByStyle, setGroupByStyle] = React.useState(false);
+  const [collapsedGroups, setCollapsedGroups] = React.useState(() => new Set());
+  const toggleGroupCollapsed = (designNo) => setCollapsedGroups(prev => {
+    const next = new Set(prev);
+    next.has(designNo) ? next.delete(designNo) : next.add(designNo);
+    return next;
+  });
+
+  const visibleRows = React.useMemo(() => {
+    if (!groupByStyle) return filtered;
+    const groups = new Map();
+    const order = [];
+    for (const row of filtered) {
+      const key = (row.design_no || "").trim();
+      if (!key) { order.push({ __single: row }); continue; }
+      if (!groups.has(key)) { groups.set(key, []); order.push({ __groupKey: key }); }
+      groups.get(key).push(row);
+    }
+    const out = [];
+    for (const entry of order) {
+      if (entry.__single) { out.push(entry.__single); continue; }
+      const members = groups.get(entry.__groupKey);
+      if (members.length < 2) { out.push(...members); continue; } // lone member — nothing to group
+      const totalQty   = members.reduce((s, r) => s + (r.qty || 0), 0);
+      const totalValue = members.reduce((s, r) => s + (r.qty || 0) * (r.rate || 0), 0);
+      const collapsed = collapsedGroups.has(entry.__groupKey);
+      out.push({ __isGroupHeader: true, design_no: entry.__groupKey, count: members.length, totalQty, totalValue, collapsed });
+      if (!collapsed) out.push(...members);
+    }
+    return out;
+  }, [filtered, groupByStyle, collapsedGroups]);
+
   const inStock    = summary.in_stock || 0;
   const lowStock   = summary.low_stock || 0;
   const outStock   = summary.out_of_stock || 0;
@@ -2059,6 +2098,13 @@ export default function InventoryCurrentStockList() {
               {search && <button onClick={() => setSearch("")} className="text-slate-400 hover:text-slate-600 text-xs">✕</button>}
             </div>
           </div>
+          <div className="sm:col-span-2 lg:col-span-4 flex items-center justify-end">
+            <label className="inline-flex items-center gap-2 text-xs font-semibold text-slate-600 cursor-pointer select-none">
+              <input type="checkbox" checked={groupByStyle} onChange={e => setGroupByStyle(e.target.checked)}
+                className="h-3.5 w-3.5 accent-indigo-600" />
+              Group by style (same design, different size/colour)
+            </label>
+          </div>
         </div>
 
         {/* Table */}
@@ -2096,7 +2142,21 @@ export default function InventoryCurrentStockList() {
                       <span className="text-sm">No stock found</span>
                     </div>
                   </td></tr>
-                ) : filtered.map((row, i) => {
+                ) : visibleRows.map((row, i) => {
+                  if (row.__isGroupHeader) {
+                    return (
+                      <tr key={`grp-${row.design_no}`} className="bg-indigo-50/60 hover:bg-indigo-50 cursor-pointer" onClick={() => toggleGroupCollapsed(row.design_no)}>
+                        <td colSpan={13} className="px-3 py-2.5">
+                          <div className="flex items-center gap-2 text-xs font-bold text-indigo-700">
+                            <FaChevronDown style={{ fontSize:10, transform: row.collapsed ? "rotate(-90deg)" : "none", transition:"transform .15s" }} />
+                            <FaLayerGroup style={{ fontSize:11 }} />
+                            <span>Style {row.design_no}</span>
+                            <span className="font-medium text-indigo-500">· {row.count} variants · {row.totalQty} qty · ₹{row.totalValue.toLocaleString("en-IN",{minimumFractionDigits:2,maximumFractionDigits:2})}</span>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  }
                   const { base, size, color } = parseVariantLabel(row.product || "");
                   const hasVariant = size || color;
                   const rowValue   = (row.qty||0) * (row.rate||0);
