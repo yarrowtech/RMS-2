@@ -177,9 +177,35 @@ def _int(v, default: int = 0) -> int:
 
 
 def _sale_product_snapshot(product: dict, variant: dict = None) -> dict:
+    """category1-6/item_code/tax_description were never actually written
+    anywhere in products.py -- they'd come out blank on every real bill
+    even though this function reads them correctly. Falling back to the
+    real fields that DO get written (design_no, brand, size_label, sku,
+    gst_rate) means the Reports-tab export's Cat-1/Cat-2/Cat-5/Item
+    Code/Tax Description columns show real data instead of staying empty
+    forever. Cat-3 (Style) and Cat-4 (Plane/F-S/H-S) have no fallback --
+    those attributes genuinely don't exist in the product model yet."""
     variant = variant or {}
-    fields = ("item_code", "vendor_name", "category1", "category2", "category3", "category4", "category5", "category6", "tax_description")
-    return {key: variant.get(key) or product.get(key) or "" for key in fields}
+
+    def pick(*keys):
+        for key in keys:
+            value = variant.get(key) or product.get(key)
+            if value:
+                return value
+        return ""
+
+    gst_rate = _float(product.get("gst_rate"))
+    return {
+        "item_code":       pick("item_code", "sku"),
+        "vendor_name":     pick("vendor_name"),
+        "category1":       pick("category1", "design_no"),
+        "category2":       pick("category2", "brand"),
+        "category3":       pick("category3"),
+        "category4":       pick("category4"),
+        "category5":       pick("category5", "size_label"),
+        "category6":       pick("category6"),
+        "tax_description": pick("tax_description") or (f"GST@{gst_rate:.0f}%" if gst_rate else ""),
+    }
 
 
 async def _latest_grn_receipt_date(tenant_id: str, barcode: str, through_date: str) -> str:
@@ -453,6 +479,8 @@ def _product_to_pos(p: dict, inv_qty: float = 0.0) -> dict:
         "division":     p.get("division", ""),
         "section":      p.get("section", ""),
         "department":   p.get("department", ""),
+        "vendor_name":  p.get("vendor_name", ""),
+        "brand":        p.get("brand", ""),
         "unit":         p.get("unit", "pcs"),
         "stock":        round(inv_qty, 2),
         "has_variants": False,
@@ -484,6 +512,8 @@ def _variant_to_pos(p: dict, v: dict, inv_qty: float = 0.0) -> dict:
         "division":     p.get("division", ""),
         "section":      p.get("section", ""),
         "department":   p.get("department", ""),
+        "vendor_name":  p.get("vendor_name", ""),
+        "brand":        p.get("brand", ""),
         "unit":         v.get("unit", "pcs"),
         "stock":        round(inv_qty, 2),
         "has_variants": True,
@@ -2156,6 +2186,20 @@ def _allocate_report_amount(amount, weights):
     return [float(value) for value in rounded]
 
 
+def _ageing_days(bill_date: str, receipt_date: str) -> "int | str":
+    """ageing_receipt_date is stored as a plain YYYY-MM-DD string (the
+    latest posted GRN on/before this bill) -- "Ageing" in retail reporting
+    means days-since-received, not the raw date itself."""
+    if not receipt_date:
+        return ""
+    try:
+        received = datetime.strptime(receipt_date[:10], "%Y-%m-%d")
+        as_of = datetime.strptime((bill_date or "")[:10], "%Y-%m-%d") if bill_date else datetime.utcnow()
+        return max(0, (as_of - received).days)
+    except ValueError:
+        return ""
+
+
 def _sales_detail_rows(doc):
     items = doc.get("items") or []
     summary = doc.get("summary") or {}
@@ -2175,11 +2219,11 @@ def _sales_detail_rows(doc):
         rows.append({
             "Bill Date": date, "Store": doc.get("store_name", ""), "Terminal No.": doc.get("terminal_name") or doc.get("terminal_id", ""),
             "DIVISION": item.get("division", ""), "SECTION": item.get("section", ""), "DEPARTMENT": item.get("department", ""),
-            "VENDOR": item.get("vendor_name", ""), "Item Code": item.get("item_code", ""),
+            "VENDOR": item.get("vendor_name", ""), "Item Code": item.get("item_code") or item.get("sku", ""),
             "IsVoid": doc.get("is_void", False), "Barcode": item.get("barcode", ""), "HSN_CODE": item.get("hsn", ""),
             "Cat-1 (Design No.)": item.get("category1", ""), "Cat-2 (Brand)": item.get("category2", ""),
             "Cat-3 (Style)": item.get("category3", ""), "Cat-4 (Plane, F/S, H/S)": item.get("category4", ""),
-            "Cat-5 (Size)": item.get("category5", ""), "Ageing": item.get("ageing_receipt_date") or item.get("category6", ""),
+            "Cat-5 (Size)": item.get("category5", ""), "Ageing": _ageing_days(date, item.get("ageing_receipt_date", "")),
             "Std Rate": item.get("cost_price", ""), "RSP": item.get("price", ""), "Mrp": item.get("mrp", ""),
             "Promo Type": doc.get("promotion_type", ""), "Promo Name": doc.get("promotion_name", ""),
             "Bill Qty": sign * abs(_float(item.get("qty"))), "Gr Amt": sign * gross[i],
