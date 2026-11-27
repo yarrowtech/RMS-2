@@ -52,6 +52,18 @@ BUSINESS_ENTITY_TYPES = {"Sole Proprietorship", "Partnership", "LLP", "Private L
 TenantCtx = Dict[str, Any]
 
 
+@router.get("/reports/third-party")
+async def hq_third_party_report(ctx: TenantCtx = Depends(get_hq_tenant)):
+    if "Third Party" not in (ctx.get("_managed_departments") or []):
+        raise HTTPException(status_code=403, detail="Third Party department access is required.")
+    # Older third-party APIs created unscoped records. Never include them in a
+    # tenant report: their ownership cannot be established safely.
+    query = {"tenant_id": ctx["tenant_id"]}
+    vendors = await db["thirdparty_vendors"].find(query, {"name": 1, "category": 1, "status": 1, "_id": 0}).to_list(1000)
+    bookings = await db["thirdparty_bookings"].find(query, {"vendorName": 1, "category": 1, "project": 1, "date": 1, "status": 1, "_id": 0}).to_list(1000)
+    return {"vendors": vendors, "bookings": bookings, "note": "Only records explicitly assigned to this tenant are shown. Older unassigned records are excluded. Each list is limited to 1,000 records."}
+
+
 @router.get("/stores/{store_id}/pos-terminals")
 async def hq_list_pos_terminals(store_id: str, ctx: TenantCtx = Depends(get_hq_tenant)):
     rows = []

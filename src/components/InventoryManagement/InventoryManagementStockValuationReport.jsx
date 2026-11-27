@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { FaCoins } from "react-icons/fa";
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Cell } from "recharts";
-import { ReportHeader, StatTile, SectionCard, EmptyState, LoadingState, ErrorState, FilterSelect, ChartTooltip } from "./reportKit.jsx";
+import { ReportHeader, StatTile, SectionCard, EmptyState, LoadingState, ErrorState, FilterSelect, SearchableFilter, ReportPagination, ChartTooltip } from "./reportKit.jsx";
 import { fetchReport, fmtINR, fmtNum, SERIES, GRID, MUTED } from "./reportUtils.js";
+import useInventoryReportTaxonomy from "./useInventoryReportTaxonomy.js";
+import useReportPage, { useDebouncedValue } from "./useReportPage.js";
 
 export default function InventoryManagementStockValuationReport() {
   const [division, setDivision] = useState("");
@@ -10,9 +12,11 @@ export default function InventoryManagementStockValuationReport() {
   const [department, setDepartment] = useState("");
   const [warehouse, setWarehouse] = useState("");
   const [search, setSearch] = useState("");
+  const debouncedSearch = useDebouncedValue(search);
   const [payload, setPayload] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const taxonomy = useInventoryReportTaxonomy();
 
   useEffect(() => {
     let cancelled = false;
@@ -24,7 +28,7 @@ export default function InventoryManagementStockValuationReport() {
         if (section) params.set("section", section);
         if (department) params.set("department", department);
         if (warehouse) params.set("warehouse", warehouse);
-        if (search) params.set("search", search);
+        if (debouncedSearch) params.set("search", debouncedSearch);
         const body = await fetchReport(`/inventory/stock-valuation?${params.toString()}`);
         if (!cancelled) setPayload(body);
       } catch (err) {
@@ -34,14 +38,15 @@ export default function InventoryManagementStockValuationReport() {
       }
     })();
     return () => { cancelled = true; };
-  }, [division, section, department, warehouse, search]);
+  }, [division, section, department, warehouse, debouncedSearch]);
 
   const rows = useMemo(() => payload?.data || [], [payload]);
+  const { page, totalPages, setPage, visibleRows } = useReportPage(rows);
   const summary = payload?.summary || { total_items: 0, total_qty: 0, total_value: 0, by_warehouse: [], by_division: [] };
 
-  const divisions = useMemo(() => [...new Set(rows.map((r) => r.division).filter(Boolean))].sort(), [rows]);
-  const sections = useMemo(() => [...new Set(rows.map((r) => r.section).filter(Boolean))].sort(), [rows]);
-  const departments = useMemo(() => [...new Set(rows.map((r) => r.department).filter(Boolean))].sort(), [rows]);
+  const divisions = useMemo(() => [...new Set([...taxonomy.divisions, ...rows.map((r) => r.division).filter(Boolean)])].sort(), [rows, taxonomy.divisions]);
+  const sections = useMemo(() => [...new Set([...taxonomy.sections, ...rows.map((r) => r.section).filter(Boolean)])].sort(), [rows, taxonomy.sections]);
+  const departments = useMemo(() => [...new Set([...taxonomy.departments, ...rows.map((r) => r.department).filter(Boolean)])].sort(), [rows, taxonomy.departments]);
   const warehouses = useMemo(() => [...new Set(rows.map((r) => r.warehouse).filter(Boolean))].sort(), [rows]);
 
   const divisionChart = summary.by_division.slice(0, 8);
@@ -52,24 +57,25 @@ export default function InventoryManagementStockValuationReport() {
       <ReportHeader icon={FaCoins} title="Stock Valuation Report" subtitle="Current stock value (quantity × cost rate) across every warehouse." />
 
       <div className="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <StatTile label="Total stock value" value={fmtINR(summary.total_value)} />
-        <StatTile label="Items valued" value={fmtNum(summary.total_items)} />
-        <StatTile label="Total quantity" value={fmtNum(summary.total_qty)} />
-        <StatTile label="Highest-value item" value={topItem ? fmtINR(topItem.value) : "—"} sub={topItem?.item} />
+        <StatTile label="Total stock value" value={loading || error ? "—" : fmtINR(summary.total_value)} />
+        <StatTile label="Items valued" value={loading || error ? "—" : fmtNum(summary.total_items)} />
+        <StatTile label="Total quantity" value={loading || error ? "—" : fmtNum(summary.total_qty)} />
+        <StatTile label="Highest-value item" value={!loading && !error && topItem ? fmtINR(topItem.value) : "—"} sub={!loading && !error ? topItem?.item : ""} />
       </div>
 
       <div className="mb-5 flex flex-wrap items-end gap-3 rounded-2xl border border-slate-200 bg-white p-3">
-        <FilterSelect label="Warehouse" value={warehouse} onChange={setWarehouse} options={warehouses} />
-        <FilterSelect label="Division" value={division} onChange={setDivision} options={divisions} />
-        <FilterSelect label="Section" value={section} onChange={setSection} options={sections} />
-        <FilterSelect label="Department" value={department} onChange={setDepartment} options={departments} />
+        <FilterSelect label="Warehouse" value={warehouse} onChange={(v) => { setWarehouse(v); setPage(0); }} options={warehouses} />
+        <SearchableFilter label="Division" value={division} onChange={(v) => { setDivision(v); setPage(0); }} options={divisions} />
+        <SearchableFilter label="Section" value={section} onChange={(v) => { setSection(v); setPage(0); }} options={sections} />
+        <SearchableFilter label="Department" value={department} onChange={(v) => { setDepartment(v); setPage(0); }} options={departments} />
         <label className="text-xs">
           <span className="mb-1 block font-bold text-slate-500">Search</span>
-          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Item, SKU, barcode…" className="h-9 rounded-lg border border-slate-200 bg-white px-2.5 text-xs" />
+          <input value={search} onChange={(e) => { setSearch(e.target.value); setPage(0); }} placeholder="Item, SKU, barcode…" className="h-9 rounded-lg border border-slate-200 bg-white px-2.5 text-xs" />
         </label>
       </div>
 
       {error && <div className="mb-4"><ErrorState message={error} /></div>}
+      {taxonomy.error && <div className="mb-4"><ErrorState message={`Could not load all filter options: ${taxonomy.error}`} /></div>}
 
       {loading ? <LoadingState /> : (
         <div className="grid gap-4 lg:grid-cols-2">
@@ -118,7 +124,7 @@ export default function InventoryManagementStockValuationReport() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {rows.map((r) => (
+                  {visibleRows.map((r) => (
                     <tr key={`${r.barcode}-${r.warehouse}`} className="hover:bg-slate-50/70">
                       <td className="max-w-[220px] truncate px-3 py-2 font-semibold text-slate-800">{r.item}</td>
                       <td className="px-3 py-2 text-slate-500">{r.sku || "—"}</td>
@@ -131,6 +137,7 @@ export default function InventoryManagementStockValuationReport() {
                   ))}
                 </tbody>
               </table>
+              <ReportPagination page={page} totalPages={totalPages} setPage={setPage} count={rows.length} />
             </div>
           ) : <EmptyState label="No stock matches these filters." />}
         </SectionCard>

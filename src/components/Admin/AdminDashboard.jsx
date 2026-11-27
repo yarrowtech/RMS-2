@@ -908,11 +908,12 @@ export default function AdminDashboardContent() {
     // Only /api/products/ is confirmed to exist on your backend.
     // The other three 404 — we still try and degrade gracefully.
     // /api/products/ uses trailing slash (same as ProductList) to skip 307 redirect.
-    const [dashboardRes, vendorOrdersRes, productsRes, usersRes] = await Promise.all([
+    const [dashboardRes, vendorOrdersRes, productsRes, usersRes, hubStatusRes] = await Promise.all([
       safeGet(`${API_BASE}/admin/dashboard`,     config),
       safeGet(`${API_BASE}/purchaseorders/`,     config),
       safeGet(`${API_BASE}/api/products/`,        config),  // ← trailing slash, matches ProductList
       safeGet(`${API_BASE}/hq/admins`,            config),
+      safeGet(`${API_BASE}/api/forecast-analytics/data-hub/status`, config),
     ]);
 
     // ── Parse ───────────────────────────────────────────────────────────────
@@ -941,7 +942,6 @@ export default function AdminDashboardContent() {
     // needed. Uses the same tenant-detection endpoint the Forecast &
     // Analytics workspace already relies on, so no new gating logic.
     let stockMap = null;
-    const hubStatusRes = await safeGet(`${API_BASE}/api/forecast-analytics/data-hub/status`, config);
     if (hubStatusRes?.data?.enabled) {
       const matrixRes = await safeGet(`${API_BASE}/stock-allocation/item-matrix?limit=1000`, config);
       const matrixRows = extractArray(matrixRes, "data");

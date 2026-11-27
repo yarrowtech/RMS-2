@@ -394,27 +394,27 @@ import InternalChatPanel from "../InternalChatPanel.jsx";
 
 
 
-import React, { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import React, { Suspense, lazy, useCallback, useEffect, useMemo, useState } from "react";
 import { FaBars } from "react-icons/fa";
 import { CircleHelp, Settings as SettingsIcon, ShieldCheck } from "lucide-react";
 import toast from "react-hot-toast";
 import { API_BASE_URL } from "../../config/api.js";
 import AdminSidebar from "./AdminSidebar";
-import AdminSettings from "./AdminSettings";
-import RetailerHelpSupport from "../RetailerHelpSupport";
-import AdminDashboard from "./AdminDashboard";
-import AdminProduct from "./AdminProduct";
-import ProductMapping from "./ProductMapping";
-import SalesReport from "./Salesreport.jsx";
- import InventoryManagementCurrentStockList from "../InventoryManagement/InventoryManagementCurrentStockList";
-import AdminStoreWiseInventory from "./AdminStoreWiseInventory.jsx";
-import HQSetup from "./Hqsetup.jsx";
-import HQAdminManagement from "./Hqadminmanagement.jsx";
-import HqVendorOverview from "./HqVendorOverview.jsx";
-import AnalyticsHub from "./AnalyticsHub.jsx";
-import DepartmentReports from "./DepartmentReports.jsx";
-import TenantDepartments from "./TenantDepartments.jsx";
-import HqAllowanceApprovals from "./HqAllowanceApprovals.jsx";
+const AdminSettings = lazy(() => import("./AdminSettings"));
+const RetailerHelpSupport = lazy(() => import("../RetailerHelpSupport"));
+const AdminDashboard = lazy(() => import("./AdminDashboard"));
+const AdminProduct = lazy(() => import("./AdminProduct"));
+const ProductMapping = lazy(() => import("./ProductMapping"));
+const SalesReport = lazy(() => import("./Salesreport.jsx"));
+const InventoryManagementCurrentStockList = lazy(() => import("../InventoryManagement/InventoryManagementCurrentStockList"));
+const AdminStoreWiseInventory = lazy(() => import("./AdminStoreWiseInventory.jsx"));
+const HQSetup = lazy(() => import("./Hqsetup.jsx"));
+const HQAdminManagement = lazy(() => import("./Hqadminmanagement.jsx"));
+const HqVendorOverview = lazy(() => import("./HqVendorOverview.jsx"));
+const AnalyticsHub = lazy(() => import("./AnalyticsHub.jsx"));
+const DepartmentReports = lazy(() => import("./DepartmentReports.jsx"));
+const TenantDepartments = lazy(() => import("./TenantDepartments.jsx"));
+const HqAllowanceApprovals = lazy(() => import("./HqAllowanceApprovals.jsx"));
 
 // ─── Store context from localStorage ─────────────────────────────────────────
 // Read INSIDE each component that needs it, never at module top-level.
@@ -436,6 +436,7 @@ function readAdminContext() {
 const COMPANY_NAME = "RMS";
 
 function labelFromKey(key) {
+  if (key.startsWith("departmentReports:")) return `${key.slice("departmentReports:".length)} Reports`;
   const labels = {
     "dashboard":             "Dashboard",
     "__settings":            "Settings",
@@ -588,6 +589,10 @@ export default function AdminModule() {
 
     // ── HQ ADMIN ─────────────────────────────────────────────────────────────
     if (isHQ) {
+      if (active.startsWith("departmentReports:")) {
+        const department = active.slice("departmentReports:".length);
+        return <DepartmentReports key={department} selectedDepartment={department} />;
+      }
       switch (active) {
         case "dashboard":
           return <AdminDashboard />;

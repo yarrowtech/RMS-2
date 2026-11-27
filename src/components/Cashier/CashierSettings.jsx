@@ -31,7 +31,7 @@ const cn = (...a) => a.filter(Boolean).join(" ");
 
 const Field = ({ label, value, editable, onChange, type = "text" }) => (
   <div className="space-y-1.5">
-    <label className="text-xs font-semibold text-black-700">{label}</label>
+    <label className="text-xs font-semibold text-slate-700">{label}</label>
 
     {editable ? (
       <input
@@ -40,48 +40,49 @@ const Field = ({ label, value, editable, onChange, type = "text" }) => (
         onChange={(e) => onChange?.(e.target.value)}
         className="
           w-full px-3 py-2 text-sm rounded-xl
-          border border-blue-500 bg-white
+          border border-slate-200 bg-white
           outline-none
-          focus:ring-2 focus:ring-blue-500/30
-          focus:border-blue-600
+          focus:ring-2 focus:ring-violet-500/20
+          focus:border-violet-500
         "
       />
     ) : (
       <div
         className="
           w-full px-3 py-2 text-sm rounded-xl
-          border border-blue-500 bg-blue-50/40
+          border border-slate-200 bg-slate-50
         "
       >
-        {value || <span className="text-black-300">—</span>}
+        {value || <span className="text-slate-400">—</span>}
       </div>
     )}
   </div>
 );
 
-const Section = ({ icon: Icon, title, subtitle, right, children }) => (
+const Section = ({ icon, title, subtitle, right, children }) => (
   <section
+    id={`settings-${title.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`}
     className="
-      rounded-3xl
-      border border-blue-500
+      rounded-2xl
+      border border-slate-200
       bg-white
-      shadow-[0_30px_90px_rgba(15,23,42,0.10)]
+      scroll-mt-5 shadow-sm
     "
   >
-    <div className="px-5 py-4 flex items-start gap-3 border-b border-blue-500">
-      <div className="mt-0.5 w-10 h-10 rounded-2xl bg-blue-600/10 text-black-700 grid place-items-center">
-        <Icon className="w-5 h-5" />
+    <div className="flex items-start gap-4 border-b border-slate-100 px-5 py-5 sm:px-6">
+      <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-slate-200 bg-slate-50 text-slate-600">
+        {React.createElement(icon, { className: "h-[18px] w-[18px]" })}
       </div>
 
       <div className="flex-1">
-        <h2 className="text-sm sm:text-base font-bold text-black-900">{title}</h2>
-        {subtitle && <p className="text-xs sm:text-sm text-black-600">{subtitle}</p>}
+        <h2 className="text-base font-semibold tracking-tight text-slate-900">{title}</h2>
+        {subtitle && <p className="mt-1 max-w-3xl text-xs leading-relaxed text-slate-500 sm:text-sm">{subtitle}</p>}
       </div>
 
       {right && <div>{right}</div>}
     </div>
 
-    <div className="p-5">{children}</div>
+    <div className="p-5 sm:p-6">{children}</div>
   </section>
 );
 
@@ -241,9 +242,18 @@ export default function SettingsProfilePage() {
   };
 
   return (
-    <div className="w-full bg-black-50">
-      <div className="w-full px-6 py-6 space-y-6">
-        <div></div>
+    <div className="w-full bg-slate-50/70">
+      <div className="mx-auto w-full max-w-6xl space-y-5 px-4 py-6 sm:px-6">
+        <div className="px-1 pb-2 pt-1">
+          <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-violet-600">Cashier workspace</p>
+          <h1 className="mt-1 text-2xl font-bold tracking-tight text-slate-900">Settings</h1>
+          <p className="mt-1 text-sm text-slate-500">Manage your account, terminal and store preferences.</p>
+        </div>
+        <nav aria-label="Settings sections" className="flex gap-2 overflow-x-auto pb-1">
+          {[["Profile", "personal-profile"], ["Account", "account-details"], ["Terminal", "this-pos-terminal"], ["Access", "pos-terminal-access"], ["Staff", "staff-logins"], ["Payments", "payments"], ["Password", "reset-password"]].map(([label, id]) => (
+            <a key={id} href={`#settings-${id}`} className="shrink-0 rounded-lg border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-600 transition hover:border-violet-200 hover:text-violet-700">{label}</a>
+          ))}
+        </nav>
 
         <Section
           icon={User}
@@ -252,7 +262,7 @@ export default function SettingsProfilePage() {
             <button
               className="
               px-4 py-2 text-sm font-semibold rounded-xl
-              bg-blue-600 text-white hover:bg-blue-700
+              bg-violet-600 text-white hover:bg-violet-700
             "
             >
               Save
@@ -291,14 +301,14 @@ export default function SettingsProfilePage() {
               onChange={(v) => setProfile((p) => ({ ...p, gender: v }))}
             />
 
-            <div className="rounded-2xl border border-blue-500 bg-blue-50/40 p-4">
-              <div className="flex items-center gap-2 font-semibold text-sm text-black-700">
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <div className="flex items-center gap-2 font-semibold text-sm text-slate-700">
                 <Mail className="w-4 h-4" /> Quick Contact
               </div>
-              <p className="mt-2 text-xs text-black-600">
+              <p className="mt-2 text-xs text-slate-600">
                 Keep your email & phone updated for account recovery.
               </p>
-              <div className="mt-3 flex items-center gap-2 text-xs text-black-600">
+              <div className="mt-3 flex items-center gap-2 text-xs text-slate-600">
                 <Phone className="w-4 h-4" /> OTP / 2FA support
               </div>
             </div>
@@ -313,12 +323,12 @@ export default function SettingsProfilePage() {
             <Field label="Created At" value={account.createdAt} />
             <Field label="Last Login" value={account.lastLogin} />
 
-            <div className="rounded-2xl border border-blue-500 bg-white p-4">
-              <div className="flex items-center gap-2 font-semibold text-sm text-black-700">
+            <div className="rounded-2xl border border-slate-200 bg-white p-4">
+              <div className="flex items-center gap-2 font-semibold text-sm text-slate-700">
                 <ShieldCheck className="w-4 h-4 text-emerald-600" />
                 Security Tips
               </div>
-              <ul className="mt-2 text-xs text-black-600 space-y-1">
+              <ul className="mt-2 text-xs text-slate-600 space-y-1">
                 <li>• Use a strong password</li>
                 <li>• Don’t reuse passwords</li>
                 <li>• Enable 2FA</li>
@@ -335,7 +345,7 @@ export default function SettingsProfilePage() {
             <button
               onClick={saveTerminalName}
               disabled={!terminalName.trim()}
-              className="px-4 py-2 text-sm font-semibold rounded-xl bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40"
+              className="px-4 py-2 text-sm font-semibold rounded-xl bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-40"
             >
               {terminalSaved ? "Saved" : "Save"}
             </button>
@@ -365,18 +375,12 @@ export default function SettingsProfilePage() {
             steps={TERMINAL_ACCESS_GUIDE_STEPS}
           />
 
-          <div className="mb-4 rounded-2xl border border-amber-300 bg-amber-50 p-4">
-            <div className="flex items-center gap-2 text-sm font-bold text-amber-900">
-              <ShieldCheck className="w-4 h-4 text-amber-700" />
-              Admin instructions
+          <div className="mb-5 flex gap-3 rounded-xl border border-slate-200 bg-slate-50 p-4">
+            <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-slate-500" />
+            <div>
+              <p className="text-sm font-semibold text-slate-800">Access is managed per terminal</p>
+              <p className="mt-1 text-xs leading-relaxed text-slate-600">Store Ops and Finance can change roles here. HQ can use Admin Management → POS Terminal Access. Reload the device after changing its role.</p>
             </div>
-            <ol className="mt-2 list-decimal space-y-1 pl-5 text-xs text-amber-900">
-              <li>Store Ops or Finance can change roles here. HQ can manage them under Admin Management → POS Terminal Access. The shared Cashier login can view this list but cannot change roles.</li>
-              <li>Every new POS device starts as <span className="font-semibold">Cashier</span> (Point of Sale + Customer tabs only) the first time it's opened — nothing needs to be configured for that.</li>
-              <li>To let one specific machine see Dashboard, Finance and Reports (e.g. the manager's counter, or a back-office terminal), find it in the list below by its terminal name and switch its dropdown to <span className="font-semibold">Supervisor</span>.</li>
-              <li>If you don't recognize a terminal name, rename it first from <span className="font-semibold">that device</span> under Settings → This POS Terminal, then come back here — roles are easiest to assign once every device has a clear name (e.g. "Counter 1", "Billing Desk 2").</li>
-              <li>A role change applies the moment that terminal reloads or switches tabs — no logout required on either side.</li>
-            </ol>
           </div>
 
           {terminalsError && (
@@ -385,24 +389,24 @@ export default function SettingsProfilePage() {
             </div>
           )}
           {terminalsLoading ? (
-            <p className="text-xs text-black-500">Loading terminals…</p>
+            <p className="text-xs text-slate-500">Loading terminals…</p>
           ) : terminals.length === 0 ? (
-            <p className="text-xs text-black-500">No terminals registered yet — open the POS on a device once and it will appear here.</p>
+            <p className="text-xs text-slate-500">No terminals registered yet — open the POS on a device once and it will appear here.</p>
           ) : (
             <div className="space-y-2">
               {terminals.map((t) => (
                 <div
                   key={t.terminal_id}
-                  className="flex items-center justify-between gap-3 rounded-2xl border border-blue-500 bg-blue-50/40 px-4 py-3"
+                  className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3"
                 >
                   <div className="min-w-0">
-                    <p className="truncate text-sm font-semibold text-black-900">
+                    <p className="truncate text-sm font-semibold text-slate-900">
                       {t.terminal_name}
                       {t.terminal_id === thisTerminalId && (
                         <span className="ml-2 rounded-full bg-blue-600/10 px-2 py-0.5 text-[10px] font-bold text-blue-700">THIS DEVICE</span>
                       )}
                     </p>
-                    <p className="text-[11px] text-black-500">{t.role === "supervisor" ? "Supervisor — full access" : "Cashier — POS + Customer only"}</p>
+                    <p className="text-[11px] text-slate-500">{t.role === "supervisor" ? "Supervisor — full access" : "Cashier — POS + Customer only"}</p>
                   </div>
                   <select
                     value={t.role}
@@ -410,7 +414,7 @@ export default function SettingsProfilePage() {
                     aria-label={`Access for ${t.terminal_name}`}
                     title={canManageTerminalRoles ? "Change terminal access" : "Only a store manager or HQ can change terminal access"}
                     onChange={(e) => changeRole(t.terminal_id, e.target.value)}
-                    className="rounded-xl border border-blue-500 bg-white px-3 py-2 text-xs font-semibold outline-none focus:ring-2 focus:ring-blue-500/30 disabled:cursor-not-allowed disabled:opacity-50"
+                    className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold outline-none focus:ring-2 focus:ring-violet-500/20 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     <option value="cashier">Cashier</option>
                     <option value="supervisor">Supervisor</option>
@@ -428,13 +432,13 @@ export default function SettingsProfilePage() {
           right={
             <button
               onClick={() => setShowStaffLogins(true)}
-              className="px-4 py-2 rounded-xl text-xs font-bold bg-blue-600 text-white hover:bg-blue-700 transition"
+              className="px-4 py-2 rounded-xl text-xs font-bold bg-violet-600 text-white hover:bg-violet-700 transition"
             >
               Manage Staff Logins
             </button>
           }
         >
-          <p className="text-xs text-black-500">
+          <p className="text-xs text-slate-500">
             These logins are scoped to this store ({storeName || storeId || "your store"}) and can only be given tabs you yourself have access to.
           </p>
         </Section>
@@ -467,12 +471,12 @@ export default function SettingsProfilePage() {
               value={upiId}
               onChange={(e) => setUpiId(e.target.value)}
               placeholder="e.g. yourstore@okaxis"
-              className="w-full sm:max-w-xs px-3 py-2 text-sm rounded-xl border border-blue-500 bg-white outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-600"
+              className="w-full sm:max-w-xs px-3 py-2 text-sm rounded-xl border border-slate-200 bg-white outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500"
             />
             <button
               onClick={saveUpiId}
               disabled={upiSaving}
-              className="px-4 py-2 rounded-xl text-xs font-bold bg-blue-600 text-white hover:bg-blue-700 transition disabled:opacity-60"
+              className="px-4 py-2 rounded-xl text-xs font-bold bg-violet-600 text-white hover:bg-violet-700 transition disabled:opacity-60"
             >
               {upiSaving ? "Saving…" : "Save"}
             </button>
@@ -490,7 +494,7 @@ export default function SettingsProfilePage() {
               className={cn(
                 "px-4 py-2 text-sm font-semibold rounded-xl",
                 pwdOk
-                  ? "bg-blue-600 text-white hover:bg-blue-700"
+                  ? "bg-violet-600 text-white hover:bg-violet-700"
                   : "bg-blue-200 text-blue-700 cursor-not-allowed"
               )}
             >

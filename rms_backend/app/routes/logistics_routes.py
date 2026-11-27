@@ -91,6 +91,23 @@ async def _notify_delayed_pos(tenant_id: str, overdue_pos: list, now: datetime) 
         )
 
 
+@router.get("/report")
+async def logistics_report(ctx: TenantCtx = Depends(_require_logistics)):
+    tenant_id = ctx["tenant_id"]
+    po_filter = {"tenant_id": tenant_id, "status": {"$in": INBOUND_STATUSES}}
+    transfer_filter = {"tenant_id": tenant_id, "type": "Out", "status": "Dispatched"}
+    orders = [{"order_no": row.get("orderNo", ""), "vendor": row.get("vendorName", ""),
+               "status": row.get("status", ""), "expected": row.get("expectedDeliveryDate", "")}
+              async for row in purchaseorders_collection.find(po_filter).sort("orderDate", -1).limit(100)]
+    transfers = [{"reference": row.get("refNo", ""), "from": row.get("fromWh", ""),
+                  "to": row.get("toWh", ""), "due_date": row.get("transitDueDate", ""), "quantity": row.get("totalQty", 0)}
+                 async for row in stock_transfers_collection.find(transfer_filter).sort("createdAt", -1).limit(100)]
+    return {"inbound_count": await purchaseorders_collection.count_documents(po_filter),
+            "transfer_count": await stock_transfers_collection.count_documents(transfer_filter),
+            "orders": orders, "transfers": transfers,
+            "note": "Counts include all matching records. Each detail list shows up to 100 recent records."}
+
+
 @router.get("/dashboard")
 async def logistics_dashboard(ctx: TenantCtx = Depends(_require_logistics)):
     tenant_id = ctx["tenant_id"]

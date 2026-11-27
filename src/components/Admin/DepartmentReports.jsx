@@ -1,98 +1,57 @@
-import React, { useMemo, useState } from "react";
-import {
-  Package, DollarSign, Truck, Building2, Palette, LineChart, Network,
-  Factory, Megaphone, HeartHandshake, LayoutGrid,
-} from "lucide-react";
+import React, { Suspense, lazy, useEffect, useMemo, useState } from "react";
+import { BarChart3 } from "lucide-react";
+import { API_BASE_URL } from "../../config/api.js";
+const InventoryManagementStockValuationReport = lazy(() => import("../InventoryManagement/InventoryManagementStockValuationReport.jsx"));
+const InventoryManagementItemAgingReport = lazy(() => import("../InventoryManagement/InventoryManagementItemAgingReport.jsx"));
+const BuyerReports = lazy(() => import("../Mbuyer/Reports.jsx"));
+const DepartmentOverviewReport = lazy(() => import("./DepartmentOverviewReport.jsx"));
 
-import Logistics from "../Logistics/LogisticsDashboard.jsx";
-import Finance from "../Finance/Finance.jsx";
-import DesignPattern from "../dnp.jsx";
-import InventoryManagement from "../InventoryManagement/InventoryManagement.jsx";
-import ForecastAnalytics from "../ForecastAnalytics.jsx";
-import ProductionJobWork from "../Production/ProductionJobWork.jsx";
-import Marketing from "../Marketing/Marketing.jsx";
-import CustomerCRM from "../CustomerCRM/CustomerCRM.jsx";
-import VisualMerchandising from "../VisualMerchandising/VisualMerchandising.jsx";
-import Mbuyer from "../Mbuyer/mbuyer.jsx";
-import ThirdPartyDept from "../thirdparty.jsx";
+function FinanceReport() {
+  const [data, setData] = useState(null);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    const token = localStorage.getItem("admin_token") || localStorage.getItem("access_token") || localStorage.getItem("token") || "";
+    const controller = new AbortController();
+    fetch(`${API_BASE_URL}/api/finance/reports`, { headers: { Authorization: `Bearer ${token}` }, signal: controller.signal })
+      .then(async response => { const body = await response.json(); if (!response.ok) throw new Error(body.detail || "Could not load finance report."); return body; })
+      .then(setData).catch(e => { if (e.name !== "AbortError") setError(e.message); });
+    return () => controller.abort();
+  }, []);
+  if (error) return <p role="alert" className="p-6 text-sm text-rose-700">{error}</p>;
+  if (!data) return <p className="p-6 text-sm text-slate-500">Loading finance report…</p>;
+  const metrics = [["Revenue", "revenue"], ["Purchase total", "purchase_total"], ["Expenses", "expense_total"], ["Estimated margin", "estimated_margin"], ["Accounts payable", "accounts_payable"], ["Accounts receivable", "accounts_receivable"], ["Net GST", "gst_net"]];
+  return <div className="space-y-5 p-5"><div><h3 className="text-lg font-bold text-slate-900">Finance summary</h3><p className="text-sm text-slate-500">Tenant-wide totals from the finance report.</p></div><div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{metrics.map(([label, key]) => <div key={key} className="rounded-xl border border-slate-200 p-4"><p className="text-xs font-semibold text-slate-500">{label}</p><p className="mt-2 text-xl font-bold text-slate-900">₹{Number(data.summary?.[key] || 0).toLocaleString("en-IN", { maximumFractionDigits: 2 })}</p></div>)}</div><div><h4 className="font-semibold text-slate-800">Vouchers · last 30 days</h4>{(data.voucher_totals_30_days || []).length ? data.voucher_totals_30_days.map(row => <div key={row.type} className="flex justify-between border-b border-slate-100 py-2 text-sm"><span className="capitalize text-slate-600">{row.type.replaceAll("_", " ")}</span><span className="font-semibold">₹{Number(row.amount).toLocaleString("en-IN")}</span></div>) : <p className="mt-2 text-sm text-slate-500">No vouchers recorded in this period.</p>}</div></div>;
+}
 
-// One entry per real department module — same components the dedicated
-// routes in App.jsx render, reused here as-is rather than extracted.
-// Each one is already a complete, self-contained dashboard with its own
-// real analytics and report/export features; this screen's only job is
-// to switch which one is mounted, not to rebuild any of them.
-const DEPARTMENTS = [
-  { department: "Inventory",             icon: Package,        Component: InventoryManagement },
-  { department: "Finance",               icon: DollarSign,     Component: Finance },
-  { department: "Logistics",             icon: Truck,          Component: Logistics },
-  { department: "Merchandiser Buyer",    icon: Building2,      Component: Mbuyer },
-  { department: "Design & Pattern",      icon: Palette,        Component: DesignPattern },
-  { department: "Forecast & Analytics",  icon: LineChart,      Component: ForecastAnalytics },
-  { department: "Third Party",           icon: Network,        Component: ThirdPartyDept },
-  { department: "Production & Job Work", icon: Factory,        Component: ProductionJobWork },
-  { department: "Marketing",             icon: Megaphone,      Component: Marketing },
-  { department: "Customer CRM",          icon: HeartHandshake, Component: CustomerCRM },
-  { department: "Visual Merchandising",  icon: LayoutGrid,     Component: VisualMerchandising },
-];
+const DEPARTMENTS = ["Inventory", "Finance", "Logistics", "Merchandiser Buyer", "Design & Pattern", "Forecast & Analytics", "Third Party", "Production & Job Work", "Marketing", "Customer CRM", "Visual Merchandising"];
+const REPORTS = {
+  Inventory: [
+    { label: "Stock valuation", Component: InventoryManagementStockValuationReport },
+    { label: "Item ageing", Component: InventoryManagementItemAgingReport },
+  ],
+  "Merchandiser Buyer": [{ label: "Buying reports", Component: BuyerReports }],
+  Finance: [{ label: "Finance summary", Component: FinanceReport }],
+  ...Object.fromEntries(["Logistics", "Design & Pattern", "Forecast & Analytics", "Third Party", "Production & Job Work", "Marketing", "Customer CRM", "Visual Merchandising"].map(department => [department, [{ label: "Overview", Component: DepartmentOverviewReport }]])),
+};
 
-export default function DepartmentReports() {
-  // Same source of truth AdminSidebar.jsx already uses for which
-  // departments this specific HQ admin is allowed to see — read fresh on
-  // every mount, not frozen at module load time, for the same reason
-  // AdminSidebar does it this way (see its own comment on this).
+export default function DepartmentReports({ selectedDepartment = "" }) {
   const managedDepartments = useMemo(() => {
     try {
-      const loginData = JSON.parse(localStorage.getItem("admin_login_data") || "{}");
-      return Array.isArray(loginData.departments) ? loginData.departments : [];
-    } catch {
-      return [];
-    }
+      const data = JSON.parse(localStorage.getItem("admin_login_data") || "{}");
+      return Array.isArray(data.departments) ? data.departments : [];
+    } catch { return []; }
   }, []);
+  const available = DEPARTMENTS.filter(department => managedDepartments.includes(department));
+  const [activeDept, setActiveDept] = useState(() => available.includes(selectedDepartment) ? selectedDepartment : available[0]);
+  const [reportIndex, setReportIndex] = useState(0);
+  const reports = REPORTS[activeDept] || [];
+  const Report = reports[reportIndex]?.Component || reports[0]?.Component;
 
-  const available = DEPARTMENTS.filter((d) => managedDepartments.includes(d.department));
-  const [activeDept, setActiveDept] = useState(available[0]?.department || "");
-
-  const active = available.find((d) => d.department === activeDept) || available[0];
-  const ActiveComponent = active?.Component;
-
-  if (!available.length) {
-    return (
-      <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center text-sm font-semibold text-slate-500">
-        No departments are assigned to this admin account yet.
-      </div>
-    );
-  }
-
-  return (
-    <div className="flex h-full min-h-0 flex-col">
-      <div className="mb-4 flex flex-wrap gap-2 shrink-0">
-        {available.map(({ department, icon: Icon }) => (
-          <button
-            key={department}
-            onClick={() => setActiveDept(department)}
-            className={`flex items-center gap-2 rounded-xl border px-3.5 py-2 text-sm font-bold transition ${
-              activeDept === department
-                ? "border-indigo-600 bg-indigo-600 text-white shadow-sm"
-                : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
-            }`}
-          >
-            <Icon size={15} /> {department}
-          </button>
-        ))}
-      </div>
-
-      {/* Each department module manages its own internal scrolling/layout
-          (most assume full-viewport height) — this just gives it a clean,
-          contained area to render into so it doesn't fight Admin's own
-          page chrome. Remounts on tab switch (key=department) rather than
-          staying mounted, since these modules aren't designed to be
-          hidden/shown — a fresh mount is the safe behavior, matching what
-          happens when you navigate to them directly today. */}
-      <div className="min-h-0 flex-1 overflow-hidden rounded-2xl border border-slate-200 shadow-sm">
-        <div className="h-full overflow-y-auto">
-          {ActiveComponent && <ActiveComponent key={active.department} />}
-        </div>
-      </div>
-    </div>
-  );
+  if (!available.length) return <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-500">No departments are assigned to this admin account.</div>;
+  return <div className="mx-auto w-full max-w-[1600px] space-y-5 p-4 sm:p-6 lg:p-8">
+    {!selectedDepartment && <><div><p className="text-xs font-bold uppercase tracking-[0.16em] text-teal-700">HQ overview</p><h2 className="mt-1 text-2xl font-bold tracking-tight text-slate-900">Department reports</h2><p className="mt-1 text-sm text-slate-500">Choose a department to review its reports.</p></div>
+    <div className="flex flex-wrap gap-2">{available.map(department => <button key={department} onClick={() => { setActiveDept(department); setReportIndex(0); }} className={`rounded-lg border px-3 py-2 text-sm font-semibold ${activeDept === department ? "border-teal-700 bg-teal-700 text-white" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"}`}>{department}</button>)}</div></>}
+    {reports.length > 1 && <div className="flex flex-wrap gap-2">{reports.map((report, i) => <button key={report.label} onClick={() => setReportIndex(i)} className={`rounded-lg px-3 py-2 text-xs font-semibold ${reportIndex === i ? "bg-indigo-50 text-indigo-700" : "bg-white text-slate-600"}`}>{report.label}</button>)}</div>}
+    {Report ? <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_4px_24px_rgba(15,23,42,0.04)]"><Suspense fallback={<p className="p-6 text-sm text-slate-500">Loading report…</p>}><Report key={`${activeDept}-${reportIndex}`} department={activeDept} /></Suspense></div> : <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center"><BarChart3 className="mx-auto h-7 w-7 text-slate-400" /><h3 className="mt-3 font-semibold text-slate-800">No standalone {activeDept} report is available here yet</h3><p className="mt-1 text-sm text-slate-500">This department needs a dedicated report view before its consolidated figures can be shown.</p></div>}
+  </div>;
 }

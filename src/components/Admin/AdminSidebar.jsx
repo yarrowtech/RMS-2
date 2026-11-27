@@ -589,12 +589,12 @@ export default function AdminSidebar({
             {departmentWorkspaces.length > 0 && (
               <>
                 {sectionLabel("Departments")}
-                {departmentWorkspaces.map(({ department, path, icon: Icon, label }) => (
-                  <button key={department} type="button" onClick={() => navigate(path)}
-                    className={cn(topBtnBase, topBtnPad, "text-cyan-50/85 hover:text-white")}
-                    title={label} aria-label={label}>
-                    <Icon size={16} />
-                    {showText && <span className="flex-1 text-left">{label}</span>}
+                {departmentWorkspaces.map(({ department, icon }) => (
+                  <button key={department} type="button" onClick={() => onSelect(`departmentReports:${department}`)}
+                    className={cn(topBtnBase, topBtnPad, active === `departmentReports:${department}` ? cn(ACTIVE_GRAD, ACTIVE_TXT, ACTIVE_BR) : "text-cyan-50/85 hover:text-white")}
+                    title={`${department} reports`} aria-label={`${department} reports`}>
+                    {React.createElement(icon, { size: 16 })}
+                    {showText && <span className="flex-1 text-left">{department}</span>}
                   </button>
                 ))}
               </>

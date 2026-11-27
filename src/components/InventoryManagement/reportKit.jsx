@@ -1,8 +1,11 @@
-export function ReportHeader({ icon: Icon, title, subtitle, right }) {
+import Select from "react-select";
+import { createElement } from "react";
+
+export function ReportHeader({ icon, title, subtitle, right }) {
   return (
     <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
       <div className="flex items-center gap-3">
-        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#2a78d6]"><Icon className="h-4.5 w-4.5 text-white" /></div>
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#2a78d6]">{createElement(icon, { className: "h-4.5 w-4.5 text-white" })}</div>
         <div>
           <h1 className="text-xl font-bold text-slate-900">{title}</h1>
           {subtitle && <p className="text-sm text-slate-500">{subtitle}</p>}
@@ -66,6 +69,38 @@ export function FilterSelect({ label, value, onChange, options }) {
       </select>
     </label>
   );
+}
+
+export function SearchableFilter({ label, value, onChange, options }) {
+  return <label className="block min-w-[170px] text-xs">
+    <span className="mb-1 block font-bold text-slate-500">{label}</span>
+    <Select
+      aria-label={label}
+      value={value ? { value, label: value } : null}
+      onChange={(option) => onChange(option?.value || "")}
+      options={options.map((option) => ({ value: option, label: option }))}
+      isClearable
+      isSearchable
+      placeholder={`All ${label.toLowerCase()}s`}
+      noOptionsMessage={() => "No matching options"}
+      styles={{
+        control: (base) => ({ ...base, minHeight: 36, borderColor: "#e2e8f0", borderRadius: 8, fontSize: 12 }),
+        menu: (base) => ({ ...base, zIndex: 30, fontSize: 12 }),
+      }}
+    />
+  </label>;
+}
+
+export function ReportPagination({ page, totalPages, setPage, count, pageSize = 100 }) {
+  if (count <= pageSize) return null;
+  return <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 px-3 py-3 text-xs text-slate-600">
+    <span>Showing {page * pageSize + 1}–{Math.min((page + 1) * pageSize, count)} of {count.toLocaleString("en-IN")} items</span>
+    <div className="flex items-center gap-2">
+      <button type="button" onClick={() => setPage(page - 1)} disabled={page === 0} className="rounded-lg border border-slate-200 px-3 py-1.5 font-semibold disabled:opacity-40">Previous</button>
+      <span>Page {page + 1} of {totalPages}</span>
+      <button type="button" onClick={() => setPage(page + 1)} disabled={page + 1 >= totalPages} className="rounded-lg border border-slate-200 px-3 py-1.5 font-semibold disabled:opacity-40">Next</button>
+    </div>
+  </div>;
 }
 
 export function ChartTooltip({ active, payload, label, formatter }) {
