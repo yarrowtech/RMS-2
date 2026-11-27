@@ -15,7 +15,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from bson import ObjectId
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from .deps import get_any_tenant
@@ -97,6 +97,35 @@ async def _system_qty(tenant_id: str, store_id: Optional[str], barcode: str) -> 
     else:
         doc = await inventory_collection.find_one({"barcode": barcode, "tenant_id": tenant_id}, {"stockQty": 1})
     return float((doc or {}).get("stockQty") or 0)
+
+
+@router.get("/search-products")
+async def search_products(q: str = Query(..., min_length=1), ctx: TenantCtx = Depends(get_any_tenant)):
+    """Find-a-product-by-name (or SKU/barcode) for the counting screen --
+    the barcode field alone assumes a scanner; this is the typed
+    alternative when counting something whose barcode isn't handy."""
+    regex = {"$regex": q, "$options": "i"}
+    results = []
+    seen = set()
+    async for p in product_collection.find({
+        "tenant_id": ctx["tenant_id"], "is_fabric": {"$ne": True},
+        "$or": [{"product_name": regex}, {"barcode": regex}, {"sku": regex}],
+    }).limit(30):
+        if not p.get("has_variants"):
+            bc = (p.get("barcode") or "").strip()
+            if bc and bc not in seen:
+                seen.add(bc)
+                results.append({"barcode": bc, "name": p.get("product_name", ""), "sku": p.get("sku", "")})
+        else:
+            for v in p.get("variants", []):
+                bc = (v.get("barcode") or "").strip()
+                vname = " | ".join(filter(None, [p.get("product_name", ""), v.get("size_label", ""), v.get("color", "")]))
+                if bc and bc not in seen and (q.lower() in vname.lower() or q.lower() in bc.lower()):
+                    seen.add(bc)
+                    results.append({"barcode": bc, "name": vname, "sku": v.get("sku", "")})
+        if len(results) >= 20:
+            break
+    return {"data": results}
 
 
 class SessionCreate(BaseModel):
@@ -201,6 +230,67 @@ async def scan_item(session_id: str, payload: ScanPayload, ctx: TenantCtx = Depe
     return _serialize_line(doc)
 
 
+class ImportRow(BaseModel):
+    barcode: str
+    counted_qty: float
+
+
+class ImportPayload(BaseModel):
+    rows: List[ImportRow]
+
+
+@router.post("/sessions/{session_id}/import")
+async def import_counts(session_id: str, payload: ImportPayload, ctx: TenantCtx = Depends(get_any_tenant)):
+    """Bulk-populate counted quantities from a parsed CSV/Excel sheet (the
+    frontend parses the file client-side with papaparse/xlsx, same as the
+    bulk-staff-import convention elsewhere, and posts plain rows here) --
+    for a count covering hundreds of SKUs where scanning one-by-one through
+    a browser is impractical. A barcode already in this session gets its
+    counted_qty overwritten (lets a sheet be re-uploaded to correct itself);
+    a new barcode is added exactly like a fresh scan, including a lookup
+    against the Product Master for its name/division/section/department
+    and its system quantity snapshot."""
+    session = await _get_session(ctx, session_id)
+    if session.get("status") != "open":
+        raise HTTPException(status_code=409, detail="This session is no longer open.")
+
+    imported = 0
+    unlisted_barcodes: List[str] = []
+    new_lines = 0
+    for row in payload.rows:
+        bc = row.barcode.strip()
+        if not bc:
+            continue
+        existing = await stock_take_lines_collection.find_one({"session_id": session_id, "barcode": bc})
+        if existing:
+            await stock_take_lines_collection.update_one(
+                {"_id": existing["_id"]},
+                {"$set": {"counted_qty": row.counted_qty, "counted_by": ctx.get("admin_name", ""), "counted_at": datetime.utcnow()}},
+            )
+            imported += 1
+            continue
+
+        info = await _lookup_product(ctx["tenant_id"], bc)
+        if not info:
+            unlisted_barcodes.append(bc)
+        system_qty = await _system_qty(ctx["tenant_id"], session.get("store_id"), bc)
+        doc = {
+            "session_id": session_id, "tenant_id": ctx["tenant_id"], "barcode": bc,
+            "sku": info.get("sku", ""), "product": info.get("product", "") or bc,
+            "division": info.get("division", ""), "section": info.get("section", ""), "department": info.get("department", ""),
+            "system_qty": system_qty, "counted_qty": row.counted_qty,
+            "counted_by": ctx.get("admin_name", ""), "counted_at": datetime.utcnow(),
+            "unlisted": not bool(info),
+        }
+        await stock_take_lines_collection.insert_one(doc)
+        imported += 1
+        new_lines += 1
+
+    if new_lines:
+        await stock_take_sessions_collection.update_one({"_id": session["_id"]}, {"$inc": {"line_count": new_lines}})
+    return {"message": "Import complete", "imported": imported, "unlisted_barcodes": unlisted_barcodes}
+
+
 class LineUpdate(BaseModel):
     counted_qty: float
 
@@ -287,3 +377,21 @@ async def cancel_session(session_id: str, ctx: TenantCtx = Depends(get_any_tenan
         raise HTTPException(status_code=409, detail="Only an open session can be cancelled.")
     await stock_take_sessions_collection.update_one({"_id": session["_id"]}, {"$set": {"status": "cancelled"}})
     return {"message": "Stock take cancelled."}
+
+
+@router.delete("/sessions/{session_id}")
+async def delete_session(session_id: str, ctx: TenantCtx = Depends(get_any_tenant)):
+    """Open or cancelled sessions can be removed outright -- neither has
+    touched real stock. A posted session stays: it's linked to a real
+    stock adjustment already applied to inventory, and deleting the
+    session record would sever that audit trail without undoing the
+    adjustment itself."""
+    session = await _get_session(ctx, session_id)
+    if session.get("status") == "posted":
+        raise HTTPException(
+            status_code=409,
+            detail="A posted stock take can't be deleted -- it's linked to a real stock adjustment that already applied to inventory.",
+        )
+    await stock_take_lines_collection.delete_many({"session_id": session_id})
+    await stock_take_sessions_collection.delete_one({"_id": session["_id"]})
+    return {"message": "Stock take session deleted."}
