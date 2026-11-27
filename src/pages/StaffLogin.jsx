@@ -2,16 +2,9 @@ import { API_BASE_URL as APP_API_URL } from "../config/api.js";
 
 import React, { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
+import { DEPT_PATH_MAP } from "../utils/authRedirect.js";
 
 const API_BASE = APP_API_URL;
-
-const DEPT_PATH_MAP = {
-  "Cashier": "/cashier",
-  "Inventory": "/inventory",
-  "HR": "/hr",
-  "Finance": "/finance",
-  "Logistics": "/logistics",
-};
 
 const EyeOpen = () => (
   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">

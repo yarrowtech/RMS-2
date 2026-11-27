@@ -3,7 +3,7 @@ import { API_BASE_URL as APP_API_URL } from "../config/api.js";
  * Shared admin authentication and department-routing helpers.
  */
 
-const DEPT_PATH_MAP = {
+export const DEPT_PATH_MAP = {
   "HQ":                             "/admin",
   "HR":                             "/hr",
   "Cashier":                        "/cashier",

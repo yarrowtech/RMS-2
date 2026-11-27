@@ -6,10 +6,18 @@ import {
   X, UserPlus, Trash2, Lock, Unlock, KeyRound, Users2, Store as StoreIcon,
   ShoppingCart, Package, Truck, ClipboardList, FileBox, ArrowLeftRight,
   FileText, Contact, Wallet, UsersRound, BarChart3, Check, Sparkles,
+  Factory, Briefcase, Megaphone, Heart, Palette,
 } from "lucide-react";
 import toast from "react-hot-toast";
+import { DEPT_PATH_MAP } from "../../utils/authRedirect.js";
 
 const API = APP_API_URL;
+
+// Every department a staff login could plausibly be pointed at after
+// sign-in -- same canonical map the real admin login already redirects
+// with (authRedirect.js), minus the HQ-only entries that make no sense
+// for a store-locked staff account.
+const STAFF_DEPARTMENTS = Object.keys(DEPT_PATH_MAP).filter((d) => !["HQ", "IT", "Store Owner", "Vendor"].includes(d));
 
 const api = async (path, opts = {}) => {
   const token = localStorage.getItem("admin_token") || "";
@@ -26,10 +34,12 @@ const api = async (path, opts = {}) => {
   return data;
 };
 
-// Same permission ids used by the Add Admin form (Hqadminmanagement.jsx) --
-// a staff login is just a narrower, store-locked version of the same
-// permission taxonomy, grouped the same way, so the tabs an HQ/department
-// admin can tick here line up with what a full admin account would have.
+// The EXACT same permission ids/grouping as the Add Admin form
+// (Hqadminmanagement.jsx's own `PERMISSIONS` array) -- every tab across
+// every department that a full admin account can be given is selectable
+// here too, since a staff login is just a narrower, store-locked version
+// of the same taxonomy. Keep this in sync with that file if a tab is
+// ever added or renamed there.
 const PERMISSION_GROUPS = [
   {
     label: "Store Floor",
@@ -45,20 +55,35 @@ const PERMISSION_GROUPS = [
     tone: "indigo",
     items: [
       { id: "inventory", label: "Inventory", icon: FileBox },
+      { id: "purchase_orders", label: "Purchase Orders", icon: Truck },
       { id: "grn", label: "GRN / Receiving", icon: ClipboardList },
       { id: "grc", label: "GRC", icon: FileText },
-      { id: "stock_transfer", label: "Stock Transfer", icon: ArrowLeftRight },
-      { id: "purchase_orders", label: "Purchase Orders", icon: Truck },
       { id: "vendors", label: "Vendors", icon: Contact },
+      { id: "stock_allocation", label: "Stock Allocation", icon: Package },
+      { id: "stock_transfer", label: "Stock Transfer", icon: ArrowLeftRight },
+      { id: "job_work", label: "Production & Job Work", icon: Factory },
+      { id: "mbuyer", label: "Merchandiser Buyer", icon: Briefcase },
     ],
   },
   {
     label: "Admin",
     tone: "amber",
     items: [
-      { id: "finance", label: "Finance", icon: Wallet },
       { id: "hr", label: "HR", icon: UsersRound },
+      { id: "finance", label: "Finance", icon: Wallet },
+      { id: "logistics", label: "Logistics", icon: Truck },
       { id: "reports", label: "Reports", icon: BarChart3 },
+      { id: "user_management", label: "User Management", icon: Users2 },
+      { id: "assign_tasks", label: "Assign Tasks to Team", icon: ClipboardList },
+    ],
+  },
+  {
+    label: "Growth",
+    tone: "violet",
+    items: [
+      { id: "marketing", label: "Marketing", icon: Megaphone },
+      { id: "customer_crm", label: "Customer CRM", icon: Heart },
+      { id: "visual_merchandising", label: "Visual Merchandising", icon: Palette },
     ],
   },
 ];
@@ -68,6 +93,7 @@ const TONE = {
   emerald: { ring: "ring-emerald-500", bg: "bg-emerald-600", text: "text-emerald-700", soft: "bg-emerald-50", border: "border-emerald-200" },
   indigo: { ring: "ring-indigo-500", bg: "bg-indigo-600", text: "text-indigo-700", soft: "bg-indigo-50", border: "border-indigo-200" },
   amber: { ring: "ring-amber-500", bg: "bg-amber-600", text: "text-amber-700", soft: "bg-amber-50", border: "border-amber-200" },
+  violet: { ring: "ring-violet-500", bg: "bg-violet-600", text: "text-violet-700", soft: "bg-violet-50", border: "border-violet-200" },
 };
 
 const AVATAR_COLORS = ["bg-emerald-500", "bg-indigo-500", "bg-amber-500", "bg-rose-500", "bg-sky-500", "bg-violet-500"];
@@ -104,8 +130,12 @@ function AddStaffModal({ stores, fixedStoreId, fixedStoreName, allowedPermission
 
   const handleSave = async () => {
     setError("");
-    if (!form.name.trim() || !form.username.trim() || !form.password || !form.store_id) {
-      setError("Name, username, password, and store are all required.");
+    if (!form.name.trim() || !form.username.trim() || !form.password || !form.store_id || !form.department) {
+      setError("Name, username, password, store, and department are all required -- department decides which dashboard this login lands on.");
+      return;
+    }
+    if (form.permissions.length === 0) {
+      setError("Tick at least one tab -- a login with no tabs can sign in but won't be able to do anything.");
       return;
     }
     setSaving(true);
@@ -186,8 +216,13 @@ function AddStaffModal({ stores, fixedStoreId, fixedStoreName, allowedPermission
           )}
 
           <div>
-            <label className={LBL}>Department (optional label)</label>
-            <input className={INP} value={form.department} onChange={(e) => setForm((f) => ({ ...f, department: e.target.value }))} placeholder="e.g. Cashier" />
+            <label className={LBL}>Department (decides which dashboard this login lands on)</label>
+            <select className={INP} value={form.department} onChange={(e) => setForm((f) => ({ ...f, department: e.target.value }))}>
+              <option value="">Select a department…</option>
+              {STAFF_DEPARTMENTS.map((d) => (
+                <option key={d} value={d}>{d}</option>
+              ))}
+            </select>
           </div>
 
           <div>

@@ -1,6 +1,6 @@
 
 
-import React, { Suspense, useMemo, useState } from "react";
+import React, { Suspense, useMemo, useState, useEffect, useRef } from "react";
 import { logoutOrReturnToDepartmentSelector } from "../../utils/authRedirect";
 import { FaBars, FaCog, FaQuestionCircle } from "react-icons/fa";
 import InternalNotificationBell from "../InternalNotificationBell.jsx";
@@ -134,6 +134,27 @@ export default function InventoryManagement() {
   );
   const [desktopSidebarOpen, setDesktopSidebarOpen] = useState(true);
   const [drawerOpen, setDrawerOpen]                 = useState(false);
+
+  // `active` is only ever seeded from isStore/storeId at the moment this
+  // component first mounts -- it has no way to notice a DIFFERENT login
+  // (different scope, different store) taking over in the SAME mounted
+  // instance (e.g. logging out and back in without a full page reload, or
+  // this instance surviving across dev-server hot-reloads). Left alone,
+  // whatever page was selected under the OLD login keeps showing under
+  // the new one, even though the new login's own HQ/Store chrome (badge,
+  // welcome banner, sidebar sections) correctly updates around it -- the
+  // exact "Central Stock List under a Store login" mismatch this is
+  // guarding against. Re-seeding `active` whenever the actual identity
+  // (not just isStore/isHQ, which can coincidentally stay the same
+  // across two different store logins) changes closes that gap.
+  const identityKey = `${storeId || ""}|${isHQ ? "hq" : "store"}`;
+  const prevIdentityKey = useRef(identityKey);
+  useEffect(() => {
+    if (prevIdentityKey.current !== identityKey) {
+      prevIdentityKey.current = identityKey;
+      setActive(isStore ? "stock.storeStock" : "dashboard.summary");
+    }
+  }, [identityKey, isStore]);
 
   const pageTitle = useMemo(() => labelFromKey(active, storeName), [active, storeName]);
   const handleLogout = () => logoutOrReturnToDepartmentSelector();
