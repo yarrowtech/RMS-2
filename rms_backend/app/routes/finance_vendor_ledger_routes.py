@@ -21,7 +21,7 @@ from bson import ObjectId
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
-from ..db import finance_vouchers_collection, purchase_invoice_collection, vendor_advances_collection
+from ..db import db, finance_vouchers_collection, purchase_invoice_collection, vendor_advances_collection
 from .finance_routes import aging_bucket, date_value, get_finance_context, number, record_scope
 from .Purchaseinvoice_routes import PAYMENT_MODES, PaymentModel, _invoice_scope, record_payment
 
@@ -56,6 +56,24 @@ def _voucher_query(ctx: dict, name: str) -> dict:
         "$or": [{"linked_invoice_id": ""}, {"linked_invoice_id": {"$exists": False}}, {"linked_invoice_id": None}],
     }
     return query
+
+
+async def _vendor_master_info(ctx: dict, name: str) -> dict:
+    """Enriches a ledger row/statement with its Finance Vendor Master entry
+    (ledger code, Sundry/Service Creditor group, bank details) when one
+    exists — purely additive, matched by the same case-insensitive name
+    the rest of this file already uses. A vendor with no Vendor Master
+    entry yet (not linked/provisioned) simply gets blanks here, same as
+    before this enrichment existed."""
+    row = await db.finance_vendor_master.find_one({**record_scope(ctx), "name": _name_query(name)}, {"_id": 0})
+    if not row:
+        return {"ledger_code": "", "creditor_group": "", "gstin": "", "pan": "", "bank_name": "", "bank_holder": "", "ifsc": "", "account_last4": ""}
+    return {
+        "ledger_code": row.get("code", ""), "creditor_group": row.get("creditor_group", ""),
+        "gstin": row.get("gstin", ""), "pan": row.get("pan", ""),
+        "bank_name": row.get("bank_name", ""), "bank_holder": row.get("bank_holder", ""),
+        "ifsc": row.get("ifsc", ""), "account_last4": row.get("account_last4", ""),
+    }
 
 
 async def _load(ctx: dict, name: str) -> dict:
@@ -175,6 +193,7 @@ async def vendor_summary(ctx: dict = Depends(get_finance_context)):
             "vendor": name, "vendor_key": name, "invoice_count": s["invoice_count"], "total_billed": s["total_billed"],
             "paid": round(s["paid_on_bills"] + s["credits_and_notes"], 2), "advance_available": s["advance_available"],
             "outstanding": s["outstanding"], "overdue": s["overdue"], "last_payment": last,
+            **await _vendor_master_info(ctx, name),
         })
     rows.sort(key=lambda r: -r["outstanding"])
     totals = {
@@ -214,6 +233,7 @@ async def _compute_statement(ctx: dict, vendor_key: str, from_date: Optional[str
         "vendor": name, "from_date": from_date or "", "to_date": to_date or "", "opening_balance": round(opening, 2),
         "closing_balance": round(closing, 2), "lines": shown, "summary": {k: v for k, v in summary.items() if k != "open_bills"},
         "open_bills": summary["open_bills"],
+        **await _vendor_master_info(ctx, name),
     }
 
 

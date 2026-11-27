@@ -496,6 +496,9 @@ export default function AdminLogin() {
                 </Link>
                 <div className="lg-footer-line" />
               </div>
+              <p style={{ textAlign: "center", fontSize: 12, color: "#9ca3af", marginTop: 14 }}>
+                Staff member? <Link to="/staff-login" style={{ color: "#1c2b2b", fontWeight: 600 }}>Sign in here</Link>
+              </p>
             </form>
 
           </div>

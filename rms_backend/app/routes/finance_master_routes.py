@@ -137,6 +137,98 @@ async def registered_vendors(ctx: dict = Depends(get_finance_context)):
             rows.append({"link_id": str(link["_id"]), "code": link.get("vendor_code", ""), "name": identity.get("name") or identity.get("vendor_name") or "Unnamed vendor"})
     return {"rows": rows}
 
+async def _link_registered_vendor_core(tenant_id: str, store_id: str, link_id: str, link: dict, identity: dict) -> dict:
+    """Shared by the manual 'Link payable vendors' action and automatic
+    provisioning at vendor approval time (vendor_routes.py). Idempotent via
+    a deterministic Mongo _id — calling this twice for the same link is a
+    no-op the second time (DuplicateKeyError), never a duplicate ledger
+    entry, so it's safe to call unconditionally on every approval."""
+    scope = {"tenant_id": tenant_id, **({"store_id": store_id} if store_id else {})}
+    key = "registered:" + tenant_id + ":" + (store_id or "hq") + ":" + link_id
+    oid = ObjectId()
+    data = VendorMasterInput(name=identity.get("name") or identity.get("vendor_name") or "Unnamed vendor", pan=identity.get("pan") or "", gstin=identity.get("gstin") or "").model_dump()
+    data["vendor_type"] = "registered"
+    data["gst_status"] = "Registered" if data["gstin"] else "Unregistered"
+    doc = {**data, **scope, "id": str(oid), "code": link.get("vendor_code") or f"FMV-{str(oid).upper()}", "registered_link_id": link_id, "registered_vendor_id": str(link["vendor_id"]), "created_at": datetime.utcnow().isoformat()}
+    try:
+        await db.finance_vendor_master.insert_one({"_id": key, **doc})
+    except DuplicateKeyError:
+        return await db.finance_vendor_master.find_one({"_id": key}, {"_id": 0})
+    return doc
+
+
+async def auto_provision_finance_vendor(tenant_id: str, link_id: str, link: dict, vendor_identity: dict) -> None:
+    """Called right after a registered vendor is approved (vendor_routes.py)
+    so its Finance ledger entry (Sundry Creditors code, etc.) exists the
+    moment the relationship goes live — no separate manual 'Link payable
+    vendors' click required. Best-effort: Finance provisioning failing must
+    never block the vendor approval itself, so this swallows its own
+    errors and relies on the existing manual link screen as a fallback if
+    it's ever needed."""
+    try:
+        await _link_registered_vendor_core(tenant_id, "", link_id, link, vendor_identity)
+    except Exception:
+        pass
+
+
+def _walkin_vendor_key(tenant_id: str, name: str, mobile: str) -> str:
+    """Deterministic identity for a walk-in vendor — there is no persistent
+    walk-in vendor collection anywhere (a walk-in vendor is just text typed
+    fresh onto each PO), so (tenant_id, normalized name + mobile) is the
+    only thing that can tell 'same walk-in vendor, repeat purchase' from
+    'a different vendor who happens to share a name'. Mobile is the
+    stronger signal; a blank mobile falls back to name-only (best effort —
+    two different walk-in vendors with the same name and no phone on file
+    will collide, same limitation the rest of this walk-in flow already
+    has everywhere else)."""
+    norm = f"{(name or '').strip().lower()}|{(mobile or '').strip()}"
+    return "walkin:" + tenant_id + ":" + hashlib.sha256(norm.encode("utf-8")).hexdigest()
+
+
+async def auto_provision_walkin_vendor(tenant_id: str, walkin: dict) -> None:
+    """Called when a walk-in-vendor PO is created (purchaseorder_routes.py)
+    so this vendor has a real Finance ledger entry (Sundry Creditors code)
+    from its very first purchase — repeat purchases from the same walk-in
+    vendor (matched by name+mobile) reuse the same code instead of minting
+    a new one, and backfill newly-supplied bank/GST/PAN details onto the
+    existing record rather than overwriting what's already there. Never
+    raises — a Finance hiccup must not block PO creation."""
+    name = (walkin or {}).get("name", "").strip()
+    if not name:
+        return
+    try:
+        key = _walkin_vendor_key(tenant_id, name, walkin.get("mobile", ""))
+        now = datetime.utcnow().isoformat()
+        existing = await db.finance_vendor_master.find_one({"_id": key})
+        if existing:
+            # Backfill only fields that are blank on the existing record —
+            # never clobber a value Finance staff may have since corrected.
+            patch = {}
+            for src, dst in (("gstin", "gstin"), ("pan", "pan"), ("bank_name", "bank_name"),
+                              ("bank_holder", "bank_holder"), ("ifsc", "ifsc"), ("account_last4", "account_last4"),
+                              ("contact_person", "contact"), ("address", "address")):
+                value = (walkin.get(src) or "").strip()
+                if value and not existing.get(dst):
+                    patch[dst] = value
+            if patch:
+                patch["updated_at"] = now
+                await db.finance_vendor_master.update_one({"_id": key}, {"$set": patch})
+            return
+        oid = ObjectId()
+        data = VendorMasterInput(
+            name=name, contact=walkin.get("contact_person", ""), address=walkin.get("address", ""),
+            pan=walkin.get("pan", ""), gstin=walkin.get("gstin", ""),
+            bank_name=walkin.get("bank_name", ""), bank_holder=walkin.get("bank_holder", ""),
+            ifsc=walkin.get("ifsc", ""), account_last4=walkin.get("account_last4", ""),
+            vendor_type="walk_in",
+        ).model_dump()
+        data["gst_status"] = "Registered" if data["gstin"] else "Unregistered"
+        doc = {**data, "tenant_id": tenant_id, "id": str(oid), "code": f"FMV-{str(oid).upper()}", "created_at": now}
+        await db.finance_vendor_master.insert_one({"_id": key, **doc})
+    except Exception:
+        pass
+
+
 @router.post("/registered-vendors/{link_id}/link", status_code=201)
 async def link_registered_vendor(link_id: str, ctx: dict = Depends(get_finance_context)):
     if not ObjectId.is_valid(link_id):
@@ -148,17 +240,10 @@ async def link_registered_vendor(link_id: str, ctx: dict = Depends(get_finance_c
     if not identity:
         raise HTTPException(404, "Vendor identity not found")
     scope = record_scope(ctx)
-    # A deterministic Mongo ID makes concurrent link requests idempotent.
-    key = "registered:" + ctx["tenant_id"] + ":" + scope.get("store_id", "hq") + ":" + link_id
-    oid = ObjectId()
-    data = VendorMasterInput(name=identity.get("name") or identity.get("vendor_name") or "Unnamed vendor", pan=identity.get("pan") or "", gstin=identity.get("gstin") or "").model_dump()
-    data["vendor_type"] = "registered"
-    data["gst_status"] = "Registered" if data["gstin"] else "Unregistered"
-    doc = {**data, **scope, "id": str(oid), "code": link.get("vendor_code") or f"FMV-{str(oid).upper()}", "registered_link_id": link_id, "registered_vendor_id": str(link["vendor_id"]), "created_at": datetime.utcnow().isoformat()}
-    try:
-        await db.finance_vendor_master.insert_one({"_id": key, **doc})
-    except DuplicateKeyError:
+    existing = await db.finance_vendor_master.find_one({**scope, "registered_link_id": link_id})
+    if existing:
         raise HTTPException(409, "This registered vendor is already linked")
+    doc = await _link_registered_vendor_core(ctx["tenant_id"], scope.get("store_id", ""), link_id, link, identity)
     return {"vendor": doc}
 
 
@@ -263,6 +348,12 @@ class PostingLine(BaseModel):
     account_id: str
     debit: str = "0"
     credit: str = "0"
+    # Only meaningful (and required) when account_id refers to a
+    # creditor_control account — identifies WHICH vendor's subledger this
+    # line posts against. Sundry/Service Creditors is a control account in
+    # the general ledger; the sum of every vendor's subledger postings
+    # against it is what the control account balance actually represents.
+    vendor_id: str = ""
 
 class BalancedVoucherInput(BaseModel):
     voucher_type: str
@@ -291,40 +382,108 @@ async def list_balanced_vouchers(ctx: dict = Depends(get_finance_context)):
             entries.append(reversal)
     return {"rows": entries}
 
-@router.post("/balanced-vouchers", status_code=201)
-async def create_balanced_voucher(payload: BalancedVoucherInput, ctx: dict = Depends(get_finance_context)):
-    if payload.voucher_type not in {"journal", "contra"}:
+
+async def _post_balanced_voucher_core(scope: dict, voucher_type: str, voucher_date: str, narration: str, posting_lines: list[PostingLine], created_by: str = "") -> dict:
+    """Shared by the manual Journal & Contra screen and automatic AP posting
+    at invoice-payment time (Purchaseinvoice_routes.py). Every validation
+    rule below applies identically either way — an automatic posting is
+    never allowed to be less rigorous than a manual one."""
+    if voucher_type not in {"journal", "contra"}:
         raise HTTPException(400, "Only journal and contra entries are supported")
     try:
-        datetime.strptime(payload.voucher_date, "%Y-%m-%d")
+        datetime.strptime(voucher_date, "%Y-%m-%d")
     except ValueError:
         raise HTTPException(400, "Invalid voucher date")
-    scope = record_scope(ctx)
     lines, debit_total, credit_total = [], 0, 0
-    for line in payload.lines:
+    for line in posting_lines:
         debit, credit = posting_amount(line.debit), posting_amount(line.credit)
         if (debit > 0) == (credit > 0):
             raise HTTPException(400, "Each line must have a debit or a credit, but not both")
         account = await db.finance_account_master.find_one({**scope, "id": line.account_id}, {"_id": 0})
         if not account:
             raise HTTPException(400, "An account was not found in your finance scope")
+        line_entry = {"account_id": account["id"], "account_name": account["name"], "debit_paise": debit, "credit_paise": credit}
         if account["kind"] == "creditor_control":
-            raise HTTPException(400, "Creditor control accounts require a vendor subledger posting, which is not available yet")
-        if payload.voucher_type == "contra" and account["kind"] not in {"cash", "bank"}:
+            if not line.vendor_id:
+                raise HTTPException(400, "Creditor control accounts require a vendor subledger posting — select the vendor")
+            vendor = await db.finance_vendor_master.find_one({**scope, "id": line.vendor_id}, {"_id": 0})
+            if not vendor:
+                raise HTTPException(400, "Vendor was not found in your finance scope")
+            line_entry.update(vendor_id=vendor["id"], vendor_name=vendor["name"], vendor_code=vendor.get("code", ""))
+        if voucher_type == "contra" and account["kind"] not in {"cash", "bank"}:
             raise HTTPException(400, "Contra entries require cash or bank accounts")
-        lines.append({"account_id": account["id"], "account_name": account["name"], "debit_paise": debit, "credit_paise": credit})
+        lines.append(line_entry)
         debit_total += debit
         credit_total += credit
     if debit_total != credit_total:
         raise HTTPException(400, "Debits and credits must balance")
     if len({line["account_id"] for line in lines}) < 2:
         raise HTTPException(400, "At least two different accounts are required")
-    if payload.voucher_type == "contra" and (len(lines) != 2 or lines[0]["account_id"] == lines[1]["account_id"]):
+    if voucher_type == "contra" and (len(lines) != 2 or lines[0]["account_id"] == lines[1]["account_id"]):
         raise HTTPException(400, "Contra requires two different cash or bank accounts")
     oid = ObjectId()
-    doc = {**scope, "id": str(oid), "voucher_no": f"{'JV' if payload.voucher_type == 'journal' else 'CV'}-{str(oid).upper()}", "voucher_type": payload.voucher_type, "voucher_date": payload.voucher_date, "narration": payload.narration.strip(), "lines": lines, "total_paise": debit_total, "created_at": datetime.utcnow().isoformat()}
+    doc = {**scope, "id": str(oid), "voucher_no": f"{'JV' if voucher_type == 'journal' else 'CV'}-{str(oid).upper()}", "voucher_type": voucher_type, "voucher_date": voucher_date, "narration": narration.strip(), "lines": lines, "total_paise": debit_total, "created_by": created_by, "created_at": datetime.utcnow().isoformat()}
     await db.finance_balanced_vouchers.insert_one({"_id": oid, **doc})
+    return doc
+
+
+@router.post("/balanced-vouchers", status_code=201)
+async def create_balanced_voucher(payload: BalancedVoucherInput, ctx: dict = Depends(get_finance_context)):
+    doc = await _post_balanced_voucher_core(record_scope(ctx), payload.voucher_type, payload.voucher_date, payload.narration, payload.lines, str(ctx.get("admin_id") or ""))
     return {"voucher": doc}
+
+
+async def _resolve_default_account(tenant_id: str, kind: str, name: str) -> dict:
+    """Finds this tenant's default account of a given kind (e.g. the one
+    'Sundry Creditors' control account, or a 'Cash' account for cash
+    payments), auto-creating it on first use so automatic AP posting never
+    fails just because nobody has set up the Chart of Accounts yet. Scoped
+    tenant-wide (store_id never set here) — these are shared control
+    accounts, not per-store ones."""
+    scope = {"tenant_id": tenant_id}
+    existing = await db.finance_account_master.find_one({**scope, "kind": kind, "name": name}, {"_id": 0})
+    if existing:
+        return existing
+    oid = ObjectId()
+    doc = {"name": name, "kind": kind, "bank_name": "", "ifsc": "", "account_last4": "", **scope, "id": str(oid), "created_at": datetime.utcnow().isoformat()}
+    await db.finance_account_master.insert_one({"_id": oid, **doc})
+    return doc
+
+
+async def post_vendor_payment_voucher(tenant_id: str, vendor_name: str, amount: float, payment_date: str, payment_mode: str, reference_no: str) -> None:
+    """Posts a real double-entry AP voucher when a Purchase Invoice payment
+    is recorded (Purchaseinvoice_routes.py) — debit the vendor's Sundry/
+    Service Creditor subledger, credit Cash or Bank depending on payment
+    mode. Closes the gap create_balanced_voucher's own validation used to
+    block outright ('Creditor control accounts require a vendor subledger
+    posting, which is not available yet').
+
+    Best-effort and silent on failure (most commonly: this vendor has no
+    Vendor Master entry yet, e.g. a walk-in vendor whose Finance record
+    wasn't provisioned for some reason) — a Finance posting hiccup must
+    never block the actual payment from being recorded against the
+    invoice, which remains the operational source of truth either way."""
+    try:
+        vendor = await db.finance_vendor_master.find_one({"tenant_id": tenant_id, "name": _name_query_exact(vendor_name)}, {"_id": 0})
+        if not vendor:
+            return
+        creditor_account = await _resolve_default_account(tenant_id, "creditor_control", vendor.get("creditor_group") or "Sundry Creditors")
+        cash_or_bank_name = "Cash" if payment_mode == "Cash" else "Bank"
+        cash_or_bank_kind = "cash" if payment_mode == "Cash" else "bank"
+        cash_or_bank_account = await _resolve_default_account(tenant_id, cash_or_bank_kind, cash_or_bank_name)
+        amount_str = f"{round(float(amount or 0), 2):.2f}"
+        lines = [
+            PostingLine(account_id=creditor_account["id"], debit=amount_str, credit="0", vendor_id=vendor["id"]),
+            PostingLine(account_id=cash_or_bank_account["id"], debit="0", credit=amount_str),
+        ]
+        narration = f"Payment to {vendor_name}" + (f" (Ref: {reference_no})" if reference_no else "")
+        await _post_balanced_voucher_core({"tenant_id": tenant_id}, "journal", (payment_date or datetime.utcnow().strftime("%Y-%m-%d"))[:10], narration, lines, "system:invoice-payment")
+    except Exception:
+        pass
+
+
+def _name_query_exact(name: str) -> dict:
+    return {"$regex": f"^{re.escape((name or '').strip())}$", "$options": "i"}
 
 
 class VoucherReversalInput(BaseModel):

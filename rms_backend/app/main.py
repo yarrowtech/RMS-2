@@ -18,6 +18,7 @@ import asyncio
 from .error_log import log_error
 from .citimart_midnight_job import run_citimart_midnight_loop
 from .routes import superadmin_routes, auth_routes, admin_routes
+from .routes.staff_routes import router as staff_router
 from .routes.readonly_routes import router as readonly_router
 from .db import admins_collection, ensure_procurement_indexes
 from .routes import vendor_routes,order_routes, grc_routes , grn_routes,Purchaseinvoice_routes
@@ -152,6 +153,7 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
 
 app.include_router(superadmin_routes.router)
 app.include_router(auth_routes.router)
+app.include_router(staff_router)
 app.include_router(admin_routes.router)
 
 app.include_router(vendor_routes.vendor_bp)

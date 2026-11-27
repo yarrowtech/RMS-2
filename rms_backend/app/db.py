@@ -21,6 +21,12 @@ admins_collection = db["admins"]
 # index auto-deletes stale sessions without a cron job; revoking one early
 # (remote logout) just deletes the doc directly.
 active_sessions_collection = db["active_sessions"]
+# Lightweight sub-logins an HQ or store admin can create for a single store
+# (e.g. a cashier terminal) — username+password instead of a real email,
+# scoped to one store and a capped subset of tabs. Fully separate from
+# admins_collection; see deps.get_tenant / store_helper.get_store_context
+# for how a "STAFF" JWT role is resolved against this collection instead.
+staff_users_collection = db["staff_users"]
 vendors_collection = db["vendors"]
 orders_collection = db["orders"]
 purchaseorders_collection = db["purchase_orders"]

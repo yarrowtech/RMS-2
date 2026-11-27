@@ -6,7 +6,10 @@ import {
   FaCreditCard, FaTimes, FaPrint, FaSpinner, FaEnvelope,
   FaFileInvoice, FaCheckCircle, FaExclamationTriangle,
   FaQuestionCircle, FaUndo, FaLock, FaWifi, FaClock, FaExchangeAlt, FaCalculator,
+  FaCamera,
 } from "react-icons/fa";
+import { BrowserMultiFormatReader } from "@zxing/browser";
+import { NotFoundException } from "@zxing/library";
 
 import { CASHIER_API_BASE as API_BASE, cashierFetch } from "./cashierApi";
 import CashierGuideModal from "./CashierGuideModal";
@@ -549,6 +552,7 @@ const POS_GUIDE_NOTES = [
   { tone: "info", icon: FaExclamationTriangle, title: "If the screen freezes mid-bill", text: "An in-progress cart autosaves every second or so. If the tab has to be reloaded, an amber banner offers to restore the last unsaved cart — check it before re-scanning everything from scratch." },
   { tone: "info", icon: FaCalculator, title: "Keyboard shortcuts — the one rule first", text: "Every shortcut below only works when you are NOT typing in a text field — click or tap anywhere outside an input first (or press Esc to close whatever's open), then use the key. This is deliberate: it stops a shortcut from firing by accident while you're typing a customer name or a discount value." },
   { tone: "info", icon: FaSearch, title: "F2 / F3 — product and customer", text: "F2 focuses product search. F3 opens customer details for the current bill." },
+  { tone: "info", icon: FaCamera, title: "Scan with camera — no hardware scanner needed", text: "Tap the camera icon next to the barcode field to scan using this device's own camera — works on a phone, tablet, or any device with one. Point it at the barcode; it adds to the bill automatically the moment it's read, no capture button needed. This is an extra option alongside a hardware scanner, not a replacement — a dedicated scanner is still faster for a busy counter." },
   { tone: "info", icon: FaPrint, title: "F4 / F8 — receipts and payment", text: "F4 searches saved bills to reprint. F8 opens the payment window for the current cart." },
   { tone: "info", icon: FaClock, title: "F5 — Drawer Summary", text: "Shows opening cash, today's Cash/Card/UPI totals so far, and the expected cash in the drawer right now — without closing your shift. Type in what you've actually counted to see any mismatch instantly; that number is only shown to you, it is never saved. The real recorded reconciliation still only happens when you actually close the shift." },
   { tone: "info", icon: FaLock, title: "F6 — rename this terminal", text: "Opens the \"Name this terminal\" box so you can rename this specific machine (e.g. if it's replaced or moved to a different counter). This name is stored on this device only, separate from your login, and is what Reports uses to tell POS machines apart." },
@@ -601,6 +605,93 @@ function TouchKeyboard({ target, onClose }) {
         <div className="flex gap-1"><button type="button" onClick={() => setCapsLock(v => !v)} aria-pressed={capsLock} className={`h-10 rounded-lg px-2 text-xs font-bold sm:h-12 sm:px-3 ${capsLock ? 'bg-violet-600 text-white' : 'bg-white text-slate-900'}`}>Caps Lock</button><button type="button" onClick={() => setShift(v => !v)} aria-pressed={shift} className={`h-10 rounded-lg px-2 text-xs font-bold sm:h-12 sm:px-3 ${shift ? 'bg-violet-600 text-white' : 'bg-white text-slate-900'}`}>Shift</button><button type="button" onClick={() => setSymbols(v => !v)} className="h-10 rounded-lg bg-white px-2 text-xs font-bold sm:h-12 sm:px-3">{symbols ? 'ABC' : '?123'}</button>{["-", "/", "@", "."].map(key => <button type="button" key={key} onClick={() => press(key)} className="h-10 flex-1 rounded-lg bg-white font-bold sm:h-12">{key}</button>)}<button type="button" onClick={() => press("Space")} className="h-10 flex-[4] rounded-lg bg-white font-bold sm:h-12">Space</button><button type="button" onClick={() => press("Backspace")} className="h-10 rounded-lg bg-white px-3 font-bold sm:h-12">⌫</button><button type="button" onClick={() => press("Enter")} className="h-10 rounded-lg bg-violet-600 px-3 font-bold text-white sm:h-12">Enter</button></div>
       </div>
     </div>, document.body
+  );
+}
+
+// Alternate input method alongside a hardware scanner — not a replacement.
+// A hardware scanner is really just a fast keyboard typing the barcode +
+// Enter, which the existing auto-scan debounce effect (watching `barcode`
+// state) already handles; this modal only needs to produce that same
+// decoded string and hand it to the same `onDetected` setter, nothing in
+// the actual scan-to-cart/billing logic changes.
+function CameraScanModal({ onDetected, onClose }) {
+  const videoRef = useRef(null);
+  const controlsRef = useRef(null);
+  const [error, setError] = useState("");
+  const [ready, setReady] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    const reader = new BrowserMultiFormatReader();
+
+    (async () => {
+      try {
+        const devices = await BrowserMultiFormatReader.listVideoInputDevices();
+        // Prefer the rear/environment-facing camera on a phone or tablet —
+        // ZXing's device list doesn't expose facing mode directly, so pick
+        // the last device (rear camera is conventionally listed last on
+        // most mobile browsers) with a graceful fallback to the first.
+        const deviceId = devices[devices.length - 1]?.deviceId || devices[0]?.deviceId;
+        if (!deviceId) { setError("No camera found on this device."); return; }
+        // decodeFromVideoDevice resolves to an IScannerControls object —
+        // its .stop() is the only correct way to release the camera; this
+        // version of the reader itself has no reset()/stop() of its own.
+        const controls = await reader.decodeFromVideoDevice(deviceId, videoRef.current, (result, err) => {
+          if (cancelled) return;
+          if (result) {
+            onDetected(result.getText());
+          } else if (err && !(err instanceof NotFoundException)) {
+            // NotFoundException just means "no barcode in this frame yet" —
+            // expected on almost every frame while aiming the camera, not
+            // a real error.
+          }
+        });
+        if (cancelled) { controls.stop(); return; }
+        controlsRef.current = controls;
+        setReady(true);
+      } catch (e) {
+        if (!cancelled) setError(e?.message?.includes("Permission") || e?.name === "NotAllowedError"
+          ? "Camera access was denied. Allow camera permission for this site and try again."
+          : "Could not start the camera. Try a different device or use the barcode field instead.");
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      try { controlsRef.current?.stop(); } catch {}
+    };
+  }, [onDetected]);
+
+  return ReactDOM.createPortal(
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/80 p-4" onClick={onClose}>
+      <div className="w-full max-w-md overflow-hidden rounded-3xl bg-slate-900 shadow-2xl" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-5 py-4">
+          <p className="text-sm font-black text-white">Scan barcode with camera</p>
+          <button onClick={onClose} className="grid h-8 w-8 place-items-center rounded-xl bg-white/10 text-white hover:bg-white/20">
+            <FaTimes size={14} />
+          </button>
+        </div>
+        <div className="relative aspect-square w-full bg-black">
+          <video ref={videoRef} className="h-full w-full object-cover" muted playsInline />
+          {!ready && !error && (
+            <div className="absolute inset-0 flex items-center justify-center text-white/70">
+              <FaSpinner className="animate-spin text-2xl" />
+            </div>
+          )}
+          {ready && (
+            <div className="pointer-events-none absolute inset-8 rounded-2xl border-2 border-violet-400/80" />
+          )}
+        </div>
+        <div className="px-5 py-4">
+          {error ? (
+            <p className="text-xs font-bold text-rose-300">{error}</p>
+          ) : (
+            <p className="text-xs font-bold text-slate-300">Point the camera at a barcode — it adds to the bill automatically.</p>
+          )}
+        </div>
+      </div>
+    </div>,
+    document.body
   );
 }
 
@@ -793,7 +884,7 @@ const GenerateBillPopup = React.forwardRef(function GenerateBillPopup({ open, is
   const payableAfterCredit = Math.max(0, payable - creditApplied);
   const refundDueNow = !isReturn && exchangeCredit ? Math.max(0, exchangeCredit.amount - payable) : 0;
   const splitClean = cleanPaymentSplit(split);
-  const paidTotal = splitEnabled ? paymentSplitTotal(splitClean) : Number(paid || (bill.paymentMethod === "Cash" ? 0 : payableAfterCredit));
+  const paidTotal = splitEnabled ? paymentSplitTotal(splitClean) : bill.paymentMethod === "Cash" ? Number(paid || 0) : payableAfterCredit;
   const change  = paidTotal > payableAfterCredit ? paidTotal - payableAfterCredit : 0;
   const selectedPaymentMethod = isReturn ? "Credit Note" : splitEnabled ? "Split" : bill.paymentMethod;
   const validateCash = () => {
@@ -1061,6 +1152,17 @@ const GenerateBillPopup = React.forwardRef(function GenerateBillPopup({ open, is
                     <TouchNumpad value={paid} onChange={setPaid} onClose={() => setNumpadField(null)} />
                   )}
                   {change > 0 && <p className="mt-2 rounded-xl bg-emerald-50 px-4 py-2 text-sm font-black text-emerald-600">Change Return: ₹{change.toFixed(2)}</p>}
+                </div>
+              )}
+              {bill.paymentMethod !== "Cash" && !isReturn && (
+                <div className="mt-3 rounded-xl border border-violet-100 bg-white p-4">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">Amount to collect</p>
+                  <p className="mt-1 text-xl font-black text-slate-950">{money(payableAfterCredit)}</p>
+                  <p className="mt-2 text-xs font-medium leading-relaxed text-slate-600">
+                    {bill.paymentMethod === "Card"
+                      ? "Collect payment using your card terminal, then finalize the bill."
+                      : "Collect payment using your UPI app or QR code, then finalize the bill."}
+                  </p>
                 </div>
               )}
             </div>}
@@ -1773,6 +1875,7 @@ export default function CashierPOS() {
   const [searchRes,      setSearchRes]      = useState([]);
   const [searching,      setSearching]      = useState(false);
   const [scanning,       setScanning]       = useState(false);
+  const [cameraScanOpen, setCameraScanOpen] = useState(false);
   const [toast,          setToast]          = useState({ msg: "", type: "default" });
   const [billOpen,       setBillOpen]       = useState(false);
   const [customerOpen, setCustomerOpen] = useState(false);
@@ -2736,6 +2839,12 @@ export default function CashierPOS() {
   return (
     <div className="min-h-screen bg-[#f4f7fb] text-slate-900">
       <Toast message={toast.msg} type={toast.type} />
+      {cameraScanOpen && (
+        <CameraScanModal
+          onDetected={(text) => { setCameraScanOpen(false); setBarcode(text); }}
+          onClose={() => setCameraScanOpen(false)}
+        />
+      )}
       {touchKeyboardOpen && <TouchKeyboard target={touchKeyboardTarget} onClose={() => setTouchKeyboardOpen(false)} />}
       <div className="flex flex-wrap gap-x-4 gap-y-1 bg-slate-900 px-4 py-2 text-[11px] font-bold text-white sm:px-6" aria-label="Cashier keyboard shortcuts">
         <span>F2 Search</span><span>F3 Customer</span><span>F4 Reprint</span><span>F5 Drawer</span><button type="button" onClick={() => { setTerminalNameDraft(getTerminalName()); setTerminalNamePrompt(true); }} className="rounded underline underline-offset-2 hover:text-emerald-300" title="Open terminal and device configuration">F6 Terminal</button><span>F7 Return</span><span>F8 Payment</span><span>Alt+D Discount</span><span>Alt+I Save &amp; print</span><span>Ctrl+7 Hold</span><span>Ctrl+8 Recall</span><button type="button" onClick={() => { const input = lastInputRef.current?.isConnected ? lastInputRef.current : searchRef.current; if (!input) { showToast('Select a text field first', 'error'); return; } setTouchKeyboardTarget(input); setTouchKeyboardOpen(true); input.focus(); }} className="rounded underline underline-offset-2 hover:text-emerald-300">Touch keyboard</button>
@@ -3155,11 +3264,17 @@ export default function CashierPOS() {
               <input ref={barcodeRef} value={barcode} onChange={e => setBarcode(e.target.value)}
                 onKeyDown={e => e.key === "Enter" && scanBarcode()}
                 placeholder="Scan barcode - auto-adds after scan"
-                className="h-12 w-full rounded-2xl border border-slate-200 bg-slate-50 pl-11 pr-20 text-sm font-bold outline-none focus:border-violet-500" />
-              <button onClick={scanBarcode} disabled={scanning || !barcode.trim()}
-                className="absolute right-2 top-1/2 -translate-y-1/2 rounded-xl bg-violet-600 px-3 py-1.5 text-[10px] font-black uppercase text-white disabled:opacity-40">
-                {scanning ? <FaSpinner className="animate-spin" /> : "Add"}
-              </button>
+                className="h-12 w-full rounded-2xl border border-slate-200 bg-slate-50 pl-11 pr-28 text-sm font-bold outline-none focus:border-violet-500" />
+              <div className="absolute right-2 top-1/2 flex -translate-y-1/2 gap-1.5">
+                <button onClick={() => setCameraScanOpen(true)} title="Scan with camera — phone, tablet, any device with a camera"
+                  className="rounded-xl bg-slate-200 px-2.5 py-1.5 text-[11px] font-black text-slate-700 hover:bg-slate-300">
+                  <FaCamera />
+                </button>
+                <button onClick={scanBarcode} disabled={scanning || !barcode.trim()}
+                  className="rounded-xl bg-violet-600 px-3 py-1.5 text-[10px] font-black uppercase text-white disabled:opacity-40">
+                  {scanning ? <FaSpinner className="animate-spin" /> : "Add"}
+                </button>
+              </div>
             </div>
             <div className="relative">
               <FaSearch className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />

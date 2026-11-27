@@ -550,6 +550,15 @@ async def _finalize_vendor_approval(
         approver_name, f"Approved vendor {vendor.get('name', vendor_code)} ({vendor_code})", type="create",
     )
 
+    # Provision this vendor's Finance ledger entry (Sundry Creditors code,
+    # etc.) the moment the relationship goes live, instead of requiring a
+    # separate manual "Link payable vendors" click in Finance. Best-effort —
+    # see auto_provision_finance_vendor's own docstring for why a Finance
+    # hiccup here must never block the vendor approval itself.
+    from .finance_master_routes import auto_provision_finance_vendor
+    link_after = {**link, "vendor_code": vendor_code}
+    await auto_provision_finance_vendor(tenant_id, str(link["_id"]), link_after, vendor)
+
     return {
         "vendor_code": vendor_code, "division": division, "section": section,
         "department": department, "email_note": email_note,

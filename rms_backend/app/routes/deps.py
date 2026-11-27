@@ -6,7 +6,7 @@ from typing import Any, Dict, Optional
 from bson import ObjectId
 
 from ..config import settings
-from ..db import admins_collection, tenants_collection
+from ..db import admins_collection, tenants_collection, staff_users_collection
 from ..session_utils import session_is_active, touch_session
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
@@ -52,10 +52,63 @@ async def get_tenant(token: str = Depends(oauth2_scheme)) -> Dict[str, Any]:
     role    = payload.get("role")
     user_id = payload.get("sub")
 
-    if not user_id or role not in ("ADMIN", "admin"):
+    if not user_id or role not in ("ADMIN", "admin", "STAFF"):
         raise credentials_exception
 
-    # â”€â”€ ALWAYS look up the live admin record â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # -- STAFF tokens: separate collection, separate branch ------------------
+    # Staff logins (username+password, no email) are never stored in
+    # admins_collection -- resolving one here means every route already
+    # gated with require_permission()/require_department() works for a
+    # staff login too, with zero changes to those routes. The ADMIN branch
+    # below is untouched.
+    if role == "STAFF":
+        try:
+            staff = await staff_users_collection.find_one({"_id": ObjectId(user_id)})
+        except Exception:
+            staff = None
+
+        if not staff:
+            raise credentials_exception
+
+        if staff.get("status") == "SUSPENDED":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="This account has been suspended. Contact your administrator.",
+            )
+
+        session_id = payload.get("sid")
+        if session_id and not await session_is_active(session_id):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="This session has been signed out from another device. Please log in again.",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        if session_id:
+            await touch_session(session_id)
+
+        tenant_id = payload.get("tenant_id") or staff.get("tenant_id")
+        if not tenant_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="No tenant assigned to this staff login. Contact your admin.",
+            )
+
+        return {
+            "tenant_id":   tenant_id,
+            "scope":       payload.get("scope") or staff.get("scope", "store"),
+            "store_id":    payload.get("store_id") or staff.get("store_id"),
+            "store_name":  payload.get("store_name") or staff.get("store_name"),
+            "store_type":  payload.get("store_type") or staff.get("store_type"),
+            "admin_id":    user_id,
+            "admin_name":  staff.get("name") or staff.get("username", ""),
+            "admin_email": "",
+            "department":  payload.get("department") or staff.get("department", ""),
+            "_permissions": staff.get("permissions", []),
+            "_managed_departments": [staff.get("department")] if staff.get("department") else [],
+            "_is_staff": True,
+        }
+
+    # -- ALWAYS look up the live admin record --------------------------------
     # Previously this only happened as a fallback when tenant_id was missing
     # from the token. Now it happens every request, because status
     # (ACTIVE/SUSPENDED) and permissions must be checked fresh â€” a JWT

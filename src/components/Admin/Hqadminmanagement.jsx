@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import toast from "react-hot-toast";
 import BulkStaffImportModal from "../../utils/BulkStaffImportModal.jsx";
+import StaffLoginsPanel from "./StaffLoginsPanel.jsx";
 
 const API   = APP_API_URL;
 
@@ -1688,6 +1689,7 @@ export default function HQAdminManagement() {
   const [showBulkImport, setShowBulkImport] = useState(false);
   const [showBuySeats, setShowBuySeats] = useState(false);
   const [showBuyPos, setShowBuyPos] = useState(false);
+  const [showStaffLogins, setShowStaffLogins] = useState(false);
   const [viewAdmin, setViewAdmin] = useState(null);
   const [editAdmin, setEditAdmin] = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(null);
@@ -1777,6 +1779,10 @@ export default function HQAdminManagement() {
             className="inline-flex items-center gap-2 px-4 py-2 border border-teal-200 bg-teal-50 text-teal-700 rounded-xl text-sm font-bold hover:bg-teal-100 transition">
             <UploadCloud className="w-4 h-4"/> Bulk Import
           </button>
+          <button onClick={() => setShowStaffLogins(true)}
+            className="inline-flex items-center gap-2 px-4 py-2 border border-emerald-200 bg-emerald-50 text-emerald-700 rounded-xl text-sm font-bold hover:bg-emerald-100 transition">
+            <Users className="w-4 h-4"/> Staff Logins
+          </button>
           <button onClick={() => setShowAdd(true)}
             className="inline-flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-indigo-600 to-indigo-700 text-white rounded-xl text-sm font-bold hover:opacity-90 transition shadow-md">
             <UserPlus className="w-4 h-4"/> Add Admin
@@ -1790,6 +1796,10 @@ export default function HQAdminManagement() {
 
       {showBuyPos && (
         <BuyPosModal onClose={() => setShowBuyPos(false)} onPurchased={fetchAll} />
+      )}
+
+      {showStaffLogins && (
+        <StaffLoginsPanel stores={stores} onClose={() => setShowStaffLogins(false)} />
       )}
 
       {/* Stats */}

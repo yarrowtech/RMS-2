@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 from bson import ObjectId
 
 from .deps import get_any_tenant
-from ..db import staff_tasks_collection, admins_collection
+from ..db import staff_tasks_collection, admins_collection, staff_users_collection
 
 router = APIRouter(prefix="/staff-tasks", tags=["Staff Tasks"])
 
@@ -118,7 +118,12 @@ class TaskUpdate(BaseModel):
 
 @router.get("/assignable-staff")
 async def list_assignable_staff(ctx: TenantCtx = Depends(get_any_tenant)):
-    """Staff the caller is allowed to hand a task to — feeds the assignee dropdown."""
+    """Staff the caller is allowed to hand a task to — feeds the assignee dropdown.
+
+    Includes both full admins_collection accounts AND the lighter staff_users
+    logins (cashiers, counter staff, etc.) created via the Staff Logins
+    panel — a task can go to either, under the exact same store/department
+    scoping rules."""
     if not await _can_assign(ctx):
         return {"data": []}
     query: dict = {"tenant_id": ctx["tenant_id"], "department": {"$ne": "SUPERADMIN"}}
@@ -129,8 +134,28 @@ async def list_assignable_staff(ctx: TenantCtx = Depends(get_any_tenant)):
         query["$or"] = [{"department": {"$in": own}}, {"managedDepartments": {"$in": own}}]
     rows = []
     async for a in admins_collection.find(query, {"name": 1, "email": 1, "department": 1, "store_name": 1}):
-        rows.append({"id": str(a["_id"]), "name": a.get("name") or a.get("email", ""), "department": a.get("department", ""), "store_name": a.get("store_name", "")})
+        rows.append({"id": str(a["_id"]), "name": a.get("name") or a.get("email", ""), "department": a.get("department", ""), "store_name": a.get("store_name", ""), "kind": "admin"})
+
+    staff_query: dict = {"tenant_id": ctx["tenant_id"]}
+    if ctx["scope"] in ("store", "branch"):
+        staff_query["store_id"] = ctx.get("store_id")
+    if not _is_full_access(ctx):
+        own = list(_own_departments(ctx))
+        staff_query["department"] = {"$in": own}
+    async for s in staff_users_collection.find(staff_query, {"name": 1, "username": 1, "department": 1, "store_name": 1}):
+        rows.append({"id": str(s["_id"]), "name": s.get("name") or s.get("username", ""), "department": s.get("department", ""), "store_name": s.get("store_name", ""), "kind": "staff"})
     return {"data": rows}
+
+
+async def _find_assignee(tenant_id: str, assignee_oid: ObjectId) -> Optional[dict]:
+    """An assignee is either a full admin or a lightweight staff login —
+    checked in that order since admins_collection is the far more common
+    case; both share enough fields (name/department/store_id/store_name)
+    for the rest of this module to treat them identically."""
+    admin = await admins_collection.find_one({"_id": assignee_oid})
+    if admin:
+        return admin
+    return await staff_users_collection.find_one({"_id": assignee_oid, "tenant_id": tenant_id})
 
 
 @router.get("/mine")
@@ -164,7 +189,7 @@ async def create_task(payload: TaskCreate, ctx: TenantCtx = Depends(get_any_tena
         assignee_oid = ObjectId(payload.assigned_to)
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid assignee ID.")
-    assignee = await admins_collection.find_one({"_id": assignee_oid})
+    assignee = await _find_assignee(ctx["tenant_id"], assignee_oid)
     if not assignee:
         raise HTTPException(status_code=404, detail="Staff member not found.")
     await _assert_can_assign_to(ctx, assignee)

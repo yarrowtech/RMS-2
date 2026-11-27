@@ -31,7 +31,7 @@ from bson import ObjectId
 from .deps import get_any_tenant
 from .internal_notification_routes import notify as notify_internal
 from ..db import (
-    admins_collection, internal_chat_messages_collection, internal_chat_reads_collection,
+    admins_collection, staff_users_collection, internal_chat_messages_collection, internal_chat_reads_collection,
     internal_chat_preferences_collection, internal_chat_channel_settings_collection,
 )
 
@@ -285,9 +285,20 @@ async def list_conversations(
     return {"data": conversations}
 
 
+async def _find_person(tenant_id: str, oid: ObjectId) -> Optional[dict]:
+    """A chat participant is either a full admin or a lightweight staff
+    login — checked in that order since admins_collection is the far more
+    common case; both share enough fields (name/department) for the rest
+    of this module to treat them identically."""
+    admin = await admins_collection.find_one({"_id": oid, "tenant_id": tenant_id})
+    if admin:
+        return admin
+    return await staff_users_collection.find_one({"_id": oid, "tenant_id": tenant_id})
+
+
 @router.get("/people")
 async def list_people(ctx: TenantCtx = Depends(get_any_tenant)):
-    """Who I can start a DM with — every other admin in the tenant."""
+    """Who I can start a DM with — every other admin OR staff login in the tenant."""
     rows = []
     async for a in admins_collection.find(
         {"tenant_id": ctx["tenant_id"], "_id": {"$ne": ObjectId(ctx["admin_id"])}, "department": {"$ne": "SUPERADMIN"}},
@@ -301,6 +312,16 @@ async def list_people(ctx: TenantCtx = Depends(get_any_tenant)):
             "department": a.get("department", ""), "departments": [d for d in departments if d],
             "store_name": a.get("store_name", ""),
         })
+    async for s in staff_users_collection.find(
+        {"tenant_id": ctx["tenant_id"], "_id": {"$ne": ObjectId(ctx["admin_id"])}},
+        {"name": 1, "username": 1, "department": 1, "store_name": 1},
+    ):
+        department = s.get("department", "")
+        rows.append({
+            "id": str(s["_id"]), "name": s.get("name") or s.get("username", ""),
+            "department": department, "departments": [department] if department else [],
+            "store_name": s.get("store_name", ""),
+        })
     return {"data": rows}
 
 
@@ -308,7 +329,7 @@ async def list_people(ctx: TenantCtx = Depends(get_any_tenant)):
 async def get_dm(other_admin_id: str, ctx: TenantCtx = Depends(get_any_tenant)):
     if not ObjectId.is_valid(other_admin_id):
         raise HTTPException(status_code=400, detail="Invalid admin ID.")
-    other = await admins_collection.find_one({"_id": ObjectId(other_admin_id), "tenant_id": ctx["tenant_id"]})
+    other = await _find_person(ctx["tenant_id"], ObjectId(other_admin_id))
     if not other:
         raise HTTPException(status_code=404, detail="Admin not found.")
     key = _dm_key(ctx["admin_id"], other_admin_id)
@@ -316,14 +337,14 @@ async def get_dm(other_admin_id: str, ctx: TenantCtx = Depends(get_any_tenant)):
         {"tenant_id": ctx["tenant_id"], "conversation_key": key}
     ).sort("created_at", 1).limit(500)]
     await _mark_read(ctx["tenant_id"], ctx["admin_id"], key, datetime.utcnow())
-    return {"data": rows, "other": {"id": str(other["_id"]), "name": other.get("name") or other.get("email", ""), "department": other.get("department", "")}}
+    return {"data": rows, "other": {"id": str(other["_id"]), "name": other.get("name") or other.get("email", "") or other.get("username", ""), "department": other.get("department", "")}}
 
 
 @router.post("/dm/{other_admin_id}", status_code=201)
 async def post_dm(other_admin_id: str, payload: MessageCreate, ctx: TenantCtx = Depends(get_any_tenant)):
     if not ObjectId.is_valid(other_admin_id):
         raise HTTPException(status_code=400, detail="Invalid admin ID.")
-    other = await admins_collection.find_one({"_id": ObjectId(other_admin_id), "tenant_id": ctx["tenant_id"]})
+    other = await _find_person(ctx["tenant_id"], ObjectId(other_admin_id))
     if not other:
         raise HTTPException(status_code=404, detail="Admin not found.")
     if other_admin_id == ctx["admin_id"]:

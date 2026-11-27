@@ -4,6 +4,7 @@ import { getTerminalName, setTerminalName, getTerminalId } from "./terminalIdent
 import { CASHIER_API_BASE as API_BASE, cashierFetch } from "./cashierApi";
 import CashierGuideModal, { GuideButton } from "./CashierGuideModal";
 import { Lock, MonitorCog } from "lucide-react";
+import StaffLoginsPanel from "../Admin/StaffLoginsPanel.jsx";
 
 const TERMINAL_ACCESS_GUIDE_STEPS = [
   {
@@ -151,6 +152,29 @@ export default function SettingsProfilePage() {
   };
 
   useEffect(() => { loadTerminals(); }, []);
+
+  // Lets THIS store's own admin create staff logins (e.g. a cashier login
+  // for one counter) without needing HQ to do it from the central Admin
+  // Management page. Scoped to this admin's own store + own permissions --
+  // the backend independently enforces both regardless of what's sent.
+  const [showStaffLogins, setShowStaffLogins] = useState(false);
+  const [ownPermissions, setOwnPermissions] = useState(null);
+  const storeId = localStorage.getItem("store_id") || localStorage.getItem("admin_store_id") || "";
+  const storeName = localStorage.getItem("store_name") || localStorage.getItem("admin_store_name") || "";
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await cashierFetch(`${API_BASE}/auth/me`);
+        if (res.ok) {
+          const data = await res.json();
+          setOwnPermissions(Array.isArray(data.permissions) ? data.permissions : []);
+        }
+      } catch {
+        setOwnPermissions([]);
+      }
+    })();
+  }, []);
 
   const changeRole = async (terminalId, role) => {
     setSavingTerminalId(terminalId);
@@ -350,6 +374,33 @@ export default function SettingsProfilePage() {
             </div>
           )}
         </Section>
+
+        <Section
+          icon={Users}
+          title="Staff Logins"
+          subtitle="Create a username + password login for one of your counters or team members -- no email needed, limited to the tabs you choose."
+          right={
+            <button
+              onClick={() => setShowStaffLogins(true)}
+              className="px-4 py-2 rounded-xl text-xs font-bold bg-blue-600 text-white hover:bg-blue-700 transition"
+            >
+              Manage Staff Logins
+            </button>
+          }
+        >
+          <p className="text-xs text-black-500">
+            These logins are scoped to this store ({storeName || storeId || "your store"}) and can only be given tabs you yourself have access to.
+          </p>
+        </Section>
+
+        {showStaffLogins && (
+          <StaffLoginsPanel
+            fixedStoreId={storeId}
+            fixedStoreName={storeName}
+            allowedPermissions={ownPermissions || []}
+            onClose={() => setShowStaffLogins(false)}
+          />
+        )}
 
         <Section
           icon={LockKeyhole}

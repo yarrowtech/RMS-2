@@ -342,7 +342,7 @@ async def _invoice_is_interstate(inv_dict: dict, po: dict | None) -> bool:
         vendor = await vendors_collection.find_one({"_id": ObjectId(str(vendor_id))}, {"gstin": 1})
         vendor_gstin = (vendor or {}).get("gstin", "")
     elif po:
-        vendor_gstin = (po.get("walkinVendor") or {}).get("gstin", "")
+        vendor_gstin = (po.get("walkin_vendor") or {}).get("gstin", "")
     vendor_state = _gst_state_code(vendor_gstin)
 
     return bool(buyer_state and vendor_state and buyer_state != vendor_state)
@@ -1570,6 +1570,17 @@ async def record_payment(inv_id: str, payment: PaymentModel):
         "created_by": "",
         "created_at": datetime.utcnow(),
     })
+
+    # Real double-entry AP posting — debit the vendor's Sundry/Service
+    # Creditor subledger, credit Cash/Bank — alongside (not replacing) the
+    # legacy mirror above. Best-effort: see post_vendor_payment_voucher's
+    # own docstring for why this must never block the payment itself.
+    if doc.get("tenant_id"):
+        from .finance_master_routes import post_vendor_payment_voucher
+        await post_vendor_payment_voucher(
+            doc["tenant_id"], doc.get("vendorName") or doc.get("vendor") or "",
+            amount_paying, payment.paymentDate, payment.paymentMode, payment.referenceNo,
+        )
 
     if new_balance < 0.01 and doc.get("po_id"):
         try:

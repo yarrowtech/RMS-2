@@ -16,6 +16,7 @@ import ThirdPartyDept from "./components/thirdparty.jsx";
 import Finance from "./components/Finance/Finance.jsx";
 import DesignPattern from "./components/dnp.jsx";
 import AdminLogin from "./pages/AdminLogin.jsx";
+import StaffLogin from "./pages/StaffLogin.jsx";
 import AdminSetPassword from "./pages/AdminSetPassword.jsx";
 import MSeller from "./components/Merchandiser_Seller/MSeller.jsx";
 import ProductMapping from "./components/ProductMapping.jsx";
@@ -208,6 +209,7 @@ export default function App() {
         <Route path="/signup"               element={<Signup />} />
         <Route path="/admin/setup-password" element={<AdminSetPassword />} />
         <Route path="/admin/login"          element={<AdminLogin />} />
+        <Route path="/staff-login"          element={<StaffLogin />} />
         <Route path="/forgot-password"      element={<ForgotPassword />} />
         <Route path="/reset-password"       element={<ResetPassword />} />
 

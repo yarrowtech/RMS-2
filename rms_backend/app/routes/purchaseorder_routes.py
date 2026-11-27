@@ -168,6 +168,14 @@ class WalkinVendorModel(BaseModel):
     address:        str = ""
     gstin:          str = ""
     pan:            str = ""
+    # For proper voucher/AP creation against a walk-in vendor — previously
+    # only registered vendors (via their self-submitted KYB) had anywhere
+    # to record these; a walk-in vendor had no bank/Aadhaar fields at all.
+    aadhar_number:  str = ""
+    bank_name:      str = ""
+    bank_holder:    str = ""
+    ifsc:           str = ""
+    account_last4:  str = ""
 
 
 class PaymentProofModel(BaseModel):
@@ -356,7 +364,7 @@ async def _po_is_interstate(po_dict: dict, tenant_id: str) -> bool:
 
     vendor_gstin = ""
     if po_dict.get("vendor_type") == "walkin":
-        vendor_gstin = (po_dict.get("walkinVendor") or {}).get("gstin", "")
+        vendor_gstin = (po_dict.get("walkin_vendor") or {}).get("gstin", "")
     elif po_dict.get("vendor_id"):
         vendor = await vendors_collection.find_one({"_id": po_dict["vendor_id"]}, {"gstin": 1})
         vendor_gstin = (vendor or {}).get("gstin", "")
@@ -708,6 +716,14 @@ async def create_po(po: PurchaseOrderModel, ctx: dict = Depends(get_hq_tenant)):
         po_dict["po_viewed_at"]     = None
         po_dict["vendor_accepted_at"] = None
         share_link = _make_share_link(token)
+        # Gives this walk-in vendor a real Finance ledger entry (Sundry
+        # Creditors code) from its first purchase, so it's immediately
+        # usable for AP vouchers — not just a name typed on a PO with
+        # nowhere accounting-relevant to live. Repeat purchases from the
+        # same walk-in vendor reuse the same code instead of minting a new
+        # one every time.
+        from .finance_master_routes import auto_provision_walkin_vendor
+        await auto_provision_walkin_vendor(ctx["tenant_id"], po_dict.get("walkin_vendor") or {})
     else:
         vendor_name = po_dict.get("vendorName")
         if vendor_name:
@@ -800,6 +816,14 @@ async def create_po(po: PurchaseOrderModel, ctx: dict = Depends(get_hq_tenant)):
         po_dict["po_viewed_at"]     = None
         po_dict["vendor_accepted_at"] = None
         share_link = _make_share_link(token)
+        # Gives this walk-in vendor a real Finance ledger entry (Sundry
+        # Creditors code) from its first purchase, so it's immediately
+        # usable for AP vouchers — not just a name typed on a PO with
+        # nowhere accounting-relevant to live. Repeat purchases from the
+        # same walk-in vendor reuse the same code instead of minting a new
+        # one every time.
+        from .finance_master_routes import auto_provision_walkin_vendor
+        await auto_provision_walkin_vendor(ctx["tenant_id"], po_dict.get("walkin_vendor") or {})
     else:
         vendor_name = po_dict.get("vendorName")
         if vendor_name:

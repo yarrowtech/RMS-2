@@ -71,7 +71,7 @@ async def get_store_context(authorization: Optional[str] = None) -> dict:
 
 from jose import jwt, JWTError
 from ..config import settings
-from ..db import admins_collection
+from ..db import admins_collection, staff_users_collection
 from bson import ObjectId
 from typing import Optional
 
@@ -131,9 +131,13 @@ async def get_store_context(authorization: Optional[str] = None) -> dict:
     # permission changes stale until the next login.
     admin = None
     user_id = payload.get("sub")
+    is_staff = payload.get("role") == "STAFF"
     if user_id:
         try:
-            admin = await admins_collection.find_one({"_id": ObjectId(user_id)})
+            if is_staff:
+                admin = await staff_users_collection.find_one({"_id": ObjectId(user_id)})
+            else:
+                admin = await admins_collection.find_one({"_id": ObjectId(user_id)})
         except Exception:
             admin = None
 
