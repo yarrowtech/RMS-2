@@ -19,6 +19,7 @@ import {
   FaBoxOpen,
   FaStore,       // ← NEW: for Store Stock menu item
   FaBalanceScale,
+  FaClipboardCheck,
 } from "react-icons/fa";
 import { PanelLeft, PanelRight } from "lucide-react";
 
@@ -295,6 +296,7 @@ export default function RMSInventorySidebar({
             {childItem("stock.ledger", <FaExchangeAlt />, "Stock Ledger / Movement")}
             {isHQ && childItem("stock.reorderLevel", <FaClipboardList />, "Reorder Level Setup")}
             {childItem("stock.adjustment", <FaExchangeAlt />, "Stock Adjustment")}
+            {childItem("stock.stockTake", <FaClipboardCheck />, "Stock Take")}
             {!isSingleStore && childItem(
               "stock.transfer",
               <FaWarehouse />,

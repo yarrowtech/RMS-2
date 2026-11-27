@@ -27,6 +27,13 @@ active_sessions_collection = db["active_sessions"]
 # admins_collection; see deps.get_tenant / store_helper.get_store_context
 # for how a "STAFF" JWT role is resolved against this collection instead.
 staff_users_collection = db["staff_users"]
+
+# Stock Take (cycle count): a session header + its counted lines. Posting a
+# session never writes inventory directly -- it hands its variances to the
+# existing /stock-adjustments endpoint (inventoryroutes.py), the same path a
+# manual adjustment already goes through.
+stock_take_sessions_collection = db["stock_take_sessions"]
+stock_take_lines_collection = db["stock_take_lines"]
 vendors_collection = db["vendors"]
 orders_collection = db["orders"]
 purchaseorders_collection = db["purchase_orders"]

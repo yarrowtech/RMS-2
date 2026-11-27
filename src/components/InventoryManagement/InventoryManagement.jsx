@@ -10,6 +10,7 @@ import InventoryManagementCurrentStockList from "./InventoryManagementCurrentSto
 import InventoryManagementStockLedgerMovement from "./InventoryManagementStockLedgerMovement";
 import InventoryManagementReorderLevelSetup from "./InventoryManagementReorderLevelSetup";
 import InventoryManagementStockAdjustment from "./InventoryManagementStockAdjustment";
+import InventoryManagementStockTake from "./InventoryManagementStockTake";
 import InventoryManagementStockTransfer from "./InventoryManagementStockTransfer";
 import InventoryManagementDamageAndReturn from "./InventoryManagementDamageAndReturn";
 import InventoryManagementStockSummeryOverview from "./InventoryManagementStockSummaryOverview";
@@ -57,6 +58,7 @@ function labelFromKey(key, storeName = "") {
     case "stock.ledger":          return "Stock Ledger / Movement";
     case "stock.reorderLevel":    return "Reorder Level Setup";
     case "stock.adjustment":      return "Stock Adjustment";
+    case "stock.stockTake":       return "Stock Take";
     case "stock.transfer":        return "Stock Transfer";
     case "stock.allocation":      return "Stock Allocation";
     case "stock.storeOverview":   return "Store Allocation Overview";
@@ -175,6 +177,8 @@ export default function InventoryManagement() {
         return <InventoryManagementReorderLevelSetup />;
       case "stock.adjustment":
         return <InventoryManagementStockAdjustment />;
+      case "stock.stockTake":
+        return <InventoryManagementStockTake />;
       case "stock.transfer":
         return isSingleStore
           ? <MinimalPlaceholder title="Stock Transfer is not needed" subtitle="This business has one store and no separate central inventory. Use Stock Ledger for receipts, sales and adjustments." />
