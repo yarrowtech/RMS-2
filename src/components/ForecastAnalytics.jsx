@@ -2368,7 +2368,7 @@ function ImportPanel({ kind, title, blurb, onCommitted }) {
 
           {kind === "stock" && (s?.catalogue_size ?? 0) === 0 && (
             <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs font-semibold text-amber-800">
-              ⚠ No products in the catalogue yet. A row with a Barcode/Item Code will create its own product; import the sales file too so items that already sold keep their real history.
+              ⚠ No products in the catalogue yet. A row with a barcode can create a product with an automatically generated RMS SKU; import the sales file too so items that already sold keep their real history.
             </div>
           )}
 
@@ -2389,7 +2389,7 @@ function ImportPanel({ kind, title, blurb, onCommitted }) {
                   <div className="flex flex-wrap gap-1.5">
                     {Object.entries(s.location_map).map(([raw, mapped]) => (
                       <span key={raw} className={`rounded-md border px-2 py-0.5 text-[11px] font-medium ${mapped ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-rose-200 bg-rose-50 text-rose-700"}`}>
-                        {raw} {mapped ? `→ ${mapped}` : "→ not mapped (qty dropped)"}
+                        {raw} {mapped ? `→ ${mapped}` : "→ not matched independently"}
                       </span>
                     ))}
                   </div>
@@ -2902,7 +2902,7 @@ function DataImportView({ enrichmentEnabled = false, unstitchedEnabled = false }
         <ImportPanel
           kind="stock"
           title="2 · Physical stock count"
-          blurb="Two layouts are auto-detected: wide (WAREHOUSE + one column per store) or long (a Locname / Source Site column plus CLOSING_QTY, one row per product per site — rows are summed per location). Matching uses ITEM_CODE / BARCODE first; failing that, DIVISION / SECTION / DEPARTMENT / VENDOR / CATEGORY1-5, and when that maps to more than one product the row's RSP / MRP picks one (CATEGORY6 = Ageing is ignored). WAREHOUSE / a warehouse Locname → Raphaaa HQ / central. Multi-sheet workbooks import in full — cover / filter / summary tabs are skipped. Quantities are set as an absolute snapshot; products absent from the file keep their current stock. Import the sales file first."
+          blurb="Two layouts are auto-detected: wide (WAREHOUSE + one column per store) or long (a Locname / Source Site column plus CLOSING_QTY, one row per product per site — rows are summed per location). Matching uses ITEM_CODE / BARCODE first; failing that, DIVISION / SECTION / DEPARTMENT / VENDOR / CATEGORY1-5, and when that maps to more than one product the row's RSP / MRP picks one (CATEGORY6 = Ageing is ignored). WAREHOUSE / a warehouse Locname → Raphaaa HQ / central. Multi-sheet workbooks import in full — cover / filter / summary tabs are skipped. Quantities are set as an absolute snapshot; products absent from the file keep their current stock. Locname and Source Site are checked independently; conflicting locations, duplicate rows and conflicting product details are skipped. Source rows and location-specific rates are retained with the stock snapshot."
           onCommitted={bumpHistory}
         />
       )}

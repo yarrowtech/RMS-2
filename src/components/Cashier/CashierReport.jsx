@@ -1152,6 +1152,61 @@ function TerminalsTab() {
   );
 }
 
+function SalesDetailTab() {
+  const [from, setFrom] = useState(MONTH_START);
+  const [to, setTo] = useState(TODAY);
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [error, setError] = useState("");
+  const requestPage = useCallback(async (skip = 0) => {
+    const params = new URLSearchParams({ from_date: from, to_date: to, terminal_id: getTerminalId(), skip: String(skip), limit: "200" });
+    const res = await cashierFetch(`${API_BASE}/cashier/reports/sales-detail?${params}`);
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.detail || "Could not load sales detail.");
+    return json;
+  }, [from, to]);
+  const refresh = useCallback(async () => {
+    setLoading(true); setError(""); setData(null);
+    try { setData(await requestPage()); }
+    catch (e) { setError(e.message); }
+    finally { setLoading(false); }
+  }, [requestPage]);
+  useEffect(() => { refresh(); }, [refresh]);
+  const download = async () => {
+    setExporting(true); setError("");
+    try {
+      let skip = 0;
+      const rows = [];
+      do {
+        const page = await requestPage(skip);
+        rows.push(...page.data);
+        skip = page.next_skip;
+      } while (skip !== null);
+      if (!rows.length) { setError("No sales or returns found for these dates."); return; }
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), "Sales Detail");
+      XLSX.writeFile(wb, `Sales_Detail_${from}_${to}.xlsx`);
+    } catch (e) { setError(e.message || "Could not export sales detail."); }
+    finally { setExporting(false); }
+  };
+  return <div>
+    <DateBar from={from} to={to} setFrom={setFrom} setTo={setTo} onRefresh={refresh} loading={loading}>
+      <button onClick={download} disabled={exporting || loading || !data?.bill_count} style={{ padding:"8px 14px", border:0, borderRadius:9, background:"#5B5FEF", color:"white", fontWeight:700, cursor:"pointer" }}>
+        <FaDownload style={{ display:"inline", marginRight:7 }} />{exporting ? "Exporting…" : "Export Excel"}
+      </button>
+    </DateBar>
+    {error && <p role="alert" style={{ color:"#b91c1c", padding:12 }}>{error}</p>}
+    <div style={{ background:"white", border:"1px solid #E4EAF3", borderRadius:14, padding:18, overflowX:"auto" }}>
+      <p style={{ fontSize:13, color:"#4A5168", margin:"0 0 12px" }}>{data?.bill_count ?? 0} bills and credit notes. Returns appear as negative values. Preview shows the first 200 bills; Excel includes all matching bills.</p>
+      <table style={{ borderCollapse:"collapse", width:"100%", fontSize:12, whiteSpace:"nowrap" }}>
+        <thead><tr>{["Bill Date", "Bill No.", "Original Bill No.", "Store", "Barcode", "Item Code", "Description", "Bill Qty", "Net Amt"].map(h => <th key={h} style={{ textAlign:"left", padding:8, borderBottom:"1px solid #E4EAF3" }}>{h}</th>)}</tr></thead>
+        <tbody>{(data?.data || []).map((row, i) => <tr key={i}>{["Bill Date", "Bill No.", "Original Bill No.", "Store", "Barcode", "Item Code", "Description", "Bill Qty", "Net Amt"].map(h => <td key={h} style={{ padding:8, borderBottom:"1px solid #F1F5F9" }}>{row[h]}</td>)}</tr>)}</tbody>
+      </table>
+    </div>
+  </div>;
+}
+
 /* ══════════════════════════ TAB 5: PAYMENTS ══════════════════════════ */
 function PaymentsTab() {
   const [from,    setFrom]   = useState(MONTH_START);
@@ -1238,6 +1293,7 @@ export default function CashierReports() {
   const TABS = [
     { key:"summary",  label:"Sales Summary",  icon:FaChartBar           },
     { key:"items",    label:"Item-wise",       icon:FaBoxes              },
+    { key:"detail",   label:"Sales Detail",    icon:FaReceipt            },
     { key:"gst",      label:"GST Report",      icon:FaFileInvoiceDollar  },
     { key:"cashiers", label:"Cashier Report",  icon:FaUserTie            },
     { key:"terminals",label:"Per-POS Terminal",icon:FaCashRegister       },
@@ -1262,6 +1318,7 @@ export default function CashierReports() {
         {/* Content */}
         {tab === "summary"  && <SummaryTab  />}
         {tab === "items"    && <ItemsTab    />}
+        {tab === "detail"   && <SalesDetailTab />}
         {tab === "gst"      && <GSTTab      />}
         {tab === "cashiers" && <CashiersTab />}
         {tab === "terminals"&& <TerminalsTab/>}

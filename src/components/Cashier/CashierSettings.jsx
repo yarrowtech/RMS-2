@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { User, IdCard, ShieldCheck, LockKeyhole, Mail, Phone, Monitor, Users } from "lucide-react";
+import { User, IdCard, ShieldCheck, LockKeyhole, Mail, Phone, Monitor, Users, QrCode } from "lucide-react";
 import { getTerminalName, setTerminalName, getTerminalId } from "./terminalIdentity";
 import { CASHIER_API_BASE as API_BASE, cashierFetch } from "./cashierApi";
 import CashierGuideModal, { GuideButton } from "./CashierGuideModal";
@@ -175,6 +175,47 @@ export default function SettingsProfilePage() {
       }
     })();
   }, []);
+
+  // Store's own UPI ID -- shown as a scan-to-pay QR on the billing screen
+  // whenever UPI is picked as the payment method. Blank by default; the
+  // POS screen just shows a plain text instruction until this is set.
+  const [upiId, setUpiId] = useState("");
+  const [upiSaved, setUpiSaved] = useState(null); // null | true | false
+  const [upiSaving, setUpiSaving] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await cashierFetch(`${API_BASE}/cashier/store-upi`);
+        if (res.ok) {
+          const data = await res.json();
+          setUpiId(data.upi_id || "");
+        }
+      } catch { /* leave blank -- not fatal */ }
+    })();
+  }, []);
+
+  const saveUpiId = async () => {
+    setUpiSaving(true);
+    setUpiSaved(null);
+    try {
+      const res = await cashierFetch(`${API_BASE}/cashier/store-upi`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ upi_id: upiId.trim() }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.detail || "Failed to save");
+      }
+      setUpiSaved(true);
+    } catch {
+      setUpiSaved(false);
+    } finally {
+      setUpiSaving(false);
+      setTimeout(() => setUpiSaved(null), 2500);
+    }
+  };
 
   const changeRole = async (terminalId, role) => {
     setSavingTerminalId(terminalId);
@@ -401,6 +442,39 @@ export default function SettingsProfilePage() {
             onClose={() => setShowStaffLogins(false)}
           />
         )}
+
+        <Section
+          icon={QrCode}
+          title="Payments"
+          subtitle="Set this store's UPI ID so billing can show a scan-to-pay QR code whenever a customer pays by UPI."
+        >
+          <div className="mb-3 rounded-2xl border border-amber-300 bg-amber-50 p-4">
+            <div className="flex items-center gap-2 text-sm font-bold text-amber-900">
+              <ShieldCheck className="w-4 h-4 text-amber-700" />
+              Only a Store Ops / Finance / HQ login can save this
+            </div>
+            <p className="mt-1 text-xs text-amber-900">
+              Every other login (including the shared Cashier login) can see this field, but saving will be rejected by the server.
+            </p>
+          </div>
+          <div className="flex flex-col sm:flex-row gap-2 items-start sm:items-center">
+            <input
+              value={upiId}
+              onChange={(e) => setUpiId(e.target.value)}
+              placeholder="e.g. yourstore@okaxis"
+              className="w-full sm:max-w-xs px-3 py-2 text-sm rounded-xl border border-blue-500 bg-white outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-600"
+            />
+            <button
+              onClick={saveUpiId}
+              disabled={upiSaving}
+              className="px-4 py-2 rounded-xl text-xs font-bold bg-blue-600 text-white hover:bg-blue-700 transition disabled:opacity-60"
+            >
+              {upiSaving ? "Saving…" : "Save"}
+            </button>
+            {upiSaved === true && <span className="text-xs font-bold text-emerald-600">Saved ✓</span>}
+            {upiSaved === false && <span className="text-xs font-bold text-rose-600">Could not save</span>}
+          </div>
+        </Section>
 
         <Section
           icon={LockKeyhole}

@@ -38,6 +38,7 @@ Isolation (enforced by _pilot_context on every route):
     and logged to data_hub_imports so it can be listed and rolled back exactly.
 """
 import io
+import math
 import re
 import uuid
 from datetime import datetime
@@ -342,7 +343,7 @@ async def _catalogue(tenant_id: str) -> tuple[dict, dict, dict]:
     sku_index: dict = {}
     cat_index: Dict[str, List[dict]] = {}
     projection = {
-        "barcode": 1, "sku": 1, "base_sku": 1, "product_name": 1, "description": 1, "variants": 1,
+        "barcode": 1, "sku": 1, "base_sku": 1, "item_code": 1, "product_name": 1, "description": 1, "variants": 1,
         "design_no": 1, "division": 1, "section": 1, "department": 1, "vendor_name": 1,
         "category1": 1, "category2": 1, "category3": 1, "category4": 1, "category5": 1,
         "cost_price": 1, "mrp": 1, "selling_price": 1,
@@ -351,6 +352,7 @@ async def _catalogue(tenant_id: str) -> tuple[dict, dict, dict]:
         payload = {
             "barcode": _text(product.get("barcode")),
             "sku": _text(product.get("sku") or product.get("base_sku")),
+            "item_code": _text(product.get("item_code")),
             "product_name": _text(product.get("product_name") or product.get("description")),
             "design_no": _text(product.get("design_no") or product.get("category1")),
             "division": _text(product.get("division")),
@@ -363,8 +365,14 @@ async def _catalogue(tenant_id: str) -> tuple[dict, dict, dict]:
         }
         if payload["barcode"]:
             barcode_index[_key(payload["barcode"])] = payload
-        if payload["sku"]:
-            sku_index[_key(payload["sku"])] = payload
+        for code in (payload["sku"], payload["item_code"]):
+            if not code:
+                continue
+            code_key = _key(code)
+            if code_key not in sku_index:
+                sku_index[code_key] = payload
+            elif sku_index[code_key] and sku_index[code_key]["barcode"] != payload["barcode"]:
+                sku_index[code_key] = None
         for variant in product.get("variants") or []:
             v_barcode = _text(variant.get("barcode"))
             v_sku = _text(variant.get("sku"))
@@ -502,6 +510,44 @@ def _match_product(row: dict, barcode_index: dict, sku_index: dict) -> Optional[
     return barcode_index.get(_key(barcode)) or sku_index.get(_key(item_code))
 
 
+async def _new_rms_sku(tenant_id: str, division: str, name: str) -> str:
+    # The standard generator uses base_sku; also check older products that
+    # only have sku before assigning the resulting code.
+    from .products import generate_base_sku
+    sku = await generate_base_sku(division, name, tenant_id)
+    prefix, number = sku.rsplit("-", 1)
+    while await product_collection.find_one({"tenant_id": tenant_id, "$or": [{"sku": sku}, {"base_sku": sku}, {"variants.sku": sku}]}, {"_id": 1}):
+        number = str(int(number) + 1).zfill(4)
+        sku = f"{prefix}-{number}"
+    return sku
+
+
+# Retain the source rows on each location's stock record: rates, ageing and
+# snapshot dates may differ between batches of the same product.
+_STOCK_SOURCE_FIELDS = {
+    "source_site": ("source site",), "locname": ("locname", "location"),
+    "division": ("division",), "section": ("section",), "department": ("department",),
+    "vendor": ("vendor",), "hsn_code": ("hsn code", "hsn"),
+    "item_code": ("item code", "sku"), "barcode": ("barcode",),
+    **{f"category{n}": (f"category{n}", f"cat{n}") for n in range(1, 7)},
+    "standard_rate": ("standard rate", "std rate"), "last_inward_rate": ("last inward rate",),
+    "rsp": ("rsp",), "mrp": ("mrp",), "wsp": ("wsp",), "uom": ("uom",),
+    "closing_qty": _STOCK_QTY_ALIASES, "closing_amt": _STOCK_VALUE_ALIASES,
+    "rsp_value": ("rsp value",), "date_as_on": ("date as on",),
+}
+_PRODUCT_SOURCE_FIELDS = {
+    "division": "division", "section": "section", "department": "department",
+    "vendor": "vendor_name", "hsn_code": "hsn_code", "item_code": "item_code",
+    **{f"category{n}": f"category{n}" for n in range(1, 6)},
+    "standard_rate": "cost_price", "rsp": "selling_price", "mrp": "mrp", "uom": "unit",
+}
+_STOCK_NUMERIC_FIELDS = {"standard_rate", "last_inward_rate", "rsp", "mrp", "wsp", "closing_qty", "closing_amt", "rsp_value"}
+
+
+def _stock_source_row(raw: dict) -> dict:
+    return {field: _column(raw, *aliases) for field, aliases in _STOCK_SOURCE_FIELDS.items()}
+
+
 def _stock_new_product_payload(raw: dict) -> Optional[dict]:
     """A stock row with a real Barcode/Item Code that matches nothing yet is
     very likely genuinely new stock that has never been sold (so the Sales
@@ -512,13 +558,12 @@ def _stock_new_product_payload(raw: dict) -> Optional[dict]:
     enrichment_patch when the product is actually created in commit."""
     barcode = _column(raw, "barcode", "rms barcode")
     item_code = _column(raw, "item code", "itemcode", "sku", "product code")
-    if not barcode and not item_code:
+    if not barcode:
         return None
-    barcode = barcode or item_code
     cats = _row_cats(raw)
     return {
         "barcode": barcode,
-        "sku": item_code or barcode,
+        "sku": "", "item_code": item_code,
         "product_name": barcode,
         "design_no": cats[0],
         "division": _column(raw, "division"),
@@ -598,7 +643,7 @@ def _sales_rows(raw_rows: List[dict], barcode_index: dict, sku_index: dict, stor
             "bill_no": bill_no,
             "store": store["name"] if store else _column(raw, "store"),
             "barcode": barcode,
-            "item_code": (product["sku"] if product else raw_item),
+            "item_code": raw_item or (product.get("item_code", "") if product else ""),
             "design_no": (product["design_no"] if product else cats[0]),
             "product": name,
             "bill_qty": qty,
@@ -670,8 +715,23 @@ def _stock_rows(raw_rows: List[dict], barcode_index: dict, sku_index: dict, cat_
 
     for index, raw in enumerate(raw_rows, start=2):
         row_errors: List[str] = []
+        source_row = _stock_source_row(raw)
+        for field in _STOCK_NUMERIC_FIELDS:
+            value = source_row[field]
+            if value and (_number(value) is None or not math.isfinite(_number(value)) or _number(value) < 0):
+                row_errors.append(f"{field} must be zero or greater and numeric.")
         has_id_col = bool(_column(raw, "barcode", "rms barcode") or _column(raw, "item code", "itemcode", "sku", "product code"))
         product = _match_product(raw, barcode_index, sku_index)
+        file_barcode = _column(raw, "barcode", "rms barcode")
+        file_item_code = _column(raw, "item code", "itemcode", "sku", "product code")
+        barcode_product = barcode_index.get(_key(file_barcode)) if file_barcode else None
+        code_product = sku_index.get(_key(file_item_code)) if file_item_code else None
+        if file_item_code and _key(file_item_code) in sku_index and code_product is None and not barcode_product:
+            row_errors.append("Item Code matches multiple products; supply a matching barcode.")
+        if file_barcode and product and file_barcode != product["barcode"]:
+            row_errors.append("Barcode and Item Code point to different products or barcode text differs; correct the file.")
+        if barcode_product and code_product and barcode_product["barcode"] != code_product["barcode"]:
+            row_errors.append("Barcode and Item Code point to different products; correct the file.")
         matched_via = "barcode"
         if not product and not has_id_col:
             product, message = _resolve_by_category(raw, cat_index)
@@ -686,7 +746,7 @@ def _stock_rows(raw_rows: List[dict], barcode_index: dict, sku_index: dict, cat_
                 product = new_payload
                 matched_via = "new_from_stock"
             else:
-                row_errors.append("Barcode / Item Code in this row does not match any product.")
+                row_errors.append("Barcode is required for a new product; the item code will not be used as a barcode.")
 
         loc_qty: Dict[str, float] = {label: 0.0 for label in all_labels}
         # Which locations THIS row actually reported a value for — distinct
@@ -696,6 +756,7 @@ def _stock_rows(raw_rows: List[dict], barcode_index: dict, sku_index: dict, cat_
         # is left completely alone, not zeroed out.
         touched: set = set()
         value_touched: set = set()
+        source_label = None
         loc_value: Dict[str, float] = {label: 0.0 for label in all_labels}
         # CATEGORY6 / Ageing (Raphaaa-only downstream use — every stock row is
         # classified fresh/aged here so it's available regardless of tenant;
@@ -704,9 +765,19 @@ def _stock_rows(raw_rows: List[dict], barcode_index: dict, sku_index: dict, cat_
         row_age_months = _age_months(ageing_month, ageing_now) if ageing_month else None
         row_aged = row_age_months is not None and row_age_months > RAPHAAA_FRESH_MAX_MONTHS
         if long_format:
-            loc_raw = _column(raw, *_STOCK_LOC_ALIASES)
-            label = _match_location(loc_raw, stores)
-            location_map.setdefault(loc_raw or "(blank)", label)
+            loc_raw = source_row["locname"]
+            site_raw = source_row["source_site"]
+            if not loc_raw and not site_raw:
+                loc_raw = _column(raw, *_STOCK_LOC_ALIASES)
+            loc_label = _match_location(loc_raw, stores) if loc_raw else None
+            site_label = _match_location(site_raw, stores) if site_raw else None
+            if loc_raw: location_map.setdefault(loc_raw, loc_label)
+            if site_raw: location_map.setdefault(site_raw, site_label)
+            label = loc_label or site_label
+            if loc_label and site_label and loc_label != site_label:
+                row_errors.append(f"Location conflict: Locname '{loc_raw}' maps to {loc_label}, Source Site '{site_raw}' maps to {site_label}.")
+                label = None
+            source_label = label
             qty = _number(_column(raw, *_STOCK_QTY_ALIASES))
             if qty is None or qty < 0:
                 row_errors.append("Closing quantity must be zero or greater.")
@@ -757,6 +828,9 @@ def _stock_rows(raw_rows: List[dict], barcode_index: dict, sku_index: dict, cat_
                 "touched": set(),
                 "value_touched": set(),
                 "source_rows": [],
+                "snapshot_rows": {label: [] for label in all_labels},
+                "product_values": {},
+                "varying_rates": set(),
                 "errors": [],
             })
             for label, qty in loc_qty.items():
@@ -772,6 +846,31 @@ def _stock_rows(raw_rows: List[dict], barcode_index: dict, sku_index: dict, cat_
             bucket["touched"] |= touched
             bucket["value_touched"] |= value_touched
             bucket["source_rows"].append(index)
+            if long_format and source_label:
+                if source_row in bucket["snapshot_rows"][source_label]:
+                    bucket["errors"].append("Duplicate stock row for the same product and location; check the file.")
+                dates = {r["date_as_on"] for r in bucket["snapshot_rows"][source_label] if r["date_as_on"]}
+                if source_row["date_as_on"] and dates and source_row["date_as_on"] not in dates:
+                    bucket["errors"].append("Conflicting snapshot dates for the same product and location.")
+                bucket["snapshot_rows"][source_label].append(source_row)
+            for source_field, target in _PRODUCT_SOURCE_FIELDS.items():
+                value = source_row[source_field]
+                if not value:
+                    continue
+                value = _number(value) if source_field in _STOCK_NUMERIC_FIELDS else value
+                if value is None:
+                    continue
+                previous = bucket["product_values"].get(target)
+                if target in bucket["varying_rates"]:
+                    continue
+                if previous is not None and previous != value:
+                    if source_field in {"standard_rate", "rsp", "mrp"}:
+                        bucket["varying_rates"].add(target)
+                        bucket["product_values"].pop(target, None)
+                    else:
+                        bucket["errors"].append(f"Conflicting product field {source_field} across rows; correct the file before import.")
+                else:
+                    bucket["product_values"][target] = value
             bucket["errors"].extend(row_errors)
         else:
             unresolved.append({
@@ -790,13 +889,14 @@ def _stock_rows(raw_rows: List[dict], barcode_index: dict, sku_index: dict, cat_
     rows: List[dict] = []
     for barcode, bucket in agg.items():
         allocation = {label: round(value, 2) for label, value in bucket["allocation"].items()}
-        for label, value in allocation.items():
-            totals[label] += value
+        if not bucket["errors"]:
+            for label, value in allocation.items():
+                totals[label] += value
         rows.append({
             "row_no": bucket["source_rows"][0],
             "source_rows": bucket["source_rows"],
             "barcode": barcode,
-            "item_code": bucket["product"]["sku"],
+            "item_code": bucket["product"].get("item_code") or bucket["product"]["sku"],
             "design_no": bucket["product"]["design_no"],
             "product": bucket["product"]["product_name"],
             "matched_via": bucket["matched_via"],
@@ -813,11 +913,11 @@ def _stock_rows(raw_rows: List[dict], barcode_index: dict, sku_index: dict, cat_
             "value_touched": sorted(bucket["value_touched"]),
             "grand_total": round(sum(allocation.values()), 2),
             "errors": list(dict.fromkeys(bucket["errors"])),
+            "_snapshot_rows": bucket["snapshot_rows"],
+            "_product_values": bucket["product_values"],
+            "_varying_rates": sorted(bucket["varying_rates"]),
             "_product": bucket["product"],
         })
-    for row in unresolved:
-        for label, value in row["allocation"].items():
-            totals[label] += value
     rows.extend(unresolved)
     meta = {
         "format": "long" if long_format else "wide",
@@ -835,6 +935,11 @@ def _summary(rows: List[dict]) -> dict:
 # admin sees "14 rows: vendor spelling didn't match" instead of having to
 # read every row's raw error text one at a time.
 _REASON_LABELS = [
+    ("duplicate stock row", "Duplicate stock rows"),
+    ("conflicting snapshot dates", "Different snapshot dates for the same product and location"),
+    ("location conflict", "Source Site and Locname point to different locations"),
+    ("conflicting product field", "Product details differ between rows"),
+    ("must be zero or greater and numeric", "Invalid numeric stock value"),
     ("does not match any product", "Barcode / Item Code not found in the catalogue"),
     ("multiple products match", "Ambiguous — matches more than one product, needs a Barcode/Item Code to resolve"),
     ("was not found in imported sales", "No matching product by Division/Section/Department/Category — check those columns and the Vendor spelling"),
@@ -868,7 +973,7 @@ def _new_product_doc(tenant_id: str, batch_id: str, row: dict, now: datetime) ->
         "product_name": row["product"],
         "division": row["_division"], "section": row["_section"], "department": row["_department"],
         "hsn_code": "", "gst_rate": 0.0, "cgst_rate": 0.0, "sgst_rate": 0.0, "igst_rate": 0.0,
-        "sku": row["item_code"] or f"DH-{row['barcode']}",
+        "sku": "", "base_sku": "", "item_code": row["item_code"],
         "barcode": row["barcode"],
         "design_no": cats[0],
         "category1": cats[0], "category2": cats[1], "category3": cats[2], "category4": cats[3], "category5": cats[4],
@@ -899,7 +1004,7 @@ def _new_product_doc_from_stock(tenant_id: str, batch_id: str, payload: dict, no
         "product_name": payload["barcode"],
         "division": payload["division"], "section": payload["section"], "department": payload["department"],
         "hsn_code": "", "gst_rate": 0.0, "cgst_rate": 0.0, "sgst_rate": 0.0, "igst_rate": 0.0,
-        "sku": payload["sku"] or f"DH-{payload['barcode']}",
+        "sku": payload["sku"], "base_sku": payload["sku"], "item_code": payload.get("item_code", ""),
         "barcode": payload["barcode"],
         "design_no": cats[0],
         "category1": cats[0], "category2": cats[1], "category3": cats[2], "category4": cats[3], "category5": cats[4],
@@ -951,10 +1056,9 @@ async def download_template(kind: str, ctx: TenantCtx = Depends(_pilot_context))
                    "Cat-1 (Design No.)", "Cat-2 (Brand)", "Cat-3 (Style)", "Cat-4 (Plane, F/S, H/S)", "Cat-5 (Size)",
                    "Description", "Bill Qty", "Gr Amt", "Net Amt", "Tax Rate", "Std Rate", "RSP", "Mrp", "IsVoid"]
     elif kind == "stock":
-        store_headers = [store["name"].split("-", 1)[-1].strip() or store["name"] for store in stores]
-        headers = ["Item Code", "Barcode", "Division", "Section", "Department", "Vendor",
-                   "Category1", "Category2", "Category3", "Category4", "Category5", "Category6",
-                   "Standard_Rate", "RSP", "MRP", *store_headers, "WAREHOUSE", "Grand Total"]
+        headers = ["Source Site", "Locname", "DIVISION", "SECTION", "DEPARTMENT", "VENDOR", "HSN CODE",
+                   "ITEM_CODE", "BARCODE", "CATEGORY1", "CATEGORY2", "CATEGORY3", "CATEGORY4", "CATEGORY5", "CATEGORY6",
+                   "STANDARD_RATE", "LAST_INWARD_RATE", "RSP", "MRP", "WSP", "UOM", "CLOSING_QTY", "CLOSING_AMT", "RSP VALUE", "Date as on"]
     elif kind == "unstitched" and is_raphaaa_tenant(ctx["tenant_id"]):
         headers = ["Design No.", "Department", "Description", "PCS", "Fabric Consume"]
     else:
@@ -1047,7 +1151,7 @@ async def commit_sales_history(
     # 1. create catalogue entries for barcodes we've never seen.
     known = set(barcode_index.keys())
     created_products: List[str] = []
-    new_docs: List[dict] = []
+    new_skus: Dict[str, str] = {}
     for row in rows:
         if row["errors"] or row["is_void"] or not row["new_product"]:
             continue
@@ -1055,10 +1159,12 @@ async def commit_sales_history(
         if bkey in known:
             continue
         known.add(bkey)
-        new_docs.append(_new_product_doc(tenant_id, batch_id, row, now))
+        new_doc = _new_product_doc(tenant_id, batch_id, row, now)
+        sku = await _new_rms_sku(tenant_id, new_doc["division"], new_doc["product_name"])
+        new_doc["sku"] = new_doc["base_sku"] = sku
+        await product_collection.insert_one(new_doc)
+        new_skus[bkey] = sku
         created_products.append(row["barcode"])
-    if new_docs:
-        await product_collection.insert_many(new_docs, ordered=False)
 
     # 2. group clean, non-void rows into bills.
     bills: Dict[tuple, dict] = {}
@@ -1083,7 +1189,8 @@ async def commit_sales_history(
         bill["items"].append({
             "barcode": row["barcode"],
             "name": row["product"],
-            "sku": row["item_code"],
+            "sku": product["sku"] if product else new_skus.get(_key(row["barcode"]), ""),
+            "item_code": row["item_code"],
             "division": product["division"] if product else row["_division"],
             "section": product["section"] if product else row["_section"],
             "department": product["department"] if product else row["_department"],
@@ -1175,16 +1282,16 @@ async def commit_stock_snapshot(
     stores = await _stores(tenant_id)
     rows, totals, store_by_label, _ = _stock_rows(raw_rows, barcode_index, sku_index, cat_index, stores)
 
-    blocking = ("does not match any product", "was not found in imported sales", "must be zero or greater")
     batch_id = uuid.uuid4().hex
     now = datetime.utcnow()
     changes: List[dict] = []
     skipped: List[dict] = []
     created_products: List[str] = []
+    product_changes: List[dict] = []
     applied = 0
 
     for row in rows:
-        if row["_product"] is None or any(any(b in error for b in blocking) for error in row["errors"]):
+        if row["_product"] is None or row["errors"]:
             skipped.append({"row_no": row["row_no"], "product": row["product"], "errors": row["errors"]})
             continue
 
@@ -1199,11 +1306,25 @@ async def commit_stock_snapshot(
                 row["_product"]["product_name"] = existing_product.get("product_name") or row["_product"]["barcode"]
             else:
                 new_doc = _new_product_doc_from_stock(tenant_id, batch_id, row["_product"], now)
+                sku = await _new_rms_sku(tenant_id, new_doc["division"], new_doc["product_name"])
+                new_doc["sku"] = new_doc["base_sku"] = sku
+                for field in row.get("_varying_rates", []):
+                    new_doc[field] = 0.0
                 await product_collection.insert_one(new_doc)
                 row["_product"]["product_name"] = new_doc["product_name"]
                 created_products.append(new_doc["barcode"])
 
         barcode = row["_product"]["barcode"]
+        product_values = row.get("_product_values") or {}
+        if product_values:
+            existing_product = await product_collection.find_one({"tenant_id": tenant_id, "barcode": barcode})
+            if existing_product:
+                previous = {key: existing_product[key] for key in product_values if key in existing_product}
+                missing = [key for key in product_values if key not in existing_product]
+                product_changes.append({"id": existing_product["_id"], "previous": previous, "missing": missing, "written": product_values,
+                                        "previous_batch": existing_product.get("stock_import_batch_id")})
+                await product_collection.update_one({"_id": existing_product["_id"], "tenant_id": tenant_id},
+                    {"$set": {**product_values, "stock_import_batch_id": batch_id}})
         description = row["_product"]["product_name"]
         touched_labels = set(row.get("touched") or [])
         raphaaa = is_raphaaa_tenant(tenant_id)
@@ -1224,7 +1345,7 @@ async def commit_stock_snapshot(
                 flt = {"tenant_id": tenant_id, "barcode": barcode, "store_id": store["id"]}
                 extra = {"store_id": store["id"], "store_name": store["name"]}
 
-            existing = await collection.find_one(flt, {"stockQty": 1, "freshQty": 1, "agedQty": 1, "agedAvgMonths": 1, "stockValue": 1})
+            existing = await collection.find_one(flt, {"stockQty": 1, "freshQty": 1, "agedQty": 1, "agedAvgMonths": 1, "stockValue": 1, "stockImportRows": 1})
             previous_qty = float((existing or {}).get("stockQty") or 0)
             set_fields: Dict[str, Any] = {
                 **flt, **extra, "stockQty": float(qty), "description": description,
@@ -1233,6 +1354,8 @@ async def commit_stock_snapshot(
             previous_fresh_qty = previous_aged_qty = previous_aged_avg_months = None
             previous_stock_value = None
             if raphaaa:
+                if row.get("_snapshot_rows", {}).get(label):
+                    set_fields["stockImportRows"] = row["_snapshot_rows"][label]
                 previous_fresh_qty = float((existing or {}).get("freshQty") or 0)
                 previous_aged_qty = float((existing or {}).get("agedQty") or 0)
                 previous_aged_avg_months = (existing or {}).get("agedAvgMonths")
@@ -1258,6 +1381,8 @@ async def commit_stock_snapshot(
                 "previous_aged_avg_months": previous_aged_avg_months,
                 "value_written": label in value_touched_labels if raphaaa else False,
                 "previous_stock_value": previous_stock_value,
+                "previous_snapshot_rows": (existing or {}).get("stockImportRows"),
+                "snapshot_written": "stockImportRows" in set_fields,
             })
         applied += 1
 
@@ -1268,6 +1393,7 @@ async def commit_stock_snapshot(
         "rows_applied": applied, "rows_skipped": len(skipped),
         "location_totals": totals, "changes": changes, "rolled_back": False,
         "products_created": created_products, "products_created_count": len(created_products),
+        "product_changes": product_changes,
     }
     await data_hub_imports_collection.insert_one(log)
 
@@ -1735,11 +1861,31 @@ async def rollback_import(batch_id: str, ctx: TenantCtx = Depends(_pilot_context
                     revert_fields["agedAvgMonths"] = change.get("previous_aged_avg_months")
                 if change.get("value_written"):
                     revert_fields["stockValue"] = change.get("previous_stock_value")
-                updated = await collection.update_one(flt, {"$set": revert_fields})
+                update: Dict[str, Any] = {"$set": revert_fields}
+                if change.get("snapshot_written"):
+                    if change.get("previous_snapshot_rows") is None:
+                        update["$unset"] = {"stockImportRows": ""}
+                    else:
+                        revert_fields["stockImportRows"] = change["previous_snapshot_rows"]
+                updated = await collection.update_one(flt, update)
                 reverted += updated.modified_count
             else:
                 deleted = await collection.delete_one(flt)
                 reverted += deleted.deleted_count
+
+        for change in doc.get("product_changes", []):
+            previous = dict(change.get("previous") or {})
+            unset = {key: "" for key in change.get("missing", [])}
+            if change.get("previous_batch") is None:
+                unset["stock_import_batch_id"] = ""
+            else:
+                previous["stock_import_batch_id"] = change["previous_batch"]
+            update = {}
+            if previous: update["$set"] = previous
+            if unset: update["$unset"] = unset
+            if update:
+                await product_collection.update_one({"_id": change["id"], "tenant_id": tenant_id,
+                                                     "stock_import_batch_id": batch_id, **change.get("written", {})}, update)
 
         # This batch may have created genuinely-new products for stock that
         # had never been sold (see _new_product_doc_from_stock) — remove

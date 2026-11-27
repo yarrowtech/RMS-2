@@ -4,13 +4,14 @@ from fastapi.responses import JSONResponse
 from fastapi.encoders import jsonable_encoder
 from typing import Optional
 from datetime import datetime, timedelta
+from decimal import Decimal, ROUND_HALF_UP
 from bson import ObjectId
 from pymongo import ReturnDocument
 import os
 import secrets
 import re
 
-from ..db import db, product_collection, inventory_collection, sales_collection, store_stock_collection, admins_collection, tenants_collection
+from ..db import db, product_collection, inventory_collection, sales_collection, store_stock_collection, admins_collection, tenants_collection, grn_collection, stores_collection
 from ..retailer_plans import retailer_plan_config
 from .store_helper import get_store_context
 from ..error_log import log_error
@@ -175,6 +176,22 @@ def _int(v, default: int = 0) -> int:
         return default
 
 
+def _sale_product_snapshot(product: dict, variant: dict = None) -> dict:
+    variant = variant or {}
+    fields = ("item_code", "vendor_name", "category1", "category2", "category3", "category4", "category5", "category6", "tax_description")
+    return {key: variant.get(key) or product.get(key) or "" for key in fields}
+
+
+async def _latest_grn_receipt_date(tenant_id: str, barcode: str, through_date: str) -> str:
+    next_day = (datetime.strptime(through_date, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
+    grn = await grn_collection.find_one(
+        {"tenant_id": tenant_id, "status": "Posted", "items.barcode": barcode,
+         "grnDate": {"$lt": next_day}},
+        {"grnDate": 1}, sort=[("grnDate", -1)],
+    )
+    return str((grn or {}).get("grnDate") or "")[:10]
+
+
 async def _get_product_info(barcode: str, tenant_id: str) -> dict:
     barcode = barcode.strip()
 
@@ -197,6 +214,7 @@ async def _get_product_info(barcode: str, tenant_id: str) -> dict:
             "unit":         p.get("unit", "pcs"),
             "quantity":     _float(p.get("quantity", 0)),
             "source":       (p.get("source") or "admin"),
+            **_sale_product_snapshot(p),
             **identity_fields({**p, "product_id": str(p["_id"]), "barcode": barcode}),
         }
 
@@ -224,6 +242,7 @@ async def _get_product_info(barcode: str, tenant_id: str) -> dict:
                     "unit":         v.get("unit", "pcs"),
                     "quantity":     _float(v.get("stock", 0)),
                     "source":       (p.get("source") or "admin"),
+                    **_sale_product_snapshot(p, v),
                     **identity_fields({**p, **v, "product_id": str(p["_id"]), "variant_id": variant_id, "barcode": barcode}),
                 }
     return {}
@@ -971,6 +990,9 @@ async def save_bill(
         if not bc or qty == 0:
             continue
         product_info = await _get_product_info(bc, tenant_id)
+        original_line = original_items.get(bc, {}) if is_return else {}
+        receipt_date = (original_line.get("ageing_receipt_date", "") if is_return
+                        else await _latest_grn_receipt_date(tenant_id, bc, now.strftime("%Y-%m-%d")))
         identity = identity_fields({**product_info, **item, "barcode": bc})
         clean_items.append({
             "barcode": bc,
@@ -987,6 +1009,9 @@ async def save_bill(
             "division": item.get("division", ""),
             "section": item.get("section", ""),
             "department": item.get("department", ""),
+            "ageing_receipt_date": receipt_date,
+            **{key: original_line.get(key, "") if is_return else product_info.get(key, "")
+               for key in ("item_code", "vendor_name", "category1", "category2", "category3", "category4", "category5", "category6", "tax_description")},
             **identity,
         })
 
@@ -1665,6 +1690,29 @@ async def register_terminal(payload: dict, authorization: str = Header(None)):
     return {"status": "success", "role": role}
 
 
+@router.get("/store-upi")
+async def get_store_upi(authorization: str = Header(None)):
+    """The store's own UPI ID (VPA) for showing a scan-to-pay QR at
+    billing when UPI is selected. Readable by any store-scoped login so
+    the POS screen can render the QR; only a store manager/HQ can set it
+    (see set_store_upi below)."""
+    ctx = await _require_store_context(authorization)
+    store = await stores_collection.find_one({"_id": ObjectId(ctx["store_id"])}, {"upi_id": 1, "name": 1})
+    return {"status": "success", "upi_id": (store or {}).get("upi_id", ""), "store_name": ctx.get("store_name") or (store or {}).get("name", "")}
+
+
+@router.patch("/store-upi")
+async def set_store_upi(payload: dict, authorization: str = Header(None)):
+    ctx = await _require_store_context(authorization)
+    if not await _is_terminal_manager(ctx):
+        raise HTTPException(status_code=403, detail="Only a store manager or HQ admin can set the store's UPI ID.")
+    upi_id = str(payload.get("upi_id") or "").strip()
+    if upi_id and not re.match(r"^[\w.\-]{2,256}@[a-zA-Z]{2,64}$", upi_id):
+        raise HTTPException(status_code=400, detail="Enter a valid UPI ID, e.g. storename@okaxis")
+    await stores_collection.update_one({"_id": ObjectId(ctx["store_id"])}, {"$set": {"upi_id": upi_id}})
+    return {"status": "success", "upi_id": upi_id}
+
+
 @router.get("/terminals")
 async def list_terminals(authorization: str = Header(None)):
     ctx = await _require_store_context(authorization)
@@ -2087,6 +2135,87 @@ async def reports_summary(
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# Sales detail uses bill-line snapshots; older bills remain blank where the
+# original value was not captured. Allocate bill totals in paise so the
+# exported lines reconcile exactly even when the bill has a round-off.
+def _allocate_report_amount(amount, weights):
+    total = Decimal(str(amount or 0)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    positive = [Decimal(str(max(0, w))) for w in weights]
+    denominator = sum(positive)
+    if not positive:
+        return []
+    if not denominator:
+        positive = [Decimal(1)] * len(positive)
+        denominator = sum(positive)
+    raw = [total * w / denominator for w in positive]
+    rounded = [v.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP) for v in raw]
+    residual = int((total - sum(rounded)) * 100)
+    order = sorted(range(len(raw)), key=lambda i: raw[i] - rounded[i], reverse=residual > 0)
+    for i in range(abs(residual)):
+        rounded[order[i % len(order)]] += Decimal("0.01") if residual > 0 else Decimal("-0.01")
+    return [float(value) for value in rounded]
+
+
+def _sales_detail_rows(doc):
+    items = doc.get("items") or []
+    summary = doc.get("summary") or {}
+    weights = [abs(_float(item.get("price")) * _float(item.get("qty"))) for item in items]
+    gross = _allocate_report_amount(summary.get("total_sale", sum(weights)), weights)
+    promo_total = _float(doc.get("applied_offer"))
+    savings = _float(summary.get("total_savings"))
+    promo = _allocate_report_amount(promo_total, weights)
+    discount = _allocate_report_amount(max(0, savings - promo_total), weights)
+    net = _allocate_report_amount(summary.get("net_payable", sum(weights) - savings), weights)
+    tax_weights = [weight / (1 + max(0, _float(item.get("gst"))) / 100) for weight, item in zip(weights, items)]
+    taxable = _allocate_report_amount(summary.get("taxable_amount", 0), tax_weights) if "taxable_amount" in summary else [None] * len(items)
+    sign = -1 if doc.get("type") == "return" else 1
+    date, _, time = str(doc.get("date") or "").partition(" ")
+    rows = []
+    for i, item in enumerate(items):
+        rows.append({
+            "Bill Date": date, "Store": doc.get("store_name", ""), "Terminal No.": doc.get("terminal_name") or doc.get("terminal_id", ""),
+            "DIVISION": item.get("division", ""), "SECTION": item.get("section", ""), "DEPARTMENT": item.get("department", ""),
+            "VENDOR": item.get("vendor_name", ""), "Item Code": item.get("item_code", ""),
+            "IsVoid": doc.get("is_void", False), "Barcode": item.get("barcode", ""), "HSN_CODE": item.get("hsn", ""),
+            "Cat-1 (Design No.)": item.get("category1", ""), "Cat-2 (Brand)": item.get("category2", ""),
+            "Cat-3 (Style)": item.get("category3", ""), "Cat-4 (Plane, F/S, H/S)": item.get("category4", ""),
+            "Cat-5 (Size)": item.get("category5", ""), "Ageing": item.get("ageing_receipt_date") or item.get("category6", ""),
+            "Std Rate": item.get("cost_price", ""), "RSP": item.get("price", ""), "Mrp": item.get("mrp", ""),
+            "Promo Type": doc.get("promotion_type", ""), "Promo Name": doc.get("promotion_name", ""),
+            "Bill Qty": sign * abs(_float(item.get("qty"))), "Gr Amt": sign * gross[i],
+            "Promo Amt": sign * promo[i], "Discount Amt": sign * discount[i], "Net Amt": sign * net[i],
+            "Tax Description": item.get("tax_description", ""), "Tax Rate": item.get("gst", ""),
+            "Taxable Sale": sign * taxable[i] if taxable[i] is not None else "",
+            "Description": item.get("name", ""), "Bill No.": doc.get("invoice_no", ""), "Bill Time": time,
+            "Original Bill No.": doc.get("original_invoice", ""),
+        })
+    return rows
+
+
+@router.get("/reports/sales-detail")
+async def reports_sales_detail(from_date: str = Query(...), to_date: str = Query(...),
+                               terminal_id: Optional[str] = Query(None),
+                               skip: int = Query(0, ge=0), limit: int = Query(200, ge=1, le=500),
+                               authorization: str = Header(None)):
+    ctx = await _require_report_context(authorization)
+    await _enforce_terminal_restriction(ctx, terminal_id)
+    try:
+        datetime.strptime(from_date, "%Y-%m-%d")
+        datetime.strptime(to_date, "%Y-%m-%d")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Enter valid dates in YYYY-MM-DD format.")
+    if from_date > to_date:
+        raise HTTPException(status_code=400, detail="Start date must not be after end date.")
+    query = _date_query(from_date, to_date)
+    query.update(_report_scope(ctx))
+    query["$or"] = [{"type": {"$in": ["sale", "return"]}}, {"type": {"$exists": False}}]
+    count = await sales_collection.count_documents(query)
+    rows = []
+    async for doc in sales_collection.find(query).sort([("date", 1), ("_id", 1)]).skip(skip).limit(limit):
+        rows.extend(_sales_detail_rows(doc))
+    return {"status": "success", "data": rows, "bill_count": count, "next_skip": skip + limit if skip + limit < count else None}
+
+
 # GET /cashier/reports/items
 # ═══════════════════════════════════════════════════════════════════════════════
 

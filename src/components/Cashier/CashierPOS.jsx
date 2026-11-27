@@ -10,6 +10,7 @@ import {
 } from "react-icons/fa";
 import { BrowserMultiFormatReader } from "@zxing/browser";
 import { NotFoundException } from "@zxing/library";
+import QRCodeStyling from "qr-code-styling";
 
 import { CASHIER_API_BASE as API_BASE, cashierFetch } from "./cashierApi";
 import CashierGuideModal from "./CashierGuideModal";
@@ -814,6 +815,42 @@ function ManualOfflineItemModal({ open, barcode, onClose, onAdd }) {
   );
 }
 
+// Scan-to-pay QR for the UPI payment method -- standard "upi://pay" deep
+// link that any UPI app (GPay/PhonePe/Paytm/etc.) understands natively, so
+// no payment gateway or API key is needed, just the store's own VPA.
+function UpiQrCode({ upiId, storeName, amount, size = 160 }) {
+  const holderRef = useRef(null);
+  const qrRef = useRef(null);
+  const data = upiId && amount > 0
+    ? `upi://pay?pa=${encodeURIComponent(upiId)}&pn=${encodeURIComponent(storeName || "Store")}&am=${amount.toFixed(2)}&cu=INR&tn=${encodeURIComponent("POS Bill")}`
+    : "";
+
+  useEffect(() => {
+    if (!data || !holderRef.current) return;
+    if (!qrRef.current) {
+      qrRef.current = new QRCodeStyling({
+        width: size,
+        height: size,
+        type: "svg",
+        data,
+        margin: 4,
+        qrOptions: { errorCorrectionLevel: "H" },
+        dotsOptions: { type: "square", color: "#0f172a" },
+        cornersSquareOptions: { type: "square", color: "#5B5FEF" },
+        cornersDotOptions: { type: "dot", color: "#0f172a" },
+        backgroundOptions: { color: "#ffffff" },
+      });
+      holderRef.current.innerHTML = "";
+      qrRef.current.append(holderRef.current);
+    } else {
+      qrRef.current.update({ data, width: size, height: size });
+    }
+  }, [data, size]);
+
+  if (!data) return null;
+  return <div ref={holderRef} style={{ width: size, height: size }} />;
+}
+
 const GenerateBillPopup = React.forwardRef(function GenerateBillPopup({ open, isReturn, items, bill, setBill, summary, onClose, onFinalize, onSaveOffline, saving, originalInvoice, exchangeCredit }, ref) {
   const discountInputRef = useRef(null);
   const [paid, setPaid] = useState("");
@@ -827,8 +864,19 @@ const GenerateBillPopup = React.forwardRef(function GenerateBillPopup({ open, is
   const [managerError, setManagerError] = useState("");
   const [managerVerifiedName, setManagerVerifiedName] = useState("");
   const [numpadField, setNumpadField] = useState(null); // "paid" | "discount" | null
+  const [storeUpi, setStoreUpi] = useState({ upi_id: "", store_name: "" });
 
   const needsApproval = isReturn && REASONS_NEEDING_APPROVAL.has(returnReason);
+
+  useEffect(() => {
+    if (!open) return;
+    (async () => {
+      try {
+        const res = await cashierFetch(`${API_BASE}/cashier/store-upi`);
+        if (res.ok) setStoreUpi(await res.json());
+      } catch { /* QR just won't show -- the card/cash flows are unaffected */ }
+    })();
+  }, [open]);
 
   useEffect(() => {
     document.body.style.overflow = open ? "hidden" : "auto";
@@ -1158,11 +1206,21 @@ const GenerateBillPopup = React.forwardRef(function GenerateBillPopup({ open, is
                 <div className="mt-3 rounded-xl border border-violet-100 bg-white p-4">
                   <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">Amount to collect</p>
                   <p className="mt-1 text-xl font-black text-slate-950">{money(payableAfterCredit)}</p>
-                  <p className="mt-2 text-xs font-medium leading-relaxed text-slate-600">
-                    {bill.paymentMethod === "Card"
-                      ? "Collect payment using your card terminal, then finalize the bill."
-                      : "Collect payment using your UPI app or QR code, then finalize the bill."}
-                  </p>
+                  {bill.paymentMethod === "Card" ? (
+                    <p className="mt-2 text-xs font-medium leading-relaxed text-slate-600">
+                      Collect payment using your card terminal, then finalize the bill.
+                    </p>
+                  ) : storeUpi.upi_id ? (
+                    <div className="mt-3 flex flex-col items-center gap-2 rounded-xl bg-slate-50 p-4">
+                      <UpiQrCode upiId={storeUpi.upi_id} storeName={storeUpi.store_name} amount={payableAfterCredit} />
+                      <p className="text-xs font-bold text-slate-600">Scan with any UPI app to pay {money(payableAfterCredit)}</p>
+                      <p className="text-[10px] text-slate-400">{storeUpi.upi_id}</p>
+                    </div>
+                  ) : (
+                    <p className="mt-2 text-xs font-medium leading-relaxed text-amber-700">
+                      No UPI ID set for this store yet — ask a manager to add one under Settings → Payments to show a scan-to-pay QR here. For now, collect payment via your UPI app directly.
+                    </p>
+                  )}
                 </div>
               )}
             </div>}
