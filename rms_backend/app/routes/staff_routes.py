@@ -75,6 +75,7 @@ async def staff_login(request: Request, req: StaffLoginRequest):
         "role":         "STAFF",
         "department":   staff.get("department", ""),
         "name":         staff.get("name") or staff.get("username", ""),
+        "store_id":     staff.get("store_id", ""),
         "store_name":   staff.get("store_name", ""),
         "permissions":  staff.get("permissions", []),
     }

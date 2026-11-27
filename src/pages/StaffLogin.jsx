@@ -62,6 +62,10 @@ export default function StaffLogin() {
       localStorage.setItem("admin_scope", "store");
       localStorage.setItem("admin_active_department", data.department || "");
       localStorage.setItem("scope", "store");
+      if (data.store_id) {
+        localStorage.setItem("store_id", data.store_id);
+        localStorage.setItem("admin_store_id", data.store_id);
+      }
       if (data.store_name) {
         localStorage.setItem("store_name", data.store_name);
         localStorage.setItem("admin_store_name", data.store_name);

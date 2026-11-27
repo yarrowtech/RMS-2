@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional
 from jose import jwt, JWTError
 
 from ..auth import decode_token, create_access_token, create_reset_token, decode_reset_token
-from ..db import admins_collection, vendors_collection, active_sessions_collection
+from ..db import admins_collection, vendors_collection, active_sessions_collection, staff_users_collection
 from ..utils import hash_password, verify_password
 from ..models import TokenResponse
 from ..config import settings
@@ -390,6 +390,31 @@ async def get_admin_me(authorization: str = Header(None)):
         user_id = payload.get("sub")
     except:
         raise HTTPException(status_code=401, detail="Invalid token")
+
+    # -- STAFF tokens: DepartmentRouteGuard.jsx calls this on every
+    # protected route to confirm department access, same as it does for a
+    # full admin. A staff login lives in staff_users_collection, not
+    # admins_collection -- without this branch, every department route
+    # 404s for a staff login (clearAuthData() wipes the token, kicking
+    # them back to /admin/login) the instant they land on it.
+    if payload.get("role") == "STAFF":
+        staff = await staff_users_collection.find_one({"_id": ObjectId(user_id)})
+        if not staff:
+            raise HTTPException(status_code=404, detail="Staff login not found")
+        department = staff.get("department", "")
+        return {
+            "id":                 str(staff["_id"]),
+            "name":               staff.get("name", ""),
+            "email":              "",
+            "department":         department,
+            "managedDepartments": [department] if department else [],
+            "permissions":        staff.get("permissions", []),
+            "store_id":           staff.get("store_id"),
+            "store_name":         staff.get("store_name"),
+            "store_type":         staff.get("store_type"),
+            "scope":              "store",
+            "account_type":       "department_retailer",
+        }
 
     admin = await admins_collection.find_one({"_id": ObjectId(user_id)})
     if not admin:
