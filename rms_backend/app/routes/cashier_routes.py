@@ -16,6 +16,7 @@ from ..retailer_plans import retailer_plan_config
 from .store_helper import get_store_context
 from ..error_log import log_error
 from ..email_utils import send_customer_pos_invoice_email
+from ..whatsapp_bill_utils import send_bill_whatsapp, whatsapp_bill_configured
 from ..product_identity import identity_fields
 from ..utils import verify_password
 
@@ -865,6 +866,17 @@ async def _send_bill_email_background(sale_id, customer_email, customer_name, st
     }})
 
 
+async def _send_bill_whatsapp_background(sale_id, mobile, store_name, share_url):
+    """Same fire-and-forget pattern as _send_bill_email_background above --
+    the cashier's response doesn't wait on this, the result is just
+    recorded onto the sale afterward."""
+    sent = await send_bill_whatsapp(mobile, store_name, share_url, context=f"bill:{sale_id}")
+    await sales_collection.update_one({"_id": sale_id}, {"$set": {
+        "customer_whatsapp_sent": sent,
+        "customer_whatsapp_sent_at": datetime.utcnow() if sent else None,
+    }})
+
+
 @router.post("/bill", status_code=201)
 async def save_bill(
     payload:         dict,
@@ -1261,6 +1273,21 @@ async def save_bill(
             "customer_email": customer_email,
         })
 
+    mobile = bill_doc.get("mobile", "")
+    whatsapp_queued = bool(mobile and whatsapp_bill_configured())
+    if whatsapp_queued:
+        background_tasks.add_task(
+            _send_bill_whatsapp_background,
+            result.inserted_id,
+            mobile,
+            store_name,
+            bill_doc.get("share_url", ""),
+        )
+        await _audit_pos(store, "bill_whatsapp_queued", {
+            "invoice_no": invoice_no,
+            "mobile": mobile,
+        })
+
     return {
         "status": "success",
         "invoice_no": invoice_no,
@@ -1272,6 +1299,8 @@ async def save_bill(
         "customer_email": bill_doc.get("customer_email", ""),
         "email_sent": False,
         "email_queued": email_queued,
+        "whatsapp_sent": False,
+        "whatsapp_queued": whatsapp_queued,
         "inventory_warnings": inventory_warnings,
         "inventory_not_found": inventory_not_found,
         "stock_conflicts": stock_conflicts,
@@ -2239,6 +2268,10 @@ def _sales_detail_rows(doc):
 @router.get("/reports/sales-detail")
 async def reports_sales_detail(from_date: str = Query(...), to_date: str = Query(...),
                                terminal_id: Optional[str] = Query(None),
+                               store_id: Optional[str] = Query(None), type_filter: Optional[str] = Query(None, alias="type"),
+                               cashier_name: Optional[str] = Query(None), payment_method: Optional[str] = Query(None),
+                               search: Optional[str] = Query(None), min_amount: Optional[float] = Query(None),
+                               max_amount: Optional[float] = Query(None),
                                skip: int = Query(0, ge=0), limit: int = Query(200, ge=1, le=500),
                                authorization: str = Header(None)):
     ctx = await _require_report_context(authorization)
@@ -2252,7 +2285,22 @@ async def reports_sales_detail(from_date: str = Query(...), to_date: str = Query
         raise HTTPException(status_code=400, detail="Start date must not be after end date.")
     query = _date_query(from_date, to_date)
     query.update(_report_scope(ctx))
-    query["$or"] = [{"type": {"$in": ["sale", "return"]}}, {"type": {"$exists": False}}]
+    if store_id and ctx.get("scope") == "hq":
+        query["store_id"] = store_id
+    if type_filter and type_filter.lower() != "all":
+        query["type"] = type_filter.lower()
+    else:
+        query["$and"] = [{"$or": [{"type": {"$in": ["sale", "return"]}}, {"type": {"$exists": False}}]}]
+    if cashier_name:
+        query["cashier_name"] = {"$regex": cashier_name.strip(), "$options": "i"}
+    if payment_method and payment_method.lower() != "all":
+        query["payment_method"] = payment_method
+    if search:
+        query["$or"] = [{key: {"$regex": search.strip(), "$options": "i"}} for key in ("invoice_no", "customer_name", "mobile")]
+    if min_amount is not None or max_amount is not None:
+        query["summary.net_payable"] = {}
+        if min_amount is not None: query["summary.net_payable"]["$gte"] = min_amount
+        if max_amount is not None: query["summary.net_payable"]["$lte"] = max_amount
     count = await sales_collection.count_documents(query)
     rows = []
     async for doc in sales_collection.find(query).sort([("date", 1), ("_id", 1)]).skip(skip).limit(limit):

@@ -55,6 +55,19 @@ class Settings(BaseSettings):
     fast2sms_api_key: Optional[str] = Field(None, env='FAST2SMS_API_KEY')
     fast2sms_sender_id: Optional[str] = Field(None, env='FAST2SMS_SENDER_ID')
 
+    # AiSensy -- WhatsApp message sent to the customer right after a
+    # Cashier POS bill is saved, with a link to view it. Both api key and
+    # campaign name must be set for whatsapp_bill_utils.whatsapp_configured()
+    # to report true; unset means the send is simply skipped, not an error.
+    # aisensy_campaign_name must be the EXACT name of an already-approved
+    # WhatsApp template in the AiSensy dashboard -- WhatsApp Business API
+    # does not allow free-text business-initiated messages, only approved
+    # templates, same DLT-template constraint sms_utils.py already has for
+    # SMS. aisensy_country_code defaults to India ("91") since customer
+    # mobile numbers are stored as plain 10-digit numbers.
+    aisensy_api_key: Optional[str] = Field(None, env='AISENSY_API_KEY')
+    aisensy_campaign_name: Optional[str] = Field(None, env='AISENSY_CAMPAIGN_NAME')
+    whatsapp_default_country_code: str = Field("91", env='WHATSAPP_DEFAULT_COUNTRY_CODE')
 
     cloudinary_cloud_name: str
     cloudinary_api_key: str

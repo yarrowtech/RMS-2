@@ -1,8 +1,10 @@
 import { API_BASE_URL as APP_API_URL } from "../../config/api.js";
-import React, { useState, useEffect, useCallback, useMemo } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import * as XLSX from "xlsx";
+import { jsPDF } from "jspdf";
+import autoTable from "jspdf-autotable";
 import {
-  FaFileExcel, FaSearch, FaFilter, FaSyncAlt, FaReceipt,
+  FaFileExcel, FaFilePdf, FaSearch, FaFilter, FaSyncAlt, FaReceipt,
   FaUndo, FaChevronDown, FaChevronUp, FaRupeeSign,
   FaBoxOpen, FaUser, FaTimes, FaCalendarAlt,
 } from "react-icons/fa";
@@ -298,200 +300,56 @@ export default function SalesReport() {
   useEffect(() => { fetchData(0); }, [fetchData]);
 
   /* ── Excel Export ── */
-  const handleExport = async () => {
+  const handleExport = async (format) => {
     setExporting(true);
     try {
-      // Fetch ALL data (no pagination limit for export)
-      const params = new URLSearchParams();
-      if (fromDate)            params.append("from_date",      fromDate);
-      if (toDate)              params.append("to_date",        toDate);
-      if (typeFilter !== "all")params.append("type",           typeFilter);
-      if (paymentFilter !== "all") params.append("payment_method", paymentFilter);
-      if (cashierFilter.trim())params.append("cashier_name",   cashierFilter.trim());
-      if (searchQ.trim())      params.append("search",         searchQ.trim());
-      if (minAmt !== "")       params.append("min_amount",     minAmt);
-      if (maxAmt !== "")       params.append("max_amount",     maxAmt);
-      if (storeFilter)         params.append("store_id",       storeFilter);
-      params.append("limit", "2000");
-      params.append("skip",  "0");
-
-      const res  = await fetch(`${API_BASE}/cashier/reports?${params}`, { headers: authHeaders() });
-      const json = await res.json();
-      const allBills = json.data || [];
-
-      const wb = XLSX.utils.book_new();
-
-      /* ── Sheet 1: Summary (one row per bill) ── */
-      const summaryHeaders = [
-        "Invoice No", "Type", "Date", ...(showStoreColumn ? ["Store"] : []), "Cashier", "Customer", "Mobile",
-        "Payment Method", "Original Invoice", "Items Count",
-        "Total Sale (₹)", "Total Savings (₹)", "Taxable Amount (₹)",
-        "CGST (₹)", "SGST (₹)", "IGST (₹)", "Total GST (₹)",
-        "Round Off (₹)", "Net Payable (₹)",
-      ];
-      const summaryRows = allBills.map(b => ({
-        "Invoice No":         b.invoice_no,
-        "Type":               b.type.toUpperCase(),
-        "Date":               b.date,
-        ...(showStoreColumn ? { "Store": b.store_name || "" } : {}),
-        "Cashier":            b.cashier_name || "",
-        "Customer":           b.customer_name || "Walking Customer",
-        "Mobile":             b.mobile || "",
-        "Payment Method":     b.payment_method,
-        "Original Invoice":   b.original_invoice || "",
-        "Items Count":        b.items_count,
-        "Total Sale (₹)":     b.summary.total_sale,
-        "Total Savings (₹)":  b.summary.total_savings,
-        "Taxable Amount (₹)": b.summary.taxable_amount,
-        "CGST (₹)":           b.summary.cgst_amount,
-        "SGST (₹)":           b.summary.sgst_amount,
-        "IGST (₹)":           b.summary.igst_amount,
-        "Total GST (₹)":      b.summary.total_gst,
-        "Round Off (₹)":      b.summary.round_off,
-        "Net Payable (₹)":    b.summary.net_payable,
-      }));
-
-      // Totals row
-      summaryRows.push({
-        "Invoice No":         "TOTAL",
-        "Type":               "",
-        "Date":               "",
-        "Cashier":            "",
-        "Customer":           `${allBills.length} bills`,
-        "Mobile":             "",
-        "Payment Method":     "",
-        "Original Invoice":   "",
-        "Items Count":        allBills.reduce((s, b) => s + b.items_count, 0),
-        "Total Sale (₹)":     allBills.reduce((s, b) => s + b.summary.total_sale, 0),
-        "Total Savings (₹)":  allBills.reduce((s, b) => s + b.summary.total_savings, 0),
-        "Taxable Amount (₹)": allBills.reduce((s, b) => s + b.summary.taxable_amount, 0),
-        "CGST (₹)":           allBills.reduce((s, b) => s + b.summary.cgst_amount, 0),
-        "SGST (₹)":           allBills.reduce((s, b) => s + b.summary.sgst_amount, 0),
-        "IGST (₹)":           allBills.reduce((s, b) => s + b.summary.igst_amount, 0),
-        "Total GST (₹)":      allBills.reduce((s, b) => s + b.summary.total_gst, 0),
-        "Round Off (₹)":      allBills.reduce((s, b) => s + b.summary.round_off, 0),
-        "Net Payable (₹)":    allBills.reduce((s, b) => s + b.summary.net_payable, 0),
-      });
-
-      const ws1 = XLSX.utils.json_to_sheet(summaryRows, { header: summaryHeaders });
-      // Column widths
-      ws1["!cols"] = [
-        { wch: 22 }, { wch: 8 }, { wch: 18 }, { wch: 14 }, { wch: 20 }, { wch: 14 },
-        { wch: 14 }, { wch: 22 }, { wch: 10 },
-        { wch: 14 }, { wch: 14 }, { wch: 16 }, { wch: 12 }, { wch: 12 },
-        { wch: 10 }, { wch: 12 }, { wch: 12 }, { wch: 14 },
-      ];
-      XLSX.utils.book_append_sheet(wb, ws1, "Bill Summary");
-
-      /* ── Sheet 2: Detailed (one row per line item) ── */
-      const detailHeaders = [
-        "Invoice No", "Type", "Date", "Cashier", "Customer", "Payment Method",
-        "Barcode", "SKU", "Product Name", "HSN Code",
-        "Qty", "Rate (₹)", "MRP (₹)", "Item Discount (₹)",
-        "GST Rate (%)", "Taxable (₹)", "CGST (₹)", "SGST (₹)", "IGST (₹)",
-        "Item Total (₹)", "Division", "Section", "Department",
-      ];
-      const detailRows = [];
-      allBills.forEach(b => {
-        b.items.forEach(item => {
-          detailRows.push({
-            "Invoice No":        b.invoice_no,
-            "Type":              b.type.toUpperCase(),
-            "Date":              b.date,
-            "Cashier":           b.cashier_name || "",
-            "Customer":          b.customer_name || "Walking Customer",
-            "Payment Method":    b.payment_method,
-            "Barcode":           item.barcode,
-            "SKU":               item.sku || "",
-            "Product Name":      item.name,
-            "HSN Code":          item.hsn || "",
-            "Qty":               item.qty,
-            "Rate (₹)":          item.price,
-            "MRP (₹)":           item.mrp || item.price,
-            "Item Discount (₹)": item.item_discount || 0,
-            "GST Rate (%)":      item.gst_rate,
-            "Taxable (₹)":       item.taxable,
-            "CGST (₹)":          item.cgst,
-            "SGST (₹)":          item.sgst,
-            "IGST (₹)":          item.igst,
-            "Item Total (₹)":    item.total,
-            "Division":          item.division || "",
-            "Section":           item.section  || "",
-            "Department":        item.department || "",
-          });
+      const params = new URLSearchParams({ from_date: fromDate, to_date: toDate, limit: "200" });
+      if (typeFilter !== "all") params.set("type", typeFilter);
+      if (paymentFilter !== "all") params.set("payment_method", paymentFilter);
+      if (cashierFilter.trim()) params.set("cashier_name", cashierFilter.trim());
+      if (searchQ.trim()) params.set("search", searchQ.trim());
+      if (minAmt !== "") params.set("min_amount", minAmt);
+      if (maxAmt !== "") params.set("max_amount", maxAmt);
+      if (storeFilter) params.set("store_id", storeFilter);
+      let next = 0;
+      const rows = [];
+      do {
+        params.set("skip", String(next));
+        const res = await fetch(`${API_BASE}/cashier/reports/sales-detail?${params}`, { headers: authHeaders() });
+        const json = await res.json();
+        if (!res.ok) throw new Error(json.detail || `HTTP ${res.status}`);
+        rows.push(...(json.data || []));
+        next = json.next_skip;
+      } while (next !== null);
+      if (!rows.length) throw new Error("No bill lines match the selected filters.");
+      const filename = `Sales_Detail_${fromDate}_to_${toDate}`;
+      if (format === "excel") {
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), "Sales Detail");
+        XLSX.writeFile(wb, `${filename}.xlsx`);
+      } else {
+        const doc = new jsPDF({ orientation: "landscape", format: "a3" });
+        const columns = Object.keys(rows[0]);
+        doc.setFontSize(14);
+        doc.text(`Sales Detail | ${fromDate} to ${toDate}`, 14, 14);
+        autoTable(doc, {
+          startY: 20,
+          columns: columns.map(key => ({ header: key, dataKey: key })),
+          body: rows,
+          horizontalPageBreak: true,
+          horizontalPageBreakRepeat: ["Bill No.", "Barcode"],
+          styles: { fontSize: 7, cellPadding: 2, overflow: "linebreak", cellWidth: 27 },
+          headStyles: { fillColor: [79, 70, 229] },
+          margin: { top: 16, left: 10, right: 10 },
+          didDrawPage: ({ pageNumber }) => {
+            doc.setFontSize(8);
+            doc.text(`Page ${pageNumber}`, doc.internal.pageSize.getWidth() - 25, doc.internal.pageSize.getHeight() - 6);
+          },
         });
-      });
-      const ws2 = XLSX.utils.json_to_sheet(detailRows, { header: detailHeaders });
-      ws2["!cols"] = [
-        { wch: 22 }, { wch: 8 }, { wch: 18 }, { wch: 14 }, { wch: 20 }, { wch: 14 },
-        { wch: 16 }, { wch: 14 }, { wch: 28 }, { wch: 12 },
-        { wch: 7 }, { wch: 12 }, { wch: 12 }, { wch: 14 },
-        { wch: 10 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 10 },
-        { wch: 14 }, { wch: 16 }, { wch: 16 }, { wch: 16 },
-      ];
-      XLSX.utils.book_append_sheet(wb, ws2, "Item Details");
-
-      /* ── Sheet 3: GST Summary ── */
-      const gstMap = {};
-      allBills.forEach(b => {
-        if (b.type === "return") return;
-        b.items.forEach(item => {
-          const rate = item.gst_rate || 0;
-          if (!gstMap[rate]) gstMap[rate] = { taxable: 0, cgst: 0, sgst: 0, igst: 0, total: 0 };
-          gstMap[rate].taxable += item.taxable;
-          gstMap[rate].cgst    += item.cgst;
-          gstMap[rate].sgst    += item.sgst;
-          gstMap[rate].igst    += item.igst;
-          gstMap[rate].total   += item.cgst + item.sgst + item.igst;
-        });
-      });
-      const gstRows = Object.entries(gstMap).map(([rate, vals]) => ({
-        "GST Rate (%)":      Number(rate),
-        "CGST Rate (%)":     Number(rate) / 2,
-        "SGST Rate (%)":     Number(rate) / 2,
-        "Taxable Amount (₹)":parseFloat(vals.taxable.toFixed(2)),
-        "CGST Amount (₹)":   parseFloat(vals.cgst.toFixed(2)),
-        "SGST Amount (₹)":   parseFloat(vals.sgst.toFixed(2)),
-        "IGST Amount (₹)":   parseFloat(vals.igst.toFixed(2)),
-        "Total GST (₹)":     parseFloat(vals.total.toFixed(2)),
-      }));
-      // Totals
-      gstRows.push({
-  "GST Rate (%)":       "TOTAL",
-  "CGST Rate (%)":      "",
-  "SGST Rate (%)":      "",
-  "Taxable Amount (₹)": parseFloat(gstRows.reduce((s, r) => s + (r["Taxable Amount (₹)"] || 0), 0).toFixed(2)),
-  "CGST Amount (₹)":    parseFloat(gstRows.reduce((s, r) => s + (r["CGST Amount (₹)"] || 0), 0).toFixed(2)),
-  "SGST Amount (₹)":    parseFloat(gstRows.reduce((s, r) => s + (r["SGST Amount (₹)"] || 0), 0).toFixed(2)),
-  "IGST Amount (₹)":    parseFloat(gstRows.reduce((s, r) => s + (r["IGST Amount (₹)"] || 0), 0).toFixed(2)),
-  "Total GST (₹)":      parseFloat(gstRows.reduce((s, r) => s + (r["Total GST (₹)"] || 0), 0).toFixed(2)),
-});
-      const ws3 = XLSX.utils.json_to_sheet(gstRows);
-      ws3["!cols"] = [{ wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 18 }, { wch: 16 }, { wch: 16 }, { wch: 16 }, { wch: 14 }];
-      XLSX.utils.book_append_sheet(wb, ws3, "GST Summary");
-
-      /* ── Sheet 4: Payment method summary ── */
-     const payMap = {};
-      allBills.filter(b => b.type !== "return").forEach(b => {
-        const pm = b.payment_method || "Cash";
-        if (!payMap[pm]) payMap[pm] = { count: 0, amount: 0 };
-        payMap[pm].count  += 1;
-        payMap[pm].amount += b.summary.net_payable;
-      });
-      const payRows = Object.entries(payMap).map(([method, v]) => ({
-        "Payment Method": method,
-        "Bill Count":     v.count,
-        "Total Amount (₹)": parseFloat(v.amount.toFixed(2)),
-      }));
-      const ws4 = XLSX.utils.json_to_sheet(payRows);
-      ws4["!cols"] = [{ wch: 18 }, { wch: 12 }, { wch: 18 }];
-      XLSX.utils.book_append_sheet(wb, ws4, "Payment Summary");
-
-      /* ── Download ── */
-      const fileName = `Sales_Report_${fromDate}_to_${toDate}.xlsx`;
-      XLSX.writeFile(wb, fileName);
+        doc.save(`${filename}.pdf`);
+      }
     } catch (e) {
-      alert("Export failed: " + e.message);
+      setError(e.message || "Export failed.");
     } finally {
       setExporting(false);
     }
@@ -541,10 +399,14 @@ export default function SalesReport() {
             style={{ height: 38, display: "flex", alignItems: "center", gap: 7, padding: "0 16px", borderRadius: 10, border: "1px solid #E2E8F0", background: "#fff", color: "#6366F1", fontSize: 12, fontWeight: 700, cursor: loading ? "not-allowed" : "pointer", opacity: loading ? 0.6 : 1 }}>
             <FaSyncAlt style={{ fontSize: 11, animation: loading ? "spin 1s linear infinite" : "none" }} /> Refresh
           </button>
-          <button onClick={handleExport} disabled={exporting || loading || totalCount === 0}
+          <button onClick={() => handleExport("excel")} disabled={exporting || loading || totalCount === 0}
             style={{ height: 38, display: "flex", alignItems: "center", gap: 8, padding: "0 20px", borderRadius: 10, border: "none", background: exporting ? "#A7F3D0" : "#059669", color: "#fff", fontSize: 13, fontWeight: 700, cursor: exporting || loading || totalCount === 0 ? "not-allowed" : "pointer", opacity: totalCount === 0 ? 0.5 : 1 }}>
             {exporting ? <FaSyncAlt style={{ fontSize: 11, animation: "spin 1s linear infinite" }} /> : <FaFileExcel />}
             {exporting ? "Exporting…" : `Export Excel (${fmtN(totalCount)} bills)`}
+          </button>
+          <button onClick={() => handleExport("pdf")} disabled={exporting || loading || totalCount === 0}
+            style={{ height: 38, display: "flex", alignItems: "center", gap: 8, padding: "0 20px", borderRadius: 10, border: "none", background: "#b91c1c", color: "white", fontSize: 13, fontWeight: 700, cursor: "pointer", opacity: exporting || loading || totalCount === 0 ? 0.5 : 1 }}>
+            <FaFilePdf /> Export PDF
           </button>
         </div>
       </div>
@@ -736,7 +598,7 @@ export default function SalesReport() {
 
       {/* Footer note */}
       <div style={{ marginTop: 12, fontSize: 11, color: "#94A3B8", textAlign: "center" }}>
-        Excel export includes 4 sheets: Bill Summary · Item Details · GST Summary · Payment Summary
+        Excel and PDF export bill-line details for the selected filters. Returns appear as negative values.
       </div>
       </>
       )}

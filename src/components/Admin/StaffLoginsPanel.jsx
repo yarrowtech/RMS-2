@@ -6,7 +6,7 @@ import {
   X, UserPlus, Trash2, Lock, Unlock, KeyRound, Users2, Store as StoreIcon,
   ShoppingCart, Package, Truck, ClipboardList, FileBox, ArrowLeftRight,
   FileText, Contact, Wallet, UsersRound, BarChart3, Check, Sparkles,
-  Factory, Briefcase, Megaphone, Heart, Palette,
+  Factory, Briefcase, Megaphone, Heart, Palette, Pencil,
 } from "lucide-react";
 import toast from "react-hot-toast";
 import { DEPT_PATH_MAP } from "../../utils/authRedirect.js";
@@ -105,6 +105,116 @@ const LBL = "block text-[11px] font-bold text-slate-500 uppercase tracking-wider
 
 const EMPTY_FORM = { name: "", username: "", password: "", store_id: "", department: "", permissions: [] };
 
+// Shared by AddStaffModal (new login) and EditAccessModal (changing an
+// existing one) -- same grouped, iconed tab picker either way.
+function PermissionPicker({ permissions, onToggle, allowedPermissions }) {
+  const visibleGroups = useMemo(() => {
+    if (!allowedPermissions) return PERMISSION_GROUPS;
+    return PERMISSION_GROUPS
+      .map((g) => ({ ...g, items: g.items.filter((p) => allowedPermissions.includes(p.id)) }))
+      .filter((g) => g.items.length);
+  }, [allowedPermissions]);
+
+  return (
+    <div className="space-y-3 mt-1.5">
+      {visibleGroups.map((g) => {
+        const t = TONE[g.tone];
+        return (
+          <div key={g.label}>
+            <p className={`text-[10px] font-bold uppercase tracking-wider ${t.text} mb-1.5`}>{g.label}</p>
+            <div className="grid grid-cols-2 gap-2">
+              {g.items.map((p) => {
+                const Icon = p.icon;
+                const active = permissions.includes(p.id);
+                return (
+                  <button
+                    key={p.id}
+                    type="button"
+                    onClick={() => onToggle(p.id)}
+                    className={`relative flex items-center gap-2 text-left px-3 py-2.5 rounded-xl text-xs font-semibold border transition ${
+                      active
+                        ? `${t.bg} text-white border-transparent shadow-sm`
+                        : `bg-white ${t.text} ${t.border} hover:${t.soft}`
+                    }`}
+                  >
+                    <Icon className={`w-3.5 h-3.5 shrink-0 ${active ? "text-white" : ""}`} />
+                    <span className="truncate">{p.label}</span>
+                    {active && <Check className="w-3.5 h-3.5 ml-auto shrink-0" />}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })}
+      {visibleGroups.length === 0 && (
+        <p className="text-xs text-slate-400 italic">You don't hold any grantable permissions yourself yet — ask HQ to assign some to your account first.</p>
+      )}
+    </div>
+  );
+}
+
+function EditAccessModal({ staff, allowedPermissions, onClose, onSaved }) {
+  const [permissions, setPermissions] = useState(staff.permissions || []);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  const togglePerm = (id) => {
+    setPermissions((prev) => (prev.includes(id) ? prev.filter((p) => p !== id) : [...prev, id]));
+  };
+
+  const handleSave = async () => {
+    setError("");
+    setSaving(true);
+    try {
+      await api(`/staff-users/${staff.id}/permissions`, { method: "PATCH", body: JSON.stringify({ permissions }) });
+      toast.success(`Access updated for @${staff.username}`);
+      onSaved();
+      onClose();
+    } catch (e) {
+      setError(e.message || "Could not update access");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return createPortal(
+    <div className="fixed inset-0 z-[210] bg-slate-900/60 backdrop-blur-[2px] flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+        <div className="relative px-6 py-5 border-b border-slate-100 bg-gradient-to-br from-emerald-600 via-teal-600 to-emerald-700 rounded-t-3xl overflow-hidden">
+          <div className="relative flex items-center justify-between">
+            <div>
+              <h2 className="text-lg font-black text-white tracking-tight">Edit Access</h2>
+              <p className="text-[11px] text-emerald-100/90">@{staff.username} — {staff.store_name || staff.store_id}</p>
+            </div>
+            <button onClick={onClose} className="text-emerald-100 hover:text-white hover:bg-white/10 rounded-full p-1.5 transition">
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+        </div>
+
+        <div className="p-6 space-y-3">
+          <label className={LBL}>Tabs this login can use</label>
+          <PermissionPicker permissions={permissions} onToggle={togglePerm} allowedPermissions={allowedPermissions} />
+          {error && <p className="text-xs font-semibold text-rose-600 bg-rose-50 border border-rose-200 rounded-xl px-3 py-2">{error}</p>}
+        </div>
+
+        <div className="flex items-center justify-end gap-2 p-5 border-t border-slate-100 bg-slate-50/60 rounded-b-3xl">
+          <button onClick={onClose} className="px-4 py-2.5 text-sm font-semibold text-slate-600 hover:bg-slate-100 rounded-xl transition">Cancel</button>
+          <button
+            onClick={handleSave}
+            disabled={saving}
+            className="inline-flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 text-white rounded-xl text-sm font-bold hover:shadow-lg hover:shadow-emerald-600/20 transition disabled:opacity-60"
+          >
+            {saving ? "Saving…" : "Save Access"}
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
 // `fixedStoreId`/`fixedStoreName` are set when a store/department admin
 // (not HQ) is creating one of these for their own store -- the store
 // picker is hidden since it's implicit, and the backend independently
@@ -113,13 +223,6 @@ function AddStaffModal({ stores, fixedStoreId, fixedStoreName, allowedPermission
   const [form, setForm] = useState(() => ({ ...EMPTY_FORM, store_id: fixedStoreId || "" }));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
-
-  const visibleGroups = useMemo(() => {
-    if (!allowedPermissions) return PERMISSION_GROUPS;
-    return PERMISSION_GROUPS
-      .map((g) => ({ ...g, items: g.items.filter((p) => allowedPermissions.includes(p.id)) }))
-      .filter((g) => g.items.length);
-  }, [allowedPermissions]);
 
   const togglePerm = (id) => {
     setForm((f) => ({
@@ -227,41 +330,7 @@ function AddStaffModal({ stores, fixedStoreId, fixedStoreName, allowedPermission
 
           <div>
             <label className={LBL}>Tabs this login can use</label>
-            <div className="space-y-3 mt-1.5">
-              {visibleGroups.map((g) => {
-                const t = TONE[g.tone];
-                return (
-                  <div key={g.label}>
-                    <p className={`text-[10px] font-bold uppercase tracking-wider ${t.text} mb-1.5`}>{g.label}</p>
-                    <div className="grid grid-cols-2 gap-2">
-                      {g.items.map((p) => {
-                        const Icon = p.icon;
-                        const active = form.permissions.includes(p.id);
-                        return (
-                          <button
-                            key={p.id}
-                            type="button"
-                            onClick={() => togglePerm(p.id)}
-                            className={`relative flex items-center gap-2 text-left px-3 py-2.5 rounded-xl text-xs font-semibold border transition ${
-                              active
-                                ? `${t.bg} text-white border-transparent shadow-sm`
-                                : `bg-white ${t.text} ${t.border} hover:${t.soft}`
-                            }`}
-                          >
-                            <Icon className={`w-3.5 h-3.5 shrink-0 ${active ? "text-white" : ""}`} />
-                            <span className="truncate">{p.label}</span>
-                            {active && <Check className="w-3.5 h-3.5 ml-auto shrink-0" />}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-                );
-              })}
-              {visibleGroups.length === 0 && (
-                <p className="text-xs text-slate-400 italic">You don't hold any grantable permissions yourself yet — ask HQ to assign some to your account first.</p>
-              )}
-            </div>
+            <PermissionPicker permissions={form.permissions} onToggle={togglePerm} allowedPermissions={allowedPermissions} />
           </div>
 
           {error && (
@@ -289,6 +358,7 @@ export default function StaffLoginsPanel({ stores = [], fixedStoreId, fixedStore
   const [staff, setStaff] = useState([]);
   const [loading, setLoading] = useState(false);
   const [showAdd, setShowAdd] = useState(false);
+  const [editTarget, setEditTarget] = useState(null);
   const [resetTarget, setResetTarget] = useState(null);
   const [newPassword, setNewPassword] = useState("");
 
@@ -421,6 +491,9 @@ export default function StaffLoginsPanel({ stores = [], fixedStoreId, fixedStore
                     <span className={`text-[11px] font-bold px-2.5 py-1 rounded-full ${s.status === "ACTIVE" ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700"}`}>
                       {s.status === "ACTIVE" ? "Active" : "Suspended"}
                     </span>
+                    <button title="Edit access" onClick={() => setEditTarget(s)} className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition">
+                      <Pencil className="w-4 h-4" />
+                    </button>
                     <button title="Reset password" onClick={() => setResetTarget(s)} className="p-2 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition">
                       <KeyRound className="w-4 h-4" />
                     </button>
@@ -446,6 +519,15 @@ export default function StaffLoginsPanel({ stores = [], fixedStoreId, fixedStore
           allowedPermissions={allowedPermissions}
           onClose={() => setShowAdd(false)}
           onCreated={fetchStaff}
+        />
+      )}
+
+      {editTarget && (
+        <EditAccessModal
+          staff={editTarget}
+          allowedPermissions={allowedPermissions}
+          onClose={() => setEditTarget(null)}
+          onSaved={fetchStaff}
         />
       )}
 

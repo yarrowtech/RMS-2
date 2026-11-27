@@ -150,6 +150,7 @@ pos_terminals_collection = db["pos_terminals"]
 # terminal someone is watching.
 email_failures_collection = db["email_failures"]
 sms_failures_collection = db["sms_failures"]
+whatsapp_bill_failures_collection = db["whatsapp_bill_failures"]
 # System-level failures — unhandled exceptions caught by main.py's global
 # handler, plus specific spots worth logging even when the exception itself
 # is swallowed for the caller (e.g. a webhook retry, a background cron
