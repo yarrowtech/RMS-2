@@ -130,6 +130,7 @@ export default function SettingsProfilePage() {
   // stays locked to Point of Sale + Customer, regardless of which shared
   // cashier login is used to sign in on it.
   const [terminals, setTerminals] = useState([]);
+  const [canManageTerminalRoles, setCanManageTerminalRoles] = useState(false);
   const [terminalsLoading, setTerminalsLoading] = useState(true);
   const [terminalsError, setTerminalsError] = useState("");
   const [savingTerminalId, setSavingTerminalId] = useState("");
@@ -144,8 +145,10 @@ export default function SettingsProfilePage() {
       if (!res.ok) throw new Error("Failed to load terminals");
       const json = await res.json();
       setTerminals(json?.data || []);
+      setCanManageTerminalRoles(json?.can_manage_roles === true);
     } catch (e) {
       setTerminalsError(e.message || "Failed to load terminals");
+      setCanManageTerminalRoles(false);
     } finally {
       setTerminalsLoading(false);
     }
@@ -368,7 +371,7 @@ export default function SettingsProfilePage() {
               Admin instructions
             </div>
             <ol className="mt-2 list-decimal space-y-1 pl-5 text-xs text-amber-900">
-              <li>Only a Store Ops / Finance / HQ login can change roles here — the shared Cashier login (and every other store department) can view this list, but any change it tries will be rejected by the server.</li>
+              <li>Store Ops or Finance can change roles here. HQ can manage them under Admin Management → POS Terminal Access. The shared Cashier login can view this list but cannot change roles.</li>
               <li>Every new POS device starts as <span className="font-semibold">Cashier</span> (Point of Sale + Customer tabs only) the first time it's opened — nothing needs to be configured for that.</li>
               <li>To let one specific machine see Dashboard, Finance and Reports (e.g. the manager's counter, or a back-office terminal), find it in the list below by its terminal name and switch its dropdown to <span className="font-semibold">Supervisor</span>.</li>
               <li>If you don't recognize a terminal name, rename it first from <span className="font-semibold">that device</span> under Settings → This POS Terminal, then come back here — roles are easiest to assign once every device has a clear name (e.g. "Counter 1", "Billing Desk 2").</li>
@@ -403,9 +406,11 @@ export default function SettingsProfilePage() {
                   </div>
                   <select
                     value={t.role}
-                    disabled={savingTerminalId === t.terminal_id}
+                    disabled={!canManageTerminalRoles || savingTerminalId === t.terminal_id}
+                    aria-label={`Access for ${t.terminal_name}`}
+                    title={canManageTerminalRoles ? "Change terminal access" : "Only a store manager or HQ can change terminal access"}
                     onChange={(e) => changeRole(t.terminal_id, e.target.value)}
-                    className="rounded-xl border border-blue-500 bg-white px-3 py-2 text-xs font-semibold outline-none focus:ring-2 focus:ring-blue-500/30"
+                    className="rounded-xl border border-blue-500 bg-white px-3 py-2 text-xs font-semibold outline-none focus:ring-2 focus:ring-blue-500/30 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     <option value="cashier">Cashier</option>
                     <option value="supervisor">Supervisor</option>

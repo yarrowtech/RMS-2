@@ -1672,12 +1672,12 @@ async def _is_terminal_manager(ctx: dict) -> bool:
         return True
     admin_id = ctx.get("admin_id")
     if not admin_id:
-        return True  # legacy tokens with no resolvable admin — fail open as before
+        return False
     try:
-        admin = await admins_collection.find_one({"_id": ObjectId(admin_id)})
+        admin = await admins_collection.find_one({"_id": ObjectId(admin_id), "tenant_id": ctx.get("tenant_id"), "store_id": ctx.get("store_id")})
     except Exception:
         admin = None
-    return bool(admin) and admin.get("department") in TERMINAL_MANAGER_DEPARTMENTS
+    return bool(admin) and str(admin.get("status") or "ACTIVE").upper() == "ACTIVE" and admin.get("department") in TERMINAL_MANAGER_DEPARTMENTS
 
 
 async def _enforce_terminal_restriction(ctx: dict, terminal_id: Optional[str]):
@@ -1783,7 +1783,7 @@ async def list_terminals(authorization: str = Header(None)):
             "role":          doc.get("role", DEFAULT_TERMINAL_ROLE),
             "last_seen_at":  doc.get("last_seen_at"),
         })
-    return JSONResponse(content=jsonable_encoder({"status": "success", "data": rows}))
+    return JSONResponse(content=jsonable_encoder({"status": "success", "data": rows, "can_manage_roles": await _is_terminal_manager(ctx)}))
 
 
 @router.get("/terminals/role")

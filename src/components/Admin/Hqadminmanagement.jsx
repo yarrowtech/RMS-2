@@ -301,7 +301,7 @@ function AddAdminModal({ onClose, onCreated, stores = [], deptConfig, admins = [
       // while it's still top of mind, instead of leaving it undiscoverable.
       if (isStoreScope && form.managedDepartments.includes("Cashier")) {
         toast(
-          "This Cashier login will be shared across every POS terminal at the store. Once it's used to sign in on each machine, go to the Cashier app → Settings → POS Terminal Access to grant Dashboard/Finance/Reports access to specific terminals.",
+          "This Cashier login will be shared across every POS terminal at the store. Open the POS on each machine, then use Admin Management → POS Terminal Access to grant Supervisor access to selected terminals.",
           { duration: 9000, icon: "ℹ️" }
         );
       }
@@ -1483,6 +1483,64 @@ const TASK_STATUS_CFG = {
   done: "bg-emerald-50 border-emerald-200 text-emerald-700",
 };
 
+function PosTerminalAccessModal({ stores, onClose }) {
+  const [storeId, setStoreId] = useState("");
+  const [terminals, setTerminals] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState("");
+  const [error, setError] = useState("");
+  const options = stores.flatMap(s => [{ id: s.id, label: s.name }, ...(s.branches || []).map(b => ({ id: b.id, label: `${s.name} / ${b.name}` }))]);
+  useEffect(() => {
+    if (!storeId) { setTerminals([]); return; }
+    let active = true;
+    setLoading(true); setError(""); setTerminals([]);
+    api(`/hq/stores/${encodeURIComponent(storeId)}/pos-terminals`)
+      .then(result => { if (active) setTerminals(result.data || []); })
+      .catch(e => { if (active) setError(e.message); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [storeId]);
+  const changeRole = async (terminal, role) => {
+    setSaving(terminal.terminal_id); setError("");
+    try {
+      await api(`/hq/stores/${encodeURIComponent(storeId)}/pos-terminals/${encodeURIComponent(terminal.terminal_id)}/role`, { method: "POST", body: JSON.stringify({ role }) });
+      setTerminals(items => items.map(item => item.terminal_id === terminal.terminal_id ? { ...item, role } : item));
+    } catch (e) { setError(e.message); }
+    finally { setSaving(""); }
+  };
+  return createPortal(<div className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/60 p-4">
+    <div className="w-full max-w-xl rounded-2xl bg-white p-6 shadow-2xl">
+      <div className="flex items-center justify-between"><h2 className="text-lg font-black text-slate-900">POS Terminal Access</h2><button onClick={onClose} aria-label="Close"><X className="h-5 w-5" /></button></div>
+      <div className="mt-3 rounded-xl border border-indigo-100 bg-indigo-50 p-4 text-sm text-indigo-950">
+        <p className="font-bold">How to grant access</p>
+        <ol className="mt-2 list-decimal space-y-1 pl-5">
+          <li>Open the Cashier POS on the device once and name it, for example, Counter 1.</li>
+          <li>Select its store or branch below and find the terminal by name.</li>
+          <li>Change its access from Cashier to Supervisor, then reload the POS on that device.</li>
+        </ol>
+        <p className="mt-2 text-xs">Supervisor enables Dashboard, Finance and Reports for everyone using that terminal. To remove access, change it back to Cashier.</p>
+      </div>
+      <label className="mt-4 block text-sm font-bold text-slate-700">Store or branch
+        <select value={storeId} disabled={Boolean(saving)} onChange={e => setStoreId(e.target.value)} className="mt-1 w-full rounded-xl border border-slate-300 p-3">
+          <option value="">Select a store</option>{options.map(store => <option key={store.id} value={store.id}>{store.label}</option>)}
+        </select>
+      </label>
+      {error && <p role="alert" className="mt-3 rounded-xl bg-rose-50 p-3 text-sm text-rose-700">{error}</p>}
+      <div className="mt-4 max-h-80 space-y-2 overflow-y-auto">
+        {loading && <p className="text-sm text-slate-500">Loading terminals…</p>}
+        {!loading && storeId && !terminals.length && !error && <p className="text-sm text-slate-500">No terminals found. Open the POS on the device first.</p>}
+        {terminals.map(t => <div key={t.terminal_id} className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 p-3">
+          <span className="font-bold text-slate-800">{t.terminal_name}</span>
+          <select aria-label={`Access for ${t.terminal_name}`} value={t.role} disabled={Boolean(saving)} onChange={e => changeRole(t, e.target.value)} className="rounded-lg border border-slate-300 p-2 text-sm">
+            <option value="cashier">Cashier</option><option value="supervisor">Supervisor</option>
+          </select>
+        </div>)}
+      </div>
+      <p className="mt-4 text-xs text-slate-500">After changing access, reload the POS on that device.</p>
+    </div>
+  </div>, document.body);
+}
+
 function AssignTaskModal({ admins, onClose, onAssigned }) {
   const [form, setForm] = useState({ title: "", details: "", assigned_to: "", priority: "medium", due_date: "" });
   const [saving, setSaving] = useState(false);
@@ -1690,6 +1748,7 @@ export default function HQAdminManagement() {
   const [showBuySeats, setShowBuySeats] = useState(false);
   const [showBuyPos, setShowBuyPos] = useState(false);
   const [showStaffLogins, setShowStaffLogins] = useState(false);
+  const [showPosAccess, setShowPosAccess] = useState(false);
   const [viewAdmin, setViewAdmin] = useState(null);
   const [editAdmin, setEditAdmin] = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(null);
@@ -1783,6 +1842,9 @@ export default function HQAdminManagement() {
             className="inline-flex items-center gap-2 px-4 py-2 border border-emerald-200 bg-emerald-50 text-emerald-700 rounded-xl text-sm font-bold hover:bg-emerald-100 transition">
             <Users className="w-4 h-4"/> Staff Logins
           </button>
+          <button onClick={() => setShowPosAccess(true)} className="inline-flex items-center gap-2 px-4 py-2 border border-indigo-200 bg-indigo-50 text-indigo-700 rounded-xl text-sm font-bold hover:bg-indigo-100 transition">
+            <ShieldCheck className="w-4 h-4"/> POS Terminal Access
+          </button>
           <button onClick={() => setShowAdd(true)}
             className="inline-flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-indigo-600 to-indigo-700 text-white rounded-xl text-sm font-bold hover:opacity-90 transition shadow-md">
             <UserPlus className="w-4 h-4"/> Add Admin
@@ -1801,6 +1863,7 @@ export default function HQAdminManagement() {
       {showStaffLogins && (
         <StaffLoginsPanel stores={stores} onClose={() => setShowStaffLogins(false)} />
       )}
+      {showPosAccess && <PosTerminalAccessModal stores={stores} onClose={() => setShowPosAccess(false)} />}
 
       {/* Stats */}
       <div className="grid grid-cols-3 gap-3">

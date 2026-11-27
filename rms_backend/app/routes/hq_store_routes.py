@@ -21,10 +21,11 @@ import cloudinary
 import cloudinary.uploader
 
 from .deps import get_hq_tenant, get_hq_or_store_hr_tenant
-from ..db import stores_collection, admins_collection, tenants_collection, retailer_store_addons_collection
+from ..db import db, stores_collection, admins_collection, tenants_collection, retailer_store_addons_collection
 from ..auth import create_password_setup_token
 from ..email_utils import send_password_setup_email
 from ..activity_log import log_activity
+from ..error_log import log_error
 from ..config import settings
 from ..retailer_plans import retailer_plan_config
 from ..utils import gstin_checksum_valid
@@ -49,6 +50,35 @@ AADHAAR_RE = re.compile(r"[2-9]\d{11}")
 BUSINESS_ENTITY_TYPES = {"Sole Proprietorship", "Partnership", "LLP", "Private Limited", "Public Limited", "Other"}
 
 TenantCtx = Dict[str, Any]
+
+
+@router.get("/stores/{store_id}/pos-terminals")
+async def hq_list_pos_terminals(store_id: str, ctx: TenantCtx = Depends(get_hq_tenant)):
+    rows = []
+    async for terminal in db["pos_terminals"].find({"tenant_id": ctx["tenant_id"], "store_id": store_id}).sort("terminal_name", 1):
+        rows.append({"terminal_id": terminal.get("terminal_id", ""), "terminal_name": terminal.get("terminal_name") or "Unnamed terminal", "role": terminal.get("role") or "cashier"})
+    return {"status": "success", "data": rows}
+
+
+@router.post("/stores/{store_id}/pos-terminals/{terminal_id}/role")
+async def hq_set_pos_terminal_role(store_id: str, terminal_id: str, payload: dict, ctx: TenantCtx = Depends(get_hq_tenant)):
+    role = str(payload.get("role") or "").strip().lower()
+    if role not in {"cashier", "supervisor"}:
+        raise HTTPException(status_code=400, detail="Role must be cashier or supervisor.")
+    result = await db["pos_terminals"].update_one(
+        {"tenant_id": ctx["tenant_id"], "store_id": store_id, "terminal_id": terminal_id}, {"$set": {"role": role}}
+    )
+    if not result.matched_count:
+        raise HTTPException(status_code=404, detail="Terminal not found in this store.")
+    try:
+        await db["cashier_pos_audit_logs"].insert_one({
+            "tenant_id": ctx["tenant_id"], "store_id": store_id, "cashier_name": ctx.get("admin_name", "HQ"),
+            "action": "terminal_role_changed", "details": {"terminal_id": terminal_id, "role": role}, "created_at": datetime.utcnow(),
+        })
+    except Exception as exc:
+        await log_error(source="hq_set_pos_terminal_role", message="Failed to audit terminal role change", exc=exc,
+                        context={"tenant_id": ctx["tenant_id"], "store_id": store_id, "terminal_id": terminal_id})
+    return {"status": "success", "role": role}
 
 
 # ── helpers ────────────────────────────────────────────────────────────────────
