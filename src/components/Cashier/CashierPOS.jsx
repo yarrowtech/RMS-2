@@ -615,11 +615,20 @@ function TouchKeyboard({ target, onClose }) {
 // state) already handles; this modal only needs to produce that same
 // decoded string and hand it to the same `onDetected` setter, nothing in
 // the actual scan-to-cart/billing logic changes.
+const CAMERA_FACING_STORAGE_KEY = "rms.cashier.scanCameraFacing";
+
 function CameraScanModal({ onDetected, onClose }) {
   const videoRef = useRef(null);
   const controlsRef = useRef(null);
   const [error, setError] = useState("");
   const [ready, setReady] = useState(false);
+  // "environment" (rear) is the right default for scanning a barcode held
+  // close to the lens — remembered per-browser so a tablet mounted facing
+  // the customer (front camera actually pointed at the counter) doesn't
+  // need re-flipping every time it's opened.
+  const [facing, setFacing] = useState(() => {
+    try { return localStorage.getItem(CAMERA_FACING_STORAGE_KEY) || "environment"; } catch { return "environment"; }
+  });
 
   useEffect(() => {
     let cancelled = false;
@@ -627,32 +636,32 @@ function CameraScanModal({ onDetected, onClose }) {
 
     (async () => {
       try {
-        const devices = await BrowserMultiFormatReader.listVideoInputDevices();
-        // Prefer the rear/environment-facing camera on a phone or tablet —
-        // ZXing's device list doesn't expose facing mode directly, so pick
-        // the last device (rear camera is conventionally listed last on
-        // most mobile browsers) with a graceful fallback to the first.
-        const deviceId = devices[devices.length - 1]?.deviceId || devices[0]?.deviceId;
-        if (!deviceId) { setError("No camera found on this device."); return; }
-        // decodeFromVideoDevice resolves to an IScannerControls object —
-        // its .stop() is the only correct way to release the camera; this
-        // version of the reader itself has no reset()/stop() of its own.
-        const controls = await reader.decodeFromVideoDevice(deviceId, videoRef.current, (result, err) => {
-          if (cancelled) return;
-          if (result) {
-            onDetected(result.getText());
-          } else if (err && !(err instanceof NotFoundException)) {
-            // NotFoundException just means "no barcode in this frame yet" —
-            // expected on almost every frame while aiming the camera, not
-            // a real error.
-          }
-        });
+        // A direct facingMode hint is more reliable across devices than
+        // guessing "rear camera = last in the device list" — some phones/
+        // tablets with multiple rear lenses or unusual OEM ordering don't
+        // follow that convention.
+        const controls = await reader.decodeFromConstraints(
+          { video: { facingMode: { ideal: facing } } },
+          videoRef.current,
+          (result, err) => {
+            if (cancelled) return;
+            if (result) {
+              onDetected(result.getText());
+            } else if (err && !(err instanceof NotFoundException)) {
+              // NotFoundException just means "no barcode in this frame yet" —
+              // expected on almost every frame while aiming the camera, not
+              // a real error.
+            }
+          },
+        );
         if (cancelled) { controls.stop(); return; }
         controlsRef.current = controls;
         setReady(true);
       } catch (e) {
         if (!cancelled) setError(e?.message?.includes("Permission") || e?.name === "NotAllowedError"
           ? "Camera access was denied. Allow camera permission for this site and try again."
+          : e?.name === "OverconstrainedError"
+          ? "That camera isn't available on this device. Try flipping to the other camera."
           : "Could not start the camera. Try a different device or use the barcode field instead.");
       }
     })();
@@ -661,16 +670,30 @@ function CameraScanModal({ onDetected, onClose }) {
       cancelled = true;
       try { controlsRef.current?.stop(); } catch {}
     };
-  }, [onDetected]);
+  }, [onDetected, facing]);
+
+  const flipCamera = () => {
+    const next = facing === "environment" ? "user" : "environment";
+    setFacing(next);
+    setReady(false);
+    setError("");
+    try { localStorage.setItem(CAMERA_FACING_STORAGE_KEY, next); } catch {}
+  };
 
   return ReactDOM.createPortal(
     <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/80 p-4" onClick={onClose}>
       <div className="w-full max-w-md overflow-hidden rounded-3xl bg-slate-900 shadow-2xl" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between px-5 py-4">
           <p className="text-sm font-black text-white">Scan barcode with camera</p>
-          <button onClick={onClose} className="grid h-8 w-8 place-items-center rounded-xl bg-white/10 text-white hover:bg-white/20">
-            <FaTimes size={14} />
-          </button>
+          <div className="flex items-center gap-2">
+            <button onClick={flipCamera} title="Switch camera"
+              className="grid h-8 w-8 place-items-center rounded-xl bg-white/10 text-white hover:bg-white/20">
+              <FaExchangeAlt size={13} />
+            </button>
+            <button onClick={onClose} className="grid h-8 w-8 place-items-center rounded-xl bg-white/10 text-white hover:bg-white/20">
+              <FaTimes size={14} />
+            </button>
+          </div>
         </div>
         <div className="relative aspect-square w-full bg-black">
           <video ref={videoRef} className="h-full w-full object-cover" muted playsInline />
@@ -687,7 +710,10 @@ function CameraScanModal({ onDetected, onClose }) {
           {error ? (
             <p className="text-xs font-bold text-rose-300">{error}</p>
           ) : (
-            <p className="text-xs font-bold text-slate-300">Point the camera at a barcode — it adds to the bill automatically.</p>
+            <p className="text-xs font-bold text-slate-300">
+              Point the camera at a barcode — it adds to the bill automatically.
+              {" "}Using the {facing === "environment" ? "rear" : "front"} camera — tap <FaExchangeAlt className="inline" size={10} /> to switch.
+            </p>
           )}
         </div>
       </div>
