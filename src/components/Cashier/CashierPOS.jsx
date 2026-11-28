@@ -2316,6 +2316,7 @@ export default function CashierPOS() {
           return;
         }
         showToast("Product not found in online/cache. Add manually if needed.", "error");
+        setBarcode("");
         openManualOfflineItem(bc);
         return;
       }
@@ -2331,6 +2332,7 @@ export default function CashierPOS() {
         showToast("Added from offline cache", "success");
       } else {
         showToast("Network error and product not in offline cache", "error");
+        setBarcode("");
         openManualOfflineItem(bc);
       }
     }
