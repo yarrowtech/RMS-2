@@ -47,6 +47,7 @@ from typing import Any, Dict, List, Optional
 import cloudinary
 import cloudinary.uploader
 import pandas as pd
+from pymongo import UpdateOne
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -77,6 +78,11 @@ TenantCtx = Dict[str, Any]
 MAX_ROWS = 20_000
 PREVIEW_ROWS = 500
 CENTRAL_LABEL = "Central Warehouse / HQ"
+# One bulk_write/insert_many per this many operations during commit, instead
+# of one DB round trip per row -- a 10k-30k row file used to mean that many
+# sequential awaited calls inside a single request, which is what was
+# crashing/timing out on a real Raphaa-sized upload.
+STOCK_WRITE_CHUNK = 1000
 
 cloudinary.config(cloud_name=settings.cloudinary_cloud_name, api_key=settings.cloudinary_api_key, api_secret=settings.cloudinary_api_secret, secure=True)
 
@@ -1238,9 +1244,10 @@ async def commit_sales_history(
         })
 
     inserted = 0
-    if docs:
-        result = await sales_collection.insert_many(docs, ordered=False)
-        inserted = len(result.inserted_ids)
+    for i in range(0, len(docs), STOCK_WRITE_CHUNK):
+        chunk = docs[i:i + STOCK_WRITE_CHUNK]
+        result = await sales_collection.insert_many(chunk, ordered=False)
+        inserted += len(result.inserted_ids)
 
     log = {
         "tenant_id": tenant_id, "kind": "sales", "batch_id": batch_id,
@@ -1289,45 +1296,117 @@ async def commit_stock_snapshot(
     created_products: List[str] = []
     product_changes: List[dict] = []
     applied = 0
+    raphaaa = is_raphaaa_tenant(tenant_id)
 
+    usable_rows = []
     for row in rows:
         if row["_product"] is None or row["errors"]:
             skipped.append({"row_no": row["row_no"], "product": row["product"], "errors": row["errors"]})
             continue
+        usable_rows.append(row)
 
-        if row.get("matched_via") == "new_from_stock":
-            # Genuinely new stock that's never been sold, so the Sales import
-            # never had a barcode to create it from. Create it now — but
-            # check first in case an earlier row in this same file already
-            # created it (two rows for the same new barcode at different
-            # sites), or a concurrent import beat us to it.
-            existing_product = await product_collection.find_one({"tenant_id": tenant_id, "barcode": row["_product"]["barcode"]}, {"product_name": 1})
-            if existing_product:
-                row["_product"]["product_name"] = existing_product.get("product_name") or row["_product"]["barcode"]
-            else:
-                new_doc = _new_product_doc_from_stock(tenant_id, batch_id, row["_product"], now)
-                sku = await _new_rms_sku(tenant_id, new_doc["division"], new_doc["product_name"])
-                new_doc["sku"] = new_doc["base_sku"] = sku
-                for field in row.get("_varying_rates", []):
-                    new_doc[field] = 0.0
-                await product_collection.insert_one(new_doc)
-                row["_product"]["product_name"] = new_doc["product_name"]
-                created_products.append(new_doc["barcode"])
+    # -- Pass 1: products (new-from-stock creation + product_values) --------
+    # Pre-fetch every product these rows could touch in ONE query instead of
+    # one find_one per row -- this and the stock pass below are what turn a
+    # 10k-30k-row file from tens of thousands of sequential DB round trips
+    # (the actual cause of the crash) into a handful of batched calls.
+    all_barcodes = list({row["_product"]["barcode"] for row in usable_rows})
+    products_by_barcode: Dict[str, dict] = {}
+    for i in range(0, len(all_barcodes), STOCK_WRITE_CHUNK):
+        chunk = all_barcodes[i:i + STOCK_WRITE_CHUNK]
+        async for p in product_collection.find({"tenant_id": tenant_id, "barcode": {"$in": chunk}}):
+            products_by_barcode[p["barcode"]] = p
 
+    for row in usable_rows:
+        if row.get("matched_via") != "new_from_stock":
+            continue
+        # Genuinely new stock that's never been sold, so the Sales import
+        # never had a barcode to create it from. Create it now -- guarding
+        # against two rows in this same file sharing the new barcode (the
+        # in-memory dict is updated immediately below, so the second row
+        # sees it as already created, same as the old per-row find_one did).
         barcode = row["_product"]["barcode"]
+        existing_product = products_by_barcode.get(barcode)
+        if existing_product:
+            row["_product"]["product_name"] = existing_product.get("product_name") or barcode
+            continue
+        new_doc = _new_product_doc_from_stock(tenant_id, batch_id, row["_product"], now)
+        sku = await _new_rms_sku(tenant_id, new_doc["division"], new_doc["product_name"])
+        new_doc["sku"] = new_doc["base_sku"] = sku
+        for field in row.get("_varying_rates", []):
+            new_doc[field] = 0.0
+        await product_collection.insert_one(new_doc)
+        row["_product"]["product_name"] = new_doc["product_name"]
+        created_products.append(new_doc["barcode"])
+        products_by_barcode[barcode] = new_doc
+
+    # Last product_values write per barcode wins -- same as the old
+    # per-row sequential update_one calls applied in file order.
+    product_value_updates: Dict[str, dict] = {}
+    for row in usable_rows:
         product_values = row.get("_product_values") or {}
         if product_values:
-            existing_product = await product_collection.find_one({"tenant_id": tenant_id, "barcode": barcode})
-            if existing_product:
-                previous = {key: existing_product[key] for key in product_values if key in existing_product}
-                missing = [key for key in product_values if key not in existing_product]
-                product_changes.append({"id": existing_product["_id"], "previous": previous, "missing": missing, "written": product_values,
-                                        "previous_batch": existing_product.get("stock_import_batch_id")})
-                await product_collection.update_one({"_id": existing_product["_id"], "tenant_id": tenant_id},
-                    {"$set": {**product_values, "stock_import_batch_id": batch_id}})
+            product_value_updates[row["_product"]["barcode"]] = product_values
+
+    product_ops = []
+    for barcode, product_values in product_value_updates.items():
+        existing_product = products_by_barcode.get(barcode)
+        if not existing_product:
+            continue
+        previous = {key: existing_product[key] for key in product_values if key in existing_product}
+        missing = [key for key in product_values if key not in existing_product]
+        product_changes.append({"id": existing_product["_id"], "previous": previous, "missing": missing, "written": product_values,
+                                "previous_batch": existing_product.get("stock_import_batch_id")})
+        product_ops.append(UpdateOne({"_id": existing_product["_id"], "tenant_id": tenant_id},
+            {"$set": {**product_values, "stock_import_batch_id": batch_id}}))
+    for i in range(0, len(product_ops), STOCK_WRITE_CHUNK):
+        chunk = product_ops[i:i + STOCK_WRITE_CHUNK]
+        if chunk:
+            await product_collection.bulk_write(chunk, ordered=False)
+
+    # -- Pass 2: stock (inventory_collection + store_stock_collection) ------
+    # Same idea: pre-fetch every (barcode[, store_id]) this file touches in
+    # one query per collection, then write everything through bulk_write in
+    # bounded chunks instead of one find_one + one update_one per row.
+    inv_barcodes = set()
+    store_barcodes = set()
+    for row in usable_rows:
+        touched_labels = set(row.get("touched") or [])
+        for label in row["allocation"]:
+            if label not in touched_labels:
+                continue
+            if label == CENTRAL_LABEL:
+                inv_barcodes.add(row["_product"]["barcode"])
+            else:
+                store_barcodes.add(row["_product"]["barcode"])
+
+    inv_existing: Dict[str, dict] = {}
+    inv_list = list(inv_barcodes)
+    for i in range(0, len(inv_list), STOCK_WRITE_CHUNK):
+        chunk = inv_list[i:i + STOCK_WRITE_CHUNK]
+        async for doc in inventory_collection.find(
+            {"tenant_id": tenant_id, "barcode": {"$in": chunk}},
+            {"barcode": 1, "stockQty": 1, "freshQty": 1, "agedQty": 1, "agedAvgMonths": 1, "stockValue": 1, "stockImportRows": 1},
+        ):
+            inv_existing[doc["barcode"]] = doc
+
+    store_existing: Dict[tuple, dict] = {}
+    store_list = list(store_barcodes)
+    for i in range(0, len(store_list), STOCK_WRITE_CHUNK):
+        chunk = store_list[i:i + STOCK_WRITE_CHUNK]
+        async for doc in store_stock_collection.find(
+            {"tenant_id": tenant_id, "barcode": {"$in": chunk}},
+            {"barcode": 1, "store_id": 1, "stockQty": 1, "freshQty": 1, "agedQty": 1, "agedAvgMonths": 1, "stockValue": 1, "stockImportRows": 1},
+        ):
+            store_existing[(doc["barcode"], doc.get("store_id"))] = doc
+
+    inventory_ops = []
+    store_ops = []
+    for row in usable_rows:
+        barcode = row["_product"]["barcode"]
         description = row["_product"]["product_name"]
         touched_labels = set(row.get("touched") or [])
-        raphaaa = is_raphaaa_tenant(tenant_id)
+        value_touched_labels = set(row.get("value_touched") or [])
         for label, qty in row["allocation"].items():
             if label not in touched_labels:
                 # This product's rows in the file never mentioned this
@@ -1336,16 +1415,15 @@ async def commit_stock_snapshot(
                 # OTHER location for this product got a real value.
                 continue
             if label == CENTRAL_LABEL:
-                collection = inventory_collection
                 flt = {"tenant_id": tenant_id, "barcode": barcode}
                 extra: Dict[str, Any] = {}
+                existing = inv_existing.get(barcode)
             else:
                 store = store_by_label[label]
-                collection = store_stock_collection
                 flt = {"tenant_id": tenant_id, "barcode": barcode, "store_id": store["id"]}
                 extra = {"store_id": store["id"], "store_name": store["name"]}
+                existing = store_existing.get((barcode, store["id"]))
 
-            existing = await collection.find_one(flt, {"stockQty": 1, "freshQty": 1, "agedQty": 1, "agedAvgMonths": 1, "stockValue": 1, "stockImportRows": 1})
             previous_qty = float((existing or {}).get("stockQty") or 0)
             set_fields: Dict[str, Any] = {
                 **flt, **extra, "stockQty": float(qty), "description": description,
@@ -1362,18 +1440,16 @@ async def commit_stock_snapshot(
                 set_fields["freshQty"] = float(row["fresh_allocation"].get(label, 0.0))
                 set_fields["agedQty"] = float(row["aged_allocation"].get(label, 0.0))
                 set_fields["agedAvgMonths"] = row["aged_avg_months"].get(label)
-                value_touched_labels = set(row.get("value_touched") or [])
                 if label in value_touched_labels:
                     previous_stock_value = (existing or {}).get("stockValue")
                     set_fields["stockValue"] = float(row["value_allocation"].get(label, 0.0))
-            await collection.update_one(
-                flt,
-                {
-                    "$set": set_fields,
-                    "$setOnInsert": {"createdAt": now},
-                },
-                upsert=True,
-            )
+
+            op = UpdateOne(flt, {"$set": set_fields, "$setOnInsert": {"createdAt": now}}, upsert=True)
+            if label == CENTRAL_LABEL:
+                inventory_ops.append(op)
+            else:
+                store_ops.append(op)
+
             changes.append({
                 "location": label, "store_id": extra.get("store_id"), "barcode": barcode,
                 "previous_qty": previous_qty, "new_qty": float(qty), "existed": bool(existing),
@@ -1385,6 +1461,15 @@ async def commit_stock_snapshot(
                 "snapshot_written": "stockImportRows" in set_fields,
             })
         applied += 1
+
+    for i in range(0, len(inventory_ops), STOCK_WRITE_CHUNK):
+        chunk = inventory_ops[i:i + STOCK_WRITE_CHUNK]
+        if chunk:
+            await inventory_collection.bulk_write(chunk, ordered=False)
+    for i in range(0, len(store_ops), STOCK_WRITE_CHUNK):
+        chunk = store_ops[i:i + STOCK_WRITE_CHUNK]
+        if chunk:
+            await store_stock_collection.bulk_write(chunk, ordered=False)
 
     log = {
         "tenant_id": tenant_id, "kind": "stock", "batch_id": batch_id,
